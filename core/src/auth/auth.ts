@@ -1,0 +1,149 @@
+import { type User } from "@EXULU_TYPES/models/user"
+import bcrypt from "bcryptjs";
+import type { Knex } from "knex";
+
+export const authentication = async ({
+    apikey,
+    authtoken,
+    internalkey,
+    db,
+}: {
+    authtoken?: any,
+    apikey?: string
+    internalkey?: string,
+    db: Knex
+}): Promise<{ error: boolean, message?: string, code?: number, user?: User }> => {
+
+    // Used for communication between "internal" services
+    // such as between the backend and the uppy file uploader.
+    if (internalkey) {
+        if (!process.env.INTERNAL_SECRET) {
+            return {
+                error: true,
+                message: `Header "internal" provided, but no INTERNAL_SECRET was provided in the environment variables.`,
+                code: 401
+            };
+        }
+
+        if (process.env.INTERNAL_SECRET !== internalkey) {
+            return {
+                error: true,
+                message: `Internal key was provided in header but did not match the INTERNAL_SECRET environment variable.`,
+                code: 401
+            };
+        }
+
+        return {
+            error: false,
+            code: 200,
+            user: {
+                type: "api",
+                id: "XXXX-XXXX-XXXX-XXXX",
+                email: "internal@exulu.com"
+            }
+        }
+
+    }
+
+    if (authtoken) {
+        try {
+            console.log("authtoken", authtoken)
+            // uses the raw encrypted JWE token provided by next-auth via
+            // a "Bearer {token}" in the authorization header.
+
+            if (!authtoken?.email) {
+                return {
+                    error: true,
+                    message: `No email provided in session ${JSON.stringify(authtoken)}`,
+                    code: 401
+                }
+            }
+
+            const user = await db.from("users").select("*").where("email", authtoken?.email).first()
+            console.log("user", user)
+            if (!user) {
+                return {
+                    error: true,
+                    message: `No user found for email: ${authtoken.email}`,
+                    code: 401
+                }
+            }
+            return {
+                error: false,
+                code: 200,
+                user
+            };
+
+        } catch (error: any) {
+            console.error(error)
+            return {
+                error: true,
+                message: "Invalid token.",
+                code: 401
+            };
+        }
+    }
+    if (apikey) {
+
+        const users = await db.from("users").select("*").where("type", "api")
+
+        if (!users || users.length === 0) {
+            return {
+                error: true,
+                message: `No API users found.`,
+                code: 401
+            };
+        }
+
+        const keyParts = apikey.split("/");
+        const keyName = keyParts.pop();
+        const keyValue = keyParts[0];
+
+        if (!keyName) {
+            return {
+                error: true,
+                message: "Provided api key does not include postfix with key name ({key}/{name}).",
+                code: 401
+            }
+        }
+
+        if (!keyValue) {
+            return {
+                error: true,
+                message: "Provided api key is not in the correct format.",
+                code: 401
+            }
+        }
+
+        const filtered = users.filter(({ apiKey, id }: { apiKey: string, id: string }) => apiKey.includes(keyName))
+
+        for (const user of filtered) {
+            const lastSlashIndex = user.apiKey.lastIndexOf("/");
+            const compareValue = lastSlashIndex !== -1 ? user.apiKey.substring(0, lastSlashIndex) : user.apiKey;
+
+            const isMatch = await bcrypt.compare(keyValue, compareValue);
+            if (isMatch) {
+                
+                await db.from("users")
+                    .where({ id: user.id })
+                    .update({
+                        lastUsed: new Date()
+                    })
+                    .returning("id");
+
+                return {
+                    error: false,
+                    code: 200,
+                    user: user as any
+                };
+            }
+        }
+    }
+
+    return {
+        error: true,
+        message: "Either an api key or authorization key must be provided.",
+        code: 401
+    }
+
+}

@@ -1,0 +1,19 @@
+version: '3.7'
+
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server --console-address ":9001" /data
+    ports:
+      - "9020:9000"
+      - "9010:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - data:/data
+
+volumes:
+  data:

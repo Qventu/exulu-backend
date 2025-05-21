@@ -1,0 +1,74 @@
+{
+    "name": "exulu",
+    "author": "Qventu Bv.",
+    "version": "0.1.6",
+    "main": "./dist/index.js",
+    "module": "./dist/index.mjs",
+    "types": "./dist/index.d.ts",
+    "homepage": "https://exulu.com",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Qventu/exulu-core"
+    },
+    "scripts": {
+        "build": "tsup"
+    },
+    "keywords": [
+        "exulu"
+    ],
+    "type": "module",
+    "private": true,
+    "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^22.14.0",
+        "@types/pg": "^8.15.1",
+        "mastra": "^0.4.4",
+        "tsup": "^8.5.0",
+        "tsx": "^4.19.3"
+    },
+    "peerDependencies": {
+        "typescript": "^5.8.3"
+    },
+    "dependencies": {
+        "@as-integrations/express5": "^1.0.0",
+        "@aws-sdk/client-s3": "^3.338.0",
+        "@aws-sdk/client-sts": "^3.338.0",
+        "@aws-sdk/s3-request-presigner": "^3.338.0",
+        "@mastra/core": "^0.8.3",
+        "@mastra/memory": "^0.2.10",
+        "@mastra/pg": "^0.2.10",
+        "@mastra/rag": "^0.1.23",
+        "@types/bcrypt": "^5.0.2",
+        "@types/cors": "^2.8.18",
+        "@types/express": "^5.0.1",
+        "@types/graphql-type-json": "^0.3.5",
+        "@types/multer": "^1.4.12",
+        "ai": "^4.3.9",
+        "apollo-server": "^3.13.0",
+        "bcryptjs": "^3.0.2",
+        "body-parser": "^2.2.0",
+        "bullmq": "^5.48.1",
+        "class-validator": "^0.14.2",
+        "cors": "^2.8.5",
+        "csv-parse": "^5.6.0",
+        "dotenv": "^16.0.0",
+        "express": "^5.1.0",
+        "graphql": "^16.11.0",
+        "graphql-tools": "^9.0.18",
+        "graphql-type-json": "^0.3.2",
+        "jose": "^6.0.10",
+        "jsonwebtoken": "^9.0.2",
+        "knex": "^3.1.0",
+        "multer": "^1.4.5-lts.2",
+        "next-auth": "^4.24.11",
+        "openai": "^4.94.0",
+        "papaparse": "^5.5.2",
+        "pgvector": "^0.2.0",
+        "redis": "^4.7.0",
+        "type-graphql": "^2.0.0-rc.2",
+        "uninstall": "^0.0.0",
+        "uuid": "^11.1.0",
+        "zod": "^3.24.2",
+        "zodex": "^0.18.2"
+    }
+}
