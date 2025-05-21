@@ -1,9 +1,6 @@
 export type UserRole = {
   id: string;
-  role: string;
+  name: string;
   is_admin: boolean;
-  agents: {
-    id: string;
-    name: string;
-  }[];
+  agents?: string[];
 };

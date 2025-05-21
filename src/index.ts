@@ -2,7 +2,6 @@
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
 import { execute as initDb } from "./postgres/init-db"
-
 export { ExuluContext, ExuluEmbedder, ExuluSource, ExuluWorkflow, ExuluAgent, ExuluTool, ExuluZodFileType } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
 export { authentication as ExuluAuthentication  } from "./auth/auth"
@@ -13,6 +12,8 @@ export const ExuluJobs = {
         validate: validateJob
     }
 }
+
+export { STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM, type STATISTICS_TYPE as EXULU_STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics"
 
 export const ExuluDatabase = {
     init: async () => {

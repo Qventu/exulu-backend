@@ -127,6 +127,7 @@ export class ExuluAgent {
         this.description = description;
         this.outputSchema = outputSchema;
         this.rateLimit = rateLimit;
+        this.tools = tools;
         this.config = config;
         this.capabilities = capabilities;
         this.slug = `/agents/${generateSlug(this.name)}/run`
@@ -965,7 +966,7 @@ export class ExuluContext {
     // Exports the context as a tool that can be used by an agent
     public tool = (): ExuluTool => {
         return new ExuluTool({
-            id: `${this.name} context`,
+            id: this.id,
             name: `${this.name} context`,
             type: "context",
             inputSchema: z.object({

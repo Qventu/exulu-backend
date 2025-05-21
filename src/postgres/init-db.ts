@@ -106,6 +106,8 @@ const up = async function (knex: Knex) {
     if (!await knex.schema.hasTable('users')) {
         await knex.schema.createTable('users', table => {
             table.increments('id').primary();
+            table.date('createdAt').defaultTo(knex.fn.now());
+            table.date('updatedAt').defaultTo(knex.fn.now());
             table.string('name', 255);
             table.string('password', 255);
             table.string('email', 255);
@@ -179,21 +181,34 @@ export const execute = async () => {
     await up(db)
 
     console.log("[EXULU] Inserting default user and admin role.")
+    const existingRole = await db.from("roles").where({ name: "admin" }).first();
+    let roleId;
 
-    const role = await db.from("roles").insert({
-        name: "admin",
-        is_admin: true,
-        agents: []
-    }).returning("id");
+    if (!existingRole) {
+        console.log("[EXULU] Creating default admin role.");
+        const role = await db.from("roles").insert({
+            name: "admin",
+            is_admin: true,
+            agents: []
+        }).returning("id");
+        roleId = role[0].id;
+    } else {
+        roleId = existingRole.id;
+    }
 
-    console.log("[EXULU] Inserting default admin user.")
-    await db.from("users").insert({
-        name: "exulu",
-        email: "admin@exulu.com",
-        super_admin: true,
-        // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
-        role: role[0].id
-    });
+    const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
+    if (!existingUser) {
+        console.log("[EXULU] Creating default admin user.");
+        await db.from("users").insert({
+            name: "exulu",
+            email: "admin@exulu.com",
+            super_admin: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
+            role: roleId
+        });
+    }
 
     console.log("[EXULU] Database initialized.")
     return;

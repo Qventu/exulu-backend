@@ -1,4 +1,4 @@
-import type { ExuluFieldTypes } from "@EXULU_SHARED/enums/field-types";
+import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 
 export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid", name: string, defaultValue?: any) => {
     if (type === "text") {
@@ -26,7 +26,7 @@ export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid", name: string
         return;
     }
     if (type === "json") {
-        t.text(name);
+        t.jsonb(name);
         return;
     }
     if (type === "date") {

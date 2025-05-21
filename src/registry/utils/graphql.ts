@@ -2,32 +2,37 @@ import type { ExuluTableDefinition } from "../routes";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from 'graphql-type-json';
 
+const map = (field: any) => {
+    let type: string;
+    switch (field.type) {
+        case "text":
+        case "shortText":
+        case "longText":
+        case "code":
+            type = "String";
+            break;
+        case "number":
+            type = "Float";
+            break;
+        case "boolean":
+            type = "Boolean";
+            break;
+        case "json":
+            type = "JSON";
+            break;
+        case "date":
+            type = "String";
+            break;
+        default:
+            type = "String";
+    }
+    return type;
+}
+
 function createTypeDefs(table: ExuluTableDefinition): string {
     const fields = table.fields.map(field => {
         let type: string;
-        switch (field.type) {
-            case "text":
-            case "shortText":
-            case "longText":
-            case "code":
-                type = "String";
-                break;
-            case "number":
-                type = "Float";
-                break;
-            case "boolean":
-                type = "Boolean";
-                break;
-            case "json":
-                type = "String";
-                break;
-            case "date":
-                type = "String";
-                break;
-            default:
-                type = "String";
-        }
-
+        type = map(field);
         const required = field.required ? "!" : "";
         return `  ${field.name}: ${type}${required}`;
     });
@@ -43,7 +48,7 @@ function createTypeDefs(table: ExuluTableDefinition): string {
 
     const inputDef = `
 input ${table.name.singular}Input {
-${table.fields.map(f => `  ${f.name}: String`).join("\n")}
+${table.fields.map(f => `  ${f.name}: ${map(f)}`).join("\n")}
 }
 `;
 
@@ -53,29 +58,7 @@ ${table.fields.map(f => `  ${f.name}: String`).join("\n")}
 function createFilterTypeDefs(table: ExuluTableDefinition): string {
     const fieldFilters = table.fields.map(field => {
         let type: string;
-        switch (field.type) {
-            case "text":
-            case "shortText":
-            case "longText":
-            case "code":
-                type = "String";
-                break;
-            case "number":
-                type = "Float";
-                break;
-            case "boolean":
-                type = "Boolean";
-                break;
-            case "json":
-                type = "JSON";
-                break;
-            case "date":
-                type = "String";
-                break;
-            default:
-                type = "String";
-        }
-
+        type = map(field);
         return `
   ${field.name}: FilterOperator${type}`;
     });
@@ -88,6 +71,7 @@ input FilterOperatorString {
   eq: String
   ne: String
   in: [String]
+  contains: String
 }
 
 input FilterOperatorFloat {
@@ -151,7 +135,11 @@ function createMutations(table: ExuluTableDefinition) {
 
             const requestedFields = getRequestedFields(info)
 
-            const results = await db(tableNamePlural).insert(args.input).returning(requestedFields);
+            const results = await db(tableNamePlural).insert({
+                ...args.input,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            }).returning(requestedFields);
 
             console.log("requestedFields", requestedFields);
             
@@ -161,7 +149,10 @@ function createMutations(table: ExuluTableDefinition) {
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const { where, input } = args;
-            await db(tableNamePlural).where(where).update(input);
+            await db(tableNamePlural).where(where).update({
+                ...input,
+                updatedAt: new Date()
+            });
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where(where).first();
             return result;
@@ -169,7 +160,10 @@ function createMutations(table: ExuluTableDefinition) {
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
             const { id, input } = args;
             const { db } = context;
-            await db(tableNamePlural).where({ id }).update(input);
+            await db(tableNamePlural).where({ id }).update({
+                ...input,
+                updatedAt: new Date()
+            });
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where({ id }).first();
             return result;
@@ -205,10 +199,13 @@ function createQueries(table: ExuluTableDefinition) {
                         query = query.where(fieldName, operators.eq);
                     }
                     if (operators.ne !== undefined) {
-                        query = query.whereNot(fieldName, operators.ne);
+                        query = query.whereRaw(`?? IS DISTINCT FROM ?`, [fieldName, operators.ne])
                     }
                     if (operators.in !== undefined) {
                         query = query.whereIn(fieldName, operators.in);
+                    }
+                    if (operators.contains !== undefined) {
+                        query = query.where(fieldName, 'like', `%${operators.contains}%`);
                     }
                 }
             });
@@ -255,7 +252,7 @@ function createQueries(table: ExuluTableDefinition) {
             const itemCount = Number(count);
             const pageCount = Math.ceil(itemCount / limit);
             const currentPage = page;
-            const hasPreviousPage = currentPage > 0;
+            const hasPreviousPage = currentPage > 1;
             const hasNextPage = currentPage < pageCount - 1;
 
             // Apply sorting only to the data query
@@ -266,6 +263,8 @@ function createQueries(table: ExuluTableDefinition) {
                 dataQuery = dataQuery.offset((page - 1) * limit);
             }
             const items = await dataQuery.select(requestedFields).limit(limit);
+
+            console.log("items", items);
 
             console.log("query", dataQuery.toQuery());
             return {

@@ -7,11 +7,11 @@ export const usersSchema: ExuluTableDefinition = {
     },
     fields: [
         {
-            name: "firstName",
+            name: "firstname",
             type: "text"
         },
         {
-            name: "lastName",
+            name: "lastname",
             type: "text"
         },
         {
@@ -46,7 +46,7 @@ export const usersSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
-            name: "apiKey",
+            name: "apikey",
             type: "text"
         },
         {

@@ -207,38 +207,31 @@ export const createExpressRoutes = async (
         }
         console.log("[EXULU] agent", agent)
         const backend = agents.find(a => a.id === agent.backend);
-        if (!backend) {
-            res.status(400).json({
-                message: "Backend for provided agent not found."
-            })
-            return;
-        }
-
-        const tools = agent.tools?.map(id => {
-            const tool = backend.tools?.find(t => t.id === id);
-            if (!tool) {
-                return null;
-            }
-            return tool;
-        }).filter(tool => tool !== null) as ExuluTool[];
 
         res.status(200).json({
-            ...agent,
             ...{
-                slug: backend.slug,
-                rateLimit: backend.rateLimit,
-                streaming: backend.streaming,
-                capabilities: backend.capabilities,
+                name: agent.name,
+                id: agent.id,
+                description: agent.description,
+                active: agent.active,
+                public: agent.public,
+                slug: backend?.slug,
+                rateLimit: backend?.rateLimit,
+                streaming: backend?.streaming,
+                capabilities: backend?.capabilities,
                 // todo add contexts
-                tools
+                availableTools: backend?.tools,
+                enabledTools: agent.tools
             }
         })
     })
-
+    console.log("tools", tools)
     app.get("/tools", async (req: Request, res: Response) => {
         // todo add auth
+    
         res.status(200).json(tools.map(tool => ({
             id: tool.id,
+            name: tool.name,
             description: tool.description,
             type: tool.type || "tool",
             inputSchema: tool.inputSchema ? zerialize(tool.inputSchema as any) : null,
@@ -647,14 +640,14 @@ export const createExpressRoutes = async (
             to = new Date();
         }
 
-        const results: any = await db.from("statistics").where({
-            name: "count",
-            type: type,
-            createdAt: {
-                $gte: from,
-                $lte: to
-            }
-        }).select("*");
+        const query = db.from("statistics").select("*");
+
+        query.where("name", "count")
+        query.andWhere("type", type)
+        query.andWhere("createdAt", ">=", from)
+        query.andWhere("createdAt", "<=", to)
+
+        const results: any = await query;
 
         // check if between from and to for each day we have a result, if not add 0
         const dates: Date[] = [];
@@ -707,7 +700,7 @@ export const createExpressRoutes = async (
                 .andWhere("type", type)
                 .andWhere("createdAt", ">=", from)
                 .andWhere("createdAt", "<=", to)
-                .select("SUM(total) as total");
+                .sum("total as total");
             return {
                 [type]: result[0]?.total || 0
             }

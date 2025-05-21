@@ -27,7 +27,7 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
     "paths": {
-      "@EXULU_TYPES/*": ["../types/*"],
+      "@EXULU_TYPES/*": ["./types/*"],
     }
   },
   "include": ["src", "../types/**/*.ts"],

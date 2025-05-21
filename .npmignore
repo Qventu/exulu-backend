@@ -8,3 +8,5 @@
 .DS_Store
 tsconfig.json
 tsup.config.ts
+docker-compose*.yml
+docker-compose*.yaml

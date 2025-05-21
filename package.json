@@ -1,23 +1,30 @@
 {
-    "name": "exulu",
+    "name": "@exulu/backend",
     "author": "Qventu Bv.",
     "version": "0.1.6",
     "main": "./dist/index.js",
+    "private": false,
+    "publishConfig": {
+      "access": "restricted"
+    },
     "module": "./dist/index.mjs",
     "types": "./dist/index.d.ts",
     "homepage": "https://exulu.com",
+    "engines": {
+        "node": "20.10.0"
+    },
     "repository": {
         "type": "git",
-        "url": "https://github.com/Qventu/exulu-core"
+        "url": "https://github.com/Qventu/exulu-backend"
     },
     "scripts": {
-        "build": "tsup"
+        "build": "tsup",
+        "dev": "npm link && tsup --watch"
     },
     "keywords": [
         "exulu"
     ],
     "type": "module",
-    "private": true,
     "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^22.14.0",
@@ -65,6 +72,7 @@
         "papaparse": "^5.5.2",
         "pgvector": "^0.2.0",
         "redis": "^4.7.0",
+        "reflect-metadata": "^0.2.2",
         "type-graphql": "^2.0.0-rc.2",
         "uninstall": "^0.0.0",
         "uuid": "^11.1.0",
