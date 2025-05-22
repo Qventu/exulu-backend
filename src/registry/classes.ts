@@ -133,6 +133,7 @@ export class ExuluAgent {
         this.slug = `/agents/${generateSlug(this.name)}/run`
 
         if (config?.memory) {
+            console.log("[EXULU] Initializing memory for agent " + this.name)
             const connectionString = `postgresql://${process.env.POSTGRES_DB_USER}:${process.env.POSTGRES_DB_PASSWORD}@${process.env.POSTGRES_DB_HOST}:${process.env.POSTGRES_DB_PORT}/exulu`;
             this.memory = new Memory({
                 storage: new PostgresStore({

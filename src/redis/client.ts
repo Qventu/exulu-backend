@@ -1,14 +1,26 @@
 import { createClient, type RedisClientType } from "redis"
 import { redisServer } from "../bullmq/server.ts";
-export let redisClient: RedisClientType | null = null;
+let client: Record<string, RedisClientType> = {};
 
-(async () => {
-    if (!redisClient) {
+export async function redisClient(): Promise<{
+    client: RedisClientType | null
+}> {
+    if (!redisServer.host || !redisServer.port) {
+        return {
+            client: null
+        }
+    }
+
+    if (!client["exulu"]) {
         const url = `redis://${redisServer.host}:${redisServer.port}`
         console.log(`[EXULU] connecting to redis.`)
-        redisClient = createClient({ // todo add password
+        client["exulu"] = createClient({ // todo add password
             url
         });
-        await redisClient.connect()
+        await client["exulu"].connect()
     }
-})();
+
+    return {
+        client: client["exulu"]
+    };
+}

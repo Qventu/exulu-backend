@@ -2,7 +2,9 @@ import {redisClient} from "../redis/client.ts";
 
 export const rateLimiter = async (key: string, windowSeconds: number, limit: number, points: number) => {
 
-    if (!redisClient) {
+    const { client } = await redisClient();
+
+    if (!client) {
         return {
             status: false,
             retryAfter: 10 // 10 seconds
@@ -10,14 +12,14 @@ export const rateLimiter = async (key: string, windowSeconds: number, limit: num
     }
 
     const redisKey: any = `exulu/${key}`;
-    const current = await redisClient.incrBy(redisKey, points as any);
+    const current = await client.incrBy(redisKey, points as any);
 
     if (current === points) {
-        await redisClient.expire(redisKey, windowSeconds as any);
+        await client.expire(redisKey, windowSeconds as any);
     }
 
     if (current > limit) {
-        const ttl = await redisClient.ttl(redisKey);
+        const ttl = await client.ttl(redisKey);
         return {
             status: false,
             retryAfter: ttl

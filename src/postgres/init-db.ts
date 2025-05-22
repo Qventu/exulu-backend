@@ -3,6 +3,7 @@ import { postgresClient } from "./client";
 import { agentsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
+import bcrypt from "bcryptjs";
 
 const up = async function (knex: Knex) {
     if (!await knex.schema.hasTable('roles')) {
@@ -174,6 +175,13 @@ const up = async function (knex: Knex) {
     }
 };
 
+const SALT_ROUNDS = 12;
+
+async function encryptApiKey(apiKey) {
+    const hash = await bcrypt.hash(apiKey, SALT_ROUNDS);
+    return hash;
+}
+
 export const execute = async () => {
     console.log("[EXULU] Initializing database.")
     const { db } = await postgresClient()
@@ -196,6 +204,11 @@ export const execute = async () => {
         roleId = existingRole.id;
     }
 
+    const newKeyName = "exulu_default_key"
+    const plainKey = `sk_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
+    const postFix = `/${newKeyName.toLowerCase().trim().replaceAll(" ", "_")}`
+    const encryptedKey = await encryptApiKey(plainKey)
+  
     const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
     if (!existingUser) {
         console.log("[EXULU] Creating default admin user.");
@@ -205,11 +218,29 @@ export const execute = async () => {
             super_admin: true,
             createdAt: new Date(),
             updatedAt: new Date(),
+            type: "user",
+            // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
+            role: roleId
+        });
+    }
+
+    const existingApiUser = await db.from("users").where({ email: "api@exulu.com" }).first();
+    if (!existingApiUser) {
+        console.log("[EXULU] Creating default api user.");
+        await db.from("users").insert({
+            name: "exulu",
+            email: "admin@exulu.com",
+            super_admin: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            type: "user",
+            apikey: `${encryptedKey}${postFix}`,
             // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
             role: roleId
         });
     }
 
     console.log("[EXULU] Database initialized.")
+    console.log("[EXULU] Default api key: ", `${encryptedKey}${postFix}`)
     return;
 }
