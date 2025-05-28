@@ -50,6 +50,10 @@ export const usersSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "last_used",
+            type: "date"
+        },
+        {
             name: "role",
             type: "reference",
             references: {
@@ -57,10 +61,6 @@ export const usersSchema: ExuluTableDefinition = {
                 field: "id",
                 onDelete: "CASCADE"
             }
-        },
-        {
-            name: "last_used",
-            type: "date"
         }
     ]
 }

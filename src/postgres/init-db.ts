@@ -4,6 +4,7 @@ import { agentsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema } 
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import bcrypt from "bcryptjs";
+import { generateApiKey } from "../auth/generate-key";
 
 const up = async function (knex: Knex) {
     if (!await knex.schema.hasTable('roles')) {
@@ -27,48 +28,48 @@ const up = async function (knex: Knex) {
             }
         });
     }
-   
+
     if (!await knex.schema.hasTable('statistics')) {
         await knex.schema.createTable('statistics', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.date('createdAt').defaultTo(knex.fn.now());
             table.date('updatedAt').defaultTo(knex.fn.now());
             for (const field of statisticsSchema.fields) {
-            const { type, name, references, default: defaultValue } = field;
-            if (!type || !name) {
-                continue;
-            }
-            if (type === "reference") {
-                if (!references) {
-                    throw new Error("Field with type reference must have a reference definition.");
+                const { type, name, references, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
                 }
-                table.uuid(name).references(references.field).inTable(references.table);
-                return;
-            }
+                if (type === "reference") {
+                    if (!references) {
+                        throw new Error("Field with type reference must have a reference definition.");
+                    }
+                    table.uuid(name).references(references.field).inTable(references.table);
+                    return;
+                }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
         });
     }
 
     if (!await knex.schema.hasTable('jobs')) {
-    await knex.schema.createTable('jobs', table => {
-        table.increments('id').primary();
-        table.date('createdAt').defaultTo(knex.fn.now());
-        table.date('updatedAt').defaultTo(knex.fn.now());
-        for (const field of jobsSchema.fields) {
-            const { type, name, references, default: defaultValue } = field;
-            if (!type || !name) {
-                continue;
-            }
-            if (type === "reference") {
-                if (!references) {
-                    throw new Error("Field with type reference must have a reference definition.");
+        await knex.schema.createTable('jobs', table => {
+            table.increments('id').primary();
+            table.date('createdAt').defaultTo(knex.fn.now());
+            table.date('updatedAt').defaultTo(knex.fn.now());
+            for (const field of jobsSchema.fields) {
+                const { type, name, references, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
                 }
-                table.uuid(name).references(references.field).inTable(references.table);
-                return;
+                if (type === "reference") {
+                    if (!references) {
+                        throw new Error("Field with type reference must have a reference definition.");
+                    }
+                    table.uuid(name).references(references.field).inTable(references.table);
+                    return;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue);
             }
-            mapType(table, type, sanitizeName(name), defaultValue);
-        }
         });
     }
 
@@ -78,29 +79,29 @@ const up = async function (knex: Knex) {
             table.date('createdAt').defaultTo(knex.fn.now());
             table.date('updatedAt').defaultTo(knex.fn.now());
             for (const field of agentsSchema.fields) {
-            const { type, name, references, default: defaultValue } = field;
-            if (!type || !name) {
-                continue;
-            }
-            if (type === "reference") {
-                if (!references) {
-                    throw new Error("Field with type reference must have a reference definition.");
+                const { type, name, references, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
                 }
-                table.uuid(name).references(references.field).inTable(references.table);
-                return;
+                if (type === "reference") {
+                    if (!references) {
+                        throw new Error("Field with type reference must have a reference definition.");
+                    }
+                    table.uuid(name).references(references.field).inTable(references.table);
+                    return;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue);
             }
-            mapType(table, type, sanitizeName(name), defaultValue);
-        }
         });
     }
 
     // Next auth tables
     if (!await knex.schema.hasTable('verification_token')) {
-    await knex.schema.createTable('verification_token', table => {
-        table.text('identifier').notNullable();
-        table.timestamp('expires', { useTz: true }).notNullable();
-        table.text('token').notNullable();
-        table.primary(['identifier', 'token']);
+        await knex.schema.createTable('verification_token', table => {
+            table.text('identifier').notNullable();
+            table.timestamp('expires', { useTz: true }).notNullable();
+            table.text('token').notNullable();
+            table.primary(['identifier', 'token']);
         });
     }
 
@@ -113,32 +114,33 @@ const up = async function (knex: Knex) {
             table.string('password', 255);
             table.string('email', 255);
             table.timestamp('emailVerified', { useTz: true });
-        table.text('image');
+            table.text('image');
 
-        for (const field of usersSchema.fields) {
-            const { type, name, references, default: defaultValue } = field;
-            if (
-                name === "id" ||
-                name === "name" ||
-                name === "email" ||
-                name === "emailVerified" ||
-                name === "image"
-            ) {
-                continue;
-            }
-
-            if (!type || !name) {
-                continue;
-            }
-            if (type === "reference") {
-                if (!references) {
-                    throw new Error("Field with type reference must have a reference definition.");
+            for (const field of usersSchema.fields) {
+                console.log("[EXULU] field", field)
+                const { type, name, references, default: defaultValue } = field;
+                if (
+                    name === "id" ||
+                    name === "name" ||
+                    name === "email" ||
+                    name === "emailVerified" ||
+                    name === "image"
+                ) {
+                    continue;
                 }
-                table.uuid(name).references(references.field).inTable(references.table);
-                return;
+
+                if (!type || !name) {
+                    continue;
+                }
+                if (type === "reference") {
+                    if (!references) {
+                        throw new Error("Field with type reference must have a reference definition.");
+                    }
+                    table.uuid(name).references(references.field).inTable(references.table);
+                    return;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue);
             }
-            mapType(table, type, sanitizeName(name), defaultValue);
-        }
         });
     }
 
@@ -148,17 +150,17 @@ const up = async function (knex: Knex) {
             table.integer('userId').notNullable();
             table.string('type', 255).notNullable();
             table.string('provider', 255).notNullable();
-        table.string('providerAccountId', 255).notNullable();
-        table.text('refresh_token');
-        table.text('access_token');
-        table.bigInteger('expires_at');
-        table.text('id_token');
-        table.text('scope');
-        table.text('session_state');
-        table.text('token_type');
+            table.string('providerAccountId', 255).notNullable();
+            table.text('refresh_token');
+            table.text('access_token');
+            table.bigInteger('expires_at');
+            table.text('id_token');
+            table.text('scope');
+            table.text('session_state');
+            table.text('token_type');
 
-        // Optional: add foreign key constraint to users.id
-        // table.foreign('userId').references('users.id').onDelete('CASCADE');
+            // Optional: add foreign key constraint to users.id
+            // table.foreign('userId').references('users.id').onDelete('CASCADE');
         });
     }
 
@@ -169,16 +171,16 @@ const up = async function (knex: Knex) {
             table.timestamp('expires', { useTz: true }).notNullable();
             table.string('sessionToken', 255).notNullable();
 
-        // Optional: add foreign key constraint to users.id
-        // table.foreign('userId').references('users.id').onDelete('CASCADE');
+            // Optional: add foreign key constraint to users.id
+            // table.foreign('userId').references('users.id').onDelete('CASCADE');
         });
     }
 };
 
 const SALT_ROUNDS = 12;
 
-async function encryptApiKey(apiKey) {
-    const hash = await bcrypt.hash(apiKey, SALT_ROUNDS);
+async function encryptApiKey(apikey) {
+    const hash = await bcrypt.hash(apikey, SALT_ROUNDS);
     return hash;
 }
 
@@ -208,7 +210,7 @@ export const execute = async () => {
     const plainKey = `sk_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
     const postFix = `/${newKeyName.toLowerCase().trim().replaceAll(" ", "_")}`
     const encryptedKey = await encryptApiKey(plainKey)
-  
+
     const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
     if (!existingUser) {
         console.log("[EXULU] Creating default admin user.");
@@ -224,23 +226,8 @@ export const execute = async () => {
         });
     }
 
-    const existingApiUser = await db.from("users").where({ email: "api@exulu.com" }).first();
-    if (!existingApiUser) {
-        console.log("[EXULU] Creating default api user.");
-        await db.from("users").insert({
-            name: "exulu",
-            email: "admin@exulu.com",
-            super_admin: true,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            type: "user",
-            apikey: `${encryptedKey}${postFix}`,
-            // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
-            role: roleId
-        });
-    }
-
+    const { key } = await generateApiKey("exulu", "api@exulu.com")
     console.log("[EXULU] Database initialized.")
-    console.log("[EXULU] Default api key: ", `${encryptedKey}${postFix}`)
+    console.log("[EXULU] Default api key: ", `${key}`)
     return;
 }

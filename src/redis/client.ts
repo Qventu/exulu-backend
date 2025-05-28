@@ -5,19 +5,22 @@ let client: Record<string, RedisClientType> = {};
 export async function redisClient(): Promise<{
     client: RedisClientType | null
 }> {
+    // Early return if Redis is not configured
     if (!redisServer.host || !redisServer.port) {
-        return {
-            client: null
-        }
+        return { client: null };
     }
 
     if (!client["exulu"]) {
-        const url = `redis://${redisServer.host}:${redisServer.port}`
-        console.log(`[EXULU] connecting to redis.`)
-        client["exulu"] = createClient({ // todo add password
-            url
-        });
-        await client["exulu"].connect()
+        try {
+            const url = `redis://${redisServer.host}:${redisServer.port}`
+            client["exulu"] = createClient({
+                url
+            });
+            await client["exulu"].connect()
+        } catch (error) {
+            console.error(`[EXULU] error connecting to redis:`, error)
+            return { client: null };
+        }
     }
 
     return {

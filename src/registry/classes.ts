@@ -787,7 +787,6 @@ export class ExuluContext {
                 query = await this.queryRewriter(query);
             }
 
-
             const chunksTable = this.getChunksTableName();
 
             // Count is irrelevant here as vector search does

@@ -14,6 +14,7 @@ export const authentication = async ({
     db: Knex
 }): Promise<{ error: boolean, message?: string, code?: number, user?: User }> => {
 
+    console.log("[EXULU] apikey", apikey)
     // Used for communication between "internal" services
     // such as between the backend and the uppy file uploader.
     if (internalkey) {
@@ -95,11 +96,12 @@ export const authentication = async ({
             };
         }
 
-        const keyParts = apikey.split("/");
-        const keyName = keyParts.pop();
-        const keyValue = keyParts[0];
+        const request_key_parts = apikey.split("/");
+        const request_key_name = request_key_parts.pop();
+        const request_key_last_slash_index = apikey.lastIndexOf("/");
+        const request_key_compare_value = apikey.substring(0, request_key_last_slash_index);
 
-        if (!keyName) {
+        if (!request_key_name) {
             return {
                 error: true,
                 message: "Provided api key does not include postfix with key name ({key}/{name}).",
@@ -107,7 +109,7 @@ export const authentication = async ({
             }
         }
 
-        if (!keyValue) {
+        if (!request_key_compare_value) {
             return {
                 error: true,
                 message: "Provided api key is not in the correct format.",
@@ -115,19 +117,25 @@ export const authentication = async ({
             }
         }
 
-        const filtered = users.filter(({ apiKey, id }: { apiKey: string, id: string }) => apiKey.includes(keyName))
+        console.log("[EXULU] users", users)
+        console.log("[EXULU] request_key_name", request_key_name)
+        console.log("[EXULU] request_key_compare_value", request_key_compare_value)
+        const filtered = users.filter(({ apikey, id }: { apikey: string, id: string }) => apikey.includes(request_key_name))
+
+        console.log("[EXULU] filtered", filtered)
 
         for (const user of filtered) {
-            const lastSlashIndex = user.apiKey.lastIndexOf("/");
-            const compareValue = lastSlashIndex !== -1 ? user.apiKey.substring(0, lastSlashIndex) : user.apiKey;
-
-            const isMatch = await bcrypt.compare(keyValue, compareValue);
+            const user_key_last_slash_index = user.apikey.lastIndexOf("/");
+            const user_key_compare_value = user.apikey.substring(0, user_key_last_slash_index);
+            console.log("[EXULU] user_key_compare_value", user_key_compare_value)
+            const isMatch = await bcrypt.compare(request_key_compare_value, user_key_compare_value);
+            console.log("[EXULU] isMatch", isMatch)
             if (isMatch) {
                 
                 await db.from("users")
                     .where({ id: user.id })
                     .update({
-                        lastUsed: new Date()
+                        last_used: new Date()
                     })
                     .returning("id");
 
@@ -137,6 +145,12 @@ export const authentication = async ({
                     user: user as any
                 };
             }
+        }
+        console.log("[EXULU] No matching api key found.")
+        return {
+            error: true,
+            message: "No matching api key found.",
+            code: 401
         }
     }
 

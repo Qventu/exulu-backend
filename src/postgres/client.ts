@@ -13,27 +13,32 @@ export async function postgresClient(): Promise<{
     db: KnexType
 }> {
     if (!db["exulu"]) {
-        console.log("[EXULU] Initializing exulu database.")
-        console.log(process.env.POSTGRES_DB_HOST)
-        console.log(process.env.POSTGRES_DB_PORT)
-        console.log(process.env.POSTGRES_DB_USER)
-        console.log(process.env.POSTGRES_DB_PASSWORD)
-        console.log(process.env.POSTGRES_DB_SSL)
-        const knex = Knex({
-            client: 'pg',
-            connection: {
-                host: process.env.POSTGRES_DB_HOST,
-                port: parseInt(process.env.POSTGRES_DB_PORT || '5432'),
-                user: process.env.POSTGRES_DB_USER,
-                database: "exulu",
-                password: process.env.POSTGRES_DB_PASSWORD,
-                ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-              }
-        });
-        // @ts-ignore - createExtensionIfNotExists gets added by importing pgvector
-        // but it's not typed so we must ignore this.
-        await knex.schema.createExtensionIfNotExists('vector');
-        db["exulu"] = knex
+        try {
+            console.log("[EXULU] Initializing exulu database.")
+            console.log(process.env.POSTGRES_DB_HOST)
+            console.log(process.env.POSTGRES_DB_PORT)
+            console.log(process.env.POSTGRES_DB_USER)
+            console.log(process.env.POSTGRES_DB_PASSWORD)
+            console.log(process.env.POSTGRES_DB_SSL)
+            const knex = Knex({
+                client: 'pg',
+                connection: {
+                    host: process.env.POSTGRES_DB_HOST,
+                    port: parseInt(process.env.POSTGRES_DB_PORT || '5432'),
+                    user: process.env.POSTGRES_DB_USER,
+                    database: "exulu",
+                    password: process.env.POSTGRES_DB_PASSWORD,
+                    ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+                }
+            });
+            // @ts-ignore - createExtensionIfNotExists gets added by importing pgvector
+            // but it's not typed so we must ignore this.
+            await knex.schema.createExtensionIfNotExists('vector');
+            db["exulu"] = knex
+        } catch (error) {
+            console.error("[EXULU] Error initializing exulu database.", error)
+            throw error
+        }
     }
 
     return {

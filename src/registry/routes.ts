@@ -19,6 +19,8 @@ import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { agentsSchema, jobsSchema, rolesSchema, usersSchema } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
+import { redisServer } from "../bullmq/server.ts";
+import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
 
 export const global_queues = {
     logs_cleaner: "logs-cleaner"
@@ -149,7 +151,11 @@ export const createExpressRoutes = async (
         { route: "/graphql", method: "POST", note: "GraphQL endpoint" },
     );
 
-    await createRecurringJobs();
+    if (redisServer.host?.length && redisServer.port?.length) {
+        await createRecurringJobs();
+    } else {
+        console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
+    }
 
     const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema]);
 
@@ -158,12 +164,19 @@ export const createExpressRoutes = async (
         req: Request;
     }
 
-    const server = new ApolloServer<GraphqlContext>({ schema, introspection: true });
+    console.log("[EXULU] graphql server")
+    const server = new ApolloServer<GraphqlContext>({ 
+        cache: new InMemoryLRUCache(),
+        schema,
+        introspection: true 
+    });
 
     // Note you must call `start()` on the `ApolloServer`
     // instance before passing the instance to `expressMiddleware`
+    console.log("[EXULU] starting graphql server")
     await server.start();
 
+    console.log("[EXULU] graphql server started")
     app.use(
         "/graphql",
         cors(),
@@ -225,10 +238,10 @@ export const createExpressRoutes = async (
             }
         })
     })
-    console.log("tools", tools)
+
     app.get("/tools", async (req: Request, res: Response) => {
         // todo add auth
-    
+
         res.status(200).json(tools.map(tool => ({
             id: tool.id,
             name: tool.name,
@@ -276,7 +289,7 @@ export const createExpressRoutes = async (
         }
         // todo add auth
         const { db } = await postgresClient();
-        const context = contexts.find( context => context.id === contextId)
+        const context = contexts.find(context => context.id === contextId)
         if (!context) {
             throw new Error("Context not found in registry.")
         }
@@ -287,17 +300,37 @@ export const createExpressRoutes = async (
             throw new Error("Table with name " + context.getTableName() + " does not exist.")
         }
 
-        const mutation = db.from(context.getTableName())
-            .delete()
-            .returning("id");
+        const query = db.from(context.getTableName())
+            .select("id");
 
         if (id) {
-            mutation.where({ id })
+            query.where({ id })
+        }
+        if (external_id) {
+            query.where({ external_id })
         }
 
-        if (external_id) {
-            mutation.where({ external_id })
+        const item = await query.first();
+
+        if (!item) {
+            throw new Error("Item not found.")
         }
+
+        const chunks = await db.from(context.getChunksTableName())
+            .where({ source: item.id })
+            .select("id");
+
+        if (chunks.length > 0) {
+            // delete chunks first
+            await db.from(context.getChunksTableName())
+                .where({ source: item.id })
+                .delete();
+        }
+
+        const mutation = db.from(context.getTableName())
+            .where({ id: item.id })
+            .delete()
+            .returning("id");
 
         const result = await mutation;
 
@@ -349,7 +382,7 @@ export const createExpressRoutes = async (
         }
         // todo add auth
         const { db } = await postgresClient();
-        const context = contexts.find( context => context.id === req.params.context)
+        const context = contexts.find(context => context.id === req.params.context)
 
         if (!context) {
             res.status(400).json({
@@ -415,7 +448,7 @@ export const createExpressRoutes = async (
             return;
         }
 
-        const context = contexts.find( context => context.id === req.params.context)
+        const context = contexts.find(context => context.id === req.params.context)
         if (!context) {
             res.status(400).json({
                 message: "Context not found in registry."
@@ -441,9 +474,24 @@ export const createExpressRoutes = async (
     app.post("/items/:context", async (req: Request, res: Response) => {
 
         try {
+            console.log("[EXULU] post items")
             if (!req.params.context) {
                 res.status(400).json({
                     message: "Missing context in request."
+                })
+                return;
+            }
+
+            if (!req.body) {
+                res.status(400).json({
+                    message: "Missing body in request."
+                })
+                return;
+            }
+
+            if (!req.body.name) {
+                res.status(400).json({
+                    message: "Missing in body of request."
                 })
                 return;
             }
@@ -454,7 +502,7 @@ export const createExpressRoutes = async (
                 return;
             }
 
-            const context = contexts.find( context => context.id === req.params.context)
+            const context = contexts.find(context => context.id === req.params.context)
 
             if (!context) {
                 res.status(400).json({
@@ -500,7 +548,7 @@ export const createExpressRoutes = async (
             return;
         }
 
-        const context = contexts.find( context => context.id === req.params.context)
+        const context = contexts.find(context => context.id === req.params.context)
         if (!context) {
             res.status(400).json({
                 message: "Context not found in registry."
@@ -550,7 +598,7 @@ export const createExpressRoutes = async (
             })
             return;
         }
-        const context = contexts.find( context => context.id === req.params.context)
+        const context = contexts.find(context => context.id === req.params.context)
         if (!context) {
             res.status(400).json({
                 message: "Context not found in registry."
@@ -578,6 +626,8 @@ export const createExpressRoutes = async (
         method: "DELETE",
         note: `Delete specific embedding for a context.`
     });
+
+    console.log("[EXULU] delete embedding by id")
     app.delete(`items/:context/:id`, async (req: Request, res: Response) => {
         const id = req.params.id;
         if (!req.params.context) {
@@ -586,7 +636,7 @@ export const createExpressRoutes = async (
             })
             return;
         }
-        const context = contexts.find( context => context.id === req.params.context)
+        const context = contexts.find(context => context.id === req.params.context)
         if (!context) {
             res.status(400).json({
                 message: "Context not found in registry."
@@ -612,6 +662,7 @@ export const createExpressRoutes = async (
         })
     })
 
+    console.log("[EXULU] statistics timeseries")
     app.post("/statistics/timeseries", async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -674,6 +725,7 @@ export const createExpressRoutes = async (
         });
     })
 
+    console.log("[EXULU] statistics totals")
     app.post("/statistics/totals", async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -716,6 +768,7 @@ export const createExpressRoutes = async (
         });
     })
 
+    console.log("[EXULU] contexts statistics")
     app.get("/contexts/statistics", async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -727,9 +780,9 @@ export const createExpressRoutes = async (
         const { db } = await postgresClient();
 
         const statistics = await db("statistics")
-        .where("name", "count")
-        .andWhere("type", "context.retrieve")
-        .sum("total as total").first()
+            .where("name", "count")
+            .andWhere("type", "context.retrieve")
+            .sum("total as total").first()
 
         const response = await db('jobs')
             .select(db.raw(`to_char("createdAt", 'YYYY-MM-DD') as date`))
@@ -769,6 +822,7 @@ export const createExpressRoutes = async (
         })
     })
 
+    console.log("[EXULU] context by id")
     app.get(`/contexts/:id`, async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -784,7 +838,7 @@ export const createExpressRoutes = async (
             })
             return;
         }
-        const context = contexts.find( context => context.id === id);
+        const context = contexts.find(context => context.id === id);
         if (!context) {
             res.status(400).json({
                 message: "Context not found."
@@ -818,6 +872,7 @@ export const createExpressRoutes = async (
         })
     })
 
+    console.log("[EXULU] items export by context")
     app.get(`/items/export/:context`, async (req: Request, res: Response) => {
 
         if (!req.params.context) {
@@ -833,7 +888,7 @@ export const createExpressRoutes = async (
             return;
         }
 
-        const context = contexts.find( context => context.id === req.params.context);
+        const context = contexts.find(context => context.id === req.params.context);
         if (!context) {
             res.status(400).json({
                 message: "Context not found."
@@ -850,6 +905,7 @@ export const createExpressRoutes = async (
         res.status(200).attachment(`${context.name}-items-export-${ISOTime}.csv`).send(csv)
     })
 
+    console.log("[EXULU] contexts get list")
     app.get(`/contexts`, async (req: Request, res: Response) => {
 
         console.log("contexts!!")
@@ -883,6 +939,7 @@ export const createExpressRoutes = async (
         })))
     })
 
+    console.log("[EXULU] workflows get list")
     app.get(`/workflows`, async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -901,6 +958,7 @@ export const createExpressRoutes = async (
         })))
     })
 
+    console.log("[EXULU] workflow by id")
     app.get(`/workflows/:id`, async (req: Request, res: Response) => {
 
         const authenticationResult = await requestValidators.authenticate(req);
@@ -931,6 +989,7 @@ export const createExpressRoutes = async (
         })
     })
 
+    console.log("[EXULU] contexts")
     contexts.forEach(context => {
         const sources = context.sources.get();
         if (!Array.isArray(sources)) {
@@ -951,7 +1010,7 @@ export const createExpressRoutes = async (
 
                     app.post(`${updater.slug}/${updater.type}/:context`, async (req: Request, res: Response) => {
 
-                        const { context: id } = req.params;
+                        /* const { context: id } = req.params;
                         if (!id) {
                             res.status(400).json({
                                 message: "Missing context id in request."
@@ -1012,9 +1071,9 @@ export const createExpressRoutes = async (
                             })
                         }
 
-                        const jobs = await Promise.all(promises);
+                        const jobs = await Promise.all(promises); */
 
-                        res.status(200).json(jobs);
+                        res.status(200).json([]);
                         return;
                     })
                 }
@@ -1022,6 +1081,7 @@ export const createExpressRoutes = async (
         })
     })
 
+    console.log("[EXULU] agents")
     agents.forEach(agent => {
         const slug = agent.slug as string;
         if (!slug) return;
@@ -1066,6 +1126,7 @@ export const createExpressRoutes = async (
             // todo display rate limit message in the chat UI
 
             if (agent.rateLimit) {
+                console.log("[EXULU] rate limiting agent.", agent.rateLimit)
                 const limit = await rateLimiter(
                     agent.rateLimit.name || agent.id,
                     agent.rateLimit.rate_limit.time,
@@ -1145,8 +1206,7 @@ export const createExpressRoutes = async (
         })
     })
 
-
-
+    console.log("[EXULU] workflows")
     workflows.forEach(workflow => {
         routeLogs.push({
             route: workflow.slug,
@@ -1229,7 +1289,15 @@ export const createExpressRoutes = async (
         });
     })
 
-    await createUppyRoutes(app)
+    if (
+        process.env.COMPANION_S3_REGION &&
+        process.env.COMPANION_S3_KEY &&
+        process.env.COMPANION_S3_SECRET
+    ) {
+        await createUppyRoutes(app)
+    } else {
+        console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in the environment.")
+    }
 
     // Output all routes in table format at the end
     console.log("Routes:")

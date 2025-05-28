@@ -8,15 +8,25 @@ import path from "path";
 import { global_queues } from "./routes";
 import { postgresClient } from "../postgres/client";
 export const defaultLogsDir = path.join(process.cwd(), 'logs');
-const redisConnection = new IORedis({
-    ...redisServer,
-    maxRetriesPerRequest: null
-});
+
+let redisConnection: IORedis;
 
 export const createWorkers = async (queues: string[], contexts: ExuluContext[], embedders: ExuluEmbedder[], workflows: ExuluWorkflow[], _logsDir?: string) => {
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
-    
+
+    if (!redisServer.host || !redisServer.port) {
+        console.error("[EXULU] you are trying to start workers, but no redis server is configured in the environment.")
+        throw new Error("No redis server configured in the environment, so cannot start workers.")
+    }
+
+    if (!redisConnection) {
+        redisConnection = new IORedis({
+            ...redisServer,
+            maxRetriesPerRequest: null
+        });
+    }
+
     const logsDir = _logsDir || defaultLogsDir;
 
     const workers = queues.map(queue => {
@@ -103,7 +113,7 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                     }
 
                     if (job.data.type === "workflow") {
-                        
+
                         const workflow = workflows.find(workflow => workflow.id === job.data.workflow)
 
                         if (!workflow) {

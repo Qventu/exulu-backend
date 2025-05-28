@@ -82,10 +82,6 @@ export const createUppyRoutes = async (
 
     app.use(bodyParser.urlencoded({ extended: true }), bodyParser.json())
 
-    app.get('/', (req, res) => {
-        res.json("Exulu upload server.");
-    })
-
     app.get('/s3/list', async (req, res, next) => {
         const apikey: any = req.headers['exulu-api-key'] || null;
         

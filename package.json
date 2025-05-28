@@ -1,7 +1,7 @@
 {
     "name": "@exulu/backend",
     "author": "Qventu Bv.",
-    "version": "0.1.8",
+    "version": "0.2.3",
     "main": "./dist/index.js",
     "private": false,
     "publishConfig": {
