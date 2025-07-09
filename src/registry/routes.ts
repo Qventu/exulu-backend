@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, ExuluEmbedder, type ExuluTool, ExuluWorkflow, type SourceDocument } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, ExuluEmbedder, ExuluLogger, type ExuluTool, ExuluWorkflow, type SourceDocument } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { bullmqDecorator } from "./decoraters/bullmq.ts";
 import { requestValidators } from "./route-validators";
@@ -10,14 +10,14 @@ import { postgresClient } from "../postgres/client.ts";
 import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods.ts";
 import express from 'express';
 import { ApolloServer } from '@apollo/server';
-const Papa = require("papaparse");
+import * as Papa from 'papaparse';
 import cors from 'cors';
 import 'reflect-metadata'
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
 import { createSDL } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
-import { agentsSchema, jobsSchema, rolesSchema, usersSchema } from "../postgres/core-schema.ts";
+import { agentsSchema, evalResultsSchema, jobsSchema, messagesSchema, rolesSchema, threadsSchema, usersSchema, workflowSchema } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
@@ -88,12 +88,15 @@ export const createExpressRoutes = async (
     tools: ExuluTool[],
     workflows: ExuluWorkflow[],
     contexts: ExuluContext[],
-) => {
+): Promise<Express> => {
     const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
     // Add route logs instead of individual console.logs
 
+    // todo make this more secure / configurable
     var corsOptions = {
         origin: '*',
+        exposedHeaders: "*",
+        allowedHeaders: "*",
         optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
     }
     app.use(cors(corsOptions));
@@ -157,7 +160,7 @@ export const createExpressRoutes = async (
         console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
     }
 
-    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema]);
+    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, threadsSchema, messagesSchema]);
 
     interface GraphqlContext {
         db: Knex;
@@ -179,7 +182,7 @@ export const createExpressRoutes = async (
     console.log("[EXULU] graphql server started")
     app.use(
         "/graphql",
-        cors(),
+        cors(corsOptions),
         express.json(),
         expressMiddleware(server, {
             context: async ({ req }) => {
@@ -228,6 +231,7 @@ export const createExpressRoutes = async (
                 description: agent.description,
                 active: agent.active,
                 public: agent.public,
+                type: agent.type,
                 slug: backend?.slug,
                 rateLimit: backend?.rateLimit,
                 streaming: backend?.streaming,
@@ -279,7 +283,7 @@ export const createExpressRoutes = async (
         id?: string;
         external_id?: string;
         contextId: string;
-    }) => {
+    }): Promise<{} | null> => {
         if (!contextId) {
             throw new Error("Missing context in request.")
         }
@@ -313,7 +317,7 @@ export const createExpressRoutes = async (
         const item = await query.first();
 
         if (!item) {
-            throw new Error("Item not found.")
+            return null;
         }
 
         const chunks = await db.from(context.getChunksTableName())
@@ -348,6 +352,12 @@ export const createExpressRoutes = async (
             id: req.params.id,
             contextId: req.params.context
         })
+        if (!result) {
+            res.status(200).json({
+                message: "Item not found."
+            });
+            return;
+        }
         res.status(200).json(result);
     })
 
@@ -362,6 +372,12 @@ export const createExpressRoutes = async (
             external_id: req.params.id,
             contextId: req.params.context
         })
+        if (!result) {
+            res.status(200).json({
+                message: "Item not found."
+            });
+            return;
+        }
         res.status(200).json(result);
     })
 
@@ -505,25 +521,33 @@ export const createExpressRoutes = async (
             const context = contexts.find(context => context.id === req.params.context)
 
             if (!context) {
+                console.error("[EXULU] context not found in registry.", req.params.context)
                 res.status(400).json({
                     message: "Context not found in registry."
                 })
                 return;
             }
 
+            console.log("[EXULU] context", context)
+
             const exists = await context.tableExists();
 
             if (!exists) {
+                console.log("[EXULU] context table does not exist, creating it.")
                 await context.createItemsTable();
             }
 
+            console.log("[EXULU] inserting item", req.body)
             const result = await context.insertItem(authenticationResult.user.id, req.body, !!req.body.upsert);
+
+            console.log("[EXULU] result", result)
 
             res.status(200).json({
                 message: "Item created successfully.",
                 id: result
             });
         } catch (error: any) {
+            console.error("[EXULU] error upserting item", error)
             res.status(500).json({
                 message: error?.message || "An error occurred while creating the item."
             })
@@ -954,7 +978,7 @@ export const createExpressRoutes = async (
             slug: workflow.slug,
             enable_batch: workflow.enable_batch,
             queue: workflow.queue?.name,
-            inputSchema: workflow.inputSchema ? zerialize(workflow.inputSchema as any) : null
+            inputSchema: workflow.steps[0]?.inputSchema ? zerialize(workflow.steps[0].inputSchema as any) : null
         })))
     })
 
@@ -984,7 +1008,7 @@ export const createExpressRoutes = async (
         res.status(200).json({
             ...workflow,
             queue: workflow.queue?.name,
-            inputSchema: workflow.inputSchema ? zerialize(workflow.inputSchema as any) : null,
+            inputSchema: workflow.steps[0]?.inputSchema ? zerialize(workflow.steps[0].inputSchema as any) : null,
             workflow: undefined
         })
     })
@@ -1215,11 +1239,6 @@ export const createExpressRoutes = async (
         });
         app.post(`${workflow.slug}`, async (req: Request, res: Response) => {
 
-            if (!workflow.queue) {
-                res.status(500).json({ detail: 'No queue set for workflow.' });
-                return;
-            }
-
             const authenticationResult = await requestValidators.authenticate(req);
             if (!authenticationResult.user?.id) {
                 res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
@@ -1241,6 +1260,7 @@ export const createExpressRoutes = async (
                     label: `Job running '${workflow.name}' for '${req.body.label}'`,
                     agent: req.body.agent,
                     workflow: workflow.id,
+                    steps: workflow.steps?.length || 0,
                     type: "workflow",
                     inputs,
                     session: req.body.session,
@@ -1261,28 +1281,21 @@ export const createExpressRoutes = async (
                 return;
             }
 
-            const { runId, start, watch } = workflow.workflow.createRun();
-
             console.log("[EXULU] running workflow with inputs.", inputs)
+            const logger = new ExuluLogger()
 
-            const output = await start({
-                triggerData: {
-                    ...inputs,
-                    user: authenticationResult.user.id
-                }
+            const result = await workflow.start({
+                inputs,
+                user: authenticationResult.user.id,
+                logger,
+                session: req.body.session,
+                agent: req.body.agent,
+                label: req.body.label
             });
 
-            const failedSteps = Object.entries(output.results)
-                .filter(([_, step]) => step.status === "failed")
-                .map(([id, step]: any) => `${id}: ${step.error}`);
-
-            if (failedSteps.length > 0) {
-                const message = `Workflow has failed steps: ${failedSteps.join('\n - ')}`;
-                throw new Error(message)
-            }
             res.status(200).json({
                 "job": {},
-                "output": output
+                "output": result
             });
             return;
             // todo batch mode
@@ -1302,6 +1315,8 @@ export const createExpressRoutes = async (
     // Output all routes in table format at the end
     console.log("Routes:")
     console.table(routeLogs);
+
+    return app;
 }
 
 const preprocessInputs = async (data: any) => {

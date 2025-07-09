@@ -1,7 +1,7 @@
 import { type Express } from "express";
 import { authentication } from "../auth/auth";
-const bodyParser = require('body-parser')
-import { getToken } from "next-auth/jwt"
+import bodyParser from 'body-parser';
+import { getToken } from "../auth/get-token"
 import { postgresClient } from "../postgres/client";
 
 export const createUppyRoutes = async (
@@ -83,12 +83,12 @@ export const createUppyRoutes = async (
     app.use(bodyParser.urlencoded({ extended: true }), bodyParser.json())
 
     app.get('/s3/list', async (req, res, next) => {
+        req.accepts
         const apikey: any = req.headers['exulu-api-key'] || null;
         
         let authtoken: any = null;
         if (typeof apikey !== "string") { // default to next auth tokens to authenticate
-            const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken({ req, secret })
+            authtoken = await getToken(req.headers.authorization ?? "")
         }
 
         const { db } = await postgresClient()
@@ -150,8 +150,7 @@ export const createUppyRoutes = async (
 
         let authtoken: any = null;
         if (typeof apikey !== "string" && typeof internalkey !== "string") { // default to next auth tokens to authenticate
-            const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken({ req, secret })
+            authtoken = await getToken(req.headers.authorization ?? "")
         }
         const authenticationResult = await authentication({
             authtoken,
@@ -249,8 +248,7 @@ export const createUppyRoutes = async (
 
         let authtoken: any = null;
         if (typeof apikey !== "string") { // default to next auth tokens to authenticate
-            const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken({ req, secret })
+            authtoken = await getToken(req.headers.authorization ?? "")
         }
         const authenticationResult = await authentication({
             authtoken,
@@ -311,8 +309,7 @@ export const createUppyRoutes = async (
 
         let authtoken: any = null;
         if (typeof apikey !== "string") { // default to next auth tokens to authenticate
-            const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken({ req, secret })
+            authtoken = await getToken(req.headers.authorization ?? "")
         }
         const authenticationResult = await authentication({
             authtoken,

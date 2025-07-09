@@ -1,18 +1,40 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { agentsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema } from "./core-schema";
+import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
-import bcrypt from "bcryptjs";
-import { generateApiKey } from "../auth/generate-key";
+import { encryptString, generateApiKey } from "../auth/generate-key";
 
 const up = async function (knex: Knex) {
+
     if (!await knex.schema.hasTable('roles')) {
         await knex.schema.createTable('roles', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.date('createdAt').defaultTo(knex.fn.now());
             table.date('updatedAt').defaultTo(knex.fn.now());
             for (const field of rolesSchema.fields) {
+                const { type, name, references, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
+                }
+                if (type === "reference") {
+                    if (!references) {
+                        throw new Error("Field with type reference must have a reference definition.");
+                    }
+                    table.uuid(name).references(references.field).inTable(references.table);
+                    return;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue);
+            }
+        });
+    }
+
+    if (!await knex.schema.hasTable('eval_results')) {
+        await knex.schema.createTable('eval_results', table => {
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.date('createdAt').defaultTo(knex.fn.now());
+            table.date('updatedAt').defaultTo(knex.fn.now());
+            for (const field of evalResultsSchema.fields) {
                 const { type, name, references, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
@@ -177,13 +199,6 @@ const up = async function (knex: Knex) {
     }
 };
 
-const SALT_ROUNDS = 12;
-
-async function encryptApiKey(apikey) {
-    const hash = await bcrypt.hash(apikey, SALT_ROUNDS);
-    return hash;
-}
-
 export const execute = async () => {
     console.log("[EXULU] Initializing database.")
     const { db } = await postgresClient()
@@ -199,29 +214,26 @@ export const execute = async () => {
         const role = await db.from("roles").insert({
             name: "admin",
             is_admin: true,
-            agents: []
+            agents: JSON.stringify([])
         }).returning("id");
         roleId = role[0].id;
     } else {
         roleId = existingRole.id;
     }
 
-    const newKeyName = "exulu_default_key"
-    const plainKey = `sk_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
-    const postFix = `/${newKeyName.toLowerCase().trim().replaceAll(" ", "_")}`
-    const encryptedKey = await encryptApiKey(plainKey)
-
     const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
     if (!existingUser) {
+        const password = await encryptString("admin")
         console.log("[EXULU] Creating default admin user.");
         await db.from("users").insert({
             name: "exulu",
             email: "admin@exulu.com",
             super_admin: true,
             createdAt: new Date(),
+            emailVerified: new Date(),
             updatedAt: new Date(),
+            password: password,
             type: "user",
-            // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
             role: roleId
         });
     }
@@ -229,5 +241,7 @@ export const execute = async () => {
     const { key } = await generateApiKey("exulu", "api@exulu.com")
     console.log("[EXULU] Database initialized.")
     console.log("[EXULU] Default api key: ", `${key}`)
+    console.log("[EXULU] Default password if using password auth: ", `admin`)
+    console.log("[EXULU] Default email if using password auth: ", `admin@exulu.com`)
     return;
 }

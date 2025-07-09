@@ -33,114 +33,120 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
         console.log(`[EXULU] creating worker for queue ${queue}.`)
         const worker = new Worker(
             `${queue}`,
-            async job => {
+            async bullmqJob => {
                 const { db } = await postgresClient()
                 try {
 
-                    bullmq.validate(job);
+                    bullmq.validate(bullmqJob);
 
-                    if (job.data.type === "embedder") {
+                    if (bullmqJob.data.type === "embedder") {
 
-                        if (!job.data.updater) {
+                        if (!bullmqJob.data.updater) {
                             throw new Error("No updater set for embedder job.");
                         }
 
-                        const context = contexts.find(context => context.id === job.data.context)
+                        const context = contexts.find(context => context.id === bullmqJob.data.context)
 
                         if (!context) {
-                            throw new Error(`Context ${job.data.context} not found in the registry.`);
+                            throw new Error(`Context ${bullmqJob.data.context} not found in the registry.`);
                         }
 
-                        if (!job.data.embedder) {
+                        if (!bullmqJob.data.embedder) {
                             throw new Error(`No embedder set for embedder job.`);
                         }
 
-                        const embedder = embedders.find(embedder => embedder.id === job.data.embedder)
+                        const embedder = embedders.find(embedder => embedder.id === bullmqJob.data.embedder)
 
                         if (!embedder) {
-                            throw new Error(`Embedder ${job.data.embedder} not found in the registry.`);
+                            throw new Error(`Embedder ${bullmqJob.data.embedder} not found in the registry.`);
                         }
 
-                        if (!job.data.source) {
+                        if (!bullmqJob.data.source) {
                             throw new Error("No source set for embedder job.");
                         }
 
-                        const source = context.sources.get(job.data.source)
+                        const source = context.sources.get(bullmqJob.data.source)
 
                         if (!source) {
-                            throw new Error(`Source ${job.data.source} not found in the registry.`);
+                            throw new Error(`Source ${bullmqJob.data.source} not found in the registry.`);
                         }
 
-                        if (!job.data.updater) {
+                        if (!bullmqJob.data.updater) {
                             throw new Error("No updater set for embedder job.");
                         }
 
-                        const updater = (source as ExuluSource).updaters.find(updater => updater.id === job.data.updater)
+                        const updater = (source as ExuluSource).updaters.find(updater => updater.id === bullmqJob.data.updater)
 
                         if (!updater) {
-                            throw new Error(`Updater ${job.data.updater} not found in the registry.`);
+                            throw new Error(`Updater ${bullmqJob.data.updater} not found in the registry.`);
                         }
 
-                        if (!job.data.documents) {
+                        if (!bullmqJob.data.documents) {
                             throw new Error("No input documents set for embedder job.");
                         }
 
-                        if (!Array.isArray(job.data.documents)) {
+                        if (!Array.isArray(bullmqJob.data.documents)) {
                             throw new Error("Input documents must be an array.");
                         }
 
                         // todo fix this
-                        const result = await embedder.upsert(job.data.context, job.data.documents, {
+                        const result = await embedder.upsert(bullmqJob.data.context, bullmqJob.data.documents, {
                             label: context.name,
-                            trigger: job.data.trigger || "unknown"
+                            trigger: bullmqJob.data.trigger || "unknown"
                         });
 
 
-                        const mongoRecord = await db.from("jobs").where({ redis: job.id }).first();
+                        const mongoRecord = await db.from("jobs").where({ redis: bullmqJob.id }).first();
                         if (!mongoRecord) {
                             throw new Error("Job not found in the database.");
                         }
 
                         const finishedAt = new Date();
                         const duration = (finishedAt.getTime() - new Date(mongoRecord.createdAt).getTime()) / 1000;
-                        await db.from("jobs").where({ redis: job.id }).update({
+                        await db.from("jobs").where({ redis: bullmqJob.id }).update({
                             status: "completed",
                             finishedAt,
                             duration,
                             result: JSON.stringify(result)
                         });
+
                         return result;
                     }
 
-                    if (job.data.type === "workflow") {
+                    if (bullmqJob.data.type === "workflow") {
 
-                        const workflow = workflows.find(workflow => workflow.id === job.data.workflow)
+                        const workflow = workflows.find(workflow => workflow.id === bullmqJob.data.workflow)
 
                         if (!workflow) {
-                            throw new Error(`Workflow ${job.data.workflow} not found in the registry.`);
+                            throw new Error(`Workflow ${bullmqJob.data.workflow} not found in the registry.`);
                         }
 
-                        const result = await bullmq.process.workflow(job, workflow, logsDir)
+                        const exuluJob = await db.from("jobs").where({ redis: bullmqJob.id }).first();
 
-                        const mongoRecord = await db.from("jobs").where({ redis: job.id }).first();
-                        if (!mongoRecord) {
+                        if (!exuluJob) {
                             throw new Error("Job not found in the database.");
                         }
-                        const finishedAt = new Date();
-                        const duration = (finishedAt.getTime() - new Date(mongoRecord.createdAt).getTime()) / 1000;
 
-                        await db.from("jobs").where({ redis: job.id }).update({
+                        const result = await bullmq.process.workflow(bullmqJob, exuluJob, workflow, logsDir)
+
+              
+
+                        const finishedAt = new Date();
+                        const duration = (finishedAt.getTime() - new Date(exuluJob.createdAt).getTime()) / 1000;
+
+                        await db.from("jobs").where({ redis: bullmqJob.id }).update({
                             status: "completed",
                             finishedAt,
                             duration,
                             result: JSON.stringify(result)
                         });
+
                         return result
 
                     }
 
                 } catch (error: unknown) {
-                    await db.from("jobs").where({ redis: job.id }).update({
+                    await db.from("jobs").where({ redis: bullmqJob.id }).update({
                         status: "failed",
                         finishedAt: new Date(),
                         error: error instanceof Error ? error.message : String(error)

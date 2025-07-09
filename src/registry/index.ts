@@ -1,33 +1,41 @@
-import {ExuluAgent, ExuluContext, ExuluEmbedder, ExuluWorkflow, type ExuluTool} from "./classes.ts";
-import {type Express} from "express"
-import {createExpressRoutes} from "./routes.ts";
-import {createWorkers} from "./workers.ts";
+import { ExuluAgent, ExuluContext, ExuluEmbedder, ExuluWorkflow, type ExuluTool } from "./classes.ts";
+import { type Express } from "express"
+import { createExpressRoutes } from "./routes.ts";
+import { createWorkers } from "./workers.ts";
+import { ExuluMCP } from "../mcp";
 
 export type ExuluConfig = {
     workers: {
         enabled: boolean,
         logsDir?: string,
     }
+    MCP: {
+        enabled: boolean,
+    }
 }
 
 export class ExuluApp {
 
-    private _agents: ExuluAgent[]
-    private _workflows: ExuluWorkflow[]
-    private _config: ExuluConfig
-    private _embedders: ExuluEmbedder[]
+    private _agents: ExuluAgent[] = []
+    private _workflows: ExuluWorkflow[] = []
+    private _config?: ExuluConfig;
+    private _embedders: ExuluEmbedder[] = []
     private _queues: string[] = []
-    private _contexts?: Record<string, ExuluContext>
-    private _tools: ExuluTool[]
+    private _contexts?: Record<string, ExuluContext> = {}
+    private _tools: ExuluTool[] = []
 
-    constructor({contexts, embedders, agents, workflows, config, tools}: {
+    constructor() { }
+
+    // Factory function so we can async initialize the
+    // MCP server if needed.
+    create = async ({ contexts, embedders, agents, workflows, config, tools }: {
         contexts?: Record<string, ExuluContext>,
         config: ExuluConfig,
         embedders?: ExuluEmbedder[],
         agents?: ExuluAgent[],
         workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
-    }) {  
+    }) => {
         this._embedders = embedders ?? [];
         this._workflows = workflows ?? [];
         this._contexts = contexts ?? {};
@@ -36,12 +44,12 @@ export class ExuluApp {
         this._tools = tools ?? [];
         const queues = [
             ...(embedders?.length ?
-                    embedders.map(agent => agent.queue?.name || null) :
-                    []
+                embedders.map(agent => agent.queue?.name || null) :
+                []
             ),
             ...(workflows?.length ?
-                    workflows.map(workflow => workflow.queue?.name || null) :
-                    []
+                workflows.map(workflow => workflow.queue?.name || null) :
+                []
             ),
         ]
         this._queues = [...new Set(queues.filter(o => !!o))] as any;
@@ -89,21 +97,22 @@ export class ExuluApp {
 
     bullmq = {
         workers: {
-            create: async() => {
+            create: async () => {
                 return await createWorkers(
                     this._queues,
                     Object.values(this._contexts ?? {}),
                     this._embedders,
                     this._workflows,
-                    this._config.workers?.logsDir
+                    this._config?.workers?.logsDir
                 )
             }
         }
     }
     server = {
         express: {
-            init: async (app: Express) => {
-                return await createExpressRoutes(
+            init: async (app: Express): Promise<Express> => {
+
+                await createExpressRoutes(
                     app,
                     this._agents,
                     this._embedders,
@@ -111,6 +120,22 @@ export class ExuluApp {
                     this._workflows,
                     Object.values(this._contexts ?? {})
                 )
+
+                if (this._config?.MCP.enabled) {
+                    const mcp = new ExuluMCP();
+                    await mcp.create({
+                        express: app,
+                        contexts: this._contexts,
+                        embedders: this._embedders,
+                        agents: this._agents,
+                        workflows: this._workflows,
+                        config: this._config,
+                        tools: this._tools
+                    });
+                    await mcp.connect();
+                }
+
+                return app;
             }
         }
     }

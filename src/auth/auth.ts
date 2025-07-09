@@ -116,13 +116,9 @@ export const authentication = async ({
                 code: 401
             }
         }
-
-        console.log("[EXULU] users", users)
         console.log("[EXULU] request_key_name", request_key_name)
         console.log("[EXULU] request_key_compare_value", request_key_compare_value)
         const filtered = users.filter(({ apikey, id }: { apikey: string, id: string }) => apikey.includes(request_key_name))
-
-        console.log("[EXULU] filtered", filtered)
 
         for (const user of filtered) {
             const user_key_last_slash_index = user.apikey.lastIndexOf("/");

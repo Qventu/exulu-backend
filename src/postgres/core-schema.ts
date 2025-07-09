@@ -11,6 +11,10 @@ export const usersSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "name",
+            type: "text"
+        },
+        {
             name: "lastname",
             type: "text"
         },
@@ -116,6 +120,127 @@ export const statisticsSchema: ExuluTableDefinition = {
     ]
 }
 
+export const workflowSchema: ExuluTableDefinition = {
+    name: {
+        plural: "workflows",
+        singular: "workflow"
+    },
+    fields: [
+        {
+            name: "workflow_name",
+            type: "text"
+        },
+        {
+            name: "run_id",
+            type: "text"
+        },
+        {
+            name: "snapshot",
+            type: "text"
+        }
+    ]
+}
+
+export const evalResultsSchema: ExuluTableDefinition = {
+    name: {
+        plural: "eval_results",
+        singular: "eval_result"
+    },
+    fields: [
+        {
+            name: "input",
+            type: "longText"
+        },
+        {
+            name: "output",
+            type: "longText"
+        },
+        {
+            name: "duration",
+            type: "number"
+        },
+        {
+            name: "category",
+            type: "text"
+        },
+        {
+            name: "metadata",
+            type: "json"
+        },
+        {
+            name: "result",
+            type: "number"
+        },
+        {
+            name: "agent_id",
+            type: "text"
+        },
+        {
+            name: "workflow_id",
+            type: "text"
+        },
+        {
+            name: "eval_type",
+            type: "text"
+        },
+        {
+            name: "eval_name",
+            type: "text"
+        },
+        {
+            name: "comment",
+            type: "longText"
+        }
+    ]
+}
+
+
+export const threadsSchema: ExuluTableDefinition = {
+    name: {
+        plural: "threads",
+        singular: "thread"
+    },
+    fields: [
+        {
+            name: "resourceId",
+            type: "text"
+        },
+        {
+            name: "title",
+            type: "text"
+        },
+        {
+            name: "metadata",
+            type: "text"
+        }
+    ]
+}
+
+export const messagesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "messages",
+        singular: "message"
+    },
+    fields: [        
+        {
+            name: "thread_id",
+            type: "text"
+        },
+        {
+            name: "content",
+            type: "text"
+        },
+        {
+            name: "role",
+            type: "text"
+        },
+        {
+            name: "type",
+            type: "text"
+        }
+    ]
+}
+
 export const jobsSchema: ExuluTableDefinition = {
     name: {
         plural: "jobs",
@@ -140,7 +265,7 @@ export const jobsSchema: ExuluTableDefinition = {
         },
         {
             name: "result",
-            type: "text"
+            type: "longText"
         },
         {
             name: "name",
@@ -151,12 +276,20 @@ export const jobsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "workflow",
+            type: "text"
+        },
+        {
             name: "user",
             type: "text"
         },
         {
             name: "item",
             type: "text"
+        },
+        {
+            name: "steps",
+            type: "number"
         },
         {
             name: "inputs",

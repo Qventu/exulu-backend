@@ -16,6 +16,7 @@ export const bullmqDecorator = async ({
     configuration,
     updater,
     context,
+    steps,
     source,
     documents,
     trigger,
@@ -37,6 +38,7 @@ export const bullmqDecorator = async ({
         example: string
     }>
     agent?: string
+    steps?: number,
     inputs: any,
     queue: Queue,
     user: String
@@ -52,11 +54,13 @@ export const bullmqDecorator = async ({
         ...(context && { context }),
         ...(source && { source }),
         ...(documents && { documents }),
+        ...(steps && { steps }),
         ...(trigger && { trigger }),
         ...(item && { item }),
         agent: agent,
         user: user,
         inputs,
+        label,
         session
     },
         {
@@ -83,6 +87,7 @@ export const bullmqDecorator = async ({
         ...(embedder && { embedder }),
         ...(workflow && { workflow }),
         ...(configuration && { configuration }),
+        ...(steps && { steps }),
         ...(updater && { updater }),
         ...(context && { context }),
         ...(source && { source }),

@@ -1,11 +1,10 @@
-import {type Request} from "express";
 import {type User} from "@EXULU_TYPES/models/user";
-import { getToken } from "next-auth/jwt"
+import { getToken } from "../../auth/get-token.ts" // old: next-auth/jwt
 import { postgresClient } from "../../postgres/client.ts";
 import { authentication } from "../../auth/auth.ts";
 
 export const requestValidators = {
-    authenticate: async (req: Request):  Promise<{ error: boolean, message?: string, code?: number, user?: User}> => {
+    authenticate: async (req):  Promise<{ error: boolean, message?: string, code?: number, user?: User}> => {
 
         const apikey: any = req.headers['exulu-api-key'] || null;
 
@@ -14,7 +13,8 @@ export const requestValidators = {
         let authtoken: any = null;
         if (typeof apikey !== "string") { // default to next auth tokens to authenticate
             const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken({ req, secret }) 
+            authtoken = await getToken(req.headers['authorization'] ?? "")
+            console.log("[EXULU] authtoken", authtoken)
         }
         return await authentication({
             authtoken,
@@ -22,7 +22,7 @@ export const requestValidators = {
             db: db
         })
     },
-    workflows: (req: Request): { error: boolean, message?: string, code?: number} => {
+    workflows: (req): { error: boolean, message?: string, code?: number} => {
         const contentType = req.headers['content-type'] || '';
 
         if (!contentType.includes('application/json')) {
@@ -77,7 +77,7 @@ export const requestValidators = {
             error: false,
         };
     },
-    embedders: (req: Request, configuration?: Record<string, {
+    embedders: (req, configuration?: Record<string, {
         type: "string" | "number" | "query"
         example: string
     }>): { error: boolean, message?: string, code?: number} => {
@@ -131,7 +131,7 @@ export const requestValidators = {
             error: false,
         };
     },
-    agents: (req: Request): { error: boolean, message?: string, code?: number} => {
+    agents: (req): { error: boolean, message?: string, code?: number} => {
         console.log("[EXULU] validating request body and headers.", req.body)
         const contentType = req.headers['content-type'] || '';
         if (!contentType.includes('application/json')) {

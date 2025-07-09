@@ -2,8 +2,8 @@ import bcrypt from "bcryptjs";
 import { postgresClient } from "../postgres/client";
 const SALT_ROUNDS = 12;
 
-async function encryptApiKey(apikey) {
-    const hash = await bcrypt.hash(apikey, SALT_ROUNDS);
+export async function encryptString(string: string) {
+    const hash = await bcrypt.hash(string, SALT_ROUNDS);
     return hash;
 }
 
@@ -44,7 +44,7 @@ export const generateApiKey = async (name: string, email: string): Promise<{ key
     const newKeyName = name;
     const plainKey = `sk_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
     const postFix = `/${newKeyName.toLowerCase().trim().replaceAll(" ", "_")}`
-    const encryptedKey = await encryptApiKey(plainKey)
+    const encryptedKey = await encryptString(plainKey)
 
     const existingApiUser = await db.from("users").where({ email: email }).first();
     if (!existingApiUser) {
@@ -56,6 +56,7 @@ export const generateApiKey = async (name: string, email: string): Promise<{ key
             createdAt: new Date(),
             updatedAt: new Date(),
             type: "api",
+            emailVerified: new Date(),
             apikey: `${encryptedKey}${postFix}`,
             // password: "admin", todo add this again when we implement password auth / encryption as alternative to OTP
             role: roleId

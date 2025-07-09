@@ -1,14 +1,12 @@
 import { ZodSchema } from "zod";
 import { Queue } from "bullmq";
-import { Agent as MastraAgent, Workflow as MastraWorkflow, type ToolAction } from "@mastra/core";
 import { z } from "zod"
 import * as fs from 'fs';
 import * as path from 'path';
-import { Job } from "bullmq";
-import type { LanguageModelV1 } from "ai";
-import { Memory } from "@mastra/memory";
-import { PostgresStore, PgVector } from "@mastra/pg";
+import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
+import { generateObject, generateText, type LanguageModelV1, streamObject, streamText, tool, type Tool } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
+import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
 import { postgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
@@ -17,6 +15,8 @@ import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
+import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import { ExuluEvalUtils } from "../evals/utils";
 
 export function generateSlug(name: string): string {
     // Normalize Unicode characters (e.g., ü -> u)
@@ -74,6 +74,7 @@ export type ExuluAgentConfig = {
     name: string,
     instructions: string,
     model: LanguageModelV1,
+    outputSchema?: ZodSchema;
     memory?: {
         lastMessages: number,
         vector: boolean;
@@ -84,6 +85,29 @@ export type ExuluAgentConfig = {
     },
 }
 
+export type ExuluAgentEval = {
+    runner: ExuluEvalRunnerInstance,
+}
+
+interface ExuluAgentParams {
+    id: string;
+    name: string;
+    type: "agent" | "workflow";
+    description: string;
+    config: ExuluAgentConfig;
+    capabilities: {
+        tools: boolean;
+        images: string[];
+        files: string[];
+        audio: string[];
+        video: string[];
+    };
+    tools?: ExuluTool[];
+    evals?: ExuluAgentEval[];
+    outputSchema?: ZodSchema;
+    rateLimit?: RateLimiterRule;
+}
+
 export class ExuluAgent {
 
     public id: string;
@@ -91,12 +115,12 @@ export class ExuluAgent {
     public description: string = "";
     public slug: string = "";
     public streaming: boolean = false;
-    public type: "agent" | "workflow";
-    public outputSchema?: ZodSchema;
     public rateLimit?: RateLimiterRule;
     public config: ExuluAgentConfig;
-    private memory: Memory | undefined;
+    // private memory: Memory | undefined; // TODO remove mastra and do own implementation
     public tools?: ExuluTool[];
+    public evals?: ExuluAgentEval[];
+    public model?: LanguageModelV1;
     public capabilities: {
         tools: boolean,
         images: string[],
@@ -104,94 +128,53 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, outputSchema, config, rateLimit, type, capabilities, tools }: {
-        id: string,
-        name: string,
-        type: "agent" | "workflow",
-        description: string,
-        config: ExuluAgentConfig,
-        outputSchema?: ZodSchema,
-        rateLimit?: RateLimiterRule,
-        capabilities: {
-            tools: boolean,
-            images: string[],
-            files: string[],
-            audio: string[],
-            video: string[]
-        },
-        tools?: ExuluTool[]
-    }) {
+    constructor({ id, name, description, config, rateLimit, capabilities, tools, evals }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
-        this.type = type;
+        this.evals = evals;
         this.description = description;
-        this.outputSchema = outputSchema;
         this.rateLimit = rateLimit;
         this.tools = tools;
         this.config = config;
         this.capabilities = capabilities;
-        this.slug = `/agents/${generateSlug(this.name)}/run`
-
-        if (config?.memory) {
-            console.log("[EXULU] Initializing memory for agent " + this.name)
-            const connectionString = `postgresql://${process.env.POSTGRES_DB_USER}:${process.env.POSTGRES_DB_PASSWORD}@${process.env.POSTGRES_DB_HOST}:${process.env.POSTGRES_DB_PORT}/exulu`;
-            this.memory = new Memory({
-                storage: new PostgresStore({
-                    host: process.env.POSTGRES_DB_HOST || "",
-                    port: parseInt(process.env.POSTGRES_DB_PORT || '5432'),
-                    user: process.env.POSTGRES_DB_USER || "",
-                    database: "exulu", // putting it into an own database that is not managed by exulu
-                    password: process.env.POSTGRES_DB_PASSWORD || "",
-                    ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-                }),
-                ...(config?.memory.vector ? { vector: new PgVector(connectionString) } : {}),
-                options: {
-                    lastMessages: config?.memory.lastMessages || 10,
-                    semanticRecall: {
-                        topK: config?.memory.semanticRecall.topK || 3,
-                        messageRange: config?.memory.semanticRecall.messageRange || 2,
-                    },
-                },
-            });
-        }
+        this.slug = `/agents/${generateSlug(this.name)}/run`;
+        this.model = this.config.model;
     }
 
-    public chat = async (id: string) => {
+    generate = async ({ prompt, stream }: { prompt: string, stream?: boolean }) => {
 
-        const { db } = await postgresClient();
-        
-        const agent: any = await db.from("agents").select("*").where("id", "=", id).first();
-        if (!agent) {
-            throw new Error("Agent not found")
+        if (!this.model) {
+            throw new Error("Model is required for streaming.")
         }
 
-        let tools = {};
-
-        // for each tool id stored in the mongodb configuration
-        // for this agent, check if the tool exists in the exulu registry
-        // if it does, add it to the tools object.
-        agent.tools?.forEach(({ name }) => { // todo
-            const tool = this.tools?.find(t => t.name === name)
-            if (!tool) {
-                return;
+        if (this.config.outputSchema) {
+            if (stream) {
+                // todo use partialObjectStream to stream the object
+                // from the vercel ai sdk.
             }
-            return tool;
-        })
+            const { object } = await generateObject({
+                model: this.model,
+                schema: this.config.outputSchema,
+                prompt: prompt,
+            });
+            return object;
+        }
 
-        updateStatistic({
-            name: "count",
-            label: this.name,
-            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-            trigger: "agent"
-        })
+        if (stream) {
+            const result = streamText({
+                model: this.model,
+                prompt: prompt,
+            });
+            const text = await result.text; // todo return the text stream and process it instead of waiting for the final result here          
+            return text;
+        }
 
-        return new MastraAgent({
-            name: this.config.name,
-            instructions: this.config.instructions,
-            model: this.config.model,
-            tools,
-            memory: this.memory ? this.memory : undefined,
-        })
+        const { text } = await generateText({
+            model: this.model,
+            prompt: prompt,
+        });
+
+        return text;
 
     }
 }
@@ -321,6 +304,25 @@ export class ExuluEmbedder {
 
 }
 
+export type ExuluWorkflowStep = {
+    id: string,
+    name: string,
+    description: string,
+    inputSchema: ZodSchema;
+    retries?: number;
+    fn: ({
+        inputs,
+        job,
+        user,
+        logger
+    }: {
+        inputs: any,
+        user?: string,
+        logger: ExuluLogger,
+        job?: ExuluJob
+    }) => Promise<any>
+}
+
 export class ExuluWorkflow {
 
     public id: string;
@@ -329,16 +331,14 @@ export class ExuluWorkflow {
     public enable_batch: boolean = false;
     public slug: string = "";
     public queue: Queue | undefined;
-    public workflow: MastraWorkflow;
-    public inputSchema?: ZodSchema;
+    public steps: Array<ExuluWorkflowStep>;
 
-    constructor({ id, name, description, workflow, queue, enable_batch, inputSchema }: {
+    constructor({ id, name, description, steps, queue, enable_batch }: {
         id: string,
         name: string,
         description: string,
-        workflow: MastraWorkflow,
+        steps: Array<ExuluWorkflowStep>,
         queue?: Queue,
-        inputSchema?: ZodSchema,
         enable_batch: boolean
     }) {
         this.id = id;
@@ -347,33 +347,176 @@ export class ExuluWorkflow {
         this.enable_batch = enable_batch;
         this.slug = `/workflows/${generateSlug(this.name)}/run`
         this.queue = queue;
-        this.inputSchema = inputSchema;
-        this.workflow = workflow;
+        this.steps = steps;
     }
 
+    public start = async ({
+        inputs: initialInputs,
+        user,
+        logger,
+        job,
+        session,
+        agent,
+        label
+    }: {
+        inputs: any, user?: string, logger: ExuluLogger, job?: ExuluJob, session?: string, agent?: string, label?: string
+    }): Promise<any> => { // todo infer type of input from the inputschema of the step
+        // Run the this.steps functions sequentially, providing the 
+        // output of each step as the input of the next step.
+        let inputs: any;
+        // todo store result into the jobs table (set to "started" if job.status is not yet "started"), if no job is provided, create a new one and
+        // set the status here, update it later with the result(s)
+
+        const { db } = await postgresClient();
+
+        if (!job?.id) {
+            logger.write(`Creating new job for workflow ${this.name} with inputs: ${JSON.stringify(initialInputs)}`, "INFO")
+            const result = await db('jobs')
+                .insert({
+                    status: JOB_STATUS_ENUM.active,
+                    name: `Job running '${this.name}' for '${label}'`,
+                    agent,
+                    workflow: this.id,
+                    type: "workflow",
+                    steps: this.steps?.length || 0,
+                    inputs: initialInputs,
+                    session,
+                    user
+                })
+                .returning(["id", "status"])
+            job = result[0];
+            logger.write(`Created new job for workflow ${this.name}, job id: ${job?.id}`, "INFO")
+        }
+
+        if (!job) {
+            throw new Error("Job not found, or failed to be created.")
+        }
+
+        if (job.status !== JOB_STATUS_ENUM.active) {
+            await db('jobs')
+                .update({
+                    status: JOB_STATUS_ENUM.active,
+                    inputs: initialInputs
+                })
+                .where({ id: job?.id })
+                .returning("id");
+        }
+
+        const runStep = async (step: ExuluWorkflowStep, inputs: any) => {
+            let result: any;
+            try {
+                result = await step.fn({
+                    inputs: inputs,
+                    logger,
+                    job: job,
+                    user: user
+                });
+                return result;
+
+            } catch (error: any) {
+                logger.write(`Step ${step.name} failed with error: ${error.message}`, "ERROR")
+                if (step.retries && step.retries > 0) {
+                    logger.write(`Retrying step ${step.name} with ${step.retries} retries left`, "INFO")
+                    step.retries--;
+                    let result = await runStep(step, inputs);
+                    return result;
+                }
+                logger.write(`Step ${step.name} failed with error: ${error.message}`, "ERROR")
+                throw error;
+            }
+        }
+
+        let final: any;
+
+        try {
+            for (let i = 0; i < this.steps.length; i++) {
+
+                const step = this.steps[i];
+
+                if (!step) {
+                    throw new Error("Step not found.")
+                }
+
+                if (i === 0) {
+                    inputs = initialInputs;
+                }
+
+                logger.write(`Running step ${step.name} with inputs: ${JSON.stringify(inputs)}`, "INFO")
+                // todo allow storing each step as an interim result in an own table which is linked to the job
+                let result = await runStep(step, inputs);
+                inputs = result;
+                logger.write(`Step ${step.name} output: ${JSON.stringify(result)}`, "INFO")
+
+                final = result;
+            }
+
+            await db('jobs')
+                .update({
+                    status: JOB_STATUS_ENUM.completed,
+                    result: JSON.stringify(final),
+                    finished_at: db.fn.now()
+                })
+                .where({ id: job?.id })
+                .returning("id");
+
+            return final;
+
+        } catch (error: any) {
+            logger.write(`Workflow ${this.name} failed with error: ${error.message} for job ${job?.id}`, "ERROR")
+            await db('jobs')
+                .update({
+                    status: JOB_STATUS_ENUM.failed,
+                    result: JSON.stringify({
+                        error: error.message || error,
+                        stack: error.stack || "No stack trace available"
+                    })
+                })
+                .where({ id: job?.id })
+                .returning("id");
+            throw error;
+        }
+
+    }
 }
 
 export class ExuluLogger {
-    private readonly logPath: string;
-    private readonly job: Job;
+    private readonly logPath?: string;
+    private readonly job?: ExuluJob;
 
-    constructor(job: Job, logsDir: string) {
+    constructor(job?: ExuluJob, logsDir?: string) {
         this.job = job;
-        // Create logs directory if it doesn't exist
-        if (!fs.existsSync(logsDir)) {
-            fs.mkdirSync(logsDir, { recursive: true });
+        if (logsDir && job) {
+            // Create logs directory if it doesn't exist
+            if (!fs.existsSync(logsDir)) {
+                fs.mkdirSync(logsDir, { recursive: true });
+            }
+            this.logPath = path.join(logsDir, `${job.id}_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`);
         }
-        this.logPath = path.join(logsDir, `${job.id}_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`);
     }
 
     async write(message: string, level: "INFO" | "ERROR" | "WARNING"): Promise<void> {
         // Append newline to message if it doesn't have one
         const logMessage = message.endsWith('\n') ? message : message + '\n';
 
+        if (!this.logPath) {
+            switch (level) {
+                case "INFO":
+                    console.log(message)
+                    break;
+                case "WARNING":
+                    console.warn(message)
+                    break;
+                case "ERROR":
+                    console.error(message)
+                    break;
+            }
+            return;
+        }
+
         try {
             await fs.promises.appendFile(this.logPath, `[EXULU][${level}] - ${new Date().toISOString()}: ${logMessage}`);
         } catch (error) {
-            console.error(`Error writing to log file ${this.job.id}:`, error);
+            console.error(`Error writing to log file ${this.job ? this.job.id : "unknown job"}:`, error);
             throw error;
         }
     }
@@ -381,44 +524,215 @@ export class ExuluLogger {
 
 type AddSourceArgs = Omit<ExuluSourceConstructorArgs, "context">;
 
+type ExuluEvalRunnerInstance = {
+    name: string,
+    description: string,
+    testcases: ExuluEvalInput[],
+    run: ExuluEvalRunner
+}
+
+type ExuluEvalRunner = ({ data, runner }: {
+    data: ExuluEvalInput, runner: {
+        agent?: ExuluAgent,
+        workflow?: ExuluWorkflow
+    }
+}) => Promise<{
+    score: number,
+    comment: string
+}>
+
+export type ExuluEvalInput = {
+    prompt?: string,
+    inputs?: any,
+    result?: string,
+    category?: string,
+    metadata?: Record<string, any>,
+    duration?: number, // provides the duration of the output generation
+    reference?: string,
+}
+
+export class ExuluEval {
+    public name: string;
+    public description: string;
+
+    constructor({ name, description }: {
+        name: string,
+        description: string
+    }) {
+        this.name = name;
+        this.description = description;
+    }
+
+    public create = {
+        LlmAsAJudge: {
+            niah: ({ label, model, needles, testDocument, contextlengths }: { label: string, model: LanguageModelV1, needles: { question: string, answer: string }[], testDocument: string, contextlengths: (5000 | 30000 | 50000 | 128000)[] }): ExuluEvalRunnerInstance => {
+                return {
+                    name: this.name,
+                    description: this.description,
+                    testcases: ExuluEvalUtils.niahTestSet({
+                        label,
+                        contextlengths: contextlengths || [5000, 30000, 50000, 128000],
+                        needles,
+                        testDocument
+                    }),
+                    run: async ({ data, runner }) => {
+
+                        if (runner.workflow) {
+                            throw new Error("Workflows are not supported for the needle in a haystack eval.")
+                        }
+
+                        if (!runner.agent) {
+                            throw new Error("Agent is required for the needle in a haystack eval.")
+                        }
+
+                        // TWO CASES:
+                        // 1. running via CLI, provided with pre-defined inputs, to run the agent on.
+                        // 2. Running as part of a job that has been triggered by the system based on pre-defined
+                        // eval trigger rules.
+
+                        // Output provided by the previously run agent.
+                        if (!data.result) {
+                            if (!data.prompt) {
+                                throw new Error("Prompt is required for running an agent.")
+                            }
+                            const result = await runner.agent.generate({
+                                prompt: data.prompt,
+                                stream: false
+                            })
+                            data.result = result;
+                        }
+
+                        const { object } = await generateObject({
+                            model: model,
+                            maxRetries: 3,
+                            schema: z.object({
+                                correctnessScore: z.number(),
+                                comment: z.string(),
+                            }),
+                            prompt: `You are checking if the below "actual_answers" contain the correct information as
+                            presented in the "correct_answers" section to calculate the correctness score.
+    
+                            The correctness score should be a number between 0 and 1. 1 is the highest score.
+
+                            For example if the actual_answers contains 1 answer of the ${needles.length} correct_answers, the 
+                            score should be ${1 / needles.length}. If the actual_answers contain 2 correct answers, the 
+                            score should be ${2 / needles.length} etc.. if the actual_answers contains all the correct answers, the 
+                            score should be 1 and if the actual_answers contains none of the correct answers, the score should be 0.
+    
+                            You can ignore small differences in the actual_answers and the correct_answers such as spelling mistakes, 
+                            punctuation, etc., if the content of the actual answer is still correct.
+
+                            Also provide a comment on how you came to your conclusion.
+                            
+                            <actual_answers>
+                            ${data.result}
+                            </actual_answers>
+                            
+                            <correct_answers>
+                            ${needles.map((needle, index) => `- ${index + 1}: ${needle.answer}`).join("\n")}
+                            </correct_answers>`
+                        });
+
+                        console.log("[EXULU] eval result", object)
+
+                        const { db } = await postgresClient();
+                        await db('eval_results').insert({
+                            input: data.prompt,
+                            output: data.result,
+                            duration: data.duration,
+                            result: object.correctnessScore,
+                            agent_id: runner.agent.id || undefined,
+                            eval_type: EVAL_TYPES_ENUM.llm_as_judge,
+                            eval_name: this.name,
+                            comment: object.comment,
+                            category: data.category,
+                            metadata: data.metadata,
+                            createdAt: db.fn.now(),
+                            updatedAt: db.fn.now()
+                        });
+
+                        return {
+                            score: object.correctnessScore,
+                            comment: object.comment
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+}
+
+const calculateStatistics = (items: any[], method: VectorMethod): {
+    average: number,
+    total: number
+} => {
+    let methodProperty = "";
+
+    if (method === "l1Distance") {
+        methodProperty = "l1_distance";
+    }
+
+    if (method === "l2Distance") {
+        methodProperty = "l2_distance";
+    }
+
+    if (method === "hammingDistance") {
+        methodProperty = "hamming_distance";
+    }
+
+    if (method === "jaccardDistance") {
+        methodProperty = "jaccard_distance";
+    }
+
+    if (method === "maxInnerProduct") {
+        methodProperty = "inner_product";
+    }
+
+    if (method === "cosineDistance") {
+        methodProperty = "cosine_distance";
+    }
+
+    const average = items.reduce((acc, item) => {
+        return acc + item[methodProperty];
+    }, 0) / items.length;
+
+    const total = items.reduce((acc, item) => {
+        return acc + item[methodProperty];
+    }, 0);
+
+    return {
+        average,
+        total
+    }
+}
+
 export class ExuluTool {
     public id: string;
     public name: string;
     public description: string;
-    public inputSchema?: ZodSchema;
-    public outputSchema?: ZodSchema;
+    public parameters?: ZodSchema;
     public type: "context" | "function";
-    private _execute: ToolAction['execute']
+    public tool: Tool
 
-    constructor({ id, name, description, inputSchema, outputSchema, type, execute }: {
+    constructor({ id, name, description, parameters, type, execute }: {
         id: string,
         name: string,
         description: string,
-        inputSchema?: ZodSchema,
-        outputSchema?: ZodSchema,
+        parameters: ZodSchema,
         type: "context" | "function",
-        execute: ToolAction['execute']
+        execute: (inputs: any) => Promise<any>
     }) {
         this.id = id;
         this.name = name;
         this.description = description;
-        this.inputSchema = inputSchema;
-        this.outputSchema = outputSchema;
+        this.parameters = parameters;
         this.type = type;
-        this._execute = execute;
-    }
-
-    public execute = async (inputs: any) => {
-        if (!this._execute) {
-            throw new Error("Tool has no execute function.");
-        }
-        updateStatistic({
-            name: "count",
-            label: this.name,
-            type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
-            trigger: "agent"
-        })
-        return await this._execute(inputs);
+        this.tool = tool({
+            description: description,
+            parameters: parameters,
+            execute: execute
+        });
     }
 }
 
@@ -771,6 +1085,10 @@ export class ExuluContext {
 
         if (typeof query === "string") {
 
+            if (!method) {
+                method = "cosineDistance";
+            }
+
             itemsQuery.limit(limit * 5) // for semantic search we increase the scope, so we can rerank the results
 
             // Without blocking the main thread, upsert an entry 
@@ -789,18 +1107,16 @@ export class ExuluContext {
 
             const chunksTable = this.getChunksTableName();
 
-            // Count is irrelevant here as vector search does
-            // not exclude any items, but merely sorts them.
             itemsQuery.leftJoin(chunksTable, function () {
                 this.on(chunksTable + ".source", "=", mainTable + ".id")
             })
 
-            itemsQuery.select(chunksTable + ".id")
+            itemsQuery.select(chunksTable + ".id as chunk_id")
             itemsQuery.select(chunksTable + ".source")
             itemsQuery.select(chunksTable + ".content")
             itemsQuery.select(chunksTable + ".chunk_index")
-            itemsQuery.select(chunksTable + ".created_at")
-            itemsQuery.select(chunksTable + ".updated_at")
+            itemsQuery.select(chunksTable + ".created_at as chunk_created_at")
+            itemsQuery.select(chunksTable + ".updated_at as chunk_updated_at")
 
             const { chunks } = await this.embedder.generateFromQuery(query)
 
@@ -870,7 +1186,10 @@ export class ExuluContext {
                                     key !== "cosine_distance" &&
                                     key !== "content" &&
                                     key !== "source" &&
-                                    key !== "chunk_index"
+                                    key !== "chunk_index" &&
+                                    key !== "chunk_id" &&
+                                    key !== "chunk_created_at" &&
+                                    key !== "chunk_updated_at"
                                 )
                                 .map(key => [key, item[key]])
                         ),
@@ -900,6 +1219,18 @@ export class ExuluContext {
                 }
                 return acc;
             }, []);
+
+            items.forEach(item => {
+                if (!item.chunks?.length) {
+                    return;
+                }
+                const {
+                    average,
+                    total
+                } = calculateStatistics(item.chunks, method ?? "cosineDistance");
+                item.averageRelevance = average;
+                item.totalRelevance = total;
+            })
 
             // todo if query && resultReranker, rerank the results
             if (this.resultReranker && query) {
@@ -969,20 +1300,8 @@ export class ExuluContext {
             id: this.id,
             name: `${this.name} context`,
             type: "context",
-            inputSchema: z.object({
+            parameters: z.object({
                 query: z.string(),
-            }),
-            outputSchema: z.object({
-                // todo check if result format is still correct based on above getItems function
-                results: z.array(z.object({
-                    count: z.number(),
-                    results: z.array(z.object({
-                        id: z.string(),
-                        content: z.string(),
-                        metadata: z.record(z.any())
-                    })),
-                    errors: z.array(z.string()).optional()
-                }))
             }),
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
             execute: async ({ context }: any) => {
@@ -1095,18 +1414,22 @@ export class ExuluSource {
 }
 
 const updateStatistic = async (statistic: Omit<ExuluStatistic, "timeseries" | "total"> & { count?: number }) => {
-    const currentDate = new Date().toISOString().split('T')[0];
-    const { db } = await postgresClient();
+    return; // todo
+    // const currentDate = new Date().toISOString().split('T')[0];
+    // const { db } = await postgresClient();
+
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.
     // If the statistic exists, it will be updated by incrementing the total count.
-    await db.from("statistics").update({
+    /* await db.from("statistics").update({
         total: db.raw("total + ?", [statistic.count ?? 1]),
-        timeseries: db.raw("CASE WHEN date = ? THEN array_append(timeseries, ?) ELSE timeseries END", [currentDate, { date: currentDate, count: statistic.count ?? 1 }])
     }).where({
         name: statistic.name,
         label: statistic.label,
-        type: statistic.type
-    }).onConflict("name").merge();
+        type: statistic.type,
+        where: {
+            createdAt: currentDate
+        }
+    }).onConflict("name").merge(); */
 
 }
