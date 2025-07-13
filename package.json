@@ -36,6 +36,8 @@
         "typescript": "^5.8.3"
     },
     "dependencies": {
+        "@ai-sdk/anthropic": "^1.2.12",
+        "@anthropic-ai/sdk": "^0.56.0",
         "@as-integrations/express5": "^1.0.0",
         "@aws-sdk/client-s3": "^3.338.0",
         "@aws-sdk/client-sts": "^3.338.0",
@@ -62,6 +64,7 @@
         "graphql": "^16.11.0",
         "graphql-tools": "^9.0.18",
         "graphql-type-json": "^0.3.2",
+        "http-proxy-middleware": "^3.0.5",
         "ink": "^6.0.0",
         "ink-big-text": "^2.0.0",
         "ink-gradient": "^3.0.0",

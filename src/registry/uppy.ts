@@ -1,6 +1,5 @@
 import { type Express } from "express";
 import { authentication } from "../auth/auth";
-import bodyParser from 'body-parser';
 import { getToken } from "../auth/get-token"
 import { postgresClient } from "../postgres/client";
 
@@ -79,8 +78,6 @@ export const createUppyRoutes = async (
         })
         return stsClient
     }
-
-    app.use(bodyParser.urlencoded({ extended: true }), bodyParser.json())
 
     app.get('/s3/list', async (req, res, next) => {
         req.accepts

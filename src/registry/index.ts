@@ -3,6 +3,7 @@ import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
+import express from "express";
 
 export type ExuluConfig = {
     workers: {
@@ -23,6 +24,7 @@ export class ExuluApp {
     private _queues: string[] = []
     private _contexts?: Record<string, ExuluContext> = {}
     private _tools: ExuluTool[] = []
+    private _expressApp: Express | null = null;
 
     constructor() { }
 
@@ -35,7 +37,7 @@ export class ExuluApp {
         agents?: ExuluAgent[],
         workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
-    }) => {
+    }): Promise<Express> => {
         this._embedders = embedders ?? [];
         this._workflows = workflows ?? [];
         this._contexts = contexts ?? {};
@@ -53,6 +55,20 @@ export class ExuluApp {
             ),
         ]
         this._queues = [...new Set(queues.filter(o => !!o))] as any;
+
+        if (!this._expressApp) {
+            this._expressApp = express();
+            await this.server.express.init();
+            console.log("[EXULU] Express app initialized.")
+        }
+        return this._expressApp;
+    }
+
+    public get expressApp(): Express {
+        if (!this._expressApp) {
+            throw new Error("Express app not initialized, initialize it by calling await ExuluApp.create() first.")
+        }
+        return this._expressApp;
     }
 
     public embedder(id: string): ExuluEmbedder | undefined {
@@ -95,7 +111,7 @@ export class ExuluApp {
         return this._agents;
     }
 
-    bullmq = {
+    public bullmq = {
         workers: {
             create: async () => {
                 return await createWorkers(
@@ -108,9 +124,16 @@ export class ExuluApp {
             }
         }
     }
-    server = {
+
+    private server = {
         express: {
-            init: async (app: Express): Promise<Express> => {
+            init: async (): Promise<Express> => {
+
+                if (!this._expressApp) {
+                    throw new Error("Express app not initialized")
+                }
+
+                const app = this._expressApp;
 
                 await createExpressRoutes(
                     app,

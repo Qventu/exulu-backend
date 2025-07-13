@@ -21,6 +21,9 @@ import { agentsSchema, evalResultsSchema, jobsSchema, messagesSchema, rolesSchem
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
+import bodyParser from 'body-parser';
+
+export const REQUEST_SIZE_LIMIT = '50mb';
 
 export const global_queues = {
     logs_cleaner: "logs-cleaner"
@@ -99,7 +102,13 @@ export const createExpressRoutes = async (
         allowedHeaders: "*",
         optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
     }
+
+    // important to set the limit here, otherwise the proxy will 
+    // fail for large requests such as those from Claude Code
+    app.use(express.json({ limit: REQUEST_SIZE_LIMIT }));
     app.use(cors(corsOptions));
+    app.use(bodyParser.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }))
+    app.use(bodyParser.json({limit: REQUEST_SIZE_LIMIT}))
 
     console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -108,6 +117,7 @@ export const createExpressRoutes = async (
     ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
     ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
     ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ 
+
     `);
 
     console.log("Agents:")
@@ -168,10 +178,10 @@ export const createExpressRoutes = async (
     }
 
     console.log("[EXULU] graphql server")
-    const server = new ApolloServer<GraphqlContext>({ 
+    const server = new ApolloServer<GraphqlContext>({
         cache: new InMemoryLRUCache(),
         schema,
-        introspection: true 
+        introspection: true
     });
 
     // Note you must call `start()` on the `ApolloServer`
@@ -183,7 +193,7 @@ export const createExpressRoutes = async (
     app.use(
         "/graphql",
         cors(corsOptions),
-        express.json(),
+        express.json({limit: REQUEST_SIZE_LIMIT}),
         expressMiddleware(server, {
             context: async ({ req }) => {
                 const authenticationResult = await requestValidators.authenticate(req);
@@ -203,6 +213,7 @@ export const createExpressRoutes = async (
         // todo add auth
         res.status(200).json(agents)
     })
+
     app.get(`/agents/:id`, async (req: Request, res: Response) => {
 
         const { db } = await postgresClient();
@@ -608,7 +619,6 @@ export const createExpressRoutes = async (
 
         res.status(200).json(result);
     })
-
 
     routeLogs.push({
         route: "/items/:context",
@@ -1315,6 +1325,87 @@ export const createExpressRoutes = async (
     // Output all routes in table format at the end
     console.log("Routes:")
     console.table(routeLogs);
+
+    const TARGET_API = 'https://api.anthropic.com';
+
+    // This route basically passes the request 1:1 to the Anthropic API, but we can
+    // inject tools into the request body, publish data to audit logs and implement
+    // custom authentication logic from the IMP UI.
+    app.use('/gateway/anthropic', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+        const path = req.url;
+        const url = `${TARGET_API}${path}`;
+        
+        console.log('[PROXY] Manual proxy to:', url);
+        console.log('[PROXY] Method:', req.method);
+        console.log('[PROXY] Headers:', Object.keys(req.headers));
+        console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
+        console.log('[PROXY] Request model name:', req.body.model);
+        
+        try {
+            const headers = {
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': req.headers['content-type'] || 'application/json'
+            };
+            
+            // Copy relevant headers
+            if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+            if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
+
+            console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
+            
+            // TODO
+            /* We can create a special config page for Claude code on the IMP UI which 
+               lists all Tool Definitions and allows switching them on / off for Claude 
+               Code. In the proxy, we then inject these tools into the Claude Code Request, 
+               and if the last part of the response includes a message with content[index]
+               .type === tool_use and name === the name of the tool we defined, we call our 
+               tool, and return the response, inject it into the content array and continue it.
+               This way we can use the tools in Claude Code, and we can use the tools in the IMP UI.
+            */
+           // Todo deal with auth, allow tagging API keys in Exulu so different users
+           //   can use different API keys based on roles etc...
+            
+            const response = await fetch(url, {
+                method: req.method,
+                headers: headers,
+                body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
+            });
+            
+            console.log('[PROXY] Response status:', response.status);
+            
+            // Copy response headers
+            response.headers.forEach((value, key) => {
+                res.setHeader(key, value);
+            });
+            
+            res.status(response.status);
+            
+            // Handle streaming vs non-streaming
+            if (response.headers.get('content-type')?.includes('text/event-stream')) {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    res.write(chunk);
+                }
+                res.end();
+            } else {
+                const data = await response.arrayBuffer();
+                res.end(Buffer.from(data));
+            }
+            
+        } catch (error) {
+            console.error('[PROXY] Manual proxy error:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: error.message });
+            }
+        }
+    });
 
     return app;
 }

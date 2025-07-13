@@ -75,6 +75,7 @@ export type ExuluAgentConfig = {
     instructions: string,
     model: LanguageModelV1,
     outputSchema?: ZodSchema;
+    custom?: ZodSchema;
     memory?: {
         lastMessages: number,
         vector: boolean;
@@ -117,7 +118,7 @@ export class ExuluAgent {
     public streaming: boolean = false;
     public rateLimit?: RateLimiterRule;
     public config: ExuluAgentConfig;
-    // private memory: Memory | undefined; // TODO remove mastra and do own implementation
+    // private memory: Memory | undefined; // TODO do own implementation
     public tools?: ExuluTool[];
     public evals?: ExuluAgentEval[];
     public model?: LanguageModelV1;
