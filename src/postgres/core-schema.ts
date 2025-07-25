@@ -58,6 +58,10 @@ export const usersSchema: ExuluTableDefinition = {
             type: "date"
         },
         {
+            name: "anthropic_token",
+            type: "text"
+        },
+        {
             name: "role",
             type: "reference",
             references: {

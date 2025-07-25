@@ -117,8 +117,6 @@ export class ExuluMCP {
 
             // Check for existing session ID
             const sessionId = req.headers[SESSION_ID_HEADER] as string | undefined;
-            console.log("sessionId!!", sessionId);
-            console.log("req.headers!!", req.headers);
             let transport: StreamableHTTPServerTransport;
 
             if (sessionId && this.transports[sessionId]) {
@@ -160,10 +158,9 @@ export class ExuluMCP {
 
         // Reusable handler for GET and DELETE requests
         const handleSessionRequest = async (req: Request, res: Response) => {
-            console.log("handleSessionRequest", req.body);
             const sessionId = req.headers[SESSION_ID_HEADER] as string | undefined;
             if (!sessionId || !this.transports[sessionId]) {
-                console.log("Invalid or missing session ID");
+                console.log("[EXULU] MCP request invalid or missing session ID");
                 res.status(400).send('Invalid or missing session ID');
                 return;
             }

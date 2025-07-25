@@ -2,7 +2,7 @@ import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 
 export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", name: string, defaultValue?: any) => {
     if (type === "text") {
-        t.string(name, 255);
+        t.text(name);
         return;
     }
     if (type === "longText") {

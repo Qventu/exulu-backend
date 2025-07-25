@@ -23,8 +23,6 @@ export const ExuluJobs = {
 export { STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM, type STATISTICS_TYPE as EXULU_STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics"
 export { JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM, type JOB_STATUS as EXULU_JOB_STATUS } from "@EXULU_TYPES/enums/jobs"
 
-export { default as ExuluCli } from "./cli/index"
-
 export const ExuluChunkers = {
     sentence: SentenceChunker,
     recursive: {

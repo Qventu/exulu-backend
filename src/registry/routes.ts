@@ -22,6 +22,8 @@ import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
 import bodyParser from 'body-parser';
+import CryptoJS from 'crypto-js';
+import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -108,7 +110,7 @@ export const createExpressRoutes = async (
     app.use(express.json({ limit: REQUEST_SIZE_LIMIT }));
     app.use(cors(corsOptions));
     app.use(bodyParser.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }))
-    app.use(bodyParser.json({limit: REQUEST_SIZE_LIMIT}))
+    app.use(bodyParser.json({ limit: REQUEST_SIZE_LIMIT }))
 
     console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -117,6 +119,7 @@ export const createExpressRoutes = async (
     ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
     ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
     ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ 
+    Intelligence Management Platform
 
     `);
 
@@ -193,7 +196,7 @@ export const createExpressRoutes = async (
     app.use(
         "/graphql",
         cors(corsOptions),
-        express.json({limit: REQUEST_SIZE_LIMIT}),
+        express.json({ limit: REQUEST_SIZE_LIMIT }),
         expressMiddleware(server, {
             context: async ({ req }) => {
                 const authenticationResult = await requestValidators.authenticate(req);
@@ -696,6 +699,21 @@ export const createExpressRoutes = async (
         })
     })
 
+    // Ping route that can be used to check if the request
+    // is authenticated and the server is running.
+    app.get("/ping", async (req: Request, res: Response) => {
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(200).json({
+                authenticated: false
+            })
+            return;
+        }
+        res.status(200).json({
+            authenticated: true
+        })
+    })
+
     console.log("[EXULU] statistics timeseries")
     app.post("/statistics/timeseries", async (req: Request, res: Response) => {
 
@@ -827,8 +845,6 @@ export const createExpressRoutes = async (
                 jobs: rows
             }));
 
-        console.log({ response })
-
         // Get total count of jobs of type "embedder"
 
         let jobs = [];
@@ -942,14 +958,11 @@ export const createExpressRoutes = async (
     console.log("[EXULU] contexts get list")
     app.get(`/contexts`, async (req: Request, res: Response) => {
 
-        console.log("contexts!!")
         const authenticationResult = await requestValidators.authenticate(req);
         if (!authenticationResult.user?.id) {
             res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
             return;
         }
-
-        console.log("contexts", contexts?.length)
 
         res.status(200).json(contexts.map(context => ({
             id: context.id,
@@ -1332,28 +1345,22 @@ export const createExpressRoutes = async (
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
     app.use('/gateway/anthropic', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+
         const path = req.url;
         const url = `${TARGET_API}${path}`;
-        
+
         console.log('[PROXY] Manual proxy to:', url);
         console.log('[PROXY] Method:', req.method);
         console.log('[PROXY] Headers:', Object.keys(req.headers));
         console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
         console.log('[PROXY] Request model name:', req.body.model);
-        
+        console.log('[PROXY] Request stream:', req.body.stream);
+        console.log('[PROXY] Request messages:', req.body.messages?.length);
+
         try {
-            const headers = {
-                'x-api-key': process.env.ANTHROPIC_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'content-type': req.headers['content-type'] || 'application/json'
-            };
-            
-            // Copy relevant headers
-            if (req.headers['accept']) headers['accept'] = req.headers['accept'];
-            if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
 
             console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
-            
+
             // TODO
             /* We can create a special config page for Claude code on the IMP UI which 
                lists all Tool Definitions and allows switching them on / off for Claude 
@@ -1363,46 +1370,108 @@ export const createExpressRoutes = async (
                tool, and return the response, inject it into the content array and continue it.
                This way we can use the tools in Claude Code, and we can use the tools in the IMP UI.
             */
-           // Todo deal with auth, allow tagging API keys in Exulu so different users
-           //   can use different API keys based on roles etc...
-            
+            // Todo deal with auth, allow tagging API keys in Exulu so different users
+            //   can use different API keys based on roles etc...
+
+            if (!req.body.tools) {
+                req.body.tools = [];
+            }
+
+            // Authenticate the user, and exchange the user token for an anthropic token.
+            const authenticationResult = await requestValidators.authenticate(req);
+            if (!authenticationResult.user?.id) {
+                res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+                return;
+            }
+
+            console.log("[EXULU] authentication result", authenticationResult)
+
+            if (!process.env.NEXTAUTH_SECRET) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (!authenticationResult.user?.anthropic_token) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            // Decrypt the anthropic token.
+            const bytes = CryptoJS.AES.decrypt(authenticationResult.user?.anthropic_token, process.env.NEXTAUTH_SECRET);
+            const anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+
+            // Set the anthropic api key in the headers.
+            const headers = {
+                'x-api-key': anthropicApiKey,
+                'anthropic-version': '2023-06-01',
+                'content-type': req.headers['content-type'] || 'application/json'
+            };
+
+            // Copy relevant headers
+            if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+            if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
+
+            console.log("[EXULU] anthropic api key", anthropicApiKey)
+
+            // Send the request to the anthropic api.
             const response = await fetch(url, {
                 method: req.method,
                 headers: headers,
                 body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
             });
-            
-            console.log('[PROXY] Response status:', response.status);
-            
+
+            console.log('[PROXY] Response:', response);
+            console.log('[PROXY] Response:', response.body);
+
             // Copy response headers
             response.headers.forEach((value, key) => {
                 res.setHeader(key, value);
             });
-            
+
             res.status(response.status);
-            
+
             // Handle streaming vs non-streaming
-            if (response.headers.get('content-type')?.includes('text/event-stream')) {
-                const reader = response.body.getReader();
+            const isStreaming = response.headers.get('content-type')?.includes('text/event-stream')
+
+            if (isStreaming && !response?.body) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_body);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (isStreaming) {
+                const reader = response.body!.getReader();
                 const decoder = new TextDecoder();
-                
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
+
                     const chunk = decoder.decode(value, { stream: true });
+                    console.log('[PROXY] Chunk:', chunk);
                     res.write(chunk);
                 }
                 res.end();
-            } else {
-                const data = await response.arrayBuffer();
-                res.end(Buffer.from(data));
+                return;
             }
-            
-        } catch (error) {
+
+            const data = await response.arrayBuffer();
+            console.log('[PROXY] Data:', data);
+            res.end(Buffer.from(data));
+
+        } catch (error: any) {
             console.error('[PROXY] Manual proxy error:', error);
             if (!res.headersSent) {
-                res.status(500).json({ error: error.message });
+                if (error?.message === "Invalid token") {
+                    res.status(500).json({ error: "Authentication error, please check your IMP token and try again." });
+                } else {
+                    res.status(500).json({ error: error.message });
+                }
             }
         }
     });
@@ -1453,3 +1522,18 @@ const getPresignedFileUrl = async (key: string) => {
     console.log(`[EXULU] presigned url for file with key: ${key}, generated: ${json.url}`)
     return json.url;
 };
+
+const createCustomAnthropicStreamingMessage = (message: string) => {
+    const responseData = {
+        type: "message",
+        content: [
+            {
+                type: "text",
+                text: message
+            }
+        ]
+    };
+    const jsonString = JSON.stringify(responseData);
+    const arrayBuffer = new TextEncoder().encode(jsonString).buffer;
+    return arrayBuffer;
+}

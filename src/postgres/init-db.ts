@@ -137,6 +137,7 @@ const up = async function (knex: Knex) {
             table.string('email', 255);
             table.timestamp('emailVerified', { useTz: true });
             table.text('image');
+            table.text('anthropic_token');
 
             for (const field of usersSchema.fields) {
                 console.log("[EXULU] field", field)
@@ -146,7 +147,8 @@ const up = async function (knex: Knex) {
                     name === "name" ||
                     name === "email" ||
                     name === "emailVerified" ||
-                    name === "image"
+                    name === "image" ||
+                    name === "anthropic_token"
                 ) {
                     continue;
                 }

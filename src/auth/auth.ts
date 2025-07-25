@@ -14,7 +14,6 @@ export const authentication = async ({
     db: Knex
 }): Promise<{ error: boolean, message?: string, code?: number, user?: User }> => {
 
-    console.log("[EXULU] apikey", apikey)
     // Used for communication between "internal" services
     // such as between the backend and the uppy file uploader.
     if (internalkey) {
@@ -48,9 +47,10 @@ export const authentication = async ({
 
     if (authtoken) {
         try {
-            console.log("authtoken", authtoken)
             // uses the raw encrypted JWE token provided by next-auth via
             // a "Bearer {token}" in the authorization header.
+
+            console.log("[EXULU] authtoken", authtoken)
 
             if (!authtoken?.email) {
                 return {
@@ -61,7 +61,7 @@ export const authentication = async ({
             }
 
             const user = await db.from("users").select("*").where("email", authtoken?.email).first()
-            console.log("user", user)
+
             if (!user) {
                 return {
                     error: true,
@@ -116,16 +116,13 @@ export const authentication = async ({
                 code: 401
             }
         }
-        console.log("[EXULU] request_key_name", request_key_name)
-        console.log("[EXULU] request_key_compare_value", request_key_compare_value)
+
         const filtered = users.filter(({ apikey, id }: { apikey: string, id: string }) => apikey.includes(request_key_name))
 
         for (const user of filtered) {
             const user_key_last_slash_index = user.apikey.lastIndexOf("/");
             const user_key_compare_value = user.apikey.substring(0, user_key_last_slash_index);
-            console.log("[EXULU] user_key_compare_value", user_key_compare_value)
             const isMatch = await bcrypt.compare(request_key_compare_value, user_key_compare_value);
-            console.log("[EXULU] isMatch", isMatch)
             if (isMatch) {
                 
                 await db.from("users")

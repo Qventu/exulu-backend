@@ -12,9 +12,7 @@ export const requestValidators = {
 
         let authtoken: any = null;
         if (typeof apikey !== "string") { // default to next auth tokens to authenticate
-            const secret = process.env.NEXTAUTH_SECRET
-            authtoken = await getToken(req.headers['authorization'] ?? "")
-            console.log("[EXULU] authtoken", authtoken)
+            authtoken = await getToken((req.headers['authorization'] || req.headers['x-api-key']) ?? "")
         }
         return await authentication({
             authtoken,
@@ -132,7 +130,6 @@ export const requestValidators = {
         };
     },
     agents: (req): { error: boolean, message?: string, code?: number} => {
-        console.log("[EXULU] validating request body and headers.", req.body)
         const contentType = req.headers['content-type'] || '';
         if (!contentType.includes('application/json')) {
             return {

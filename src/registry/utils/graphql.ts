@@ -1,6 +1,7 @@
 import type { ExuluTableDefinition } from "../routes";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from 'graphql-type-json';
+import CryptoJS from 'crypto-js';
 
 const map = (field: any) => {
     let type: string;
@@ -64,7 +65,7 @@ function createFilterTypeDefs(table: ExuluTableDefinition): string {
     });
 
     const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
-    
+
     // Create filter operator types for each field type
     const operatorTypes = `
 input FilterOperatorString {
@@ -112,7 +113,7 @@ ${fieldFilters.join("\n")}
 const getRequestedFields = (info: any) => {
     const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
     const itemsSelection = selections.find(s => s.name.value === 'items');
-    const fields = itemsSelection 
+    const fields = itemsSelection
         ? Object.keys(itemsSelection.selectionSet.selections.reduce((acc, field) => {
             acc[field.name.value] = true;
             return acc;
@@ -132,23 +133,22 @@ function createMutations(table: ExuluTableDefinition) {
     return {
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
-
             const requestedFields = getRequestedFields(info)
-
+            let { input } = args;
+            input = encryptSensitiveFields(input);
             const results = await db(tableNamePlural).insert({
-                ...args.input,
+                ...input,
                 createdAt: new Date(),
                 updatedAt: new Date()
             }).returning(requestedFields);
 
-            console.log("requestedFields", requestedFields);
-            
             // Filter result to only include requested fields
             return results[0];
         },
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
             const { db } = context;
-            const { where, input } = args;
+            let { where, input } = args;
+            input = encryptSensitiveFields(input);
             await db(tableNamePlural).where(where).update({
                 ...input,
                 updatedAt: new Date()
@@ -158,7 +158,8 @@ function createMutations(table: ExuluTableDefinition) {
             return result;
         },
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
-            const { id, input } = args;
+            let { id, input } = args;
+            input = encryptSensitiveFields(input);
             const { db } = context;
             await db(tableNamePlural).where({ id }).update({
                 ...input,
@@ -241,12 +242,10 @@ function createQueries(table: ExuluTableDefinition) {
             const { limit = 10, page = 0, filters = [], sort } = args;
             const { db } = context;
 
-            console.log("page", page);
-            
             // Create base query with filters
             let baseQuery = db(tableNamePlural);
             baseQuery = applyFilters(baseQuery, filters);
-            
+
             // Get total count without sorting
             const [{ count }] = await baseQuery.clone().count('* as count');
             const itemCount = Number(count);
@@ -263,10 +262,6 @@ function createQueries(table: ExuluTableDefinition) {
                 dataQuery = dataQuery.offset((page - 1) * limit);
             }
             const items = await dataQuery.select(requestedFields).limit(limit);
-
-            console.log("items", items);
-
-            console.log("query", dataQuery.toQuery());
             return {
                 pageInfo: {
                     pageCount,
@@ -287,14 +282,14 @@ export function createSDL(tables: ExuluTableDefinition[]) {
     
     type Query {
     `;
-    
+
     let mutationDefs = `
     type Mutation {
     `;
-    
+
     let modelDefs = "";
     const resolvers = { JSON: GraphQLJSON, Query: {}, Mutation: {} };
-    
+
     // todo add the contexts from Exulu to the schema
     for (const table of tables) {
         const tableNamePlural = table.name.plural.toLowerCase();
@@ -306,7 +301,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
     `;
-    // todo add the fields of each table as filter options
+        // todo add the fields of each table as filter options
         mutationDefs += `
       ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!): ${tableNameSingular}
       ${tableNamePlural}UpdateOne(where: JSON!, input: ${tableNameSingular}Input!): ${tableNameSingular}
@@ -333,17 +328,17 @@ type PageInfo {
         Object.assign(resolvers.Query, createQueries(table));
         Object.assign(resolvers.Mutation, createMutations(table));
     }
-    
+
     typeDefs += "}\n";
     mutationDefs += "}\n";
-    
+
     const fullSDL = typeDefs + mutationDefs + modelDefs;
-    
+
     // -------------- Create Schema ------------------
-    
+
     const schema = makeExecutableSchema({
-      typeDefs: fullSDL,
-      resolvers
+        typeDefs: fullSDL,
+        resolvers
     });
 
     // Log schema information in table format
@@ -351,34 +346,45 @@ type PageInfo {
 
     // Prepare data for tables
     const queriesTable = Object.keys(resolvers.Query).map(query => ({
-      'Operation Type': 'Query',
-      'Name': query,
-      'Description': 'Retrieves data'
+        'Operation Type': 'Query',
+        'Name': query,
+        'Description': 'Retrieves data'
     }));
 
     const mutationsTable = Object.keys(resolvers.Mutation).map(mutation => ({
-      'Operation Type': 'Mutation',
-      'Name': mutation,
-      'Description': 'Modifies data'
+        'Operation Type': 'Mutation',
+        'Name': mutation,
+        'Description': 'Modifies data'
     }));
 
-    const typesTable = tables.flatMap(table => 
-      table.fields.map(field => ({
-        'Type': table.name.singular,
-        'Field': field.name,
-        'Field Type': field.type,
-        'Required': field.required ? 'Yes' : 'No'
-      }))
+    const typesTable = tables.flatMap(table =>
+        table.fields.map(field => ({
+            'Type': table.name.singular,
+            'Field': field.name,
+            'Field Type': field.type,
+            'Required': field.required ? 'Yes' : 'No'
+        }))
     );
 
     // Log tables
     console.log('🔍 Operations:');
     console.table([...queriesTable, ...mutationsTable]);
-    
+
     console.log('\n📝 Types and Fields:');
     console.table(typesTable);
-    
+
     console.log('\n');
 
     return schema;
+}
+
+const sensitiveFields = ["anthropic_token"];
+
+const encryptSensitiveFields = (input: any) => {
+    sensitiveFields.forEach(field => {
+        if (input[field]) {
+            input[field] = CryptoJS.AES.encrypt(input[field], process.env.NEXTAUTH_SECRET).toString();
+        }
+    });
+    return input;
 }

@@ -147,8 +147,6 @@ export class RecursiveChunker extends BaseChunker {
    *
    * @example <caption>Accessing properties and methods</caption>
    * const chunker = await RecursiveChunker.create();
-   * console.log(chunker.chunkSize); // 512
-   * console.log(chunker.rules); // RecursiveRules instance
    * const chunks = await chunker.chunk("Some text"); // Use as object method
    *
    * @note
@@ -421,9 +419,6 @@ export class RecursiveChunker extends BaseChunker {
       return [];
     }
 
-    console.log("[EXULU] Rule.", this.rules.length)
-    console.log("[EXULU] Level.", level)
-
     if (level >= this.rules.length) {
       const tokenCount = await this._estimateTokenCount(text);
       return [
@@ -498,7 +493,6 @@ export class RecursiveChunker extends BaseChunker {
    * @returns {Promise<RecursiveChunk[]>} A promise that resolves to an array of RecursiveChunk objects
    */
   public async chunk(text: string): Promise<RecursiveChunk[]> {
-    console.log("[EXULU] Chunking text.", text)
     const result = await this._recursiveChunk(text, 0, 0);
     await this.tokenizer.free();
     return result as RecursiveChunk[];

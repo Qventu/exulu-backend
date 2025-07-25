@@ -19,15 +19,12 @@ export class ExuluTokenizer {
         console.log("[EXULU] Loading tokenizer.", modelName)
         const model = await load(registry[models[modelName]]);
         console.log("[EXULU] Loaded tokenizer.", modelName, performance.now() - time)
-        console.log("[EXULU] Model.", model.bpe_ranks)
-        console.log("[EXULU] Model.", model.special_tokens)
-        console.log("[EXULU] Model.", model.pat_str)
         const encoder = new Tiktoken(
             model.bpe_ranks,
             model.special_tokens,
             model.pat_str
         );
-        console.log("[EXULU] Encoder.", encoder)
+        console.log("[EXULU] Set encoder.")
         this.encoder = encoder;
         return encoder;
     }
@@ -56,9 +53,9 @@ export class ExuluTokenizer {
         }
 
         const time = performance.now();
-        console.log("[EXULU] Encoding text.", text)
+        console.log("[EXULU] Encoding text length: " + (text?.length || 0))
         const tokens = this.encoder.encode(text);
-        console.log("[EXULU] Encoded text.", text, performance.now() - time)
+        console.log("[EXULU] Finished encoding text.", performance.now() - time)
         return tokens;
     }
 
@@ -74,7 +71,6 @@ export class ExuluTokenizer {
         if (!this.encoder) {
             throw new Error("Tokenizer not initialized");
         }
-        console.log("[EXULU] Counting tokens.", text)
         const tokens = this.encoder.encode(text);
         const count = tokens.length;
         console.log("[EXULU] Token count.", count)

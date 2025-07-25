@@ -3,6 +3,7 @@ export type User = {
   email: string;
   emailVerified?: string;
   type?: "api" | "user"
+  anthropic_token?: string;
   roles?: {
     id: string;
     role: string;

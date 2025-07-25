@@ -246,7 +246,6 @@ export class ExuluEmbedder {
             // todo fix the statistics upsert!
             // Without blocking the main thread, upsert an entry 
             // into mongdb of type ExuluStatistic.
-            // console.log("updating statistic")
             // updateStatistic({
             //     name: "count",
             //     label: statistics.label,
@@ -276,7 +275,6 @@ export class ExuluEmbedder {
             // todo fix the statistics upsert!
             // Without blocking the main thread, upsert an entry 
             // into mongdb of type ExuluStatistic.
-            // console.log("updating statistic")
             // updateStatistic({
             //     name: "count",
             //     label: statistics.label,
@@ -290,15 +288,13 @@ export class ExuluEmbedder {
             throw new Error("Chunker not found for embedder " + this.name)
         }
 
-        console.log("generating chunks")
-
         if (!input.id) {
             throw new Error("Item id is required for generating embeddings.")
         }
 
         const output = await this.chunker(input as Item & { id: string }, this.maxChunkSize)
 
-        console.log("generating embeddings")
+        console.log("[EXULU] Generating embeddings.")
 
         return await this.generateEmbeddings(output)
     };
@@ -832,7 +828,6 @@ export class ExuluContext {
             if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert") {
                 return;
             }
-            console.log("this.fields", this.fields)
             const field = this.fields.find(field => field.name === key);
             if (!field) {
                 throw new Error("Trying to uppdate value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
@@ -935,7 +930,6 @@ export class ExuluContext {
             if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert") {
                 return;
             }
-            console.log("this.fields", this.fields)
             const field = this.fields.find(field => field.name === key);
             if (!field) {
                 throw new Error("Trying to insert value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
@@ -984,7 +978,7 @@ export class ExuluContext {
                 await this.createChunksTable();
             }
 
-            console.log("inserting chunks")
+            console.log("[EXULU] Inserting chunks.")
             await db.from(this.getChunksTableName()).insert(chunks.map(chunk => ({
                 source,
                 content: chunk.content,
@@ -1263,13 +1257,13 @@ export class ExuluContext {
         return await db.schema.createTable(tableName, (table) => {
             console.log("[EXULU] Creating fields for table.", this.fields);
             table.uuid("id").primary().defaultTo(db.fn.uuid());
-            table.string("name", 100);
+            table.text("name");
             table.text('description');
-            table.string('tags', 100);
+            table.text('tags');
             table.boolean('archived').defaultTo(false);
-            table.string('external_id', 100);
+            table.text('external_id');
             table.integer('textLength');
-            table.string('source', 100);
+            table.text('source');
             for (const field of this.fields) {
                 const { type, name } = field;
                 if (!type || !name) {
