@@ -11,7 +11,7 @@ export const defaultLogsDir = path.join(process.cwd(), 'logs');
 
 let redisConnection: IORedis;
 
-export const createWorkers = async (queues: string[], contexts: ExuluContext[], embedders: ExuluEmbedder[], workflows: ExuluWorkflow[], _logsDir?: string) => {
+export const createWorkers = async (queues: string[], contexts: ExuluContext[], workflows: ExuluWorkflow[], _logsDir?: string) => {
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
 
@@ -55,7 +55,7 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                             throw new Error(`No embedder set for embedder job.`);
                         }
 
-                        const embedder = embedders.find(embedder => embedder.id === bullmqJob.data.embedder)
+                        const embedder = contexts.find(context => context.embedder?.id === bullmqJob.data.embedder)
 
                         if (!embedder) {
                             throw new Error(`Embedder ${bullmqJob.data.embedder} not found in the registry.`);

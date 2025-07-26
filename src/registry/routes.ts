@@ -89,7 +89,6 @@ export type ExuluTableDefinition = {
 export const createExpressRoutes = async (
     app: Express,
     agents: ExuluAgent[],
-    embedders: ExuluEmbedder[],
     tools: ExuluTool[],
     workflows: ExuluWorkflow[],
     contexts: ExuluContext[],
@@ -251,7 +250,7 @@ export const createExpressRoutes = async (
                 streaming: backend?.streaming,
                 capabilities: backend?.capabilities,
                 // todo add contexts
-                availableTools: backend?.tools,
+                availableTools: tools,
                 enabledTools: agent.tools
             }
         })

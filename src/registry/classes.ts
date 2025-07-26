@@ -93,17 +93,16 @@ export type ExuluAgentEval = {
 interface ExuluAgentParams {
     id: string;
     name: string;
-    type: "agent" | "workflow";
+    type: "agent" | "workflow" | "custom";
     description: string;
-    config: ExuluAgentConfig;
-    capabilities: {
+    config?: ExuluAgentConfig | undefined;
+    capabilities?: {
         tools: boolean;
         images: string[];
         files: string[];
         audio: string[];
         video: string[];
     };
-    tools?: ExuluTool[];
     evals?: ExuluAgentEval[];
     outputSchema?: ZodSchema;
     rateLimit?: RateLimiterRule;
@@ -115,37 +114,69 @@ export class ExuluAgent {
     public name: string;
     public description: string = "";
     public slug: string = "";
+    public type: "agent" | "workflow" | "custom";
     public streaming: boolean = false;
     public rateLimit?: RateLimiterRule;
-    public config: ExuluAgentConfig;
+    public config?: ExuluAgentConfig | undefined;
     // private memory: Memory | undefined; // TODO do own implementation
-    public tools?: ExuluTool[];
     public evals?: ExuluAgentEval[];
     public model?: LanguageModelV1;
     public capabilities: {
-        tools: boolean,
         images: string[],
         files: string[],
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, tools, evals }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, evals }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
         this.evals = evals;
         this.description = description;
         this.rateLimit = rateLimit;
-        this.tools = tools;
         this.config = config;
-        this.capabilities = capabilities;
+        this.type = type;
+        this.capabilities = capabilities || {
+            images: [],
+            files: [],
+            audio: [],
+            video: []
+        };
         this.slug = `/agents/${generateSlug(this.name)}/run`;
-        this.model = this.config.model;
+
+        // If it is a custom agent,it is only
+        // used as a config object, but the actual
+        // inference is done by outside of Exulu.
+        this.model = this.config?.model;
+    }
+
+    // Exports the agent as a tool that can be used by another agent
+    // todo test this
+    public tool = (): ExuluTool => {
+        return new ExuluTool({
+            id: this.id,
+            name: `${this.name} agent`,
+            type: "agent",
+            parameters: z.object({
+                query: z.string(),
+            }),
+            description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
+            execute: async ({ context }: any) => {
+                return await this.generate({
+                    prompt: context.query,
+                    stream: false
+                })
+            },
+        });
     }
 
     generate = async ({ prompt, stream }: { prompt: string, stream?: boolean }) => {
 
         if (!this.model) {
             throw new Error("Model is required for streaming.")
+        }
+
+        if (!this.config) {
+            throw new Error("Config is required for generating.")
         }
 
         if (this.config.outputSchema) {
@@ -709,7 +740,7 @@ export class ExuluTool {
     public name: string;
     public description: string;
     public parameters?: ZodSchema;
-    public type: "context" | "function";
+    public type: "context" | "function" | "agent";
     public tool: Tool
 
     constructor({ id, name, description, parameters, type, execute }: {
@@ -717,7 +748,7 @@ export class ExuluTool {
         name: string,
         description: string,
         parameters: ZodSchema,
-        type: "context" | "function",
+        type: "context" | "function" | "agent",
         execute: (inputs: any) => Promise<any>
     }) {
         this.id = id;

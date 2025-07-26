@@ -147,8 +147,7 @@ const up = async function (knex: Knex) {
                     name === "name" ||
                     name === "email" ||
                     name === "emailVerified" ||
-                    name === "image" ||
-                    name === "anthropic_token"
+                    name === "image"
                 ) {
                     continue;
                 }

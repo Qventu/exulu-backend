@@ -4,6 +4,8 @@ import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
+import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
+import { defaultAgent } from "../templates/agents/default-agent.ts";
 
 export type ExuluConfig = {
     workers: {
@@ -20,7 +22,6 @@ export class ExuluApp {
     private _agents: ExuluAgent[] = []
     private _workflows: ExuluWorkflow[] = []
     private _config?: ExuluConfig;
-    private _embedders: ExuluEmbedder[] = []
     private _queues: string[] = []
     private _contexts?: Record<string, ExuluContext> = {}
     private _tools: ExuluTool[] = []
@@ -28,25 +29,38 @@ export class ExuluApp {
 
     constructor() { }
 
-    // Factory function so we can async initialize the
-    // MCP server if needed.
-    create = async ({ contexts, embedders, agents, workflows, config, tools }: {
+    // Factory function so we can async 
+    // initialize the MCP server if needed.
+    create = async ({ contexts, agents, workflows, config, tools }: {
         contexts?: Record<string, ExuluContext>,
         config: ExuluConfig,
-        embedders?: ExuluEmbedder[],
         agents?: ExuluAgent[],
         workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
     }): Promise<Express> => {
-        this._embedders = embedders ?? [];
+
         this._workflows = workflows ?? [];
         this._contexts = contexts ?? {};
-        this._agents = agents ?? [];
+        this._agents = [
+            claudeCodeAgent,
+            defaultAgent,
+            ...(agents ?? [])
+        ];
         this._config = config;
-        this._tools = tools ?? [];
+
+        this._tools = [
+            ...(tools ?? []),
+            // Add contexts as tools
+            ...Object.values(contexts || {}).map(context => context.tool()),
+            // Add agents as tools
+            ...(agents || []).map(agent => agent.tool())
+        ]
+
+        const contextsArray = Object.values(contexts || {});
+
         const queues = [
-            ...(embedders?.length ?
-                embedders.map(agent => agent.queue?.name || null) :
+            ...(contextsArray?.length ?
+                contextsArray.map(context => context.embedder.queue?.name || null) :
                 []
             ),
             ...(workflows?.length ?
@@ -71,10 +85,6 @@ export class ExuluApp {
         return this._expressApp;
     }
 
-    public embedder(id: string): ExuluEmbedder | undefined {
-        return this._embedders.find(x => x.id === id)
-    }
-
     public tool(id: string): ExuluTool | undefined {
         return this._tools.find(x => x.id === id)
     }
@@ -95,10 +105,6 @@ export class ExuluApp {
         return this._workflows.find(x => x.id === id)
     }
 
-    public get embedders(): ExuluEmbedder[] {
-        return this._embedders;
-    }
-
     public get contexts(): ExuluContext[] {
         return Object.values(this._contexts ?? {});
     }
@@ -117,7 +123,6 @@ export class ExuluApp {
                 return await createWorkers(
                     this._queues,
                     Object.values(this._contexts ?? {}),
-                    this._embedders,
                     this._workflows,
                     this._config?.workers?.logsDir
                 )
@@ -138,7 +143,6 @@ export class ExuluApp {
                 await createExpressRoutes(
                     app,
                     this._agents,
-                    this._embedders,
                     this._tools,
                     this._workflows,
                     Object.values(this._contexts ?? {})
@@ -149,7 +153,6 @@ export class ExuluApp {
                     await mcp.create({
                         express: app,
                         contexts: this._contexts,
-                        embedders: this._embedders,
                         agents: this._agents,
                         workflows: this._workflows,
                         config: this._config,
