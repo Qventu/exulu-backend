@@ -272,7 +272,51 @@ function createQueries(table: ExuluTableDefinition) {
                 },
                 items: items
             };
-        }
+        },
+        // Add jobStatistics query for jobs table
+        ...(tableNamePlural === 'jobs' ? {
+            jobStatistics: async (_, args, context, info) => {
+                const { user, agent, from, to } = args;
+                const { db } = context;
+                
+                let query = db('jobs');
+                
+                // Apply filters
+                if (user) {
+                    query = query.where('user', user);
+                }
+                if (agent) {
+                    query = query.where('agent', agent);
+                }
+                if (from) {
+                    query = query.where('createdAt', '>=', from);
+                }
+                if (to) {
+                    query = query.where('createdAt', '<=', to);
+                }
+                
+                // Get completed jobs count
+                const completedQuery = query.clone().where('status', 'completed');
+                const [{ completedCount }] = await completedQuery.count('* as completedCount');
+                
+                // Get failed jobs count
+                const failedQuery = query.clone().where('status', 'failed');
+                const [{ failedCount }] = await failedQuery.count('* as failedCount');
+                
+                // Calculate average duration for completed jobs using the "duration" field (in seconds)
+                const durationQuery = query.clone()
+                    .where('status', 'completed')
+                    .whereNotNull('duration')
+                    .select(db.raw('AVG("duration") as averageDuration'));
+                const [{ averageDuration }] = await durationQuery;
+                
+                return {
+                    completedCount: Number(completedCount),
+                    failedCount: Number(failedCount),
+                    averageDuration: averageDuration ? Number(averageDuration) : 0
+                };
+            }
+        } : {})
     };
 }
 
@@ -300,6 +344,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
+      ${tableNamePlural === 'jobs' ? `jobStatistics(user: ID, agent: String, from: String, to: String): JobStatistics` : ''}
     `;
         // todo add the fields of each table as filter options
         mutationDefs += `
@@ -325,6 +370,17 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
+        
+        // Add JobStatistics type for jobs table
+        if (tableNamePlural === 'jobs') {
+            modelDefs += `
+type JobStatistics {
+  completedCount: Int!
+  failedCount: Int!
+  averageDuration: Float!
+}
+`;
+        }
         Object.assign(resolvers.Query, createQueries(table));
         Object.assign(resolvers.Mutation, createMutations(table));
     }
