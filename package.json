@@ -32,11 +32,10 @@
     "@types/bun": "latest",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.15.1",
+    "conventional-changelog-atom": "^5.0.0",
     "husky": "^9.1.7",
     "tsup": "^8.5.0",
-    "tsx": "^4.19.3",
-    "@semantic-release/changelog": "^6.0.3",
-    "conventional-changelog-atom": "^5.0.0"
+    "tsx": "^4.19.3"
   },
   "peerDependencies": {
     "typescript": "^5.8.3"
@@ -52,6 +51,8 @@
     "@browserbasehq/stagehand": "^2.4.1",
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.14.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.1",
