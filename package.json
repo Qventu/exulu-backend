@@ -1,7 +1,7 @@
 {
   "name": "@exulu/backend",
   "author": "Qventu Bv.",
-  "version": "0.3.13",
+  "version": "0.3.13-development",
   "main": "./dist/index.js",
   "private": false,
   "publishConfig": {
@@ -30,8 +30,6 @@
     "@commitlint/cli": "^19.8.1",
     "@commitlint/config-conventional": "^19.8.1",
     "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
-    "@semantic-release/npm": "^12.0.2",
     "@types/bun": "latest",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.15.1",
