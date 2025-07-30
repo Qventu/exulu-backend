@@ -50,7 +50,6 @@
     "@browserbasehq/stagehand": "^2.4.1",
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.14.0",
-    "@panva/hkdf": "^1.2.1",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.1",
