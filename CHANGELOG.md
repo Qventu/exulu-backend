@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/Qventu/exulu-backend/compare/v1.0.0...v1.0.1) (2025-07-30)
+
+
+### Bug Fixes
+
+* add npm plugin for semantic release ([92cb0b2](https://github.com/Qventu/exulu-backend/commit/92cb0b2f00f125d429b94fef19e58caf5f2c41ab))
+
 # 1.0.0 (2025-07-30)
 
 
