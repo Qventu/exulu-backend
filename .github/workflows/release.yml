@@ -35,4 +35,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npx semantic-release
+        run: npm -g install @semantic-release/git semantic-release && semantic-release
+        run: HUSKY=0 npm run semantic-release
