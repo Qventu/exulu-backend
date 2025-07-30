@@ -1,7 +1,44 @@
 import type { ExuluTableDefinition } from "../routes";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from 'graphql-type-json';
+import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
+
+// Custom Date scalar to handle timestamp conversion
+const GraphQLDate = new GraphQLScalarType({
+    name: 'Date',
+    description: 'Date custom scalar type',
+    serialize(value) {
+        if (value instanceof Date) {
+            return value.toISOString();
+        }
+        if (typeof value === 'number') {
+            return new Date(value).toISOString();
+        }
+        if (typeof value === 'string') {
+            return new Date(value).toISOString();
+        }
+        return value;
+    },
+    parseValue(value) {
+        if (typeof value === 'string') {
+            return new Date(value);
+        }
+        if (typeof value === 'number') {
+            return new Date(value);
+        }
+        return value;
+    },
+    parseLiteral(ast) {
+        if (ast.kind === Kind.STRING) {
+            return new Date(ast.value);
+        }
+        if (ast.kind === Kind.INT) {
+            return new Date(parseInt(ast.value, 10));
+        }
+        return null;
+    },
+});
 
 const map = (field: any) => {
     let type: string;
@@ -22,7 +59,7 @@ const map = (field: any) => {
             type = "JSON";
             break;
         case "date":
-            type = "String";
+            type = "Date";
             break;
         default:
             type = "String";
@@ -42,8 +79,8 @@ function createTypeDefs(table: ExuluTableDefinition): string {
   type ${table.name.singular} {
   ${fields.join("\n")}
     id: ID!
-    createdAt: String!
-    updatedAt: String!
+    createdAt: Date!
+    updatedAt: Date!
   }
   `;
 
@@ -73,6 +110,11 @@ input FilterOperatorString {
   ne: String
   in: [String]
   contains: String
+}
+
+input FilterOperatorDate {
+  lte: Date
+  gte: Date
 }
 
 input FilterOperatorFloat {
@@ -323,6 +365,7 @@ function createQueries(table: ExuluTableDefinition) {
 export function createSDL(tables: ExuluTableDefinition[]) {
     let typeDefs = `
     scalar JSON
+    scalar Date
     
     type Query {
     `;
@@ -332,7 +375,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
     `;
 
     let modelDefs = "";
-    const resolvers = { JSON: GraphQLJSON, Query: {}, Mutation: {} };
+    const resolvers = { JSON: GraphQLJSON, Date: GraphQLDate, Query: {}, Mutation: {} };
 
     // todo add the contexts from Exulu to the schema
     for (const table of tables) {

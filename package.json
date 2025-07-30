@@ -1,91 +1,98 @@
 {
-    "name": "@exulu/backend",
-    "author": "Qventu Bv.",
-    "version": "0.3.13",
-    "main": "./dist/index.js",
-    "private": false,
-    "publishConfig": {
-        "access": "restricted"
-    },
-    "module": "./dist/index.mjs",
-    "types": "./dist/index.d.ts",
-    "homepage": "https://exulu.com",
-    "engines": {
-        "node": "20.10.0"
-    },
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/Qventu/exulu-backend"
-    },
-    "scripts": {
-        "build": "tsup",
-        "dev": "npm link && tsup --watch"
-    },
-    "keywords": [
-        "exulu"
-    ],
-    "type": "module",
-    "devDependencies": {
-        "@types/bun": "latest",
-        "@types/node": "^22.14.0",
-        "@types/pg": "^8.15.1",
-        "tsup": "^8.5.0",
-        "tsx": "^4.19.3"
-    },
-    "peerDependencies": {
-        "typescript": "^5.8.3"
-    },
-    "dependencies": {
-        "@ai-sdk/anthropic": "^1.2.12",
-        "@anthropic-ai/sdk": "^0.56.0",
-        "@as-integrations/express5": "^1.0.0",
-        "@aws-sdk/client-s3": "^3.338.0",
-        "@aws-sdk/client-sts": "^3.338.0",
-        "@aws-sdk/s3-request-presigner": "^3.338.0",
-        "@inkjs/ui": "^2.0.0",
-        "@modelcontextprotocol/sdk": "^1.14.0",
-        "@panva/hkdf": "^1.2.1",
-        "@types/bcrypt": "^5.0.2",
-        "@types/cors": "^2.8.18",
-        "@types/express": "^5.0.1",
-        "@types/graphql-type-json": "^0.3.5",
-        "@types/multer": "^1.4.12",
-        "ai": "^4.3.9",
-        "apollo-server": "^3.13.0",
-        "bcryptjs": "^3.0.2",
-        "body-parser": "^2.2.0",
-        "bullmq": "^5.48.1",
-        "class-validator": "^0.14.2",
-        "cors": "^2.8.5",
-        "crypto-js": "^4.2.0",
-        "csv-parse": "^5.6.0",
-        "dotenv": "^16.5.0",
-        "express": "^5.1.0",
-        "fullscreen-ink": "^0.0.2",
-        "graphql": "^16.11.0",
-        "graphql-tools": "^9.0.18",
-        "graphql-type-json": "^0.3.2",
-        "http-proxy-middleware": "^3.0.5",
-        "ink": "^6.0.0",
-        "ink-big-text": "^2.0.0",
-        "ink-gradient": "^3.0.0",
-        "ink-select-input": "^6.2.0",
-        "ink-table": "^3.1.0",
-        "jose": "^6.0.10",
-        "jsonwebtoken": "^9.0.2",
-        "knex": "^3.1.0",
-        "multer": "^1.4.5-lts.2",
-        "openai": "^4.94.0",
-        "papaparse": "^5.5.2",
-        "pg": "^8.16.3",
-        "pgvector": "^0.2.0",
-        "redis": "^4.7.0",
-        "reflect-metadata": "^0.2.2",
-        "tiktoken": "^1.0.21",
-        "type-graphql": "^2.0.0-rc.2",
-        "uninstall": "^0.0.0",
-        "uuid": "^11.1.0",
-        "zod": "^3.24.2",
-        "zodex": "^0.18.2"
-    }
+  "name": "@exulu/backend",
+  "author": "Qventu Bv.",
+  "version": "0.3.13",
+  "main": "./dist/index.js",
+  "private": false,
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "homepage": "https://exulu.com",
+  "engines": {
+    "node": "20.10.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Qventu/exulu-backend"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "npm link && tsup --watch",
+    "prepare": "husky"
+  },
+  "keywords": [
+    "exulu"
+  ],
+  "type": "module",
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@types/bun": "latest",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.15.1",
+    "husky": "^9.1.7",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.2.12",
+    "@anthropic-ai/sdk": "^0.56.0",
+    "@as-integrations/express5": "^1.0.0",
+    "@aws-sdk/client-s3": "^3.338.0",
+    "@aws-sdk/client-sts": "^3.338.0",
+    "@aws-sdk/s3-request-presigner": "^3.338.0",
+    "@browserbasehq/sdk": "^2.6.0",
+    "@browserbasehq/stagehand": "^2.4.1",
+    "@inkjs/ui": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.14.0",
+    "@panva/hkdf": "^1.2.1",
+    "@types/bcrypt": "^5.0.2",
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.1",
+    "@types/graphql-type-json": "^0.3.5",
+    "@types/multer": "^1.4.12",
+    "ai": "^4.3.9",
+    "apollo-server": "^3.13.0",
+    "bcryptjs": "^3.0.2",
+    "body-parser": "^2.2.0",
+    "bullmq": "^5.48.1",
+    "class-validator": "^0.14.2",
+    "conventional-changelog-atom": "^5.0.0",
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "fullscreen-ink": "^0.0.2",
+    "graphql": "^16.11.0",
+    "graphql-tools": "^9.0.18",
+    "graphql-type-json": "^0.3.2",
+    "http-proxy-middleware": "^3.0.5",
+    "ink": "^6.0.0",
+    "ink-big-text": "^2.0.0",
+    "ink-gradient": "^3.0.0",
+    "ink-select-input": "^6.2.0",
+    "ink-table": "^3.1.0",
+    "jose": "^6.0.10",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.1.0",
+    "multer": "^1.4.5-lts.2",
+    "openai": "^4.94.0",
+    "papaparse": "^5.5.2",
+    "pg": "^8.16.3",
+    "pgvector": "^0.2.0",
+    "redis": "^4.7.0",
+    "reflect-metadata": "^0.2.2",
+    "tiktoken": "^1.0.21",
+    "type-graphql": "^2.0.0-rc.2",
+    "uninstall": "^0.0.0",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2",
+    "zodex": "^0.18.2"
+  }
 }

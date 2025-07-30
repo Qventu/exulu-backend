@@ -1,28 +1,51 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema } from "./core-schema";
+import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import { encryptString, generateApiKey } from "../auth/generate-key";
 
 const up = async function (knex: Knex) {
 
-    if (!await knex.schema.hasTable('roles')) {
-        await knex.schema.createTable('roles', table => {
+    if (!await knex.schema.hasTable('agent_sessions')) {
+        await knex.schema.createTable('agent_sessions', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
-            for (const field of rolesSchema.fields) {
-                const { type, name, references, default: defaultValue } = field;
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
+            for (const field of agentSessionsSchema.fields) {
+                const { type, name, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
                 }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
+                mapType(table, type, sanitizeName(name), defaultValue);
+            }
+        });
+    }
+
+    if (!await knex.schema.hasTable('agent_messages')) {
+        await knex.schema.createTable('agent_messages', table => {
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
+            for (const field of agentMessagesSchema.fields) {
+                const { type, name, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue);
+            }
+        });
+    }
+
+    if (!await knex.schema.hasTable('roles')) {
+        await knex.schema.createTable('roles', table => {
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
+            for (const field of rolesSchema.fields) {
+                const { type, name, default: defaultValue } = field;
+                if (!type || !name) {
+                    continue;
                 }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
@@ -32,19 +55,12 @@ const up = async function (knex: Knex) {
     if (!await knex.schema.hasTable('eval_results')) {
         await knex.schema.createTable('eval_results', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of evalResultsSchema.fields) {
-                const { type, name, references, default: defaultValue } = field;
+                const { type, name, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
-                }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
                 }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
@@ -54,19 +70,12 @@ const up = async function (knex: Knex) {
     if (!await knex.schema.hasTable('statistics')) {
         await knex.schema.createTable('statistics', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of statisticsSchema.fields) {
-                const { type, name, references, default: defaultValue } = field;
+                const { type, name, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
-                }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
                 }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
@@ -75,20 +84,13 @@ const up = async function (knex: Knex) {
 
     if (!await knex.schema.hasTable('jobs')) {
         await knex.schema.createTable('jobs', table => {
-            table.increments('id').primary();
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of jobsSchema.fields) {
-                const { type, name, references, default: defaultValue } = field;
+                const { type, name, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
-                }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
                 }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
@@ -97,20 +99,13 @@ const up = async function (knex: Knex) {
 
     if (!await knex.schema.hasTable('agents')) {
         await knex.schema.createTable('agents', table => {
-            table.increments('id').primary();
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of agentsSchema.fields) {
-                const { type, name, references, default: defaultValue } = field;
+                const { type, name, default: defaultValue } = field;
                 if (!type || !name) {
                     continue;
-                }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
                 }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
@@ -129,19 +124,18 @@ const up = async function (knex: Knex) {
 
     if (!await knex.schema.hasTable('users')) {
         await knex.schema.createTable('users', table => {
-            table.increments('id').primary();
-            table.date('createdAt').defaultTo(knex.fn.now());
-            table.date('updatedAt').defaultTo(knex.fn.now());
+            table.increments('id').primary(); // next auth stores users with id type SERIAL, so we need to use number
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
             table.string('name', 255);
             table.string('password', 255);
             table.string('email', 255);
             table.timestamp('emailVerified', { useTz: true });
             table.text('image');
-            table.text('anthropic_token');
 
             for (const field of usersSchema.fields) {
                 console.log("[EXULU] field", field)
-                const { type, name, references, default: defaultValue } = field;
+                const { type, name, default: defaultValue } = field;
                 if (
                     name === "id" ||
                     name === "name" ||
@@ -155,13 +149,6 @@ const up = async function (knex: Knex) {
                 if (!type || !name) {
                     continue;
                 }
-                if (type === "reference") {
-                    if (!references) {
-                        throw new Error("Field with type reference must have a reference definition.");
-                    }
-                    table.uuid(name).references(references.field).inTable(references.table);
-                    return;
-                }
                 mapType(table, type, sanitizeName(name), defaultValue);
             }
         });
@@ -169,7 +156,7 @@ const up = async function (knex: Knex) {
 
     if (!await knex.schema.hasTable('accounts')) {
         await knex.schema.createTable('accounts', table => {
-            table.increments('id').primary();
+            table.increments('id').primary(); // next auth stores users with id type SERIAL, so we need to use number
             table.integer('userId').notNullable();
             table.string('type', 255).notNullable();
             table.string('provider', 255).notNullable();
@@ -181,23 +168,17 @@ const up = async function (knex: Knex) {
             table.text('scope');
             table.text('session_state');
             table.text('token_type');
-
-            // Optional: add foreign key constraint to users.id
-            // table.foreign('userId').references('users.id').onDelete('CASCADE');
         });
     }
 
-    if (!await knex.schema.hasTable('sessions')) {
+   /*  if (!await knex.schema.hasTable('sessions')) {
         await knex.schema.createTable('sessions', table => {
             table.increments('id').primary();
             table.integer('userId').notNullable();
             table.timestamp('expires', { useTz: true }).notNullable();
             table.string('sessionToken', 255).notNullable();
-
-            // Optional: add foreign key constraint to users.id
-            // table.foreign('userId').references('users.id').onDelete('CASCADE');
         });
-    }
+    } */
 };
 
 export const execute = async () => {

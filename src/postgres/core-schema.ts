@@ -1,5 +1,47 @@
 import type { ExuluTableDefinition } from "../registry/routes"
 
+export const agentMessagesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "agent_messages",
+        singular: "agent_message"
+    },
+    fields: [
+        {
+            name: "content",
+            type: "text"
+        },
+        {
+            name: "title",
+            type: "text"
+        },
+        {
+            name: "session",
+            type: "text",
+        }
+    ]
+}
+
+export const agentSessionsSchema: ExuluTableDefinition = {
+    name: {
+        plural: "agent_sessions",
+        singular: "agent_session"
+    },
+    fields: [
+        {
+            name: "agent",
+            type: "uuid",
+        },
+        {
+            name: "user", // next auth stores users with id type SERIAL, so we need to use number
+            type: "number",
+        },
+        {
+            name: "title",
+            type: "text"
+        }
+    ]
+}
+
 export const usersSchema: ExuluTableDefinition = {
     name: {
         plural: "users",
@@ -63,12 +105,7 @@ export const usersSchema: ExuluTableDefinition = {
         },
         {
             name: "role",
-            type: "reference",
-            references: {
-                table: "roles",
-                field: "id",
-                onDelete: "CASCADE"
-            }
+            type: "uuid"
         }
     ]
 }
@@ -116,10 +153,6 @@ export const statisticsSchema: ExuluTableDefinition = {
         {
             name: "total",
             type: "number"
-        },
-        {
-            name: "timeseries",
-            type: "json"
         }
     ]
 }
@@ -177,11 +210,11 @@ export const evalResultsSchema: ExuluTableDefinition = {
         },
         {
             name: "agent_id",
-            type: "text"
+            type: "uuid"
         },
         {
             name: "workflow_id",
-            type: "text"
+            type: "uuid"
         },
         {
             name: "eval_type",
@@ -194,53 +227,6 @@ export const evalResultsSchema: ExuluTableDefinition = {
         {
             name: "comment",
             type: "longText"
-        }
-    ]
-}
-
-
-export const threadsSchema: ExuluTableDefinition = {
-    name: {
-        plural: "threads",
-        singular: "thread"
-    },
-    fields: [
-        {
-            name: "resourceId",
-            type: "text"
-        },
-        {
-            name: "title",
-            type: "text"
-        },
-        {
-            name: "metadata",
-            type: "text"
-        }
-    ]
-}
-
-export const messagesSchema: ExuluTableDefinition = {
-    name: {
-        plural: "messages",
-        singular: "message"
-    },
-    fields: [        
-        {
-            name: "thread_id",
-            type: "text"
-        },
-        {
-            name: "content",
-            type: "text"
-        },
-        {
-            name: "role",
-            type: "text"
-        },
-        {
-            name: "type",
-            type: "text"
         }
     ]
 }
@@ -277,19 +263,19 @@ export const jobsSchema: ExuluTableDefinition = {
         },
         {
             name: "agent",
-            type: "text"
+            type: "uuid"
         },
         {
             name: "workflow",
-            type: "text"
+            type: "uuid"
         },
         {
-            name: "user",
-            type: "text"
+            name: "user", // next auth stores users with id type SERIAL, so we need to use number
+            type: "number"
         },
         {
             name: "item",
-            type: "text"
+            type: "uuid"
         },
         {
             name: "steps",

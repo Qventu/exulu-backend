@@ -4,7 +4,7 @@ import { z } from "zod"
 import * as fs from 'fs';
 import * as path from 'path';
 import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
-import { generateObject, generateText, type LanguageModelV1, streamObject, streamText, tool, type Tool } from "ai";
+import { generateObject, generateText, type LanguageModelV1, type Message, streamObject, streamText, tool, type Tool } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
 import { postgresClient } from "../postgres/client";
@@ -17,6 +17,46 @@ import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { ExuluEvalUtils } from "../evals/utils";
+
+export function sanitizeToolName(name) {
+    if (typeof name !== 'string') return '';
+
+    // Step 1: Replace invalid characters with underscores
+    // Only keep a-z, A-Z, 0-9, hyphens and underscores
+    let sanitized = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
+
+    // Step 2: Remove leading/trailing underscores
+    sanitized = sanitized.replace(/^_+|_+$/g, '');
+
+    // Step 3: Trim to 128 characters
+    if (sanitized.length > 128) {
+        sanitized = sanitized.substring(0, 128);
+    }
+
+    return sanitized;
+}
+
+const convertToolsArrayToObject = (tools: ExuluTool[] | undefined): Record<string, Tool> => {
+    if (!tools) return {};
+    const sanitizedTools = tools ? tools.map(tool => ({
+        ...tool,
+        name: sanitizeToolName(tool.name)
+    })) : [];
+
+    const askForConfirmation: Tool = {
+        description: 'Ask the user for confirmation.',
+        parameters: z.object({
+            message: z.string().describe('The message to ask for confirmation.'),
+        }),
+    }
+    return {
+        ...sanitizedTools?.reduce(
+            (prev, cur) =>
+                ({ ...prev, [cur.name]: cur.tool }), {}
+        ),
+        askForConfirmation
+    }
+}
 
 export function generateSlug(name: string): string {
     // Normalize Unicode characters (e.g., ü -> u)
@@ -156,20 +196,25 @@ export class ExuluAgent {
             id: this.id,
             name: `${this.name} agent`,
             type: "agent",
-            parameters: z.object({
-                query: z.string(),
+            inputSchema: z.object({
+                prompt: z.string(),
             }),
-            description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-            execute: async ({ context }: any) => {
-                return await this.generate({
-                    prompt: context.query,
-                    stream: false
+            description: `A function that calls an AI agent named: ${this.name}. The agent does the following: ${this.description}.`,
+            execute: async ({ prompt }: any) => {
+                return await this.generateSync({
+                    prompt: prompt,
+                    statistics: {
+                        label: "",
+                        trigger: "tool"
+                    }
                 })
             },
         });
     }
 
-    generate = async ({ prompt, stream }: { prompt: string, stream?: boolean }) => {
+    generateSync = async ({ messages, prompt, tools, statistics }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams
+    }) => {
 
         if (!this.model) {
             throw new Error("Model is required for streaming.")
@@ -179,35 +224,74 @@ export class ExuluAgent {
             throw new Error("Config is required for generating.")
         }
 
-        if (this.config.outputSchema) {
-            if (stream) {
-                // todo use partialObjectStream to stream the object
-                // from the vercel ai sdk.
-            }
-            const { object } = await generateObject({
-                model: this.model,
-                schema: this.config.outputSchema,
-                prompt: prompt,
-            });
-            return object;
-        }
-
-        if (stream) {
-            const result = streamText({
-                model: this.model,
-                prompt: prompt,
-            });
-            const text = await result.text; // todo return the text stream and process it instead of waiting for the final result here          
-            return text;
+        if (prompt && messages) {
+            throw new Error("Prompt and messages cannot be provided at the same time.")
         }
 
         const { text } = await generateText({
             model: this.model,
+            system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
+            messages: messages,
             prompt: prompt,
+            maxRetries: 2,
+            tools: convertToolsArrayToObject(tools),
+            maxSteps: 5,
         });
 
-        return text;
+        if (statistics) {
+            await updateStatistic({
+                name: "count",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: 1
+            })
+        }
 
+        return text;
+    }
+
+    generateStream = ({ messages, prompt, tools, statistics }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams
+    }) => {
+
+        if (!this.model) {
+            throw new Error("Model is required for streaming.")
+        }
+
+        if (!this.config) {
+            throw new Error("Config is required for generating.")
+        }
+
+        if (prompt && messages) {
+            throw new Error("Prompt and messages cannot be provided at the same time.")
+        }
+
+        return streamText({
+            model: this.model,
+            messages: messages,
+            prompt: prompt,
+            system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
+            maxRetries: 2,
+            tools: convertToolsArrayToObject(tools),
+            maxSteps: 5,
+            onError: error => console.error("[EXULU] chat stream error.", error),
+            onFinish: async ({ response, usage }) => {
+                console.info(
+                    "[EXULU] chat stream finished.",
+                    usage
+                )
+                if (statistics) {
+                    await updateStatistic({
+                        name: "count",
+                        label: statistics.label,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: statistics.trigger,
+                        count: 1
+                    })
+                }
+            }
+        });
     }
 }
 
@@ -268,22 +352,16 @@ export class ExuluEmbedder {
         this.generateEmbeddings = generateEmbeddings;
     }
 
-    public async generateFromQuery(query: string, statistics?: {
-        label: string,
-        trigger: string
-    }): VectorGenerationResponse {
+    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams): VectorGenerationResponse {
 
         if (statistics) {
-            // todo fix the statistics upsert!
-            // Without blocking the main thread, upsert an entry 
-            // into mongdb of type ExuluStatistic.
-            // updateStatistic({
-            //     name: "count",
-            //     label: statistics.label,
-            //     type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
-            //     trigger: statistics.trigger,
-            //     count: 1
-            // })
+            await updateStatistic({
+                name: "count",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: 1
+            })
         }
 
         return await this.generateEmbeddings({
@@ -297,22 +375,16 @@ export class ExuluEmbedder {
         })
     }
 
-    public async generateFromDocument(input: Item, statistics?: {
-        label: string,
-        trigger: string
-    }): VectorGenerationResponse {
+    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams): VectorGenerationResponse {
 
         if (statistics) {
-            // todo fix the statistics upsert!
-            // Without blocking the main thread, upsert an entry 
-            // into mongdb of type ExuluStatistic.
-            // updateStatistic({
-            //     name: "count",
-            //     label: statistics.label,
-            //     type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
-            //     trigger: statistics.trigger,
-            //     count: 1
-            // })
+            await updateStatistic({
+                name: "count",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: 1
+            })
         }
 
         if (!this.chunker) {
@@ -623,9 +695,8 @@ export class ExuluEval {
                             if (!data.prompt) {
                                 throw new Error("Prompt is required for running an agent.")
                             }
-                            const result = await runner.agent.generate({
+                            const result = await runner.agent.generateSync({
                                 prompt: data.prompt,
-                                stream: false
                             })
                             data.result = result;
                         }
@@ -739,26 +810,26 @@ export class ExuluTool {
     public id: string;
     public name: string;
     public description: string;
-    public parameters?: ZodSchema;
+    public inputSchema?: ZodSchema;
     public type: "context" | "function" | "agent";
     public tool: Tool
 
-    constructor({ id, name, description, parameters, type, execute }: {
+    constructor({ id, name, description, inputSchema, type, execute }: {
         id: string,
         name: string,
         description: string,
-        parameters: ZodSchema,
+        inputSchema?: ZodSchema,
         type: "context" | "function" | "agent",
         execute: (inputs: any) => Promise<any>
     }) {
         this.id = id;
         this.name = name;
         this.description = description;
-        this.parameters = parameters;
+        this.inputSchema = inputSchema;
         this.type = type;
         this.tool = tool({
             description: description,
-            parameters: parameters,
+            parameters: inputSchema || z.object({}),
             execute: execute
         });
     }
@@ -781,7 +852,7 @@ export class ExuluContext {
     public queryRewriter?: (query: string) => Promise<string>;
     public resultReranker?: (results: any[]) => Promise<any[]>; // todo typings
     private _sources: ExuluSource[] = [];
-    private configuration: {
+    public configuration: {
         calculateVectors: "manual" | "onUpdate" | "onInsert" | "always"
     };
 
@@ -856,7 +927,7 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         Object.keys(item).forEach(key => {
-            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert") {
+            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => field.name === key);
@@ -919,6 +990,10 @@ export class ExuluContext {
                 chunk_index: chunk.index,
                 embedding: pgvector.toSql(chunk.vector)
             })))
+
+            await db.from(this.getTableName()).where({ id }).update({
+                embeddings_updated_at: new Date().toISOString()
+            }).returning("id")
         }
 
         return {
@@ -958,7 +1033,7 @@ export class ExuluContext {
         }
 
         Object.keys(item).forEach(key => {
-            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert") {
+            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => field.name === key);
@@ -989,6 +1064,7 @@ export class ExuluContext {
                     queue: this.embedder.queue,
                     user: user
                 })
+
                 return {
                     id: result[0].id,
                     job: job.id
@@ -1016,6 +1092,10 @@ export class ExuluContext {
                 chunk_index: chunk.index,
                 embedding: pgvector.toSql(chunk.vector)
             })))
+
+            await db.from(this.getTableName()).where({ id: result[0].id }).update({
+                embeddings_updated_at: new Date().toISOString()
+            }).returning("id")
         }
 
         return {
@@ -1027,17 +1107,18 @@ export class ExuluContext {
     public getItems = async ({
         statistics,
         limit,
+        sort,
+        order,
         page,
         name,
         archived,
         query,
         method
     }: {
-        statistics?: {
-            label: string,
-            trigger: string
-        },
+        statistics?: ExuluStatisticParams,
         page: number,
+        sort?: "created_at" | "embeddings_updated_at",
+        order?: "desc" | "asc",
         limit: number,
         name?: string,
         archived?: boolean,
@@ -1063,6 +1144,10 @@ export class ExuluContext {
 
         const totalQuery = db.count('* as count').from(mainTable).first()
         const itemsQuery = db.select(Object.keys(columns).map(column => mainTable + "." + column)).from(mainTable).offset(offset).limit(limit)
+
+        if (sort) {
+            itemsQuery.orderBy(sort, order === "desc" ? "desc" : "asc")
+        }
 
         if (typeof name === "string") {
             itemsQuery.whereILike("name", `%${name}%`)
@@ -1120,7 +1205,7 @@ export class ExuluContext {
             // Without blocking the main thread, upsert an entry 
             // into mongdb of type ExuluStatistic.
             if (statistics) {
-                updateStatistic({
+                await updateStatistic({
                     name: "count",
                     label: statistics.label,
                     type: STATISTICS_TYPE_ENUM.CONTEXT_RETRIEVE as STATISTICS_TYPE,
@@ -1295,6 +1380,7 @@ export class ExuluContext {
             table.text('external_id');
             table.integer('textLength');
             table.text('source');
+            table.timestamp('embeddings_updated_at')
             for (const field of this.fields) {
                 const { type, name } = field;
                 if (!type || !name) {
@@ -1326,16 +1412,16 @@ export class ExuluContext {
             id: this.id,
             name: `${this.name} context`,
             type: "context",
-            parameters: z.object({
+            inputSchema: z.object({
                 query: z.string(),
             }),
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-            execute: async ({ context }: any) => {
+            execute: async ({ query }: any) => {
                 // todo make trigger more specific with the agent name
                 return await this.getItems({
                     page: 1,
                     limit: 10,
-                    query: context.query,
+                    query: query,
                     statistics: {
                         label: this.name,
                         trigger: "agent"
@@ -1402,13 +1488,11 @@ export type ExuluStatistic = {
     name: string,
     label: string,
     type: STATISTICS_TYPE,
-    trigger: string,
+    trigger: "tool" | "agent" | "flow" | "api" | "claude-code",
     total: number,
-    timeseries: {
-        date: string,
-        count: number
-    }[]
 }
+
+export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
 export type ExuluSourceUpdater = ExuluSourceUpdaterArgs & {
     slug?: string,
@@ -1439,23 +1523,37 @@ export class ExuluSource {
     }
 }
 
-const updateStatistic = async (statistic: Omit<ExuluStatistic, "timeseries" | "total"> & { count?: number }) => {
-    return; // todo
-    // const currentDate = new Date().toISOString().split('T')[0];
-    // const { db } = await postgresClient();
+export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number }) => {
+    const currentDate = new Date().toISOString().split('T')[0];
+    const { db } = await postgresClient();
+
+    const existing = await db.from("statistics").where({
+        name: statistic.name,
+        label: statistic.label,
+        type: statistic.type,
+        createdAt: currentDate
+    }).first();
 
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.
     // If the statistic exists, it will be updated by incrementing the total count.
-    /* await db.from("statistics").update({
-        total: db.raw("total + ?", [statistic.count ?? 1]),
-    }).where({
-        name: statistic.name,
-        label: statistic.label,
-        type: statistic.type,
-        where: {
+    if (!existing) {
+        await db.from("statistics").insert({
+            name: statistic.name,
+            label: statistic.label,
+            type: statistic.type,
+            total: statistic.count ?? 1,
             createdAt: currentDate
-        }
-    }).onConflict("name").merge(); */
+        })
+    } else {
+        await db.from("statistics").update({
+            total: db.raw("total + ?", [statistic.count ?? 1]),
+        }).where({
+            name: statistic.name,
+            label: statistic.label,
+            type: statistic.type,
+            createdAt: currentDate
+        })
+    }
 
 }

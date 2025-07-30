@@ -110,6 +110,11 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                             result: JSON.stringify(result)
                         });
 
+
+                        await db.from(this.getTableName()).where({ id: result[0].id }).update({
+                            embeddings_updated_at: new Date().toISOString()
+                        }).returning("id")
+
                         return result;
                     }
 
@@ -129,7 +134,7 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
 
                         const result = await bullmq.process.workflow(bullmqJob, exuluJob, workflow, logsDir)
 
-              
+
 
                         const finishedAt = new Date();
                         const duration = (finishedAt.getTime() - new Date(exuluJob.createdAt).getTime()) / 1000;

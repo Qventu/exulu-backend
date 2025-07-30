@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, ExuluEmbedder, ExuluLogger, type ExuluTool, ExuluWorkflow, type SourceDocument } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, ExuluEmbedder, ExuluLogger, type ExuluTool, ExuluWorkflow, type SourceDocument, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { bullmqDecorator } from "./decoraters/bullmq.ts";
 import { requestValidators } from "./route-validators";
@@ -17,7 +17,7 @@ import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
 import { createSDL } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
-import { agentsSchema, evalResultsSchema, jobsSchema, messagesSchema, rolesSchema, threadsSchema, usersSchema, workflowSchema } from "../postgres/core-schema.ts";
+import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
@@ -74,15 +74,10 @@ export type ExuluTableDefinition = {
     },
     fields: {
         name: string,
-        type: ExuluFieldTypes | "reference" | "date" | "json" | "uuid",
+        type: ExuluFieldTypes | "date" | "json" | "uuid",
         index?: boolean,
         required?: boolean,
         default?: any,
-        references?: {
-            table: string,
-            field: string,
-            onDelete: "CASCADE" | "SET NULL" | "NO ACTION"
-        }
     }[]
 }
 
@@ -172,7 +167,7 @@ export const createExpressRoutes = async (
         console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
     }
 
-    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, threadsSchema, messagesSchema]);
+    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema]);
 
     interface GraphqlContext {
         db: Knex;
@@ -211,15 +206,55 @@ export const createExpressRoutes = async (
         }),
     );
 
-    app.get(`/agents`, async (req: Request, res: Response) => {
-        // todo add auth
+    app.get(`/providers`, async (req: Request, res: Response) => {
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
         res.status(200).json(agents)
     })
 
-    app.get(`/agents/:id`, async (req: Request, res: Response) => {
-
+    app.get(`/agents`, async (req: Request, res: Response) => {
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
         const { db } = await postgresClient();
-        // todo add auth
+        const agentsFromDb = await db.from("agents").select("*");
+        res.status(200).json( agentsFromDb.map((agent: any) => {
+            const backend = agents.find(a => a.id === agent.backend);
+            if (!backend) {
+                return null;
+            }
+            return {
+                name: agent.name,
+                id: agent.id,
+                description: agent.description,
+                provider: backend?.model?.provider,
+                model: backend?.model?.modelId,
+                active: agent.active,
+                public: agent.public,
+                type: agent.type,
+                slug: backend?.slug,
+                rateLimit: backend?.rateLimit,
+                streaming: backend?.streaming,
+                capabilities: backend?.capabilities,
+                // todo add contexts
+                availableTools: tools,
+                enabledTools: agent.tools
+            }
+        }).filter(Boolean))
+    })
+
+    app.get(`/agents/:id`, async (req: Request, res: Response) => {
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+        const { db } = await postgresClient();
         const id = req.params.id;
         if (!id) {
             res.status(400).json({
@@ -242,6 +277,8 @@ export const createExpressRoutes = async (
                 name: agent.name,
                 id: agent.id,
                 description: agent.description,
+                provider: backend?.model?.provider,
+                model: backend?.model?.modelId,
                 active: agent.active,
                 public: agent.public,
                 type: agent.type,
@@ -265,7 +302,6 @@ export const createExpressRoutes = async (
             description: tool.description,
             type: tool.type || "tool",
             inputSchema: tool.inputSchema ? zerialize(tool.inputSchema as any) : null,
-            outputSchema: tool.outputSchema ? zerialize(tool.outputSchema as any) : null
         })))
     })
 
@@ -418,6 +454,17 @@ export const createExpressRoutes = async (
                 message: "Context not found in registry."
             })
             return;
+        }
+
+        const itemsTableExists = await context.tableExists();
+
+        if (!itemsTableExists) {
+            await context.createItemsTable()
+        }
+
+        const chunksTableExists = await db.schema.hasTable(context.getChunksTableName());
+        if (!chunksTableExists) {
+            await context.createChunksTable();
         }
 
         const item = await db.from(context.getTableName())
@@ -578,6 +625,22 @@ export const createExpressRoutes = async (
 
         let limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
         let page = req.query.page ? parseInt(req.query.page as string) : 1;
+        let sort = req.query.sort ? req.query.sort as string : "created_at";
+        let order = req.query.order ? req.query.order as string : "desc";
+
+        if (sort && !["created_at", "embeddings_updated_at"].includes(sort)) {
+            res.status(400).json({
+                message: "Invalid sort field, must be one of: createdAt, embeddings_updated_at"
+            })
+            return;
+        }
+
+        if (order && !["desc", "asc"].includes(order)) {
+            res.status(400).json({
+                message: "Invalid order, must be one of: desc, asc"
+            })
+            return;
+        }
 
         const authenticationResult = await requestValidators.authenticate(req);
         if (!authenticationResult.user?.id) {
@@ -607,6 +670,8 @@ export const createExpressRoutes = async (
         }
 
         const result = await context.getItems({
+            sort: sort as "created_at" | "embeddings_updated_at",
+            order: order as "desc" | "asc",
             page,
             limit,
             archived: req.query.archived === "true",
@@ -905,6 +970,7 @@ export const createExpressRoutes = async (
                 slug: "/contexts/" + context.id,
                 active: context.active,
                 fields: context.fields,
+                configuration: context.configuration,
                 sources: context.sources.get().map(source => ({
                     id: source.id,
                     name: source.name,
@@ -1137,6 +1203,7 @@ export const createExpressRoutes = async (
             method: "POST",
             note: `Agent endpoint for ${agent.id}`
         });
+
         // The instance is the object in mongodb that uses this agent
         // as the backend. It allows for multiple instances of the same agent
         // to be used in parallel, with different configurations.
@@ -1203,48 +1270,36 @@ export const createExpressRoutes = async (
                 return;
             }
 
+            console.log("[EXULU] agent tools", agentInstance.tools)
+
+            const enabledTools = agentInstance.tools.map(tool => tools.find(({ id }) => id === tool)).filter(Boolean)
+
+            console.log("[EXULU] enabled tools", enabledTools)
+
             // todo add authentication based on thread id to guarantee privacy
             // todo validate req.body data structure
             if (!!stream) {
-                const chatClient = await agent.chat(agentInstance.id)
-                if (!chatClient) {
-                    res.status(500).json({
-                        message: "Agent instantiation not successful."
-                    })
-                    return;
-                }
-                const { textStream } = await chatClient.stream(req.body.messages, {
-                    threadId: `${req.body.threadId}`, // conversation id
-                    resourceId: `${req.body.resourceId}`, // user id
-                    ...(agent.outputSchema && { output: agent.outputSchema }),
-                    maxRetries: 2, // todo make part of ExuluAgent class
-                    maxSteps: 5, // todo make part of ExuluAgent class
-                    onError: error => console.error("[EXULU] chat stream error.", error),
-                    onFinish: ({ response, usage }) => console.info(
-                        "[EXULU] chat stream finished.",
-                        usage
-                    )
+                const result = agent.generateStream({
+                    messages: req.body.messages,
+                    tools: enabledTools,
+                    statistics: {
+                        label: agent.name,
+                        trigger: "agent"
+                    }
                 })
-
                 // Returns a response that can be used by the "useChat" hook
                 // on the client side from the vercel "ai" SDK.
-                for await (const delta of textStream) {
-                    // Client's useChat is configured to use streamProtocol 'text', so we can 
-                    // send text deltas directly without SSE framing.
-                    res.write(`data: ${delta}\n\n`);
-                }
-                res.end();
-                return
-
+                result.pipeDataStreamToResponse(res);
+                return;
             } else {
-                const response = await agent.chat.generate(req.body.messages, {
-                    resourceId: `${authenticationResult.user.id}`,
-                    output: agent.outputSchema,
-                    threadId: `${req.body.threadId}`, // conversation id
-                    maxRetries: 2, // todo make part of ExuluAgent class
-                    maxSteps: 5 // todo make part of ExuluAgent class
+                const response = await agent.generateSync({
+                    messages: req.body.messages,
+                    tools: enabledTools.map(),
+                    statistics: {
+                        label: agent.name,
+                        trigger: "agent"
+                    }
                 })
-
                 res.status(200).json(response)
                 return;
 
@@ -1343,7 +1398,7 @@ export const createExpressRoutes = async (
     // This route basically passes the request 1:1 to the Anthropic API, but we can
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
-    app.use('/gateway/anthropic', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+    app.use('/gateway/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
 
         const path = req.url;
         const url = `${TARGET_API}${path}`;
@@ -1385,6 +1440,23 @@ export const createExpressRoutes = async (
 
             console.log("[EXULU] authentication result", authenticationResult)
 
+            const { db } = await postgresClient();
+            // Todo check if user has access to agent via their role
+            const agent = await db.from("agents").where({
+                id: req.params.id
+            }).first();
+
+            if (!agent) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+\x1b[41m -- Agent ${req.params.id} not found or you do not have access to it. --
+\x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("[EXULU] agent", agent?.name)
+
             if (!process.env.NEXTAUTH_SECRET) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
                 res.setHeader('Content-Type', 'application/json');
@@ -1402,6 +1474,9 @@ export const createExpressRoutes = async (
             // Decrypt the anthropic token.
             const bytes = CryptoJS.AES.decrypt(authenticationResult.user?.anthropic_token, process.env.NEXTAUTH_SECRET);
             const anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+
+            // todo get enabled tools from agent and add them to the request body
+            // todo build logic to execute tool calls 
 
             // Set the anthropic api key in the headers.
             const headers = {
@@ -1425,6 +1500,14 @@ export const createExpressRoutes = async (
 
             console.log('[PROXY] Response:', response);
             console.log('[PROXY] Response:', response.body);
+
+            await updateStatistic({
+                name: "count",
+                label: "Claude Code",
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: "claude-code",
+                count: 1
+            })
 
             // Copy response headers
             response.headers.forEach((value, key) => {

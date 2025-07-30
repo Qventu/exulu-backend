@@ -1,11 +1,13 @@
-import { ExuluAgent, ExuluContext, ExuluEmbedder, ExuluWorkflow, type ExuluTool } from "./classes.ts";
+import { ExuluAgent, ExuluContext, ExuluWorkflow, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
-import { defaultAgent } from "../templates/agents/default-agent.ts";
+import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
+import { askChatgpt, createSession } from "../templates/tools/browserbase.ts";
+import { getTicket } from "../templates/tools/jira.ts";
 
 export type ExuluConfig = {
     workers: {
@@ -53,7 +55,12 @@ export class ExuluApp {
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),
             // Add agents as tools
-            ...(agents || []).map(agent => agent.tool())
+            ...(agents || []).map(agent => agent.tool()),
+            ...[
+                createSession,
+                askChatgpt,
+                getTicket
+            ]
         ]
 
         const contextsArray = Object.values(contexts || {});

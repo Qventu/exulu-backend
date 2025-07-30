@@ -30,7 +30,7 @@ export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", na
         return;
     }
     if (type === "date") {
-        t.date(name);
+        t.timestamp(name);
         return;
     }
     if (type === "uuid") {
