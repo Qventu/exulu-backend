@@ -1582,14 +1582,14 @@ const preprocessInputs = async (data: any) => {
 };
 
 const getPresignedFileUrl = async (key: string) => {
-    if (!process.env.NEXT_PUBLIC_UPLOAD_URL) {
-        throw new Error("Missing process.env.NEXT_PUBLIC_UPLOAD_URL")
+    if (!process.env.NEXT_BACKEND) {
+        throw new Error("Missing process.env.NEXT_BACKEND")
     }
     if (!process.env.INTERNAL_SECRET) {
-        throw new Error("Missing process.env.NEXT_PUBLIC_UPLOAD_URL")
+        throw new Error("Missing process.env.NEXT_BACKEND")
     }
     console.log(`[EXULU] fetching presigned url for file with key: ${key}`)
-    let url = `${process.env.NEXT_PUBLIC_UPLOAD_URL}/s3/download?key=${key}`;
+    let url = `${process.env.NEXT_BACKEND}/s3/download?key=${key}`;
     const response = await fetch(url, {
         method: "GET",
         headers: {

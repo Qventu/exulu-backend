@@ -14,7 +14,12 @@ export async function postgresClient(): Promise<{
 }> {
     if (!db["exulu"]) {
         try {
-            console.log("[EXULU] Initializing exulu database.")
+            console.log("[EXULU] Connecting to exulu database.")
+            console.log("[EXULU] POSTGRES_DB_HOST:", process.env.POSTGRES_DB_HOST)
+            console.log("[EXULU] POSTGRES_DB_PORT:", process.env.POSTGRES_DB_PORT)
+            console.log("[EXULU] POSTGRES_DB_USER:", process.env.POSTGRES_DB_USER)
+            console.log("[EXULU] POSTGRES_DB_PASSWORD:", process.env.POSTGRES_DB_PASSWORD)
+            console.log("[EXULU] POSTGRES_DB_SSL:", process.env.POSTGRES_DB_SSL)
             const knex = Knex({
                 client: 'pg',
                 connection: {

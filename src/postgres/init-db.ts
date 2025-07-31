@@ -182,7 +182,7 @@ const up = async function (knex: Knex) {
 };
 
 export const execute = async () => {
-    console.log("[EXULU] Initializing database.")
+    console.log("[EXULU] Initializing Exulu IMP database.")
     const { db } = await postgresClient()
 
     await up(db)
