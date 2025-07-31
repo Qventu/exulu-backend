@@ -8,6 +8,7 @@ import { encryptString, generateApiKey } from "../auth/generate-key";
 const up = async function (knex: Knex) {
 
     if (!await knex.schema.hasTable('agent_sessions')) {
+        console.log("[EXULU] Creating agent_sessions table.")
         await knex.schema.createTable('agent_sessions', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -23,6 +24,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('agent_messages')) {
+        console.log("[EXULU] Creating agent_messages table.")
         await knex.schema.createTable('agent_messages', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -38,6 +40,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('roles')) {
+        console.log("[EXULU] Creating roles table.")
         await knex.schema.createTable('roles', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -53,6 +56,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('eval_results')) {
+        console.log("[EXULU] Creating eval_results table.")
         await knex.schema.createTable('eval_results', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -68,6 +72,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('statistics')) {
+        console.log("[EXULU] Creating statistics table.")
         await knex.schema.createTable('statistics', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -83,6 +88,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('jobs')) {
+        console.log("[EXULU] Creating jobs table.")
         await knex.schema.createTable('jobs', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -98,6 +104,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('agents')) {
+        console.log("[EXULU] Creating agents table.")
         await knex.schema.createTable('agents', table => {
             table.uuid("id").primary().defaultTo(knex.fn.uuid());
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -114,6 +121,7 @@ const up = async function (knex: Knex) {
 
     // Next auth tables
     if (!await knex.schema.hasTable('verification_token')) {
+        console.log("[EXULU] Creating verification_token table.")
         await knex.schema.createTable('verification_token', table => {
             table.text('identifier').notNullable();
             table.timestamp('expires', { useTz: true }).notNullable();
@@ -123,6 +131,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('users')) {
+        console.log("[EXULU] Creating users table.")
         await knex.schema.createTable('users', table => {
             table.increments('id').primary(); // next auth stores users with id type SERIAL, so we need to use number
             table.timestamp('createdAt').defaultTo(knex.fn.now());
@@ -155,6 +164,7 @@ const up = async function (knex: Knex) {
     }
 
     if (!await knex.schema.hasTable('accounts')) {
+        console.log("[EXULU] Creating accounts table.")
         await knex.schema.createTable('accounts', table => {
             table.increments('id').primary(); // next auth stores users with id type SERIAL, so we need to use number
             table.integer('userId').notNullable();
@@ -182,9 +192,10 @@ const up = async function (knex: Knex) {
 };
 
 export const execute = async () => {
-    console.log("[EXULU] Initializing Exulu IMP database.")
+    
     const { db } = await postgresClient()
 
+    console.log("[EXULU] Checking Exulu IMP database status.")
     await up(db)
 
     console.log("[EXULU] Inserting default user and admin role.")

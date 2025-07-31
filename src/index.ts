@@ -1,8 +1,6 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
-import { execute as initDb } from "./postgres/init-db"
-import { generateApiKey } from "./auth/generate-key"
 export { ExuluContext, ExuluEmbedder, ExuluSource, ExuluWorkflow, ExuluAgent, ExuluTool, ExuluEval, ExuluZodFileType, type ExuluWorkflowStep as ExuluWorkflowStep } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
 export { type Job as ExuluJob } from "@EXULU_TYPES/models/job"
@@ -28,14 +26,5 @@ export const ExuluChunkers = {
     recursive: {
         function: RecursiveChunker,
         rules: RecursiveRules
-    }
-}
-
-export const ExuluDatabase = {
-    init: async () => {
-        await initDb()
-    },
-    generateApiKey: async (name: string, email: string) => {
-        return await generateApiKey(name, email)
     }
 }
