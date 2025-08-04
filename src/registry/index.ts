@@ -1,14 +1,13 @@
 import { ExuluAgent, ExuluContext, ExuluWorkflow, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
-import { createWorkers } from "./worker.ts";
+import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
 import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
 import { askChatgpt, createSession } from "../templates/tools/browserbase.ts";
 import { getTicket } from "../templates/tools/jira.ts";
-import { execute as initDb } from "../postgres/init-db"
 
 export type ExuluConfig = {
     workers: {
@@ -41,9 +40,6 @@ export class ExuluApp {
         workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
     }): Promise<Express> => {
-
-        await initDb()
-
         this._workflows = workflows ?? [];
         this._contexts = contexts ?? {};
         this._agents = [

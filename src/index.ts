@@ -10,6 +10,7 @@ export { queues as ExuluQueues } from "./bullmq/queues"
 import { RecursiveChunker } from "./chunking/recursive";
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
+import { execute as initDb } from "./postgres/init-db"
 
 export const ExuluJobs = {
     redis: redisClient,
@@ -20,6 +21,12 @@ export const ExuluJobs = {
 
 export { STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM, type STATISTICS_TYPE as EXULU_STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics"
 export { JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM, type JOB_STATUS as EXULU_JOB_STATUS } from "@EXULU_TYPES/enums/jobs"
+
+export const db = {
+    init: async () => {
+        await initDb()
+    }
+}
 
 export const ExuluChunkers = {
     sentence: SentenceChunker,
