@@ -16,8 +16,8 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
     // and agent jobs in the defined queues by checking the registry.
 
     if (!redisServer.host || !redisServer.port) {
-        console.error("[EXULU] you are trying to start workers, but no redis server is configured in the environment.")
-        throw new Error("No redis server configured in the environment, so cannot start workers.")
+        console.error("[EXULU] you are trying to start worker, but no redis server is configured in the environment.")
+        throw new Error("No redis server configured in the environment, so cannot start worker.")
     }
 
     if (!redisConnection) {

@@ -65,8 +65,6 @@ export const generateApiKey = async (name: string, email: string): Promise<{ key
     } else {
         console.log("[EXULU] API user with that name already exists.")
     }
-    console.log("[EXULU] Key generated, copy and use the plain key from here, you will not be able to access it again.")
-    console.log("[EXULU] Key: ", `${plainKey}${postFix}`)
     return {
         key: `${plainKey}${postFix}`
     }

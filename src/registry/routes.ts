@@ -1399,21 +1399,23 @@ export const createExpressRoutes = async (
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
     app.use('/gateway/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
-
         const path = req.url;
         const url = `${TARGET_API}${path}`;
-
-        console.log('[PROXY] Manual proxy to:', url);
-        console.log('[PROXY] Method:', req.method);
-        console.log('[PROXY] Headers:', Object.keys(req.headers));
-        console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
-        console.log('[PROXY] Request model name:', req.body.model);
-        console.log('[PROXY] Request stream:', req.body.stream);
-        console.log('[PROXY] Request messages:', req.body.messages?.length);
+        // const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+        // console.log('[PROXY] Manual proxy to:', url);
+        // console.log('[PROXY] Path:', path);
+        // console.log('[PROXY] Full URL:', fullUrl);
+        // console.log('[PROXY] Method:', req.method);
+        // console.log('[PROXY] Headers:', Object.keys(req.headers));
+        // console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
+        // console.log('[PROXY] Request model name:', req.body.model);
+        // console.log('[PROXY] Request stream:', req.body.stream);
+        // console.log('[PROXY] Request messages:', req.body.messages?.length);
+        // console.log('[PROXY] Request id:', req.params.id);
 
         try {
 
-            console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
+            // console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
 
             // TODO
             /* We can create a special config page for Claude code on the IMP UI which 
@@ -1434,11 +1436,10 @@ export const createExpressRoutes = async (
             // Authenticate the user, and exchange the user token for an anthropic token.
             const authenticationResult = await requestValidators.authenticate(req);
             if (!authenticationResult.user?.id) {
+                console.log("[EXULU] failed authentication result", authenticationResult)
                 res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
                 return;
             }
-
-            console.log("[EXULU] authentication result", authenticationResult)
 
             const { db } = await postgresClient();
             // Todo check if user has access to agent via their role
@@ -1455,7 +1456,7 @@ export const createExpressRoutes = async (
                 return;
             }
 
-            console.log("[EXULU] agent", agent?.name)
+            console.log("[EXULU] anthropic proxy called for agent:", agent?.name)
 
             if (!process.env.NEXTAUTH_SECRET) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
@@ -1489,17 +1490,12 @@ export const createExpressRoutes = async (
             if (req.headers['accept']) headers['accept'] = req.headers['accept'];
             if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
 
-            console.log("[EXULU] anthropic api key", anthropicApiKey)
-
             // Send the request to the anthropic api.
             const response = await fetch(url, {
                 method: req.method,
                 headers: headers,
                 body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
             });
-
-            console.log('[PROXY] Response:', response);
-            console.log('[PROXY] Response:', response.body);
 
             await updateStatistic({
                 name: "count",
@@ -1535,7 +1531,6 @@ export const createExpressRoutes = async (
                     if (done) break;
 
                     const chunk = decoder.decode(value, { stream: true });
-                    console.log('[PROXY] Chunk:', chunk);
                     res.write(chunk);
                 }
                 res.end();
@@ -1543,7 +1538,6 @@ export const createExpressRoutes = async (
             }
 
             const data = await response.arrayBuffer();
-            console.log('[PROXY] Data:', data);
             res.end(Buffer.from(data));
 
         } catch (error: any) {

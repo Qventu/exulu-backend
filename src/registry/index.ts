@@ -1,7 +1,7 @@
 import { ExuluAgent, ExuluContext, ExuluWorkflow, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
-import { createWorkers } from "./workers.ts";
+import { createWorkers } from "./worker.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
