@@ -2,6 +2,7 @@ import Knex from 'knex';
 import { Knex as KnexType } from 'knex';
 import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 let db: Record<string, KnexType> = {};
+let databaseExistsChecked = false;
 
 // We have 3 databases, that are seperated on purpose. Exulu core is
 // managed by the prisma schema and contains things like agent configurations,
@@ -9,6 +10,40 @@ let db: Record<string, KnexType> = {};
 // databases are managed dynamically. The exulu knowledge database contains
 // all the knowledge base items, while the mastra database contains the
 // chat history and user sessions.
+
+async function ensureDatabaseExists(): Promise<void> {
+    // Connect to default postgres database to check/create exulu database
+    console.log("[EXULU] Ensuring exulu database exists...")
+    const defaultKnex = Knex({
+        client: 'pg',
+        connection: {
+            host: process.env.POSTGRES_DB_HOST,
+            port: parseInt(process.env.POSTGRES_DB_PORT || '5432'),
+            user: process.env.POSTGRES_DB_USER,
+            database: 'postgres', // Connect to default database
+            password: process.env.POSTGRES_DB_PASSWORD,
+            ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+        }
+    });
+
+    try {
+        // Check if exulu database exists
+        const result = await defaultKnex.raw(`
+            SELECT 1 FROM pg_database WHERE datname = 'exulu'
+        `);
+
+        if (result.rows.length === 0) {
+            console.log("[EXULU] Database 'exulu' does not exist. Creating it...");
+            await defaultKnex.raw(`CREATE DATABASE exulu`);
+            console.log("[EXULU] Database 'exulu' created successfully.");
+        } else {
+            console.log("[EXULU] Database 'exulu' already exists.");
+        }
+    } finally {
+        await defaultKnex.destroy();
+    }
+}
+
 export async function postgresClient(): Promise<{
     db: KnexType
 }> {
@@ -20,6 +55,15 @@ export async function postgresClient(): Promise<{
             console.log("[EXULU] POSTGRES_DB_USER:", process.env.POSTGRES_DB_USER)
             console.log("[EXULU] POSTGRES_DB_PASSWORD:", process.env.POSTGRES_DB_PASSWORD)
             console.log("[EXULU] POSTGRES_DB_SSL:", process.env.POSTGRES_DB_SSL)
+            console.log("[EXULU] Database exists checked:", databaseExistsChecked)
+
+            // Only check database existence once per application lifecycle
+            if (!databaseExistsChecked) {
+                console.log("[EXULU] Ensuring exulu database exists...");
+                await ensureDatabaseExists();
+                databaseExistsChecked = true;
+            }
+
             const knex = Knex({
                 client: 'pg',
                 connection: {

@@ -32,6 +32,8 @@ export const global_queues = {
 }
 
 const createRecurringJobs = async () => {
+
+    console.log("[EXULU] creating recurring jobs.")
     const recurringJobSchedulersLogs: Array<{ name: string; pattern: string; ttld?: string; opts?: any }> = [];
 
     const queue = queues.use(global_queues.logs_cleaner);
@@ -61,7 +63,7 @@ const createRecurringJobs = async () => {
         },
     );
 
-    console.log("Recurring job schedulers:")
+    console.log("[EXULU] recurring job schedulers:")
     console.table(recurringJobSchedulersLogs);
 
     return queue;
