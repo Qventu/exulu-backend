@@ -6,8 +6,6 @@ import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
 import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
-import { askChatgpt, createSession } from "../templates/tools/browserbase.ts";
-import { getTicket } from "../templates/tools/jira.ts";
 
 export type ExuluConfig = {
     workers: {
@@ -54,12 +52,7 @@ export class ExuluApp {
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),
             // Add agents as tools
-            ...(agents || []).map(agent => agent.tool()),
-            ...[
-                createSession,
-                askChatgpt,
-                getTicket
-            ]
+            ...(agents || []).map(agent => agent.tool())
         ]
 
         const contextsArray = Object.values(contexts || {});
