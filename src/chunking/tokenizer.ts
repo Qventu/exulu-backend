@@ -1,7 +1,7 @@
 import { Tiktoken } from "tiktoken/lite";
 import { load } from "tiktoken/load"
-import registry from "tiktoken/registry.json";
-import models from "tiktoken/model_to_encoding.json";
+import registry from "tiktoken/registry.json" with { type: "json" };
+import models from "tiktoken/model_to_encoding.json" with { type: "json" };
 
 export type TokenizerModelName = keyof typeof models;
 
