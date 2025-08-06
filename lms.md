@@ -1,0 +1,3 @@
+The Exulu LMS is a Tutor Open Edx instance hosted on a hetzner cloud. Important, we used this guide https://community.hetzner.com/tutorials/open-edx-lms-docker. Pleas note the command "config save --set ENABLE_WEB_PROXY=false --set CADDY_HTTP_PORT=84" used in the guide is false, it should be "tutor config save --set ENABLE_WEB_PROXY=true --set ENABLE_HTTPS=true --set CADDY_HTTP_PORT=80 --set CADDY_HTTPS_PORT=443".
+
+Also follow this guide to setup the first user, and upgrade the database to support icons / emojis: https://docs.tutor.edly.io/local.html#createuser

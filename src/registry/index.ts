@@ -16,7 +16,6 @@ export type ExuluConfig = {
         enabled: boolean,
     }
 }
-
 export class ExuluApp {
 
     private _agents: ExuluAgent[] = []
