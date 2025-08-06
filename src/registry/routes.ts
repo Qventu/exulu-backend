@@ -17,7 +17,7 @@ import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
 import { createSDL } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
-import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema } from "../postgres/core-schema.ts";
+import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
@@ -80,6 +80,7 @@ export type ExuluTableDefinition = {
         index?: boolean,
         required?: boolean,
         default?: any,
+        unique?: boolean,
     }[]
 }
 
@@ -169,7 +170,7 @@ export const createExpressRoutes = async (
         console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
     }
 
-    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema]);
+    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema]);
 
     interface GraphqlContext {
         db: Knex;
@@ -1284,6 +1285,7 @@ export const createExpressRoutes = async (
                 const result = agent.generateStream({
                     messages: req.body.messages,
                     tools: enabledTools,
+                    configs: agentInstance.tools,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -1296,7 +1298,8 @@ export const createExpressRoutes = async (
             } else {
                 const response = await agent.generateSync({
                     messages: req.body.messages,
-                    tools: enabledTools.map(),
+                    tools: enabledTools.map(tool => tool.tool),
+                    configs: agentInstance.tools,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -1474,9 +1477,32 @@ export const createExpressRoutes = async (
                 return;
             }
 
-            // Decrypt the anthropic token.
-            const bytes = CryptoJS.AES.decrypt(authenticationResult.user?.anthropic_token, process.env.NEXTAUTH_SECRET);
-            const anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+            // Get the variable name from user's anthropic_token field
+            const variableName = authenticationResult.user.anthropic_token;
+            
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+            if (!variable) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_found);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            // Get the API key from the variable (decrypt if encrypted)
+            let anthropicApiKey = variable.value;
+
+            if (!variable.encrypted) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+            }
 
             // todo get enabled tools from agent and add them to the request body
             // todo build logic to execute tool calls 

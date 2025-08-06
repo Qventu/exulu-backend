@@ -4,6 +4,7 @@ export type User = {
   emailVerified?: string;
   type?: "api" | "user"
   anthropic_token?: string;
+  super_admin?: boolean;
   roles?: {
     id: string;
     role: string;

@@ -17,6 +17,8 @@ import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { ExuluEvalUtils } from "../evals/utils";
+import { CLAUDE_MESSAGES } from "./utils/claude-messages";
+import CryptoJS from 'crypto-js';
 
 export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
@@ -36,7 +38,7 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (tools: ExuluTool[] | undefined): Record<string, Tool> => {
+const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined): Record<string, Tool> => {
     if (!tools) return {};
     const sanitizedTools = tools ? tools.map(tool => ({
         ...tool,
@@ -49,13 +51,69 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined): Record<strin
             message: z.string().describe('The message to ask for confirmation.'),
         }),
     }
+
     return {
         ...sanitizedTools?.reduce(
             (prev, cur) =>
-                ({ ...prev, [cur.name]: cur.tool }), {}
+            ({
+                ...prev, [cur.name]: {
+                    ...cur.tool,
+                    execute: async (inputs: any, options: any) => {
+                        if (!cur.tool?.execute) {
+                            console.error("[EXULU] Tool execute function is undefined.", cur.tool)
+                            throw new Error("Tool execute function is undefined.")
+                        }
+                        let config = configs?.find(config => config.toolId === cur.id);
+
+                        if (config) {
+                            config = await hydrateVariables(config || []);
+                        }
+                        return await cur.tool.execute({
+                            ...inputs,
+                            // Convert config to object format if a config object 
+                            // is available, after we added the .value property
+                            // by hydrating it from the variables table.
+                            config: config ? config.config.reduce((acc, curr) => {
+                                acc[curr.name] = curr.value;
+                                return acc;
+                            }, {}) : {}
+                        }, options);
+                    }
+                }
+            }), {}
         ),
         askForConfirmation
     }
+}
+
+const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
+    const { db } = await postgresClient();
+    const promises = tool.config.map(async (toolConfig) => {
+
+        // Get the variable name from user's anthropic_token field
+        const variableName = toolConfig.variable;
+
+        // Look up the variable from the variables table
+        const variable = await db.from("variables").where({ name: variableName }).first();
+        if (!variable) {
+            console.error("[EXULU] Variable " + variableName + " not found.")
+            throw new Error("Variable " + variableName + " not found.")
+        }
+
+        // Get the API key from the variable (decrypt if encrypted)
+        let value = variable.value;
+
+        if (variable.encrypted) {
+            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+            value = bytes.toString(CryptoJS.enc.Utf8);
+        }
+
+        toolConfig.value = value;
+
+    })
+    await Promise.all(promises);
+    console.log("[EXULU] Variable values retrieved and added to tool config.")
+    return tool;
 }
 
 export function generateSlug(name: string): string {
@@ -148,6 +206,15 @@ interface ExuluAgentParams {
     rateLimit?: RateLimiterRule;
 }
 
+interface ExuluAgentToolConfig {
+    toolId: string,
+    config: {
+        name: string,
+        variable: string // is a variable name
+        value?: any // fetched on demand from the database based on the variable name
+    }[]
+}
+
 export class ExuluAgent {
 
     public id: string;
@@ -194,12 +261,13 @@ export class ExuluAgent {
     public tool = (): ExuluTool => {
         return new ExuluTool({
             id: this.id,
-            name: `${this.name} agent`,
+            name: `${this.name}`,
             type: "agent",
             inputSchema: z.object({
                 prompt: z.string(),
             }),
             description: `A function that calls an AI agent named: ${this.name}. The agent does the following: ${this.description}.`,
+            config: [],
             execute: async ({ prompt }: any) => {
                 return await this.generateSync({
                     prompt: prompt,
@@ -212,8 +280,8 @@ export class ExuluAgent {
         });
     }
 
-    generateSync = async ({ messages, prompt, tools, statistics }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams
+    generateSync = async ({ messages, prompt, tools, statistics, configs }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, configs?: ExuluAgentToolConfig[]
     }) => {
 
         if (!this.model) {
@@ -234,7 +302,7 @@ export class ExuluAgent {
             messages: messages,
             prompt: prompt,
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools),
+            tools: convertToolsArrayToObject(tools, configs),
             maxSteps: 5,
         });
 
@@ -251,8 +319,8 @@ export class ExuluAgent {
         return text;
     }
 
-    generateStream = ({ messages, prompt, tools, statistics }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams
+    generateStream = ({ messages, prompt, tools, statistics, configs }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, configs?: ExuluAgentToolConfig[]
     }) => {
 
         if (!this.model) {
@@ -273,7 +341,7 @@ export class ExuluAgent {
             prompt: prompt,
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools),
+            tools: convertToolsArrayToObject(tools, configs),
             maxSteps: 5,
             onError: error => console.error("[EXULU] chat stream error.", error),
             onFinish: async ({ response, usage }) => {
@@ -813,16 +881,25 @@ export class ExuluTool {
     public inputSchema?: ZodSchema;
     public type: "context" | "function" | "agent";
     public tool: Tool
+    public config: {
+        name: string,
+        description: string
+    }[]
 
-    constructor({ id, name, description, inputSchema, type, execute }: {
+    constructor({ id, name, description, inputSchema, type, execute, config }: {
         id: string,
         name: string,
         description: string,
         inputSchema?: ZodSchema,
         type: "context" | "function" | "agent",
+        config: {
+            name: string,
+            description: string
+        }[],
         execute: (inputs: any) => Promise<any>
     }) {
         this.id = id;
+        this.config = config;
         this.name = name;
         this.description = description;
         this.inputSchema = inputSchema;
@@ -838,6 +915,7 @@ export class ExuluTool {
 type ExuluContextFieldDefinition = {
     name: string,
     type: ExuluFieldTypes
+    unique?: boolean
 }
 
 export class ExuluContext {
@@ -1382,11 +1460,11 @@ export class ExuluContext {
             table.text('source');
             table.timestamp('embeddings_updated_at')
             for (const field of this.fields) {
-                const { type, name } = field;
+                const { type, name, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name));
+                mapType(table, type, sanitizeName(name), undefined, unique);
             }
             table.timestamps(true, true);
         });
@@ -1410,11 +1488,12 @@ export class ExuluContext {
     public tool = (): ExuluTool => {
         return new ExuluTool({
             id: this.id,
-            name: `${this.name} context`,
+            name: `${this.name}`,
             type: "context",
             inputSchema: z.object({
                 query: z.string(),
             }),
+            config: [],
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
             execute: async ({ query }: any) => {
                 // todo make trigger more specific with the agent name

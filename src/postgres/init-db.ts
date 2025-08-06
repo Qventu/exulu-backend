@@ -1,12 +1,13 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema } from "./core-schema";
+import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import { encryptString, generateApiKey } from "../auth/generate-key";
 
 const up = async function (knex: Knex) {
-
+    console.log("[EXULU] Database up.")
+    
     if (!await knex.schema.hasTable('agent_sessions')) {
         console.log("[EXULU] Creating agent_sessions table.")
         await knex.schema.createTable('agent_sessions', table => {
@@ -14,11 +15,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of agentSessionsSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -30,11 +31,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of agentMessagesSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -46,11 +47,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of rolesSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -62,11 +63,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of evalResultsSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -78,11 +79,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of statisticsSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -94,11 +95,11 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of jobsSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -110,11 +111,27 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of agentsSchema.fields) {
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
+            }
+        });
+    }
+
+    if (!await knex.schema.hasTable('variables')) {
+        console.log("[EXULU] Creating variables table.")
+        await knex.schema.createTable('variables', table => {
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
+            for (const field of variablesSchema.fields) {
+                const { type, name, default: defaultValue, unique } = field;
+                if (!type || !name) {
+                    continue;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }
@@ -144,7 +161,7 @@ const up = async function (knex: Knex) {
 
             for (const field of usersSchema.fields) {
                 console.log("[EXULU] field", field)
-                const { type, name, default: defaultValue } = field;
+                const { type, name, default: defaultValue, unique } = field;
                 if (
                     name === "id" ||
                     name === "name" ||
@@ -158,7 +175,7 @@ const up = async function (knex: Knex) {
                 if (!type || !name) {
                     continue;
                 }
-                mapType(table, type, sanitizeName(name), defaultValue);
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
     }

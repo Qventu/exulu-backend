@@ -3,6 +3,7 @@ import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from 'graphql-type-json';
 import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
+import { requestValidators } from '../route-validators';
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -188,8 +189,11 @@ function createMutations(table: ExuluTableDefinition) {
             return results[0];
         },
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
-            const { db } = context;
+            const { db, req } = context;
             let { where, input } = args;
+            
+            await validateSuperAdminPermission(tableNamePlural, input, req);
+            
             input = encryptSensitiveFields(input);
             await db(tableNamePlural).where(where).update({
                 ...input,
@@ -200,9 +204,12 @@ function createMutations(table: ExuluTableDefinition) {
             return result;
         },
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
+            const { db, req } = context;
             let { id, input } = args;
+            
+            await validateSuperAdminPermission(tableNamePlural, input, req);
+            
             input = encryptSensitiveFields(input);
-            const { db } = context;
             await db(tableNamePlural).where({ id }).update({
                 ...input,
                 updatedAt: new Date()
@@ -363,6 +370,7 @@ function createQueries(table: ExuluTableDefinition) {
 }
 
 export function createSDL(tables: ExuluTableDefinition[]) {
+    console.log("[EXULU] Creating SDL")
     let typeDefs = `
     scalar JSON
     scalar Date
@@ -383,6 +391,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
         const tableNameSingular = table.name.singular.toLowerCase();
         const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
+        console.log("[EXULU] Adding table >>>>>", tableNamePlural)
         typeDefs += `
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
@@ -477,13 +486,28 @@ type JobStatistics {
     return schema;
 }
 
-const sensitiveFields = ["anthropic_token"];
-
 const encryptSensitiveFields = (input: any) => {
-    sensitiveFields.forEach(field => {
-        if (input[field]) {
-            input[field] = CryptoJS.AES.encrypt(input[field], process.env.NEXTAUTH_SECRET).toString();
-        }
-    });
+    
+    // Special handling for variables table - encrypt value if encrypted flag is true
+    if (input.value && input.encrypted === true) {
+        input.value = CryptoJS.AES.encrypt(input.value, process.env.NEXTAUTH_SECRET).toString();
+    }
+    
     return input;
+}
+
+const validateSuperAdminPermission = async (tableNamePlural: string, input: any, req: any) => {
+    // Check if trying to update super_admin field for users table
+    if (tableNamePlural === 'users' && input.super_admin !== undefined) {
+        const authResult = await requestValidators.authenticate(req);
+        
+        if (authResult.error || !authResult.user) {
+            throw new Error('Authentication failed');
+        }
+        
+        // Only super_admin can update super_admin field
+        if (!authResult.user.super_admin) {
+            throw new Error('Only super administrators can modify super_admin status');
+        }
+    }
 }

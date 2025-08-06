@@ -338,3 +338,27 @@ export const agentsSchema: ExuluTableDefinition = {
         }
     ]
 }
+
+export const variablesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "variables",
+        singular: "variable"
+    },
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            index: true,
+            unique: true
+        },
+        {
+            name: "value",
+            type: "longText"
+        },
+        {
+            name: "encrypted",
+            type: "boolean",
+            default: false
+        }
+    ]
+}
