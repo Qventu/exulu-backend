@@ -226,7 +226,7 @@ export const createExpressRoutes = async (
         }
         const { db } = await postgresClient();
         const agentsFromDb = await db.from("agents").select("*");
-        res.status(200).json( agentsFromDb.map((agent: any) => {
+        res.status(200).json(agentsFromDb.map((agent: any) => {
             const backend = agents.find(a => a.id === agent.backend);
             if (!backend) {
                 return null;
@@ -280,8 +280,8 @@ export const createExpressRoutes = async (
                 name: agent.name,
                 id: agent.id,
                 description: agent.description,
-                provider: backend?.model?.provider,
-                model: backend?.model?.modelId,
+                provider: backend?.model?.create({ apiKey: "" }).provider,
+                model: backend?.model?.create({ apiKey: "" }).modelId,
                 active: agent.active,
                 public: agent.public,
                 type: agent.type,
@@ -289,6 +289,7 @@ export const createExpressRoutes = async (
                 rateLimit: backend?.rateLimit,
                 streaming: backend?.streaming,
                 capabilities: backend?.capabilities,
+                providerApiKey: agent.providerApiKey,
                 // todo add contexts
                 availableTools: tools,
                 enabledTools: agent.tools
@@ -1207,9 +1208,6 @@ export const createExpressRoutes = async (
             note: `Agent endpoint for ${agent.id}`
         });
 
-        // The instance is the object in mongodb that uses this agent
-        // as the backend. It allows for multiple instances of the same agent
-        // to be used in parallel, with different configurations.
         app.post(slug + "/:instance", async (req: Request, res: Response) => {
 
             const instance = req.params.instance;
@@ -1275,9 +1273,36 @@ export const createExpressRoutes = async (
 
             console.log("[EXULU] agent tools", agentInstance.tools)
 
-            const enabledTools = agentInstance.tools.map(tool => tools.find(({ id }) => id === tool)).filter(Boolean)
+            const enabledTools = agentInstance.tools.map(({ config, toolId }) => tools.find(({ id }) => id === toolId)).filter(Boolean)
 
             console.log("[EXULU] enabled tools", enabledTools)
+
+            // Get the variable name from user's anthropic_token field
+            const variableName = agentInstance.providerApiKey;
+
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+            if (!variable) {
+                res.status(400).json({
+                    message: "Provider API key variable not found."
+                })
+                return;
+            }
+
+            // Get the API key from the variable (decrypt if encrypted)
+            let providerApiKey = variable.value;
+
+            if (!variable.encrypted) {
+                res.status(400).json({
+                    message: "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys."
+                })
+                return;
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+            }
 
             // todo add authentication based on thread id to guarantee privacy
             // todo validate req.body data structure
@@ -1285,7 +1310,8 @@ export const createExpressRoutes = async (
                 const result = agent.generateStream({
                     messages: req.body.messages,
                     tools: enabledTools,
-                    configs: agentInstance.tools,
+                    providerApiKey,
+                    toolConfigs: agentInstance.tools,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -1299,7 +1325,8 @@ export const createExpressRoutes = async (
                 const response = await agent.generateSync({
                     messages: req.body.messages,
                     tools: enabledTools.map(tool => tool.tool),
-                    configs: agentInstance.tools,
+                    providerApiKey,
+                    toolConfigs: agentInstance.tools,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -1479,7 +1506,7 @@ export const createExpressRoutes = async (
 
             // Get the variable name from user's anthropic_token field
             const variableName = authenticationResult.user.anthropic_token;
-            
+
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
             if (!variable) {

@@ -311,6 +311,10 @@ export const agentsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "providerApiKey",
+            type: "text"
+        },
+        {
             name: "extensions",
             type: "json"
         },

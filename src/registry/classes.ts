@@ -4,7 +4,7 @@ import { z } from "zod"
 import * as fs from 'fs';
 import * as path from 'path';
 import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
-import { generateObject, generateText, type LanguageModelV1, type Message, streamObject, streamText, tool, type Tool } from "ai";
+import { generateObject, generateText, type LanguageModelV1, type Message, streamText, tool, type Tool } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
 import { postgresClient } from "../postgres/client";
@@ -17,7 +17,6 @@ import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { ExuluEvalUtils } from "../evals/utils";
-import { CLAUDE_MESSAGES } from "./utils/claude-messages";
 import CryptoJS from 'crypto-js';
 
 export function sanitizeToolName(name) {
@@ -38,12 +37,14 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined): Record<string, Tool> => {
+const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string): Record<string, Tool> => {
     if (!tools) return {};
     const sanitizedTools = tools ? tools.map(tool => ({
         ...tool,
         name: sanitizeToolName(tool.name)
     })) : [];
+
+    console.log("[EXULU] Sanitized tools", sanitizedTools)
 
     const askForConfirmation: Tool = {
         description: 'Ask the user for confirmation.',
@@ -68,11 +69,15 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: Exul
                         if (config) {
                             config = await hydrateVariables(config || []);
                         }
+
+                        console.log("[EXULU] Config", config)
+                        
                         return await cur.tool.execute({
                             ...inputs,
                             // Convert config to object format if a config object 
                             // is available, after we added the .value property
                             // by hydrating it from the variables table.
+                            providerApiKey: providerApiKey,
                             config: config ? config.config.reduce((acc, curr) => {
                                 acc[curr.name] = curr.value;
                                 return acc;
@@ -171,9 +176,14 @@ export const ExuluZodFileType = ({
 export type ExuluAgentConfig = {
     name: string,
     instructions: string,
-    model: LanguageModelV1,
+    model: {
+        create: ({ apiKey }: { apiKey: string }) => LanguageModelV1 // LanguageModelV1
+    },
     outputSchema?: ZodSchema;
-    custom?: ZodSchema;
+    custom?: {
+        name: string,
+        description: string
+    }[];
     memory?: {
         lastMessages: number,
         vector: boolean;
@@ -227,7 +237,9 @@ export class ExuluAgent {
     public config?: ExuluAgentConfig | undefined;
     // private memory: Memory | undefined; // TODO do own implementation
     public evals?: ExuluAgentEval[];
-    public model?: LanguageModelV1;
+    public model?: {
+        create: ({ apiKey }: { apiKey: string }) => LanguageModelV1 // LanguageModelV1
+    };
     public capabilities: {
         images: string[],
         files: string[],
@@ -268,9 +280,10 @@ export class ExuluAgent {
             }),
             description: `A function that calls an AI agent named: ${this.name}. The agent does the following: ${this.description}.`,
             config: [],
-            execute: async ({ prompt }: any) => {
+            execute: async ({ prompt, config, providerApiKey }: any) => {
                 return await this.generateSync({
                     prompt: prompt,
+                    providerApiKey: providerApiKey,
                     statistics: {
                         label: "",
                         trigger: "tool"
@@ -280,8 +293,8 @@ export class ExuluAgent {
         });
     }
 
-    generateSync = async ({ messages, prompt, tools, statistics, configs }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, configs?: ExuluAgentToolConfig[]
+    generateSync = async ({ messages, prompt, tools, statistics, toolConfigs, providerApiKey }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
     }) => {
 
         if (!this.model) {
@@ -296,13 +309,17 @@ export class ExuluAgent {
             throw new Error("Prompt and messages cannot be provided at the same time.")
         }
 
+        const model = this.model.create({
+            apiKey: providerApiKey
+        })
+
         const { text } = await generateText({
-            model: this.model,
+            model: model, // Should be a LanguageModelV1
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             messages: messages,
             prompt: prompt,
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, configs),
+            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
             maxSteps: 5,
         });
 
@@ -319,8 +336,8 @@ export class ExuluAgent {
         return text;
     }
 
-    generateStream = ({ messages, prompt, tools, statistics, configs }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, configs?: ExuluAgentToolConfig[]
+    generateStream = ({ messages, prompt, tools, statistics, toolConfigs, providerApiKey }: {
+        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
     }) => {
 
         if (!this.model) {
@@ -335,13 +352,21 @@ export class ExuluAgent {
             throw new Error("Prompt and messages cannot be provided at the same time.")
         }
 
+        const model = this.model.create({
+            apiKey: providerApiKey
+        })
+
+        console.log("[EXULU] Model provider key", providerApiKey)
+
+        console.log("[EXULU] Tool configs", toolConfigs)
+
         return streamText({
-            model: this.model,
+            model: model, // Should be a LanguageModelV1
             messages: messages,
             prompt: prompt,
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, configs),
+            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
             maxSteps: 5,
             onError: error => console.error("[EXULU] chat stream error.", error),
             onFinish: async ({ response, usage }) => {
@@ -701,7 +726,7 @@ type ExuluEvalRunnerInstance = {
 
 type ExuluEvalRunner = ({ data, runner }: {
     data: ExuluEvalInput, runner: {
-        agent?: ExuluAgent,
+        agent?: ExuluAgent & { providerApiKey: string },
         workflow?: ExuluWorkflow
     }
 }) => Promise<{
@@ -763,8 +788,32 @@ export class ExuluEval {
                             if (!data.prompt) {
                                 throw new Error("Prompt is required for running an agent.")
                             }
+
+                            const { db } = await postgresClient();
+                            // Get the variable name from user's anthropic_token field
+                            const variableName = runner.agent.providerApiKey;
+
+                            // Look up the variable from the variables table
+                            const variable = await db.from("variables").where({ name: variableName }).first();
+                            if (!variable) {
+                                throw new Error(`Provider API key for variable "${runner.agent.providerApiKey}" not found.`)
+                            }
+
+                            // Get the API key from the variable (decrypt if encrypted)
+                            let providerApiKey = variable.value;
+
+                            if (!variable.encrypted) {
+                                throw new Error(`Provider API key for variable "${runner.agent.providerApiKey}" is not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.`)
+                            }
+
+                            if (variable.encrypted) {
+                                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                                providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+                            }
+
                             const result = await runner.agent.generateSync({
                                 prompt: data.prompt,
+                                providerApiKey
                             })
                             data.result = result;
                         }
