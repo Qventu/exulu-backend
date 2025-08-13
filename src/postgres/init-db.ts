@@ -1,6 +1,6 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema } from "./core-schema";
+import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema, workflowTemplatesSchema } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import { encryptString, generateApiKey } from "../auth/generate-key";
@@ -127,6 +127,22 @@ const up = async function (knex: Knex) {
             table.timestamp('createdAt').defaultTo(knex.fn.now());
             table.timestamp('updatedAt').defaultTo(knex.fn.now());
             for (const field of variablesSchema.fields) {
+                const { type, name, default: defaultValue, unique } = field;
+                if (!type || !name) {
+                    continue;
+                }
+                mapType(table, type, sanitizeName(name), defaultValue, unique);
+            }
+        });
+    }
+
+    if (!await knex.schema.hasTable('workflow_templates')) {
+        console.log("[EXULU] Creating workflow_templates table.")
+        await knex.schema.createTable('workflow_templates', table => {
+            table.uuid("id").primary().defaultTo(knex.fn.uuid());
+            table.timestamp('createdAt').defaultTo(knex.fn.now());
+            table.timestamp('updatedAt').defaultTo(knex.fn.now());
+            for (const field of workflowTemplatesSchema.fields) {
                 const { type, name, default: defaultValue, unique } = field;
                 if (!type || !name) {
                     continue;

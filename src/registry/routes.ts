@@ -17,7 +17,7 @@ import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
 import { createSDL } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
-import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema } from "../postgres/core-schema.ts";
+import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
@@ -170,7 +170,7 @@ export const createExpressRoutes = async (
         console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
     }
 
-    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema]);
+    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema, workflowTemplatesSchema]);
 
     interface GraphqlContext {
         db: Knex;

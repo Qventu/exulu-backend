@@ -366,3 +366,52 @@ export const variablesSchema: ExuluTableDefinition = {
         }
     ]
 }
+
+export const workflowTemplatesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "workflow_templates",
+        singular: "workflow_template"
+    },
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        },
+        {
+            name: "owner",
+            type: "number",
+            required: true
+        },
+        {
+            name: "visibility",
+            type: "text",
+            required: true
+        },
+        {
+            name: "shared_user_ids",
+            type: "json"
+        },
+        {
+            name: "shared_role_ids",
+            type: "json"
+        },
+        {
+            name: "variables",
+            type: "json"
+        },
+        {
+            name: "steps_json",
+            type: "json",
+            required: true
+        },
+        {
+            name: "example_metadata_json",
+            type: "json"
+        }
+    ]
+}

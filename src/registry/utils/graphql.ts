@@ -179,6 +179,18 @@ function createMutations(table: ExuluTableDefinition) {
             const requestedFields = getRequestedFields(info)
             let { input } = args;
             input = encryptSensitiveFields(input);
+
+            // Check for each field if it is a json field, and if 
+            // so, check if it is an object or array and convert 
+            // it to a string.
+            Object.keys(input).forEach(key => {
+                if (table.fields.find(field => field.name === key)?.type === "json") {
+                    if (typeof input[key] === "object" || Array.isArray(input[key])) {
+                        input[key] = JSON.stringify(input[key]);
+                    }
+                }
+            });
+
             const results = await db(tableNamePlural).insert({
                 ...input,
                 createdAt: new Date(),
@@ -195,6 +207,19 @@ function createMutations(table: ExuluTableDefinition) {
             await validateSuperAdminPermission(tableNamePlural, input, req);
             
             input = encryptSensitiveFields(input);
+
+            // Check for each field if it is a json field, and if 
+            // so, check if it is an object or array and convert 
+            // it to a string.
+            Object.keys(input).forEach(key => {
+                if (table.fields.find(field => field.name === key)?.type === "json") {
+                    if (typeof input[key] === "object" || Array.isArray(input[key])) {
+                        input[key] = JSON.stringify(input[key]);
+                    }
+                }
+            });
+
+
             await db(tableNamePlural).where(where).update({
                 ...input,
                 updatedAt: new Date()
@@ -210,6 +235,19 @@ function createMutations(table: ExuluTableDefinition) {
             await validateSuperAdminPermission(tableNamePlural, input, req);
             
             input = encryptSensitiveFields(input);
+
+            // Check for each field if it is a json field, and if 
+            // so, check if it is an object or array and convert 
+            // it to a string.
+            Object.keys(input).forEach(key => {
+                if (table.fields.find(field => field.name === key)?.type === "json") {
+                    if (typeof input[key] === "object" || Array.isArray(input[key])) {
+                        input[key] = JSON.stringify(input[key]);
+                    }
+                }
+            });
+
+
             await db(tableNamePlural).where({ id }).update({
                 ...input,
                 updatedAt: new Date()
