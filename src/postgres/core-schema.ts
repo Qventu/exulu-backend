@@ -1,6 +1,6 @@
 import type { ExuluTableDefinition } from "../registry/routes"
 
-export const agentMessagesSchema: ExuluTableDefinition = {
+const agentMessagesSchema: ExuluTableDefinition = {
     name: {
         plural: "agent_messages",
         singular: "agent_message"
@@ -21,7 +21,7 @@ export const agentMessagesSchema: ExuluTableDefinition = {
     ]
 }
 
-export const agentSessionsSchema: ExuluTableDefinition = {
+const agentSessionsSchema: ExuluTableDefinition = {
     name: {
         plural: "agent_sessions",
         singular: "agent_session"
@@ -42,12 +42,17 @@ export const agentSessionsSchema: ExuluTableDefinition = {
     ]
 }
 
-export const usersSchema: ExuluTableDefinition = {
+const usersSchema: ExuluTableDefinition = {
     name: {
         plural: "users",
         singular: "user"
     },
     fields: [
+        {
+            name: "id",
+            type: "number",
+            index: true
+        },
         {
             name: "firstname",
             type: "text"
@@ -100,6 +105,10 @@ export const usersSchema: ExuluTableDefinition = {
             type: "date"
         },
         {
+            name: "password",
+            type: "text"
+        },
+        {
             name: "anthropic_token",
             type: "text"
         },
@@ -110,7 +119,7 @@ export const usersSchema: ExuluTableDefinition = {
     ]
 }
 
-export const rolesSchema: ExuluTableDefinition = {
+const rolesSchema: ExuluTableDefinition = {
     name: {
         plural: "roles",
         singular: "role"
@@ -132,7 +141,7 @@ export const rolesSchema: ExuluTableDefinition = {
     ]
 }
 
-export const statisticsSchema: ExuluTableDefinition = {
+const statisticsSchema: ExuluTableDefinition = {
     name: {
         plural: "statistics",
         singular: "statistic"
@@ -157,7 +166,7 @@ export const statisticsSchema: ExuluTableDefinition = {
     ]
 }
 
-export const workflowSchema: ExuluTableDefinition = {
+const workflowSchema: ExuluTableDefinition = {
     name: {
         plural: "workflows",
         singular: "workflow"
@@ -178,7 +187,7 @@ export const workflowSchema: ExuluTableDefinition = {
     ]
 }
 
-export const evalResultsSchema: ExuluTableDefinition = {
+const evalResultsSchema: ExuluTableDefinition = {
     name: {
         plural: "eval_results",
         singular: "eval_result"
@@ -231,7 +240,7 @@ export const evalResultsSchema: ExuluTableDefinition = {
     ]
 }
 
-export const jobsSchema: ExuluTableDefinition = {
+const jobsSchema: ExuluTableDefinition = {
     name: {
         plural: "jobs",
         singular: "job"
@@ -296,11 +305,12 @@ export const jobsSchema: ExuluTableDefinition = {
     ]
 }
 
-export const agentsSchema: ExuluTableDefinition = {
+const agentsSchema: ExuluTableDefinition = {
     name: {
         plural: "agents",
         singular: "agent"
     },
+    RBAC: true,
     fields: [
         {
             name: "name",
@@ -332,18 +342,13 @@ export const agentsSchema: ExuluTableDefinition = {
             default: false
         },
         {
-            name: "public",
-            type: "boolean",
-            default: false
-        },
-        {
             name: "tools",
             type: "json"
         }
     ]
 }
 
-export const variablesSchema: ExuluTableDefinition = {
+const variablesSchema: ExuluTableDefinition = {
     name: {
         plural: "variables",
         singular: "variable"
@@ -367,11 +372,50 @@ export const variablesSchema: ExuluTableDefinition = {
     ]
 }
 
-export const workflowTemplatesSchema: ExuluTableDefinition = {
+const rbacSchema: ExuluTableDefinition = {
+    name: {
+        plural: "rbac",
+        singular: "rbac"
+    },
+    graphql: false,
+    fields: [
+        {
+            name: "entity",
+            type: "text",
+            required: true
+        },
+        {
+            name: "access_type",
+            type: "text",
+            required: true
+        },
+        {
+            name: "target_resource_id",
+            type: "uuid",
+            required: true
+        },
+        {
+            name: "role_id",
+            type: "uuid"
+        },
+        {
+            name: "user_id",
+            type: "number"
+        },
+        {
+            name: "rights",
+            type: "text",
+            required: true
+        }
+    ]
+}
+
+const workflowTemplatesSchema: ExuluTableDefinition = {
     name: {
         plural: "workflow_templates",
         singular: "workflow_template"
     },
+    RBAC: true,
     fields: [
         {
             name: "name",
@@ -415,3 +459,45 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         }
     ]
 }
+
+const addRBACfields = (schema: ExuluTableDefinition) => {
+    if (schema.RBAC) {
+        console.log(`[EXULU] Adding rights_mode field to ${schema.name.plural} table.`)
+        schema.fields.push({
+            name: "rights_mode",
+            type: "text",
+            required: false,
+            default: "private"
+        })
+        schema.fields.push({
+            name: "created_by",
+            type: "number",
+            required: true,
+            default: 0
+        })
+    }
+    return schema;
+}
+
+
+
+export const coreSchemas = {
+    get: () => {
+        return {
+            agentsSchema: () => addRBACfields(agentsSchema),
+            agentMessagesSchema: () => addRBACfields(agentMessagesSchema),
+            agentSessionsSchema: () => addRBACfields(agentSessionsSchema),
+            usersSchema: () => addRBACfields(usersSchema),
+            rolesSchema: () => addRBACfields(rolesSchema),
+            statisticsSchema: () => addRBACfields(statisticsSchema),
+            workflowSchema: () => addRBACfields(workflowSchema),
+            evalResultsSchema: () => addRBACfields(evalResultsSchema),
+            jobsSchema: () => addRBACfields(jobsSchema),
+            variablesSchema: () => addRBACfields(variablesSchema),
+            rbacSchema: () => addRBACfields(rbacSchema),
+            workflowTemplatesSchema: () => addRBACfields(workflowTemplatesSchema)
+        }
+    }
+}
+
+

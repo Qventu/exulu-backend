@@ -268,6 +268,14 @@ export class ExuluAgent {
         this.model = this.config?.model;
     }
 
+    get providerName(): string {
+        return this.config?.model?.create({ apiKey: "" })?.provider || ""
+    }
+
+    get modelName(): string {
+        return this.config?.model?.create({ apiKey: "" })?.modelId || ""
+    }
+
     // Exports the agent as a tool that can be used by another agent
     // todo test this
     public tool = (): ExuluTool => {

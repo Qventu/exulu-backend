@@ -1,155 +1,76 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { agentsSchema, evalResultsSchema, jobsSchema, rolesSchema, statisticsSchema, usersSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema, workflowTemplatesSchema } from "./core-schema";
+import { coreSchemas } from "./core-schema";
 import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import { encryptString, generateApiKey } from "../auth/generate-key";
+import type { ExuluTableDefinition } from "../registry/routes";
+
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, statisticsSchema, variablesSchema, workflowTemplatesSchema, rbacSchema} = coreSchemas.get();
+
+const addMissingFields = async (knex: Knex, tableName: string, fields: any[], skipFields: string[] = []) => {
+    for (const field of fields) {
+        const { type, name, default: defaultValue, unique } = field;
+        if (!type || !name) {
+            continue;
+        }
+        
+        const sanitizedName = sanitizeName(name);
+        
+        if (skipFields.includes(name)) {
+            continue;
+        }
+        
+        const hasColumn = await knex.schema.hasColumn(tableName, sanitizedName);
+        if (!hasColumn) {
+            console.log(`[EXULU] Adding missing field '${sanitizedName}' to ${tableName} table.`);
+            await knex.schema.alterTable(tableName, table => {
+                mapType(table, type, sanitizedName, defaultValue, unique);
+            });
+        }
+        console.log(`[EXULU] Field '${sanitizedName}' already exists in ${tableName} table.`)
+    }
+};
 
 const up = async function (knex: Knex) {
     console.log("[EXULU] Database up.")
-    
-    if (!await knex.schema.hasTable('agent_sessions')) {
-        console.log("[EXULU] Creating agent_sessions table.")
-        await knex.schema.createTable('agent_sessions', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of agentSessionsSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
 
-    if (!await knex.schema.hasTable('agent_messages')) {
-        console.log("[EXULU] Creating agent_messages table.")
-        await knex.schema.createTable('agent_messages', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of agentMessagesSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
+    const schemas = [
+        agentSessionsSchema(),
+        agentMessagesSchema(),
+        rolesSchema(),
+        evalResultsSchema(),
+        statisticsSchema(),
+        jobsSchema(),
+        rbacSchema(),
+        agentsSchema(),
+        variablesSchema(),
+        workflowTemplatesSchema()
+    ]
 
-    if (!await knex.schema.hasTable('roles')) {
-        console.log("[EXULU] Creating roles table.")
-        await knex.schema.createTable('roles', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of rolesSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
+    const createTable = async (schema: ExuluTableDefinition) => {
+        if (!await knex.schema.hasTable(schema.name.plural)) {
+            console.log(`[EXULU] Creating ${schema.name.plural} table.`)
+            await knex.schema.createTable(schema.name.plural, table => {
+                table.uuid("id").primary().defaultTo(knex.fn.uuid());
+                table.timestamp('createdAt').defaultTo(knex.fn.now());
+                table.timestamp('updatedAt').defaultTo(knex.fn.now());
+        
+                for (const field of schema.fields) {
+                    const { type, name, default: defaultValue, unique } = field;
+                    if (!type || !name) {
+                        continue;
+                    }
+                    mapType(table, type, sanitizeName(name), defaultValue, unique);
                 }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
+            });
+        } else {
+            console.log(`[EXULU] Checking missing fields to ${schema.name.plural} table.`)
+            await addMissingFields(knex, schema.name.plural, schema.fields);
+        }
     }
-
-    if (!await knex.schema.hasTable('eval_results')) {
-        console.log("[EXULU] Creating eval_results table.")
-        await knex.schema.createTable('eval_results', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of evalResultsSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
-
-    if (!await knex.schema.hasTable('statistics')) {
-        console.log("[EXULU] Creating statistics table.")
-        await knex.schema.createTable('statistics', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of statisticsSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
-
-    if (!await knex.schema.hasTable('jobs')) {
-        console.log("[EXULU] Creating jobs table.")
-        await knex.schema.createTable('jobs', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of jobsSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
-
-    if (!await knex.schema.hasTable('agents')) {
-        console.log("[EXULU] Creating agents table.")
-        await knex.schema.createTable('agents', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of agentsSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
-
-    if (!await knex.schema.hasTable('variables')) {
-        console.log("[EXULU] Creating variables table.")
-        await knex.schema.createTable('variables', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of variablesSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
-    }
-
-    if (!await knex.schema.hasTable('workflow_templates')) {
-        console.log("[EXULU] Creating workflow_templates table.")
-        await knex.schema.createTable('workflow_templates', table => {
-            table.uuid("id").primary().defaultTo(knex.fn.uuid());
-            table.timestamp('createdAt').defaultTo(knex.fn.now());
-            table.timestamp('updatedAt').defaultTo(knex.fn.now());
-            for (const field of workflowTemplatesSchema.fields) {
-                const { type, name, default: defaultValue, unique } = field;
-                if (!type || !name) {
-                    continue;
-                }
-                mapType(table, type, sanitizeName(name), defaultValue, unique);
-            }
-        });
+    for (const schema of schemas) {
+        await createTable(schema)
     }
 
     // Next auth tables
@@ -174,8 +95,7 @@ const up = async function (knex: Knex) {
             table.string('email', 255);
             table.timestamp('emailVerified', { useTz: true });
             table.text('image');
-
-            for (const field of usersSchema.fields) {
+            for (const field of usersSchema().fields) {
                 console.log("[EXULU] field", field)
                 const { type, name, default: defaultValue, unique } = field;
                 if (
@@ -183,7 +103,8 @@ const up = async function (knex: Knex) {
                     name === "name" ||
                     name === "email" ||
                     name === "emailVerified" ||
-                    name === "image"
+                    name === "image" ||
+                    name === "password"
                 ) {
                     continue;
                 }
@@ -194,6 +115,8 @@ const up = async function (knex: Knex) {
                 mapType(table, type, sanitizeName(name), defaultValue, unique);
             }
         });
+    } else {
+        await addMissingFields(knex, 'users', usersSchema().fields, ['id', 'name', 'email', 'emailVerified', 'image']);
     }
 
     if (!await knex.schema.hasTable('accounts')) {

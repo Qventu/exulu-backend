@@ -4,6 +4,7 @@ import GraphQLJSON from 'graphql-type-json';
 import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
+import bcrypt from "bcryptjs";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -69,6 +70,7 @@ const map = (field: any) => {
 }
 
 function createTypeDefs(table: ExuluTableDefinition): string {
+
     const fields = table.fields.map(field => {
         let type: string;
         type = map(field);
@@ -76,18 +78,28 @@ function createTypeDefs(table: ExuluTableDefinition): string {
         return `  ${field.name}: ${type}${required}`;
     });
 
+    // Add RBAC field if enabled
+    const rbacField = table.RBAC ? '  RBAC: RBACData' : '';
+
+
+    // Allow defining a custom id type (for example the users entity has type number because of next-auth)
     const typeDef = `
   type ${table.name.singular} {
   ${fields.join("\n")}
-    id: ID!
+    ${ table.fields.find(field => field.name === "id") ? "" : "id: ID!"}
     createdAt: Date!
     updatedAt: Date!
+${rbacField}
   }
   `;
+
+    // Add RBAC input field if enabled
+    const rbacInputField = table.RBAC ? '  RBAC: RBACInput' : '';
 
     const inputDef = `
 input ${table.name.singular}Input {
 ${table.fields.map(f => `  ${f.name}: ${map(f)}`).join("\n")}
+${rbacInputField}
 }
 `;
 
@@ -166,19 +178,203 @@ const getRequestedFields = (info: any) => {
             return acc;
         }, {}));
     // remove pageInfo and items
-    return fields.filter(field => field !== "pageInfo" && field !== "items");
+    return fields.filter(field => field !== "pageInfo" && field !== "items" && field !== "RBAC");
 }
+
+// Helper function to handle RBAC updates
+const handleRBACUpdate = async (db: any, entityName: string, resourceId: string, rbacData: any, existingRbacRecords: any[]) => {
+    const { users = [], roles = [] } = rbacData;
+
+    // Get existing RBAC records if not provided
+    if (!existingRbacRecords) {
+        existingRbacRecords = await db.from('rbac')
+            .where({
+                entity: entityName,
+                target_resource_id: resourceId
+            })
+            .select('*');
+    }
+
+    // Create sets for comparison
+    const newUserRecords = new Set(users.map((u: any) => `${u.id}:${u.rights}`));
+    const newRoleRecords = new Set(roles.map((r: any) => `${r.id}:${r.rights}`));
+    const existingUserRecords = new Set(existingRbacRecords
+        .filter(r => r.access_type === 'User')
+        .map(r => `${r.user_id}:${r.rights}`));
+    const existingRoleRecords = new Set(existingRbacRecords
+        .filter(r => r.access_type === 'Role')
+        .map(r => `${r.role_id}:${r.rights}`));
+
+    // Records to create
+    const usersToCreate = users.filter((u: any) => !existingUserRecords.has(`${u.id}:${u.rights}`));
+    const rolesToCreate = roles.filter((r: any) => !existingRoleRecords.has(`${r.id}:${r.rights}`));
+
+    // Records to remove
+    const usersToRemove = existingRbacRecords
+        .filter(r => r.access_type === 'User' && !newUserRecords.has(`${r.user_id}:${r.rights}`));
+    const rolesToRemove = existingRbacRecords
+        .filter(r => r.access_type === 'Role' && !newRoleRecords.has(`${r.role_id}:${r.rights}`));
+
+    // Remove obsolete records
+    if (usersToRemove.length > 0) {
+        await db.from('rbac').whereIn('id', usersToRemove.map(r => r.id)).del();
+    }
+    if (rolesToRemove.length > 0) {
+        await db.from('rbac').whereIn('id', rolesToRemove.map(r => r.id)).del();
+    }
+
+    // Create new records
+    const recordsToInsert: any[] = [];
+
+    usersToCreate.forEach((user: any) => {
+        recordsToInsert.push({
+            entity: entityName,
+            access_type: 'User',
+            target_resource_id: resourceId,
+            user_id: user.id,
+            rights: user.rights,
+            createdAt: new Date(),
+            updatedAt: new Date()
+        });
+    });
+
+    rolesToCreate.forEach((role: any) => {
+        recordsToInsert.push({
+            entity: entityName,
+            access_type: 'Role',
+            target_resource_id: resourceId,
+            role_id: role.id,
+            rights: role.rights,
+            createdAt: new Date(),
+            updatedAt: new Date()
+        });
+    });
+
+    if (recordsToInsert.length > 0) {
+        await db.from('rbac').insert(recordsToInsert);
+    }
+};
 
 function createMutations(table: ExuluTableDefinition) {
     const tableNamePlural = table.name.plural.toLowerCase();
-    const tableNameSingular = table.name.singular.toLowerCase();
+    const validateWriteAccess = async (id: string, context: any) => {
+
+        const { db, req, user } = context;
+
+        // Check if this table has RBAC enabled or legacy access control fields
+        const hasRBAC = table.RBAC === true;
+
+        if (!hasRBAC) {
+            return true; // No access control needed
+        }
+
+        if (user.type === "api" || user.super_admin === true) {
+            return true; // todo roadmap - scoping api users to specific resources
+        }
+
+        try {
+            const authResult = await requestValidators.authenticate(req);
+            if (authResult.error || !authResult.user) {
+                throw new Error('Authentication required');
+            }
+
+            const user = authResult.user;
+
+            // New RBAC system
+            const record = await db.from(tableNamePlural)
+                .select(['rights_mode', 'created_by'])
+                .where({ id })
+                .first();
+
+            if (!record) {
+                throw new Error('Record not found');
+            }
+
+            // Check if record is public (any user can edit)
+            if (record.rights_mode === 'public') {
+                return true;
+            }
+
+            // Check if record is private and user is creator
+            if (record.rights_mode === 'private') {
+                if (record.created_by === user.id) {
+                    return true;
+                }
+                throw new Error('Only the creator can edit this private record');
+            }
+
+            // Check if user has write access via RBAC table
+            if (record.rights_mode === 'users') {
+                const rbacRecord = await db.from('rbac')
+                    .where({
+                        entity: table.name.singular,
+                        target_resource_id: id,
+                        access_type: 'User',
+                        user_id: user.id,
+                        rights: 'write'
+                    })
+                    .first();
+
+                if (rbacRecord) {
+                    return true;
+                }
+                throw new Error('Insufficient user permissions to edit this record');
+            }
+
+            // Check if user has write access via role in RBAC table
+            if (record.rights_mode === 'roles' && user.role) {
+                const rbacRecord = await db.from('rbac')
+                    .where({
+                        entity: table.name.singular,
+                        target_resource_id: id,
+                        access_type: 'Role',
+                        role_id: user.role,
+                        rights: 'write'
+                    })
+                    .first();
+
+                if (rbacRecord) {
+                    return true;
+                }
+                throw new Error('Insufficient role permissions to edit this record');
+            }
+
+            throw new Error('Insufficient permissions to edit this record');
+
+
+
+        } catch (error) {
+            console.error('Write access validation error:', error);
+            throw error;
+        }
+    };
 
     return {
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
             let { input } = args;
+
+            // Handle RBAC input
+            const rbacData = input.RBAC;
+            delete input.RBAC;
+
+            // Remove created_by field to prevent mutation
+            delete input.created_by;
+
             input = encryptSensitiveFields(input);
+
+            if (table.RBAC) {
+                input.created_by = context.user.id;
+            }
+
+            if (table.name.singular === "user" && context.user?.super_admin !== true) {
+                throw new Error('You are not authorized to create users');
+            }
+
+            if (table.name.singular === "user" && input.password) {
+                input.password = await bcrypt.hash(input.password, 10);
+            }
 
             // Check for each field if it is a json field, and if 
             // so, check if it is an object or array and convert 
@@ -193,9 +389,15 @@ function createMutations(table: ExuluTableDefinition) {
 
             const results = await db(tableNamePlural).insert({
                 ...input,
+                ...(table.RBAC ? { rights_mode: 'private' } : {}),
                 createdAt: new Date(),
                 updatedAt: new Date()
             }).returning(requestedFields);
+
+            // Handle RBAC records if provided
+            if (table.RBAC && rbacData && results[0]) {
+                await handleRBACUpdate(db, table.name.singular, results[0].id, rbacData, []);
+            }
 
             // Filter result to only include requested fields
             return results[0];
@@ -203,9 +405,21 @@ function createMutations(table: ExuluTableDefinition) {
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
             const { db, req } = context;
             let { where, input } = args;
-            
-            await validateSuperAdminPermission(tableNamePlural, input, req);
-            
+
+            await validateCreateOrRemoveSuperAdminPermission(tableNamePlural, input, req);
+
+            // For access-controlled tables, validate write access
+            if (where.id) {
+                await validateWriteAccess(where.id, context);
+            }
+
+            // Handle RBAC input
+            const rbacData = input.RBAC;
+            delete input.RBAC;
+
+            // Remove created_by field to prevent mutation
+            delete input.created_by;
+
             input = encryptSensitiveFields(input);
 
             // Check for each field if it is a json field, and if 
@@ -219,11 +433,23 @@ function createMutations(table: ExuluTableDefinition) {
                 }
             });
 
-
             await db(tableNamePlural).where(where).update({
                 ...input,
                 updatedAt: new Date()
             });
+
+            // Handle RBAC records if provided
+            if (table.RBAC && rbacData && where.id) {
+                const existingRbacRecords = await db.from('rbac')
+                    .where({
+                        entity: table.name.singular,
+                        target_resource_id: where.id
+                    })
+                    .select('*');
+
+                await handleRBACUpdate(db, table.name.singular, where.id, rbacData, existingRbacRecords);
+            }
+
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where(where).first();
             return result;
@@ -231,9 +457,19 @@ function createMutations(table: ExuluTableDefinition) {
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
             const { db, req } = context;
             let { id, input } = args;
-            
-            await validateSuperAdminPermission(tableNamePlural, input, req);
-            
+
+            await validateCreateOrRemoveSuperAdminPermission(tableNamePlural, input, req);
+
+            // For access-controlled tables, validate write access
+            await validateWriteAccess(id, context);
+
+            // Handle RBAC input
+            const rbacData = input.RBAC;
+            delete input.RBAC;
+
+            // Remove created_by field to prevent mutation
+            delete input.created_by;
+
             input = encryptSensitiveFields(input);
 
             // Check for each field if it is a json field, and if 
@@ -247,11 +483,23 @@ function createMutations(table: ExuluTableDefinition) {
                 }
             });
 
-
             await db(tableNamePlural).where({ id }).update({
                 ...input,
                 updatedAt: new Date()
             });
+
+            // Handle RBAC records if provided
+            if (table.RBAC && rbacData) {
+                const existingRbacRecords = await db.from('rbac')
+                    .where({
+                        entity: table.name.singular,
+                        target_resource_id: id
+                    })
+                    .select('*');
+
+                await handleRBACUpdate(db, table.name.singular, id, rbacData, existingRbacRecords);
+            }
+
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where({ id }).first();
             return result;
@@ -261,7 +509,20 @@ function createMutations(table: ExuluTableDefinition) {
             const { where } = args;
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where(where).first();
+
+            if (!result) {
+                throw new Error('Record not found');
+            }
+
             await db(tableNamePlural).where(where).del();
+
+            if (table.RBAC) {
+                await db.from('rbac').where({
+                    entity: table.name.singular,
+                    target_resource_id: result.id
+                }).del();
+            }
+
             return result;
         },
         [`${tableNamePlural}RemoveOneById`]: async (_, args, context, info) => {
@@ -269,11 +530,83 @@ function createMutations(table: ExuluTableDefinition) {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
             const result = await db.from(tableNamePlural).select(requestedFields).where({ id }).first();
+
+            if (!result) {
+                throw new Error('Record not found');
+            }
+
             await db(tableNamePlural).where({ id }).del();
+
+            if (table.RBAC) {
+                await db.from('rbac').where({
+                    entity: table.name.singular,
+                    target_resource_id: id
+                }).del();
+            }
+
             return result;
         }
     };
 }
+
+export const applyAccessControl = (table: ExuluTableDefinition, user: any, query: any) => {
+
+    console.log("table", table)
+    const tableNamePlural = table.name.plural.toLowerCase();
+
+    const hasRBAC = table.RBAC === true;
+    if (!hasRBAC) {
+        return query;
+    }
+
+    if (user.type === "api" || user.super_admin === true) {
+        return query; // todo roadmap - scoping api users to specific resources
+    }
+
+    try {
+        // New RBAC system
+        query = query.where(function (this: any) {
+            // Public records
+            this.where('rights_mode', 'public');
+            this.orWhere('created_by', user.id);
+
+            // Records shared with users via RBAC table
+            this.orWhere(function (this: any) {
+                this.where('rights_mode', 'users')
+                    .whereExists(function (this: any) {
+                        this.select('*')
+                            .from('rbac')
+                            .whereRaw('rbac.target_resource_id = ' + tableNamePlural + '.id')
+                            .where('rbac.entity', table.name.singular)
+                            .where('rbac.access_type', 'User')
+                            .where('rbac.user_id', user.id);
+                    });
+            });
+
+            // Records shared with roles via RBAC table (if user has a role)
+            if (user.role) {
+                console.log("user.role", user.role)
+                this.orWhere(function (this: any) {
+                    this.where('rights_mode', 'roles')
+                        .whereExists(function (this: any) {
+                            this.select('*')
+                                .from('rbac')
+                                .whereRaw('rbac.target_resource_id = ' + tableNamePlural + '.id')
+                                .where('rbac.entity', table.name.singular)
+                                .where('rbac.access_type', 'Role')
+                                .where('rbac.role_id', user.role);
+                        });
+                });
+            }
+        });
+    } catch (error) {
+        console.error('Access control error:', error);
+        // Return empty result on error
+        return query.where('1', '=', '0');
+    }
+
+    return query;
+};
 
 function createQueries(table: ExuluTableDefinition) {
     const tableNamePlural = table.name.plural.toLowerCase();
@@ -301,6 +634,8 @@ function createQueries(table: ExuluTableDefinition) {
         return query;
     };
 
+
+
     const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }) => {
         if (sort) {
             query = query.orderBy(sort.field, sort.direction.toLowerCase());
@@ -312,7 +647,9 @@ function createQueries(table: ExuluTableDefinition) {
         [`${tableNameSingular}ById`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            const result = await db.from(tableNamePlural).select(requestedFields).where({ id: args.id }).first();
+            let query = db.from(tableNamePlural).select(requestedFields).where({ id: args.id });
+            query = applyAccessControl(table, context.user, query);
+            const result = await query.first();
             return result;
         },
         [`${tableNameSingular}One`]: async (_, args, context, info) => {
@@ -321,6 +658,7 @@ function createQueries(table: ExuluTableDefinition) {
             const requestedFields = getRequestedFields(info)
             let query = db.from(tableNamePlural).select(requestedFields);
             query = applyFilters(query, filters);
+            query = applyAccessControl(table, context.user, query);
             query = applySorting(query, sort);
             const result = await query.first();
             return result;
@@ -329,20 +667,26 @@ function createQueries(table: ExuluTableDefinition) {
             const { limit = 10, page = 0, filters = [], sort } = args;
             const { db } = context;
 
-            // Create base query with filters
-            let baseQuery = db(tableNamePlural);
-            baseQuery = applyFilters(baseQuery, filters);
+            // Create count query  
+            let countQuery = db(tableNamePlural);
+            countQuery = applyFilters(countQuery, filters);
+            countQuery = applyAccessControl(table, context.user, countQuery);
 
-            // Get total count without sorting
-            const [{ count }] = await baseQuery.clone().count('* as count');
-            const itemCount = Number(count);
+            console.log("countQuery", countQuery)
+
+            // Get total count
+            const countResult = await countQuery.count('* as count');
+            const itemCount = Number(countResult[0]?.count || 0);
             const pageCount = Math.ceil(itemCount / limit);
             const currentPage = page;
             const hasPreviousPage = currentPage > 1;
             const hasNextPage = currentPage < pageCount - 1;
 
-            // Apply sorting only to the data query
-            let dataQuery = baseQuery.clone();
+            // Create separate data query
+            let dataQuery = db(tableNamePlural);
+            dataQuery = applyFilters(dataQuery, filters);
+            dataQuery = applyAccessControl(table, context.user, dataQuery);
+
             const requestedFields = getRequestedFields(info)
             dataQuery = applySorting(dataQuery, sort);
             if (page > 1) {
@@ -360,14 +704,44 @@ function createQueries(table: ExuluTableDefinition) {
                 items: items
             };
         },
-        // Add jobStatistics query for jobs table
+        // Add generic statistics query for all tables
+        [`${tableNamePlural}Statistics`]: async (_, args, context, info) => {
+            const { filters = [], groupBy } = args;
+            const { db } = context;
+
+            let query = db(tableNamePlural);
+            query = applyFilters(query, filters);
+            query = applyAccessControl(table, context.user, query);
+
+            // Group by the specified field and count
+            if (groupBy) {
+                const results = await query
+                    .select(groupBy)
+                    .count('* as count')
+                    .groupBy(groupBy);
+
+                return results.map(r => ({
+                    group: r[groupBy],
+                    count: Number(r.count)
+                }));
+            } else {
+                // Just return total count
+                const [{ count }] = await query.count('* as count');
+                return [{
+                    group: 'total',
+                    count: Number(count)
+                }];
+            }
+        },
+        // Add jobStatistics query for jobs table (backward compatibility)
         ...(tableNamePlural === 'jobs' ? {
             jobStatistics: async (_, args, context, info) => {
                 const { user, agent, from, to } = args;
+
                 const { db } = context;
-                
+
                 let query = db('jobs');
-                
+
                 // Apply filters
                 if (user) {
                     query = query.where('user', user);
@@ -381,23 +755,36 @@ function createQueries(table: ExuluTableDefinition) {
                 if (to) {
                     query = query.where('createdAt', '<=', to);
                 }
-                
+
+                // Apply access control
+                query = applyAccessControl(table, context.user, query);
+
+                // Get running jobs count (active, waiting, delayed, paused)
+                const runningQuery = query.clone().whereIn('status', ['active', 'waiting', 'delayed', 'paused']);
+                const [{ runningCount }] = await runningQuery.count('* as runningCount');
+
+                // Get errored jobs count (failed, stuck)
+                const erroredQuery = query.clone().whereIn('status', ['failed', 'stuck']);
+                const [{ erroredCount }] = await erroredQuery.count('* as erroredCount');
+
                 // Get completed jobs count
                 const completedQuery = query.clone().where('status', 'completed');
                 const [{ completedCount }] = await completedQuery.count('* as completedCount');
-                
+
                 // Get failed jobs count
                 const failedQuery = query.clone().where('status', 'failed');
                 const [{ failedCount }] = await failedQuery.count('* as failedCount');
-                
+
                 // Calculate average duration for completed jobs using the "duration" field (in seconds)
                 const durationQuery = query.clone()
                     .where('status', 'completed')
                     .whereNotNull('duration')
                     .select(db.raw('AVG("duration") as averageDuration'));
                 const [{ averageDuration }] = await durationQuery;
-                
+
                 return {
+                    runningCount: Number(runningCount),
+                    erroredCount: Number(erroredCount),
                     completedCount: Number(completedCount),
                     failedCount: Number(failedCount),
                     averageDuration: averageDuration ? Number(averageDuration) : 0
@@ -407,11 +794,72 @@ function createQueries(table: ExuluTableDefinition) {
     };
 }
 
+export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityName: string, resourceId: string, rights_mode: string) => {
+
+    // Get RBAC records for this resource
+    const rbacRecords = await db.from('rbac')
+        .where({
+            entity: entityName,
+            target_resource_id: resourceId
+        })
+        .select('*');
+
+    const users = rbacRecords
+        .filter(r => r.access_type === 'User')
+        .map(r => ({ id: r.user_id, rights: r.rights }));
+
+    const roles = rbacRecords
+        .filter(r => r.access_type === 'Role')
+        .map(r => ({ id: r.role_id, rights: r.rights }));
+
+    // Determine the type based on rights_mode or presence of records
+    let type = rights_mode || 'private';
+    if (type === 'users' && users.length === 0) type = 'private';
+    if (type === 'roles' && roles.length === 0) type = 'private';
+
+    return {
+        type,
+        users,
+        roles
+    };
+}
+
 export function createSDL(tables: ExuluTableDefinition[]) {
     console.log("[EXULU] Creating SDL")
     let typeDefs = `
     scalar JSON
     scalar Date
+    
+    type RBACData {
+      type: String!
+      users: [RBACUser!]
+      roles: [RBACRole!]
+    }
+    
+    type RBACUser {
+      id: ID!
+      rights: String!
+    }
+    
+    type RBACRole {
+      id: ID!
+      rights: String!
+    }
+    
+    input RBACInput {
+      users: [RBACUserInput!]
+      roles: [RBACRoleInput!]
+    }
+    
+    input RBACUserInput {
+      id: ID!
+      rights: String!
+    }
+    
+    input RBACRoleInput {
+      id: ID!
+      rights: String!
+    }
     
     type Query {
     `;
@@ -425,6 +873,10 @@ export function createSDL(tables: ExuluTableDefinition[]) {
 
     // todo add the contexts from Exulu to the schema
     for (const table of tables) {
+        // Skip tables with graphql: false
+        if (table.graphql === false) {
+            continue;
+        }
         const tableNamePlural = table.name.plural.toLowerCase();
         const tableNameSingular = table.name.singular.toLowerCase();
         const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
@@ -434,6 +886,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
+      ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String): [StatisticsResult]!
       ${tableNamePlural === 'jobs' ? `jobStatistics(user: ID, agent: String, from: String, to: String): JobStatistics` : ''}
     `;
         // todo add the fields of each table as filter options
@@ -460,11 +913,13 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-        
+
         // Add JobStatistics type for jobs table
         if (tableNamePlural === 'jobs') {
             modelDefs += `
 type JobStatistics {
+  runningCount: Int!
+  erroredCount: Int!
   completedCount: Int!
   failedCount: Int!
   averageDuration: Float!
@@ -473,12 +928,35 @@ type JobStatistics {
         }
         Object.assign(resolvers.Query, createQueries(table));
         Object.assign(resolvers.Mutation, createMutations(table));
+
+        // Add RBAC resolver if enabled
+        if (table.RBAC) {
+            const rbacResolverName = table.name.singular;
+            if (!resolvers[rbacResolverName]) {
+                resolvers[rbacResolverName] = {};
+            }
+            resolvers[rbacResolverName].RBAC = async (parent: any, args: any, context: any) => {
+                const { db } = context;
+                const resourceId = parent.id;
+                const entityName = table.name.singular
+                const rights_mode = parent.rights_mode;
+                return RBACResolver(db, table, entityName, resourceId, rights_mode)
+            }
+        }
     }
 
     typeDefs += "}\n";
     mutationDefs += "}\n";
 
-    const fullSDL = typeDefs + mutationDefs + modelDefs;
+    // Add generic types used across all tables
+    const genericTypes = `
+type StatisticsResult {
+  group: String!
+  count: Int!
+}
+`;
+
+    const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes;
 
     // -------------- Create Schema ------------------
 
@@ -525,24 +1003,24 @@ type JobStatistics {
 }
 
 const encryptSensitiveFields = (input: any) => {
-    
+
     // Special handling for variables table - encrypt value if encrypted flag is true
     if (input.value && input.encrypted === true) {
         input.value = CryptoJS.AES.encrypt(input.value, process.env.NEXTAUTH_SECRET).toString();
     }
-    
+
     return input;
 }
 
-const validateSuperAdminPermission = async (tableNamePlural: string, input: any, req: any) => {
+const validateCreateOrRemoveSuperAdminPermission = async (tableNamePlural: string, input: any, req: any) => {
     // Check if trying to update super_admin field for users table
     if (tableNamePlural === 'users' && input.super_admin !== undefined) {
         const authResult = await requestValidators.authenticate(req);
-        
+
         if (authResult.error || !authResult.user) {
             throw new Error('Authentication failed');
         }
-        
+
         // Only super_admin can update super_admin field
         if (!authResult.user.super_admin) {
             throw new Error('Only super administrators can modify super_admin status');

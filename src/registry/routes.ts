@@ -14,10 +14,10 @@ import * as Papa from 'papaparse';
 import cors from 'cors';
 import 'reflect-metadata'
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
-import { createSDL } from "./utils/graphql.ts";
+import { createSDL, applyAccessControl, RBACResolver } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
-import { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema } from "../postgres/core-schema.ts";
+import { coreSchemas } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
 import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
@@ -30,6 +30,8 @@ export const REQUEST_SIZE_LIMIT = '50mb';
 export const global_queues = {
     logs_cleaner: "logs-cleaner"
 }
+
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema, rbacSchema} = coreSchemas.get();
 
 const createRecurringJobs = async () => {
 
@@ -81,7 +83,9 @@ export type ExuluTableDefinition = {
         required?: boolean,
         default?: any,
         unique?: boolean,
-    }[]
+    }[],
+    RBAC?: boolean,
+    graphql?: boolean,
 }
 
 export const createExpressRoutes = async (
@@ -170,7 +174,19 @@ export const createExpressRoutes = async (
         console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
     }
 
-    const schema = createSDL([usersSchema, rolesSchema, agentsSchema, jobsSchema, workflowSchema, evalResultsSchema, agentSessionsSchema, agentMessagesSchema, variablesSchema, workflowTemplatesSchema]);
+    const schema = createSDL([
+        usersSchema(),
+        rolesSchema(),
+        agentsSchema(), 
+        jobsSchema(), 
+        workflowSchema(), 
+        evalResultsSchema(), 
+        agentSessionsSchema(), 
+        agentMessagesSchema(), 
+        variablesSchema(), 
+        workflowTemplatesSchema(), 
+        rbacSchema()]
+    );
 
     interface GraphqlContext {
         db: Knex;
@@ -203,7 +219,8 @@ export const createExpressRoutes = async (
                 const { db } = await postgresClient();
                 return {
                     req,
-                    db
+                    db,
+                    user: authenticationResult.user
                 };
             },
         }),
@@ -225,7 +242,12 @@ export const createExpressRoutes = async (
             return;
         }
         const { db } = await postgresClient();
-        const agentsFromDb = await db.from("agents").select("*");
+
+        let query = db('agents');
+        query.select("*");
+        query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
+        const agentsFromDb = await query;
+
         res.status(200).json(agentsFromDb.map((agent: any) => {
             const backend = agents.find(a => a.id === agent.backend);
             if (!backend) {
@@ -235,15 +257,16 @@ export const createExpressRoutes = async (
                 name: agent.name,
                 id: agent.id,
                 description: agent.description,
-                provider: backend?.model?.provider,
-                model: backend?.model?.modelId,
+                provider: backend.providerName,
+                model: backend.modelName,
                 active: agent.active,
-                public: agent.public,
                 type: agent.type,
+                rights_mode: agent.rights_mode,
                 slug: backend?.slug,
                 rateLimit: backend?.rateLimit,
                 streaming: backend?.streaming,
                 capabilities: backend?.capabilities,
+                RBAC: agent.RBAC,
                 // todo add contexts
                 availableTools: tools,
                 enabledTools: agent.tools
@@ -265,7 +288,11 @@ export const createExpressRoutes = async (
             })
             return;
         }
-        const agent = await db.from("agents").where({ id }).first();
+        let query = db("agents");
+        query.select("*");
+        query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
+        query.where({ id });
+        const agent = await query.first();
         if (!agent) {
             res.status(400).json({
                 message: "Agent not found in database."
@@ -275,6 +302,10 @@ export const createExpressRoutes = async (
         console.log("[EXULU] agent", agent)
         const backend = agents.find(a => a.id === agent.backend);
 
+        console.log("[EXULU] agent", agent)
+
+        const RBAC = await RBACResolver(db, agentsSchema(), agentsSchema().name.singular, agent.id, agent.rights_mode)
+        
         res.status(200).json({
             ...{
                 name: agent.name,
@@ -285,9 +316,11 @@ export const createExpressRoutes = async (
                 active: agent.active,
                 public: agent.public,
                 type: agent.type,
+                rights_mode: agent.rights_mode,
                 slug: backend?.slug,
                 rateLimit: backend?.rateLimit,
                 streaming: backend?.streaming,
+                RBAC: RBAC,
                 capabilities: backend?.capabilities,
                 providerApiKey: agent.providerApiKey,
                 // todo add contexts
