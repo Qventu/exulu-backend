@@ -31,7 +31,7 @@ export const global_queues = {
     logs_cleaner: "logs-cleaner"
 }
 
-const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema, rbacSchema} = coreSchemas.get();
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema, rbacSchema } = coreSchemas.get();
 
 const createRecurringJobs = async () => {
 
@@ -177,14 +177,15 @@ export const createExpressRoutes = async (
     const schema = createSDL([
         usersSchema(),
         rolesSchema(),
-        agentsSchema(), 
-        jobsSchema(), 
-        workflowSchema(), 
-        evalResultsSchema(), 
-        agentSessionsSchema(), 
-        agentMessagesSchema(), 
-        variablesSchema(), 
-        workflowTemplatesSchema(), 
+        agentsSchema(),
+        jobsSchema(),
+        workflowSchema(),
+        evalResultsSchema(),
+        agentSessionsSchema(),
+        agentMessagesSchema(),
+        variablesSchema(),
+        workflowTemplatesSchema(),
+        statisticsSchema(),
         rbacSchema()]
     );
 
@@ -305,7 +306,7 @@ export const createExpressRoutes = async (
         console.log("[EXULU] agent", agent)
 
         const RBAC = await RBACResolver(db, agentsSchema(), agentsSchema().name.singular, agent.id, agent.rights_mode)
-        
+
         res.status(200).json({
             ...{
                 name: agent.name,
@@ -1507,10 +1508,12 @@ export const createExpressRoutes = async (
             }
 
             const { db } = await postgresClient();
-            // Todo check if user has access to agent via their role
-            const agent = await db.from("agents").where({
-                id: req.params.id
-            }).first();
+
+            let query = db('agents');
+            query.select("*");
+            query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
+            query.where({ id: req.params.id });
+            const agent = await query.first();
 
             if (!agent) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(`

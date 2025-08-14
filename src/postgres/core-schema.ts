@@ -36,6 +36,10 @@ const agentSessionsSchema: ExuluTableDefinition = {
             type: "number",
         },
         {
+            name: "role",
+            type: "uuid"
+        },
+        {
             name: "title",
             type: "text"
         }
