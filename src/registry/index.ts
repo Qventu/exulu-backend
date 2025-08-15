@@ -1,4 +1,4 @@
-import { ExuluAgent, ExuluContext, ExuluWorkflow, type ExuluTool } from "./classes.ts";
+import { ExuluAgent, ExuluContext, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
@@ -19,7 +19,6 @@ export type ExuluConfig = {
 export class ExuluApp {
 
     private _agents: ExuluAgent[] = []
-    private _workflows: ExuluWorkflow[] = []
     private _config?: ExuluConfig;
     private _queues: string[] = []
     private _contexts?: Record<string, ExuluContext> = {}
@@ -30,14 +29,12 @@ export class ExuluApp {
 
     // Factory function so we can async 
     // initialize the MCP server if needed.
-    create = async ({ contexts, agents, workflows, config, tools }: {
+    create = async ({ contexts, agents, config, tools }: {
         contexts?: Record<string, ExuluContext>,
         config: ExuluConfig,
         agents?: ExuluAgent[],
-        workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
     }): Promise<Express> => {
-        this._workflows = workflows ?? [];
         this._contexts = contexts ?? {};
         this._agents = [
             claudeCodeAgent,
@@ -60,12 +57,9 @@ export class ExuluApp {
             ...(contextsArray?.length ?
                 contextsArray.map(context => context.embedder.queue?.name || null) :
                 []
-            ),
-            ...(workflows?.length ?
-                workflows.map(workflow => workflow.queue?.name || null) :
-                []
-            ),
+            )
         ]
+        
         this._queues = [...new Set(queues.filter(o => !!o))] as any;
 
         if (!this._expressApp) {
@@ -99,16 +93,8 @@ export class ExuluApp {
         return this._agents.find(x => x.id === id)
     }
 
-    public workflow(id: string): ExuluWorkflow | undefined {
-        return this._workflows.find(x => x.id === id)
-    }
-
     public get contexts(): ExuluContext[] {
         return Object.values(this._contexts ?? {});
-    }
-
-    public get workflows(): ExuluWorkflow[] {
-        return this._workflows;
     }
 
     public get agents(): ExuluAgent[] {
@@ -121,7 +107,6 @@ export class ExuluApp {
                 return await createWorkers(
                     this._queues,
                     Object.values(this._contexts ?? {}),
-                    this._workflows,
                     this._config?.workers?.logsDir
                 )
             }
@@ -142,7 +127,6 @@ export class ExuluApp {
                     app,
                     this._agents,
                     this._tools,
-                    this._workflows,
                     Object.values(this._contexts ?? {})
                 )
 
@@ -152,7 +136,6 @@ export class ExuluApp {
                         express: app,
                         contexts: this._contexts,
                         agents: this._agents,
-                        workflows: this._workflows,
                         config: this._config,
                         tools: this._tools
                     });

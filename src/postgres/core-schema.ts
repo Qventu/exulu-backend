@@ -46,6 +46,124 @@ const agentSessionsSchema: ExuluTableDefinition = {
     ]
 }
 
+
+const variablesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "variables",
+        singular: "variable"
+    },
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            index: true,
+            unique: true
+        },
+        {
+            name: "value",
+            type: "longText"
+        },
+        {
+            name: "encrypted",
+            type: "boolean",
+            default: false
+        }
+    ]
+}
+
+const workflowTemplatesSchema: ExuluTableDefinition = {
+    name: {
+        plural: "workflow_templates",
+        singular: "workflow_template"
+    },
+    RBAC: true,
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        },
+        {
+            name: "owner",
+            type: "number",
+            required: true
+        },
+        {
+            name: "visibility",
+            type: "text",
+            required: true
+        },
+        {
+            name: "shared_user_ids",
+            type: "json"
+        },
+        {
+            name: "shared_role_ids",
+            type: "json"
+        },
+        {
+            name: "variables",
+            type: "json"
+        },
+        {
+            name: "steps_json",
+            type: "json",
+            required: true
+        },
+        {
+            name: "example_metadata_json",
+            type: "json"
+        }
+    ]
+}
+
+const agentsSchema: ExuluTableDefinition = {
+    name: {
+        plural: "agents",
+        singular: "agent"
+    },
+    RBAC: true,
+    fields: [
+        {
+            name: "name",
+            type: "text"
+        },
+        {
+            name: "description",
+            type: "text"
+        },
+        {
+            name: "providerApiKey",
+            type: "text"
+        },
+        {
+            name: "extensions",
+            type: "json"
+        },
+        {
+            name: "backend",
+            type: "text"
+        },
+        {
+            name: "type",
+            type: "text"
+        },
+        {
+            name: "active",
+            type: "boolean",
+            default: false
+        },
+        {
+            name: "tools",
+            type: "json"
+        }
+    ]
+}
+
 const usersSchema: ExuluTableDefinition = {
     name: {
         plural: "users",
@@ -134,13 +252,20 @@ const rolesSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
-            name: "is_admin",
-            type: "boolean",
-            default: false
+            name: agentsSchema.name.plural,
+            type: "text" // write | read access to agents
         },
         {
-            name: "agents",
-            type: "json"
+            name: "workflows",
+            type: "text" // write | read access to workflows
+        },
+        {
+            name: variablesSchema.name.plural,
+            type: "text" // write | read access to variables
+        },
+        {
+            name: usersSchema.name.plural,
+            type: "text" // write | read access to users
         }
     ]
 }
@@ -166,27 +291,6 @@ const statisticsSchema: ExuluTableDefinition = {
         {
             name: "total",
             type: "number"
-        }
-    ]
-}
-
-const workflowSchema: ExuluTableDefinition = {
-    name: {
-        plural: "workflows",
-        singular: "workflow"
-    },
-    fields: [
-        {
-            name: "workflow_name",
-            type: "text"
-        },
-        {
-            name: "run_id",
-            type: "text"
-        },
-        {
-            name: "snapshot",
-            type: "text"
         }
     ]
 }
@@ -309,72 +413,6 @@ const jobsSchema: ExuluTableDefinition = {
     ]
 }
 
-const agentsSchema: ExuluTableDefinition = {
-    name: {
-        plural: "agents",
-        singular: "agent"
-    },
-    RBAC: true,
-    fields: [
-        {
-            name: "name",
-            type: "text"
-        },
-        {
-            name: "description",
-            type: "text"
-        },
-        {
-            name: "providerApiKey",
-            type: "text"
-        },
-        {
-            name: "extensions",
-            type: "json"
-        },
-        {
-            name: "backend",
-            type: "text"
-        },
-        {
-            name: "type",
-            type: "text"
-        },
-        {
-            name: "active",
-            type: "boolean",
-            default: false
-        },
-        {
-            name: "tools",
-            type: "json"
-        }
-    ]
-}
-
-const variablesSchema: ExuluTableDefinition = {
-    name: {
-        plural: "variables",
-        singular: "variable"
-    },
-    fields: [
-        {
-            name: "name",
-            type: "text",
-            index: true,
-            unique: true
-        },
-        {
-            name: "value",
-            type: "longText"
-        },
-        {
-            name: "encrypted",
-            type: "boolean",
-            default: false
-        }
-    ]
-}
 
 const rbacSchema: ExuluTableDefinition = {
     name: {
@@ -414,56 +452,6 @@ const rbacSchema: ExuluTableDefinition = {
     ]
 }
 
-const workflowTemplatesSchema: ExuluTableDefinition = {
-    name: {
-        plural: "workflow_templates",
-        singular: "workflow_template"
-    },
-    RBAC: true,
-    fields: [
-        {
-            name: "name",
-            type: "text",
-            required: true
-        },
-        {
-            name: "description",
-            type: "text"
-        },
-        {
-            name: "owner",
-            type: "number",
-            required: true
-        },
-        {
-            name: "visibility",
-            type: "text",
-            required: true
-        },
-        {
-            name: "shared_user_ids",
-            type: "json"
-        },
-        {
-            name: "shared_role_ids",
-            type: "json"
-        },
-        {
-            name: "variables",
-            type: "json"
-        },
-        {
-            name: "steps_json",
-            type: "json",
-            required: true
-        },
-        {
-            name: "example_metadata_json",
-            type: "json"
-        }
-    ]
-}
-
 const addRBACfields = (schema: ExuluTableDefinition) => {
     if (schema.RBAC) {
         console.log(`[EXULU] Adding rights_mode field to ${schema.name.plural} table.`)
@@ -483,8 +471,6 @@ const addRBACfields = (schema: ExuluTableDefinition) => {
     return schema;
 }
 
-
-
 export const coreSchemas = {
     get: () => {
         return {
@@ -494,7 +480,6 @@ export const coreSchemas = {
             usersSchema: () => addRBACfields(usersSchema),
             rolesSchema: () => addRBACfields(rolesSchema),
             statisticsSchema: () => addRBACfields(statisticsSchema),
-            workflowSchema: () => addRBACfields(workflowSchema),
             evalResultsSchema: () => addRBACfields(evalResultsSchema),
             jobsSchema: () => addRBACfields(jobsSchema),
             variablesSchema: () => addRBACfields(variablesSchema),

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"
 import { z } from "zod";
-import type { ExuluAgent, ExuluContext, ExuluTool, ExuluWorkflow } from "../registry/classes";
+import type { ExuluAgent, ExuluContext, ExuluTool } from "../registry/classes";
 import type { ExuluConfig } from "../registry";
 import { type Express, type Request, type Response } from "express";
 
@@ -20,12 +20,11 @@ export class ExuluMCP {
     constructor() {
     }
 
-    create = async ({ express, contexts, agents, workflows, config, tools }: {
+    create = async ({ express, contexts, agents, config, tools }: {
         contexts?: Record<string, ExuluContext>,
         express?: Express,
         config: ExuluConfig,
         agents?: ExuluAgent[],
-        workflows?: ExuluWorkflow[],
         tools?: ExuluTool[]
     }) => {
         this.express = express;

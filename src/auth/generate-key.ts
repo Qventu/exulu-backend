@@ -33,8 +33,10 @@ export const generateApiKey = async (name: string, email: string): Promise<{ key
         console.log("[EXULU] Creating default admin role.");
         const role = await db.from("roles").insert({
             name: "admin",
-            is_admin: true,
-            agents: []
+            agents: "write",
+            workflows: "write",
+            variables: "write",
+            users: "write"
         }).returning("id");
         roleId = role[0].id;
     } else {

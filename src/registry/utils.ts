@@ -1,6 +1,6 @@
 import { Job as BullmqJob } from "bullmq";
 import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
-import { ExuluLogger, ExuluWorkflow } from "./classes.ts";
+import { ExuluLogger, type ExuluWorkflow } from "./classes.ts";
 
 export const bullmq = {
     validate: (bullmqJob: BullmqJob): void => {
@@ -39,6 +39,7 @@ export const bullmq = {
 
             const logger = new ExuluLogger(exuluJob, logsDir)
 
+            // todo adjust to new workflow type
             const output = await workflow.start({
                 job: exuluJob,
                 inputs: bullmqJob.data.inputs,

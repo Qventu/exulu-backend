@@ -86,7 +86,7 @@ function createTypeDefs(table: ExuluTableDefinition): string {
     const typeDef = `
   type ${table.name.singular} {
   ${fields.join("\n")}
-    ${ table.fields.find(field => field.name === "id") ? "" : "id: ID!"}
+    ${table.fields.find(field => field.name === "id") ? "" : "id: ID!"}
     createdAt: Date!
     updatedAt: Date!
 ${rbacField}
@@ -268,8 +268,19 @@ function createMutations(table: ExuluTableDefinition) {
             return true; // No access control needed
         }
 
-        if (user.type === "api" || user.super_admin === true) {
+        if (user.super_admin === true) {
             return true; // todo roadmap - scoping api users to specific resources
+        }
+
+        if (!user.role || (
+            !(table.name.plural.includes("agent") && user.role.agents === "write") &&
+            !(table.name.plural.includes("workflow") && user.role.workflows === "write") &&
+            !(table.name.plural.includes("variable") && user.role.variables === "write") &&
+            !(table.name.plural.includes("user") && user.role.users === "write")
+        )) {
+            console.error('Access control error: no role found for current user or no access to entity type.');
+            // Return empty result on error
+            throw new Error('Access control error: no role found for current user or no access to entity type.');
         }
 
         try {
@@ -559,8 +570,19 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
         return query;
     }
 
-    if (user.type === "api" || user.super_admin === true) {
+    if (user.super_admin === true) {
         return query; // todo roadmap - scoping api users to specific resources
+    }
+
+    if (!user.role || (
+        !(table.name.plural.includes("agent") && (user.role.agents === "read" || user.role.agents === "write")) &&
+        !(table.name.plural.includes("workflow") && (user.role.workflows === "read" || user.role.workflows === "write")) &&
+        !(table.name.plural.includes("variable") && (user.role.variables === "read" || user.role.variables === "write")) &&
+        !(table.name.plural.includes("user") && (user.role.users === "read" || user.role.users === "write"))
+    )) {
+        console.error('Access control error: no role found or no access to entity type.');
+        // Return empty result on error
+        return query.where('1', '=', '0');
     }
 
     try {
@@ -688,6 +710,7 @@ function createQueries(table: ExuluTableDefinition) {
             dataQuery = applyAccessControl(table, context.user, dataQuery);
 
             const requestedFields = getRequestedFields(info)
+            
             dataQuery = applySorting(dataQuery, sort);
             if (page > 1) {
                 dataQuery = dataQuery.offset((page - 1) * limit);
@@ -871,7 +894,8 @@ export function createSDL(tables: ExuluTableDefinition[]) {
     let modelDefs = "";
     const resolvers = { JSON: GraphQLJSON, Date: GraphQLDate, Query: {}, Mutation: {} };
 
-    // todo add the contexts from Exulu to the schema
+    // todo add the contexts from Exulu to the schema and then remove from the REST API make sure to also check if user has
+    //   read / write access to the contexts table
     for (const table of tables) {
         // Skip tables with graphql: false
         if (table.graphql === false) {

@@ -162,8 +162,10 @@ export const execute = async () => {
         console.log("[EXULU] Creating default admin role.");
         const role = await db.from("roles").insert({
             name: "admin",
-            is_admin: true,
-            agents: JSON.stringify([])
+            agents: "write",
+            workflows: "write",
+            variables: "write",
+            users: "write"
         }).returning("id");
         roleId = role[0].id;
     } else {

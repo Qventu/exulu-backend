@@ -1,7 +1,6 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, ExuluEmbedder, ExuluLogger, type ExuluTool, ExuluWorkflow, type SourceDocument, updateStatistic } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
-import { bullmqDecorator } from "./decoraters/bullmq.ts";
 import { requestValidators } from "./route-validators";
 import { zerialize } from "zodex";
 import { queues } from "../bullmq/queues.ts";
@@ -31,7 +30,7 @@ export const global_queues = {
     logs_cleaner: "logs-cleaner"
 }
 
-const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, workflowSchema, variablesSchema, workflowTemplatesSchema, rbacSchema } = coreSchemas.get();
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, variablesSchema, workflowTemplatesSchema, rbacSchema, statisticsSchema } = coreSchemas.get();
 
 const createRecurringJobs = async () => {
 
@@ -92,7 +91,6 @@ export const createExpressRoutes = async (
     app: Express,
     agents: ExuluAgent[],
     tools: ExuluTool[],
-    workflows: ExuluWorkflow[],
     contexts: ExuluContext[],
 ): Promise<Express> => {
     const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
@@ -153,8 +151,6 @@ export const createExpressRoutes = async (
     routeLogs.push(
         { route: "/agents", method: "GET", note: "List all agents" },
         { route: "/agents/:id", method: "GET", note: "Get specific agent" },
-        { route: "/workflows", method: "GET", note: "List all workflows" },
-        { route: "/workflows/:id", method: "GET", note: "Get specific workflow" },
         { route: "/contexts", method: "GET", note: "List all contexts" },
         { route: "/contexts/:id", method: "GET", note: "Get specific context" },
         { route: "/contexts/statistics", method: "GET", note: "Get context statistics" },
@@ -179,7 +175,6 @@ export const createExpressRoutes = async (
         rolesSchema(),
         agentsSchema(),
         jobsSchema(),
-        workflowSchema(),
         evalResultsSchema(),
         agentSessionsSchema(),
         agentMessagesSchema(),
@@ -1089,56 +1084,6 @@ export const createExpressRoutes = async (
         })))
     })
 
-    console.log("[EXULU] workflows get list")
-    app.get(`/workflows`, async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        res.status(200).json(workflows.map(workflow => ({
-            id: workflow.id,
-            name: workflow.name,
-            slug: workflow.slug,
-            enable_batch: workflow.enable_batch,
-            queue: workflow.queue?.name,
-            inputSchema: workflow.steps[0]?.inputSchema ? zerialize(workflow.steps[0].inputSchema as any) : null
-        })))
-    })
-
-    console.log("[EXULU] workflow by id")
-    app.get(`/workflows/:id`, async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const id = req.params.id;
-        if (!id) {
-            res.status(400).json({
-                message: "Missing id in request."
-            })
-            return;
-        }
-        const workflow = workflows.find(workflow => workflow.id === id)
-        if (!workflow) {
-            res.status(400).json({
-                message: "Workflow not found."
-            })
-            return;
-        }
-        res.status(200).json({
-            ...workflow,
-            queue: workflow.queue?.name,
-            inputSchema: workflow.steps[0]?.inputSchema ? zerialize(workflow.steps[0].inputSchema as any) : null,
-            workflow: undefined
-        })
-    })
-
     console.log("[EXULU] contexts")
     contexts.forEach(context => {
         const sources = context.sources.get();
@@ -1371,78 +1316,6 @@ export const createExpressRoutes = async (
 
             }
         })
-    })
-
-    console.log("[EXULU] workflows")
-    workflows.forEach(workflow => {
-        routeLogs.push({
-            route: workflow.slug,
-            method: "POST",
-            note: `Execute workflow ${workflow.name}`
-        });
-        app.post(`${workflow.slug}`, async (req: Request, res: Response) => {
-
-            const authenticationResult = await requestValidators.authenticate(req);
-            if (!authenticationResult.user?.id) {
-                res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-                return;
-            }
-
-            const requestValidationResult = requestValidators.workflows(req)
-
-            if (requestValidationResult.error) {
-                res.status(requestValidationResult.code || 500).json({ detail: `${requestValidationResult.message}` });
-                return;
-            }
-
-            const inputs = await preprocessInputs(req.body.inputs);
-
-            if (workflow.queue) {
-
-                const job = await bullmqDecorator({
-                    label: `Job running '${workflow.name}' for '${req.body.label}'`,
-                    agent: req.body.agent,
-                    workflow: workflow.id,
-                    steps: workflow.steps?.length || 0,
-                    type: "workflow",
-                    inputs,
-                    session: req.body.session,
-                    queue: workflow.queue,
-                    user: authenticationResult.user.id
-                })
-
-                res.status(200).json({
-                    "job": {
-                        "status": "waiting",
-                        "name": job.name,
-                        "queue": workflow.queue.name,
-                        "redisId": job.redis,
-                        "jobId": job.id
-                    },
-                    "output": {}
-                });
-                return;
-            }
-
-            console.log("[EXULU] running workflow with inputs.", inputs)
-            const logger = new ExuluLogger()
-
-            const result = await workflow.start({
-                inputs,
-                user: authenticationResult.user.id,
-                logger,
-                session: req.body.session,
-                agent: req.body.agent,
-                label: req.body.label
-            });
-
-            res.status(200).json({
-                "job": {},
-                "output": result
-            });
-            return;
-            // todo batch mode
-        });
     })
 
     if (

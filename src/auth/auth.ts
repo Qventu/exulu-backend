@@ -39,7 +39,15 @@ export const authentication = async ({
             user: {
                 type: "api",
                 id: "XXXX-XXXX-XXXX-XXXX",
-                email: "internal@exulu.com"
+                email: "internal@exulu.com",
+                role: {
+                    id: "internal",
+                    name: "Internal",
+                    agents: "read",
+                    workflows: "read",
+                    variables: "read",
+                    users: "read"
+                }
             }
         }
 
@@ -61,6 +69,13 @@ export const authentication = async ({
             }
 
             const user = await db.from("users").select("*").where("email", authtoken?.email).first()
+
+            if (user?.role) {
+                const role = await db.from("roles").select("*").where("id", user?.role).first()
+                if (role) {
+                    user.role = role;
+                }
+            }
 
             if (!user) {
                 return {
@@ -124,13 +139,20 @@ export const authentication = async ({
             const user_key_compare_value = user.apikey.substring(0, user_key_last_slash_index);
             const isMatch = await bcrypt.compare(request_key_compare_value, user_key_compare_value);
             if (isMatch) {
-                
+
                 await db.from("users")
                     .where({ id: user.id })
                     .update({
                         last_used: new Date()
                     })
                     .returning("id");
+
+                if (user?.role) {
+                    const role = await db.from("roles").select("*").where("id", user?.role).first()
+                    if (role) {
+                        user.role = role;
+                    }
+                }
 
                 return {
                     error: false,

@@ -5,8 +5,12 @@ export type User = {
   type?: "api" | "user"
   anthropic_token?: string;
   super_admin?: boolean;
-  roles?: {
+  role: {
     id: string;
-    role: string;
-  }[];
+    name: string;
+    agents: "read" | "write";
+    workflows: "read" | "write";
+    variables: "read" | "write";
+    users: "read" | "write";
+  };
 };

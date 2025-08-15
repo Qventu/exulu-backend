@@ -15,7 +15,6 @@ import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
-import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
 
@@ -71,7 +70,7 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: Exul
                         }
 
                         console.log("[EXULU] Config", config)
-                        
+
                         return await cur.tool.execute({
                             ...inputs,
                             // Convert config to object format if a config object 
@@ -201,7 +200,7 @@ export type ExuluAgentEval = {
 interface ExuluAgentParams {
     id: string;
     name: string;
-    type: "agent" | "workflow" | "custom";
+    type: "agent" | "custom";
     description: string;
     config?: ExuluAgentConfig | undefined;
     capabilities?: {
@@ -231,7 +230,7 @@ export class ExuluAgent {
     public name: string;
     public description: string = "";
     public slug: string = "";
-    public type: "agent" | "workflow" | "custom";
+    public type: "agent" | "custom";
     public streaming: boolean = false;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
@@ -502,182 +501,6 @@ export class ExuluEmbedder {
 
         return await this.generateEmbeddings(output)
     };
-
-}
-
-export type ExuluWorkflowStep = {
-    id: string,
-    name: string,
-    description: string,
-    inputSchema: ZodSchema;
-    retries?: number;
-    fn: ({
-        inputs,
-        job,
-        user,
-        logger
-    }: {
-        inputs: any,
-        user?: string,
-        logger: ExuluLogger,
-        job?: ExuluJob
-    }) => Promise<any>
-}
-
-export class ExuluWorkflow {
-
-    public id: string;
-    public name: string;
-    public description: string = "";
-    public enable_batch: boolean = false;
-    public slug: string = "";
-    public queue: Queue | undefined;
-    public steps: Array<ExuluWorkflowStep>;
-
-    constructor({ id, name, description, steps, queue, enable_batch }: {
-        id: string,
-        name: string,
-        description: string,
-        steps: Array<ExuluWorkflowStep>,
-        queue?: Queue,
-        enable_batch: boolean
-    }) {
-        this.id = id;
-        this.name = name;
-        this.description = description;
-        this.enable_batch = enable_batch;
-        this.slug = `/workflows/${generateSlug(this.name)}/run`
-        this.queue = queue;
-        this.steps = steps;
-    }
-
-    public start = async ({
-        inputs: initialInputs,
-        user,
-        logger,
-        job,
-        session,
-        agent,
-        label
-    }: {
-        inputs: any, user?: string, logger: ExuluLogger, job?: ExuluJob, session?: string, agent?: string, label?: string
-    }): Promise<any> => { // todo infer type of input from the inputschema of the step
-        // Run the this.steps functions sequentially, providing the 
-        // output of each step as the input of the next step.
-        let inputs: any;
-        // todo store result into the jobs table (set to "started" if job.status is not yet "started"), if no job is provided, create a new one and
-        // set the status here, update it later with the result(s)
-
-        const { db } = await postgresClient();
-
-        if (!job?.id) {
-            logger.write(`Creating new job for workflow ${this.name} with inputs: ${JSON.stringify(initialInputs)}`, "INFO")
-            const result = await db('jobs')
-                .insert({
-                    status: JOB_STATUS_ENUM.active,
-                    name: `Job running '${this.name}' for '${label}'`,
-                    agent,
-                    workflow: this.id,
-                    type: "workflow",
-                    steps: this.steps?.length || 0,
-                    inputs: initialInputs,
-                    session,
-                    user
-                })
-                .returning(["id", "status"])
-            job = result[0];
-            logger.write(`Created new job for workflow ${this.name}, job id: ${job?.id}`, "INFO")
-        }
-
-        if (!job) {
-            throw new Error("Job not found, or failed to be created.")
-        }
-
-        if (job.status !== JOB_STATUS_ENUM.active) {
-            await db('jobs')
-                .update({
-                    status: JOB_STATUS_ENUM.active,
-                    inputs: initialInputs
-                })
-                .where({ id: job?.id })
-                .returning("id");
-        }
-
-        const runStep = async (step: ExuluWorkflowStep, inputs: any) => {
-            let result: any;
-            try {
-                result = await step.fn({
-                    inputs: inputs,
-                    logger,
-                    job: job,
-                    user: user
-                });
-                return result;
-
-            } catch (error: any) {
-                logger.write(`Step ${step.name} failed with error: ${error.message}`, "ERROR")
-                if (step.retries && step.retries > 0) {
-                    logger.write(`Retrying step ${step.name} with ${step.retries} retries left`, "INFO")
-                    step.retries--;
-                    let result = await runStep(step, inputs);
-                    return result;
-                }
-                logger.write(`Step ${step.name} failed with error: ${error.message}`, "ERROR")
-                throw error;
-            }
-        }
-
-        let final: any;
-
-        try {
-            for (let i = 0; i < this.steps.length; i++) {
-
-                const step = this.steps[i];
-
-                if (!step) {
-                    throw new Error("Step not found.")
-                }
-
-                if (i === 0) {
-                    inputs = initialInputs;
-                }
-
-                logger.write(`Running step ${step.name} with inputs: ${JSON.stringify(inputs)}`, "INFO")
-                // todo allow storing each step as an interim result in an own table which is linked to the job
-                let result = await runStep(step, inputs);
-                inputs = result;
-                logger.write(`Step ${step.name} output: ${JSON.stringify(result)}`, "INFO")
-
-                final = result;
-            }
-
-            await db('jobs')
-                .update({
-                    status: JOB_STATUS_ENUM.completed,
-                    result: JSON.stringify(final),
-                    finished_at: db.fn.now()
-                })
-                .where({ id: job?.id })
-                .returning("id");
-
-            return final;
-
-        } catch (error: any) {
-            logger.write(`Workflow ${this.name} failed with error: ${error.message} for job ${job?.id}`, "ERROR")
-            await db('jobs')
-                .update({
-                    status: JOB_STATUS_ENUM.failed,
-                    result: JSON.stringify({
-                        error: error.message || error,
-                        stack: error.stack || "No stack trace available"
-                    })
-                })
-                .where({ id: job?.id })
-                .returning("id");
-            throw error;
-        }
-
-    }
 }
 
 export class ExuluLogger {
@@ -724,6 +547,36 @@ export class ExuluLogger {
 }
 
 type AddSourceArgs = Omit<ExuluSourceConstructorArgs, "context">;
+
+interface WorkflowVariable {
+    name: string
+    description?: string
+    type: 'string'
+    required: boolean
+    defaultValue?: string
+}
+
+interface WorkflowStep {
+    id: string
+    type: 'user' | 'assistant' | 'tool'
+    content?: string
+    contentExample?: string
+    toolName?: string
+    variablesUsed?: string[]
+}
+
+export interface ExuluWorkflow {
+    id: string
+    name: string
+    description?: string
+    rights_mode?: 'private' | 'users' | 'roles' | 'public'
+    RBAC?: {
+        users?: Array<{ id: string; rights: 'read' | 'write' }>
+        roles?: Array<{ id: string; rights: 'read' | 'write' }>
+    }
+    variables?: WorkflowVariable[]
+    steps_json?: WorkflowStep[]
+}
 
 type ExuluEvalRunnerInstance = {
     name: string,

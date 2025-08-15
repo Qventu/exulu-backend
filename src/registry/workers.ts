@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Worker } from "bullmq";
 import { bullmq } from "./utils";
-import { ExuluContext, ExuluEmbedder, ExuluSource, ExuluWorkflow } from "./classes";
+import { ExuluContext, ExuluSource } from "./classes";
 import * as fs from 'fs';
 import path from "path";
 import { global_queues } from "./routes";
@@ -11,7 +11,7 @@ export const defaultLogsDir = path.join(process.cwd(), 'logs');
 
 let redisConnection: IORedis;
 
-export const createWorkers = async (queues: string[], contexts: ExuluContext[], workflows: ExuluWorkflow[], _logsDir?: string) => {
+export const createWorkers = async (queues: string[], contexts: ExuluContext[], _logsDir?: string) => {
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
 
@@ -120,6 +120,7 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
 
                     if (bullmqJob.data.type === "workflow") {
 
+                        // todo find the workflow in the database instead of the old workflows object
                         const workflow = workflows.find(workflow => workflow.id === bullmqJob.data.workflow)
 
                         if (!workflow) {
@@ -133,8 +134,6 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                         }
 
                         const result = await bullmq.process.workflow(bullmqJob, exuluJob, workflow, logsDir)
-
-
 
                         const finishedAt = new Date();
                         const duration = (finishedAt.getTime() - new Date(exuluJob.createdAt).getTime()) / 1000;

@@ -18,7 +18,7 @@ export class ExuluQueues {
             return existing;
         }
         if (!redisServer.host?.length || !redisServer.port?.length) {
-            console.error(`[EXULU] no redis server configured, but you are trying to use a queue ( ${name}), likely in an agent or workflow (look for ExuluQueues.use() ).`)
+            console.error(`[EXULU] no redis server configured, but you are trying to use a queue ( ${name}), likely in an agent or embedder (look for ExuluQueues.use() ).`)
             throw new Error(`[EXULU] no redis server configured.`)
         }
         const newQueue = new Queue(`${name}`, { connection: redisServer });
