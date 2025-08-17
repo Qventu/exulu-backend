@@ -363,6 +363,10 @@ const jobsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "created_by",
+            type: "number"
+        },
+        {
             name: "status",
             type: "text"
         },

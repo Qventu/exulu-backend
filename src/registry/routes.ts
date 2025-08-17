@@ -72,8 +72,8 @@ const createRecurringJobs = async () => {
 
 export type ExuluTableDefinition = {
     name: {
-        plural: string,
-        singular: string,
+        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "statistics" | "rbac" | "users" | "variables" | "roles" | "agents",
+        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "statistic" | "rbac" | "user" | "variable" | "role" | "agent",
     },
     fields: {
         name: string,

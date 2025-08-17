@@ -259,39 +259,9 @@ function createMutations(table: ExuluTableDefinition) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const validateWriteAccess = async (id: string, context: any) => {
 
-        const { db, req, user } = context;
-
-        // Check if this table has RBAC enabled or legacy access control fields
-        const hasRBAC = table.RBAC === true;
-
-        if (!hasRBAC) {
-            return true; // No access control needed
-        }
-
-        if (user.super_admin === true) {
-            return true; // todo roadmap - scoping api users to specific resources
-        }
-
-        if (!user.role || (
-            !(table.name.plural.includes("agent") && user.role.agents === "write") &&
-            !(table.name.plural.includes("workflow") && user.role.workflows === "write") &&
-            !(table.name.plural.includes("variable") && user.role.variables === "write") &&
-            !(table.name.plural.includes("user") && user.role.users === "write")
-        )) {
-            console.error('Access control error: no role found for current user or no access to entity type.');
-            // Return empty result on error
-            throw new Error('Access control error: no role found for current user or no access to entity type.');
-        }
-
         try {
-            const authResult = await requestValidators.authenticate(req);
-            if (authResult.error || !authResult.user) {
-                throw new Error('Authentication required');
-            }
+            const { db, req, user } = context;
 
-            const user = authResult.user;
-
-            // New RBAC system
             const record = await db.from(tableNamePlural)
                 .select(['rights_mode', 'created_by'])
                 .where({ id })
@@ -299,6 +269,38 @@ function createMutations(table: ExuluTableDefinition) {
 
             if (!record) {
                 throw new Error('Record not found');
+            }
+
+            // Special rules for jobs.
+            if (tableNamePlural === "jobs") {
+                // If a user is not super admin, they 
+                // can only see their own jobs.
+                // todo we could potentially check the if the request is for jobs with type embeddder, and then filter on jobs where the user has access to the context source of the embedder.
+                if (!user.super_admin && record.created_by !== user.id) {
+                    throw new Error('You are not authorized to edit this record');
+                }
+            }
+
+            // Check if this table has RBAC enabled or legacy access control fields
+            const hasRBAC = table.RBAC === true;
+
+            if (!hasRBAC) {
+                return true; // No access control needed
+            }
+
+            if (user.super_admin === true) {
+                return true; // todo roadmap - scoping api users to specific resources
+            }
+
+            if (!user.role || (
+                !(table.name.plural === "agents" && user.role.agents === "write") &&
+                !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
+                !(table.name.plural === "variables" && user.role.variables === "write") &&
+                !(table.name.plural === "users" && user.role.users === "write")
+            )) {
+                console.error('Access control error: no role found for current user or no access to entity type.');
+                // Return empty result on error
+                throw new Error('Access control error: no role found for current user or no access to entity type.');
             }
 
             // Check if record is public (any user can edit)
@@ -574,11 +576,19 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
         return query; // todo roadmap - scoping api users to specific resources
     }
 
+    if (table.name.plural === "jobs") {
+        // If a user is not super admin, they 
+        // can only see their own jobs.
+        // todo we could potentially check the if the request is for jobs with type embeddder, and then filter on jobs where the user has access to the context source of the embedder.
+        query = query.where('created_by', user.id);
+        return query;
+    }
+
     if (!user.role || (
-        !(table.name.plural.includes("agent") && (user.role.agents === "read" || user.role.agents === "write")) &&
-        !(table.name.plural.includes("workflow") && (user.role.workflows === "read" || user.role.workflows === "write")) &&
-        !(table.name.plural.includes("variable") && (user.role.variables === "read" || user.role.variables === "write")) &&
-        !(table.name.plural.includes("user") && (user.role.users === "read" || user.role.users === "write"))
+        !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
+        !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
+        !(table.name.plural === "variables" && (user.role.variables === "read" || user.role.variables === "write")) &&
+        !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write"))
     )) {
         console.error('Access control error: no role found or no access to entity type.');
         // Return empty result on error
@@ -710,7 +720,7 @@ function createQueries(table: ExuluTableDefinition) {
             dataQuery = applyAccessControl(table, context.user, dataQuery);
 
             const requestedFields = getRequestedFields(info)
-            
+
             dataQuery = applySorting(dataQuery, sort);
             if (page > 1) {
                 dataQuery = dataQuery.offset((page - 1) * limit);
