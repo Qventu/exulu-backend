@@ -147,30 +147,28 @@ export const requestValidators = {
             };
         }
 
-        // conversation id
-        if (!req.body.threadId) {
+        if (!req.headers['user']) {
             return {
                 error: true,
                 code: 400,
-                message: 'Missing threadId in body.'
+                message: 'Missing "user" property in headers.'
             };
         }
 
-        // user id
-        if (!req.body.resourceId) {
+        if (!req.headers['session']) {
             return {
                 error: true,
                 code: 400,
-                message: 'Missing resourceId in body.'
+                message: 'Missing "session" property in headers.'
             };
         }
 
         // chat inputs
-        if (!req.body.messages) {
+        if (!req.body.message) {
             return {
                 error: true,
                 code: 400,
-                message: 'Missing "messages" property in body.'
+                message: 'Missing "message" property in body.'
             };
         }
 

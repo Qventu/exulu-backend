@@ -1,7 +1,7 @@
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 
 export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", name: string, defaultValue?: any, unique?: boolean) => {
-    if (type === "text") {
+    if (type === "text" || type === "enum") {
         t.text(name);
         if (unique) t.unique(name);
         if (defaultValue) t.defaultTo(defaultValue);

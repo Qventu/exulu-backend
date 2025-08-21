@@ -51,6 +51,9 @@ const map = (field: any) => {
         case "code":
             type = "String";
             break;
+        case "enum":
+            type = field.enumValues ? `${field.name}Enum` : "String";
+            break;
         case "number":
             type = "Float";
             break;
@@ -71,6 +74,28 @@ const map = (field: any) => {
 
 function createTypeDefs(table: ExuluTableDefinition): string {
 
+    // Generate enum definitions for enum fields
+    const enumDefs = table.fields
+        .filter(field => field.type === "enum" && field.enumValues)
+        .map(field => {
+            // @ts-ignore
+            const enumValues = field.enumValues
+                .map(value => {
+                    // Convert enum values to valid GraphQL identifiers
+                    const sanitized = String(value)
+                        .replace(/[^a-zA-Z0-9_]/g, '_')
+                        .replace(/^[0-9]/, '_$&')
+                        .toUpperCase();
+                    return `  ${sanitized}`;
+                })
+                .join("\n");
+            return `
+enum ${field.name}Enum {
+${enumValues}
+}`;
+        })
+        .join("\n");
+
     const fields = table.fields.map(field => {
         let type: string;
         type = map(field);
@@ -87,8 +112,6 @@ function createTypeDefs(table: ExuluTableDefinition): string {
   type ${table.name.singular} {
   ${fields.join("\n")}
     ${table.fields.find(field => field.name === "id") ? "" : "id: ID!"}
-    createdAt: Date!
-    updatedAt: Date!
 ${rbacField}
   }
   `;
@@ -103,18 +126,38 @@ ${rbacInputField}
 }
 `;
 
-    return typeDef + inputDef;
+    return enumDefs + typeDef + inputDef;
 }
 
 function createFilterTypeDefs(table: ExuluTableDefinition): string {
     const fieldFilters = table.fields.map(field => {
         let type: string;
-        type = map(field);
+        if (field.type === "enum" && field.enumValues) {
+            type = `${field.name}Enum`;
+        } else {
+            type = map(field);
+        }
         return `
   ${field.name}: FilterOperator${type}`;
     });
 
     const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
+
+    // Create enum-specific filter operators
+    const enumFilterOperators = table.fields
+        .filter(field => field.type === "enum" && field.enumValues)
+        .map(field => {
+            const enumTypeName = `${field.name}Enum`;
+            return `
+input FilterOperator${enumTypeName} {
+  eq: ${enumTypeName}
+  ne: ${enumTypeName}
+  in: [${enumTypeName}]
+  and: [FilterOperator${enumTypeName}]
+  or: [FilterOperator${enumTypeName}]
+}`;
+        })
+        .join("\n");
 
     // Create filter operator types for each field type
     const operatorTypes = `
@@ -123,23 +166,31 @@ input FilterOperatorString {
   ne: String
   in: [String]
   contains: String
+  and: [FilterOperatorString]
+  or: [FilterOperatorString]
 }
 
 input FilterOperatorDate {
   lte: Date
   gte: Date
+  and: [FilterOperatorDate]
+  or: [FilterOperatorDate]
 }
 
 input FilterOperatorFloat {
   eq: Float
   ne: Float
   in: [Float]
+  and: [FilterOperatorFloat]
+  or: [FilterOperatorFloat]
 }
 
 input FilterOperatorBoolean {
   eq: Boolean
   ne: Boolean
   in: [Boolean]
+  and: [FilterOperatorBoolean]
+  or: [FilterOperatorBoolean]
 }
 
 input FilterOperatorJSON {
@@ -157,6 +208,8 @@ enum SortDirection {
   ASC
   DESC
 }
+
+${enumFilterOperators}
 
 input Filter${tableNameSingularUpperCaseFirst} {
 ${fieldFilters.join("\n")}
@@ -260,7 +313,30 @@ function createMutations(table: ExuluTableDefinition) {
     const validateWriteAccess = async (id: string, context: any) => {
 
         try {
+
             const { db, req, user } = context;
+
+            if (user.super_admin === true) {
+                return true; // todo roadmap - scoping api users to specific resources
+            }
+
+            if (!user.role || (
+                !(table.name.plural === "agents" && user.role.agents === "write") &&
+                !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
+                !(table.name.plural === "variables" && user.role.variables === "write") &&
+                !(table.name.plural === "users" && user.role.users === "write")
+            )) {
+                console.error('Access control error: no role found for current user or no access to entity type.');
+                // Return empty result on error
+                throw new Error('Access control error: no role found for current user or no access to entity type.');
+            }
+
+            // Check if this table has RBAC enabled or legacy access control fields
+            const hasRBAC = table.RBAC === true;
+
+            if (!hasRBAC) {
+                return true; // No access control needed
+            }
 
             const record = await db.from(tableNamePlural)
                 .select(['rights_mode', 'created_by'])
@@ -281,27 +357,7 @@ function createMutations(table: ExuluTableDefinition) {
                 }
             }
 
-            // Check if this table has RBAC enabled or legacy access control fields
-            const hasRBAC = table.RBAC === true;
 
-            if (!hasRBAC) {
-                return true; // No access control needed
-            }
-
-            if (user.super_admin === true) {
-                return true; // todo roadmap - scoping api users to specific resources
-            }
-
-            if (!user.role || (
-                !(table.name.plural === "agents" && user.role.agents === "write") &&
-                !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
-                !(table.name.plural === "variables" && user.role.variables === "write") &&
-                !(table.name.plural === "users" && user.role.users === "write")
-            )) {
-                console.error('Access control error: no role found for current user or no access to entity type.');
-                // Return empty result on error
-                throw new Error('Access control error: no role found for current user or no access to entity type.');
-            }
 
             // Check if record is public (any user can edit)
             if (record.rights_mode === 'public') {
@@ -567,21 +623,24 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
     console.log("table", table)
     const tableNamePlural = table.name.plural.toLowerCase();
 
-    const hasRBAC = table.RBAC === true;
-    if (!hasRBAC) {
-        return query;
-    }
-
-    if (user.super_admin === true) {
-        return query; // todo roadmap - scoping api users to specific resources
-    }
-
-    if (table.name.plural === "jobs") {
+    if (!user.super_admin && table.name.plural === "jobs") {
         // If a user is not super admin, they 
         // can only see their own jobs.
         // todo we could potentially check the if the request is for jobs with type embeddder, and then filter on jobs where the user has access to the context source of the embedder.
         query = query.where('created_by', user.id);
         return query;
+    }
+
+    const hasRBAC = table.RBAC === true;
+    if (!hasRBAC) {
+        return query;
+    }
+
+    // If a user is super admin, they can see everything, except if
+    // the table is agent_sessions, in which case we always enforce
+    // the regular rbac rules set for the session (defaults to private).
+    if (table.name.plural !== "agent_sessions" && user.super_admin === true) {
+        return query; // todo roadmap - scoping api users to specific resources
     }
 
     if (!user.role || (
@@ -640,6 +699,28 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
     return query;
 };
 
+const converOperatorToQuery = (query: any, fieldName: string, operators: any) => {
+    if (operators.eq !== undefined) {
+        query = query.where(fieldName, operators.eq);
+    }
+    if (operators.ne !== undefined) {
+        query = query.whereRaw(`?? IS DISTINCT FROM ?`, [fieldName, operators.ne])
+    }
+    if (operators.in !== undefined) {
+        query = query.whereIn(fieldName, operators.in);
+    }
+    if (operators.contains !== undefined) {
+        query = query.where(fieldName, 'like', `%${operators.contains}%`);
+    }
+    if (operators.lte !== undefined) {
+        query = query.where(fieldName, '<=', operators.lte);
+    }
+    if (operators.gte !== undefined) {
+        query = query.where(fieldName, '>=', operators.gte);
+    }
+    return query;
+}
+
 function createQueries(table: ExuluTableDefinition) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const tableNameSingular = table.name.singular.toLowerCase();
@@ -648,18 +729,19 @@ function createQueries(table: ExuluTableDefinition) {
         filters.forEach(filter => {
             Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
                 if (operators) {
-                    if (operators.eq !== undefined) {
-                        query = query.where(fieldName, operators.eq);
+                    if (operators.and !== undefined) {
+                        console.log("operators.and", operators.and)
+                        operators.and.forEach(operator => {
+                            query = converOperatorToQuery(query, fieldName, operator);
+                        });
                     }
-                    if (operators.ne !== undefined) {
-                        query = query.whereRaw(`?? IS DISTINCT FROM ?`, [fieldName, operators.ne])
+                    if (operators.or !== undefined) {
+                        operators.or.forEach(operator => {
+                            query = converOperatorToQuery(query, fieldName, operator);
+                        });
                     }
-                    if (operators.in !== undefined) {
-                        query = query.whereIn(fieldName, operators.in);
-                    }
-                    if (operators.contains !== undefined) {
-                        query = query.where(fieldName, 'like', `%${operators.contains}%`);
-                    }
+                    query = converOperatorToQuery(query, fieldName, operators)
+                    console.log("query", query)
                 }
             });
         });
@@ -748,82 +830,42 @@ function createQueries(table: ExuluTableDefinition) {
 
             // Group by the specified field and count
             if (groupBy) {
-                const results = await query
+                query = query
                     .select(groupBy)
-                    .count('* as count')
                     .groupBy(groupBy);
 
+                // if table is tracking, then instead of counting we sum the total column
+                if (tableNamePlural === "tracking") {
+                    query = query.sum('total as count');
+                } else {
+                    query = query.count('* as count')
+                }
+                const results = await query
+                console.log("!!! results !!!", results)
                 return results.map(r => ({
                     group: r[groupBy],
-                    count: Number(r.count)
+                    count: r.count ? Number(r.count) : 0
                 }));
             } else {
                 // Just return total count
-                const [{ count }] = await query.count('* as count');
-                return [{
-                    group: 'total',
-                    count: Number(count)
-                }];
+                // if table is tracking, then instead of counting we sum the total column
+                if (tableNamePlural === "tracking") {
+                    query = query.sum('total as count');
+                    const [{ count }] = await query.sum('total as count');
+                    console.log("!!! count !!!", count)
+                    return [{
+                        group: 'total',
+                        count: count ? Number(count) : 0
+                    }];
+                } else {
+                    const [{ count }] = await query.count('* as count');
+                    return [{
+                        group: 'total',
+                        count: count ? Number(count) : 0
+                    }];
+                }
             }
-        },
-        // Add jobStatistics query for jobs table (backward compatibility)
-        ...(tableNamePlural === 'jobs' ? {
-            jobStatistics: async (_, args, context, info) => {
-                const { user, agent, from, to } = args;
-
-                const { db } = context;
-
-                let query = db('jobs');
-
-                // Apply filters
-                if (user) {
-                    query = query.where('user', user);
-                }
-                if (agent) {
-                    query = query.where('agent', agent);
-                }
-                if (from) {
-                    query = query.where('createdAt', '>=', from);
-                }
-                if (to) {
-                    query = query.where('createdAt', '<=', to);
-                }
-
-                // Apply access control
-                query = applyAccessControl(table, context.user, query);
-
-                // Get running jobs count (active, waiting, delayed, paused)
-                const runningQuery = query.clone().whereIn('status', ['active', 'waiting', 'delayed', 'paused']);
-                const [{ runningCount }] = await runningQuery.count('* as runningCount');
-
-                // Get errored jobs count (failed, stuck)
-                const erroredQuery = query.clone().whereIn('status', ['failed', 'stuck']);
-                const [{ erroredCount }] = await erroredQuery.count('* as erroredCount');
-
-                // Get completed jobs count
-                const completedQuery = query.clone().where('status', 'completed');
-                const [{ completedCount }] = await completedQuery.count('* as completedCount');
-
-                // Get failed jobs count
-                const failedQuery = query.clone().where('status', 'failed');
-                const [{ failedCount }] = await failedQuery.count('* as failedCount');
-
-                // Calculate average duration for completed jobs using the "duration" field (in seconds)
-                const durationQuery = query.clone()
-                    .where('status', 'completed')
-                    .whereNotNull('duration')
-                    .select(db.raw('AVG("duration") as averageDuration'));
-                const [{ averageDuration }] = await durationQuery;
-
-                return {
-                    runningCount: Number(runningCount),
-                    erroredCount: Number(erroredCount),
-                    completedCount: Number(completedCount),
-                    failedCount: Number(failedCount),
-                    averageDuration: averageDuration ? Number(averageDuration) : 0
-                };
-            }
-        } : {})
+        }
     };
 }
 
@@ -858,6 +900,18 @@ export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityN
 }
 
 export function createSDL(tables: ExuluTableDefinition[]) {
+
+    tables.forEach(table => {
+        table.fields.push({
+            name: "createdAt",
+            type: "date",
+        })
+        table.fields.push({
+            name: "updatedAt",
+            type: "date",
+        })
+    })
+
     console.log("[EXULU] Creating SDL")
     let typeDefs = `
     scalar JSON
@@ -921,7 +975,6 @@ export function createSDL(tables: ExuluTableDefinition[]) {
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
       ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String): [StatisticsResult]!
-      ${tableNamePlural === 'jobs' ? `jobStatistics(user: ID, agent: String, from: String, to: String): JobStatistics` : ''}
     `;
         // todo add the fields of each table as filter options
         mutationDefs += `
@@ -947,19 +1000,6 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-
-        // Add JobStatistics type for jobs table
-        if (tableNamePlural === 'jobs') {
-            modelDefs += `
-type JobStatistics {
-  runningCount: Int!
-  erroredCount: Int!
-  completedCount: Int!
-  failedCount: Int!
-  averageDuration: Float!
-}
-`;
-        }
         Object.assign(resolvers.Query, createQueries(table));
         Object.assign(resolvers.Mutation, createMutations(table));
 

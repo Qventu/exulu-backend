@@ -1,5 +1,5 @@
 import { ExuluAgent } from "../../registry/classes"
-import { createAnthropic, anthropic } from '@ai-sdk/anthropic';
+import { createAnthropic } from '@ai-sdk/anthropic';
 
 const agentId = "5434-5678-9143-2590";
 export const defaultAgent = new ExuluAgent({
@@ -8,7 +8,6 @@ export const defaultAgent = new ExuluAgent({
     description: `Basic agent without any defined tools, that can support MCP's.`,
     type: "agent",
     capabilities: {
-        tools: false,
         images: [],
         files: [],
         audio: [],
@@ -23,7 +22,7 @@ export const defaultAgent = new ExuluAgent({
                 const anthropic = createAnthropic({
                     apiKey: apiKey
                 })
-                return anthropic("claude-4-opus-20250514")
+                return anthropic.languageModel("claude-4-opus-20250514")
             },
             // todo add a field of type string that adds a dropdown list from which the user can select the model
             // todo for each model, check which provider is used, and require the admin to add one or multiple

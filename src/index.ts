@@ -11,6 +11,7 @@ import { RecursiveChunker } from "./chunking/recursive";
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db"
+import { generateApiKey } from './auth/generate-key'
 
 export const ExuluJobs = {
     redis: redisClient,
@@ -25,6 +26,13 @@ export { JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM, type JOB_STATUS as EXULU_JOB_
 export const db = {
     init: async () => {
         await initDb()
+    },
+    api: {
+        key: {
+            generate: async (name: string, email: string) => {
+                return await generateApiKey(name, email)
+            }
+        }
     }
 }
 

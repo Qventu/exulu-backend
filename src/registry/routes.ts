@@ -72,12 +72,13 @@ const createRecurringJobs = async () => {
 
 export type ExuluTableDefinition = {
     name: {
-        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "statistics" | "rbac" | "users" | "variables" | "roles" | "agents",
-        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "statistic" | "rbac" | "user" | "variable" | "role" | "agent",
+        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents",
+        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent",
     },
     fields: {
         name: string,
-        type: ExuluFieldTypes | "date" | "json" | "uuid",
+        type: ExuluFieldTypes | "date" | "json" | "uuid" | "enum",
+        enumValues?: string[],
         index?: boolean,
         required?: boolean,
         default?: any,
@@ -153,11 +154,8 @@ export const createExpressRoutes = async (
         { route: "/agents/:id", method: "GET", note: "Get specific agent" },
         { route: "/contexts", method: "GET", note: "List all contexts" },
         { route: "/contexts/:id", method: "GET", note: "Get specific context" },
-        { route: "/contexts/statistics", method: "GET", note: "Get context statistics" },
         { route: "/tools", method: "GET", note: "List all tools" },
         { route: "/tools/:id", method: "GET", note: "Get specific tool" },
-        { route: "/statistics/timeseries", method: "POST", note: "Get time series statistics" },
-        { route: "/statistics/totals", method: "POST", note: "Get totals statistics" },
         { route: "/items/:context", method: "POST", note: "Create new item in context" },
         { route: "/items/:context", method: "GET", note: "Get items from context" },
         { route: "/items/export/:context", method: "GET", note: "Export items from context" },
@@ -811,164 +809,6 @@ export const createExpressRoutes = async (
         })
     })
 
-    console.log("[EXULU] statistics timeseries")
-    app.post("/statistics/timeseries", async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const { db } = await postgresClient();
-
-        const type: STATISTICS_TYPE = req.body.type;
-
-        if (!Object.values(STATISTICS_TYPE_ENUM).includes(type)) {
-            res.status(400).json({
-                message: "Invalid type, must be one of: " + Object.values(STATISTICS_TYPE_ENUM).join(", ")
-            })
-            return;
-        }
-
-        let from: Date = new Date(req.body.from);
-        let to: Date = new Date(req.body.to);
-
-        if (!from || !to) {
-            // set to default 7 days ago
-            from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-            to = new Date();
-        }
-
-        const query = db.from("statistics").select("*");
-
-        query.where("name", "count")
-        query.andWhere("type", type)
-        query.andWhere("createdAt", ">=", from)
-        query.andWhere("createdAt", "<=", to)
-
-        const results: any = await query;
-
-        // check if between from and to for each day we have a result, if not add 0
-        const dates: Date[] = [];
-        for (let i = 0; i < (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24); i++) {
-            dates.push(new Date(from.getTime() + i * (1000 * 60 * 60 * 24)));
-        }
-
-        const data: { date: Date; count: number }[] = dates.map(date => {
-            const result = results.find(result => result.date === date);
-            if (result) {
-                return result;
-            }
-            return {
-                date: date,
-                count: 0
-            };
-        });
-        res.status(200).json({
-            data,
-            filter: {
-                from,
-                to
-            }
-        });
-    })
-
-    console.log("[EXULU] statistics totals")
-    app.post("/statistics/totals", async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const { db } = await postgresClient();
-
-        let from: Date = new Date(req.body.from);
-        let to: Date = new Date(req.body.to);
-
-        if (!from || !to) {
-            // set to default 7 days ago
-            from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-            to = new Date();
-        }
-
-        let promises = Object.values(STATISTICS_TYPE_ENUM).map(async (type: string) => {
-            // get the sum of the total for the given type and date range
-            const result = await db.from("statistics")
-                .where("name", "count")
-                .andWhere("type", type)
-                .andWhere("createdAt", ">=", from)
-                .andWhere("createdAt", "<=", to)
-                .sum("total as total");
-            return {
-                [type]: result[0]?.total || 0
-            }
-        });
-
-        const results = await Promise.all(promises);
-        res.status(200).json({
-            data: { ...Object.assign({}, ...results) },
-            filter: {
-                from,
-                to
-            }
-        });
-    })
-
-    console.log("[EXULU] contexts statistics")
-    app.get("/contexts/statistics", async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const { db } = await postgresClient();
-
-        const statistics = await db("statistics")
-            .where("name", "count")
-            .andWhere("type", "context.retrieve")
-            .sum("total as total").first()
-
-        const response = await db('jobs')
-            .select(db.raw(`to_char("createdAt", 'YYYY-MM-DD') as date`))
-            .count('* as count')
-            .where('type', 'embedder')
-            .groupByRaw(`to_char("createdAt", 'YYYY-MM-DD')`)
-            .then(rows => ({
-                jobs: rows
-            }));
-
-        // Get total count of jobs of type "embedder"
-
-        let jobs = [];
-        if (response[0]) {
-            jobs = response[0].jobs.map(job => ({
-                date: job.id,
-                count: job.count
-            }));
-        }
-
-        const embeddingsCountResult = await db('jobs')
-            .where('type', 'embedder')
-            .count('* as count')
-            .first();
-
-        res.status(200).json({
-            active: contexts.filter(context => context.active).length,
-            inactive: contexts.filter(context => !context.active).length,
-            sources: contexts.reduce((acc, context) => acc + context.sources.get().length, 0),
-            queries: statistics?.total || 0,
-            jobs: jobs,
-            totals: {
-                embeddings: embeddingsCountResult?.count || 0
-            }
-        })
-    })
-
     console.log("[EXULU] context by id")
     app.get(`/contexts/:id`, async (req: Request, res: Response) => {
 
@@ -1235,8 +1075,16 @@ export const createExpressRoutes = async (
                     return;
                 }
             }
+            const headers: {
+                stream: boolean,
+                user: string | null,
+                session: string | null,
+            } = {
+                stream: req.headers['stream'] as string === "true" || false,
+                user: req.headers['user'] as string || null,
+                session: req.headers['session'] as string || null,
+            }
 
-            const stream = req.headers['stream'] || false;
             const requestValidationResult = requestValidators.agents(req)
 
             if (requestValidationResult.error) {
@@ -1247,6 +1095,19 @@ export const createExpressRoutes = async (
             const authenticationResult = await requestValidators.authenticate(req);
             if (!authenticationResult.user?.id) {
                 res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+                return;
+            }
+
+            const user = authenticationResult.user;
+
+            if (
+                user.type !== "api" &&
+                !user.super_admin &&
+                req.body.resourceId !== user.id
+            ) {
+                res.status(400).json({
+                    message: "The provided user id in the resourceId field is not the same as the authenticated user. Only super admins and API users can impersonate other users."
+                })
                 return;
             }
 
@@ -1285,9 +1146,15 @@ export const createExpressRoutes = async (
 
             // todo add authentication based on thread id to guarantee privacy
             // todo validate req.body data structure
-            if (!!stream) {
-                const result = agent.generateStream({
-                    messages: req.body.messages,
+            if (!!headers.stream) {
+                await agent.generateStream({
+                    express: {
+                        res,
+                        req,
+                    },
+                    user: headers.user as string,
+                    session: headers.session as string,
+                    message: req.body.message,
                     tools: enabledTools,
                     providerApiKey,
                     toolConfigs: agentInstance.tools,
@@ -1298,11 +1165,13 @@ export const createExpressRoutes = async (
                 })
                 // Returns a response that can be used by the "useChat" hook
                 // on the client side from the vercel "ai" SDK.
-                result.pipeDataStreamToResponse(res);
+               
                 return;
             } else {
                 const response = await agent.generateSync({
-                    messages: req.body.messages,
+                    user: headers.user as string,
+                    session: headers.session as string,
+                    message: req.body.message,
                     tools: enabledTools.map(tool => tool.tool),
                     providerApiKey,
                     toolConfigs: agentInstance.tools,

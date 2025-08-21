@@ -1,3 +1,4 @@
+import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics"
 import type { ExuluTableDefinition } from "../registry/routes"
 
 const agentMessagesSchema: ExuluTableDefinition = {
@@ -13,6 +14,10 @@ const agentMessagesSchema: ExuluTableDefinition = {
         {
             name: "title",
             type: "text"
+        },
+        {
+            name: "user",
+            type: "number",
         },
         {
             name: "session",
@@ -256,6 +261,10 @@ const rolesSchema: ExuluTableDefinition = {
             type: "text" // write | read access to agents
         },
         {
+            name: "api",
+            type: "text"
+        },
+        {
             name: "workflows",
             type: "text" // write | read access to workflows
         },
@@ -272,8 +281,8 @@ const rolesSchema: ExuluTableDefinition = {
 
 const statisticsSchema: ExuluTableDefinition = {
     name: {
-        plural: "statistics",
-        singular: "statistic"
+        plural: "tracking",
+        singular: "tracking"
     },
     fields: [
         {
@@ -286,11 +295,20 @@ const statisticsSchema: ExuluTableDefinition = {
         },
         {
             name: "type",
-            type: "text"
+            type: "enum",
+            enumValues: Object.values(STATISTICS_TYPE_ENUM)
         },
         {
             name: "total",
             type: "number"
+        },
+        {
+            name: "user",
+            type: "number"
+        },
+        {
+            name: "role",
+            type: "uuid"
         }
     ]
 }
@@ -353,6 +371,7 @@ const jobsSchema: ExuluTableDefinition = {
         plural: "jobs",
         singular: "job"
     },
+    RBAC: true,
     fields: [
         {
             name: "redis",
@@ -361,10 +380,6 @@ const jobsSchema: ExuluTableDefinition = {
         {
             name: "session",
             type: "text"
-        },
-        {
-            name: "created_by",
-            type: "number"
         },
         {
             name: "status",

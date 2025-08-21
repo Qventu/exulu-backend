@@ -14,7 +14,6 @@ export interface Agent {
         type?: "context";
     }[];
     capabilities?: {
-        tools: boolean;
         images: string[];
         files: string[];
         audio: string[];

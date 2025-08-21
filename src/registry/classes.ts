@@ -4,7 +4,7 @@ import { z } from "zod"
 import * as fs from 'fs';
 import * as path from 'path';
 import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
-import { generateObject, generateText, type LanguageModelV1, type Message, streamText, tool, type Tool } from "ai";
+import { convertToModelMessages, createIdGenerator, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
 import { postgresClient } from "../postgres/client";
@@ -17,6 +17,7 @@ import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
+import { type Request, type Response } from "express";
 
 export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
@@ -47,7 +48,7 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: Exul
 
     const askForConfirmation: Tool = {
         description: 'Ask the user for confirmation.',
-        parameters: z.object({
+        inputSchema: z.object({
             message: z.string().describe('The message to ask for confirmation.'),
         }),
     }
@@ -176,7 +177,7 @@ export type ExuluAgentConfig = {
     name: string,
     instructions: string,
     model: {
-        create: ({ apiKey }: { apiKey: string }) => LanguageModelV1 // LanguageModelV1
+        create: ({ apiKey }: { apiKey: string }) => LanguageModel 
     },
     outputSchema?: ZodSchema;
     custom?: {
@@ -204,7 +205,6 @@ interface ExuluAgentParams {
     description: string;
     config?: ExuluAgentConfig | undefined;
     capabilities?: {
-        tools: boolean;
         images: string[];
         files: string[];
         audio: string[];
@@ -237,7 +237,7 @@ export class ExuluAgent {
     // private memory: Memory | undefined; // TODO do own implementation
     public evals?: ExuluAgentEval[];
     public model?: {
-        create: ({ apiKey }: { apiKey: string }) => LanguageModelV1 // LanguageModelV1
+        create: ({ apiKey }: { apiKey: string }) => LanguageModel
     };
     public capabilities: {
         images: string[],
@@ -268,11 +268,13 @@ export class ExuluAgent {
     }
 
     get providerName(): string {
-        return this.config?.model?.create({ apiKey: "" })?.provider || ""
+        const model = this.config?.model?.create({ apiKey: "" });
+        return typeof model === 'string' ? model : model?.provider || "";
     }
 
     get modelName(): string {
-        return this.config?.model?.create({ apiKey: "" })?.modelId || ""
+        const model = this.config?.model?.create({ apiKey: "" });
+        return typeof model === 'string' ? model : model?.modelId || "";
     }
 
     // Exports the agent as a tool that can be used by another agent
@@ -300,8 +302,15 @@ export class ExuluAgent {
         });
     }
 
-    generateSync = async ({ messages, prompt, tools, statistics, toolConfigs, providerApiKey }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
+    generateSync = async ({ prompt, user, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+        prompt?: string,
+        user?: string,
+        session?: string,
+        message?: UIMessage,
+        tools?: ExuluTool[],
+        statistics?: ExuluStatisticParams,
+        toolConfigs?: ExuluAgentToolConfig[],
+        providerApiKey: string,
     }) => {
 
         if (!this.model) {
@@ -312,22 +321,44 @@ export class ExuluAgent {
             throw new Error("Config is required for generating.")
         }
 
-        if (prompt && messages) {
-            throw new Error("Prompt and messages cannot be provided at the same time.")
+        if (prompt && message) {
+            throw new Error("Message and prompt cannot be provided at the same time.")
         }
 
         const model = this.model.create({
             apiKey: providerApiKey
         })
 
+        let messages: UIMessage[] = [];
+        if (message && session && user) {
+            // load the previous messages from the server:
+            const previousMessages = await getAgentMessages({
+                session,
+                user,
+                limit: 50,
+                page: 1
+            })
+
+            const previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
+            // validate messages
+            messages = await validateUIMessages({
+                // append the new message to the previous messages:
+                messages: [...previousMessagesContent, message],
+            });
+        }
+
+        console.log("[EXULU] Model provider key", providerApiKey)
+
+        console.log("[EXULU] Tool configs", toolConfigs)
+
         const { text } = await generateText({
             model: model, // Should be a LanguageModelV1
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
-            messages: messages,
+            messages: messages ? convertToModelMessages(messages) : undefined,
             prompt: prompt,
             maxRetries: 2,
             tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
-            maxSteps: 5,
+            stopWhen: [stepCountIs(5)]
         });
 
         if (statistics) {
@@ -343,8 +374,12 @@ export class ExuluAgent {
         return text;
     }
 
-    generateStream = ({ messages, prompt, tools, statistics, toolConfigs, providerApiKey }: {
-        messages?: Message[], prompt?: string, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
+    generateStream = async ({ express, user, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+        express: {
+            res: Response,
+            req: Request,
+        },
+        user: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
     }) => {
 
         if (!this.model) {
@@ -355,32 +390,67 @@ export class ExuluAgent {
             throw new Error("Config is required for generating.")
         }
 
-        if (prompt && messages) {
-            throw new Error("Prompt and messages cannot be provided at the same time.")
+        if (!message) {
+            throw new Error("Message is required for streaming.")
         }
 
         const model = this.model.create({
             apiKey: providerApiKey
         })
 
+        let messages: UIMessage[] = [];
+        // load the previous messages from the server:
+        const previousMessages = await getAgentMessages({
+            session,
+            user,
+            limit: 50,
+            page: 1
+        })
+
+        const previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
+        // validate messages
+        messages = await validateUIMessages({
+            // append the new message to the previous messages:
+            messages: [...previousMessagesContent, message],
+        });
+
+
         console.log("[EXULU] Model provider key", providerApiKey)
 
         console.log("[EXULU] Tool configs", toolConfigs)
 
-        return streamText({
+        const result = streamText({
             model: model, // Should be a LanguageModelV1
-            messages: messages,
-            prompt: prompt,
+            messages: messages ? convertToModelMessages(messages) : undefined,
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             maxRetries: 2,
             tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
-            maxSteps: 5,
             onError: error => console.error("[EXULU] chat stream error.", error),
-            onFinish: async ({ response, usage }) => {
+            stopWhen: [stepCountIs(5)],
+        });
+
+        // consume the stream to ensure it runs to completion & triggers onFinish
+        // even when the client response is aborted:
+        result.consumeStream(); // no await
+
+        result.pipeUIMessageStreamToResponse(express.res, {
+            originalMessages: messages,
+            sendReasoning: true,
+            generateMessageId: createIdGenerator({
+                prefix: 'msg_',
+                size: 16,
+            }),
+            onFinish: async ({ messages }) => {
                 console.info(
                     "[EXULU] chat stream finished.",
-                    usage
+                    messages
                 )
+                // save chat
+                await saveChat({
+                    session,
+                    user,
+                    messages
+                })
                 if (statistics) {
                     await updateStatistic({
                         name: "count",
@@ -390,9 +460,30 @@ export class ExuluAgent {
                         count: 1
                     })
                 }
-            }
+            },
         });
+        return;
     }
+}
+
+// todo check how to deal with pagination
+const getAgentMessages = async ({ session, user, limit, page }: { session: string, user: string, limit: number, page: number }) => {
+    const { db } = await postgresClient();
+    const messages = await db.from("agent_messages").where({ session, user }).limit(limit).offset(page * limit);
+    return messages;
+}
+
+const saveChat = async ({ session, user, messages }: { session: string, user: string, messages: UIMessage[] }) => {
+    const { db } = await postgresClient();
+    const promises = messages.map((message) => {
+        return db.from("agent_messages").insert({
+            session,
+            user,
+            content: JSON.stringify(message),
+            title: message.role === "user" ? "User" : "Assistant"
+        })  
+    })
+    await Promise.all(promises)
 }
 
 export type VectorOperationResponse = Promise<{
@@ -619,7 +710,7 @@ export class ExuluEval {
 
     public create = {
         LlmAsAJudge: {
-            niah: ({ label, model, needles, testDocument, contextlengths }: { label: string, model: LanguageModelV1, needles: { question: string, answer: string }[], testDocument: string, contextlengths: (5000 | 30000 | 50000 | 128000)[] }): ExuluEvalRunnerInstance => {
+            niah: ({ label, model, needles, testDocument, contextlengths }: { label: string, model: LanguageModel, needles: { question: string, answer: string }[], testDocument: string, contextlengths: (5000 | 30000 | 50000 | 128000)[] }): ExuluEvalRunnerInstance => {
                 return {
                     name: this.name,
                     description: this.description,
@@ -816,7 +907,7 @@ export class ExuluTool {
         this.type = type;
         this.tool = tool({
             description: description,
-            parameters: inputSchema || z.object({}),
+            inputSchema: inputSchema || z.object({}),
             execute: execute
         });
     }
@@ -1512,30 +1603,36 @@ export class ExuluSource {
     }
 }
 
-export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number }) => {
+export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: string, role?: string }) => {
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
 
-    const existing = await db.from("statistics").where({
+    const existing = await db.from("tracking").where({
+        ...(statistic.user ? { user: statistic.user } : {}),
+        ...(statistic.role ? { role: statistic.role } : {}),
         name: statistic.name,
         label: statistic.label,
         type: statistic.type,
         createdAt: currentDate
     }).first();
 
+    console.log("!!! existing !!!", existing)
+
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.
     // If the statistic exists, it will be updated by incrementing the total count.
     if (!existing) {
-        await db.from("statistics").insert({
+        await db.from("tracking").insert({
             name: statistic.name,
             label: statistic.label,
             type: statistic.type,
             total: statistic.count ?? 1,
-            createdAt: currentDate
+            createdAt: currentDate,
+            ...(statistic.user ? { user: statistic.user } : {}),
+            ...(statistic.role ? { role: statistic.role } : {})
         })
     } else {
-        await db.from("statistics").update({
+        await db.from("tracking").update({
             total: db.raw("total + ?", [statistic.count ?? 1]),
         }).where({
             name: statistic.name,
