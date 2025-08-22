@@ -205,6 +205,7 @@ interface ExuluAgentParams {
     description: string;
     config?: ExuluAgentConfig | undefined;
     capabilities?: {
+        text: boolean;
         images: string[];
         files: string[];
         audio: string[];
@@ -240,6 +241,7 @@ export class ExuluAgent {
         create: ({ apiKey }: { apiKey: string }) => LanguageModel
     };
     public capabilities: {
+        text: boolean,
         images: string[],
         files: string[],
         audio: string[],
@@ -254,6 +256,7 @@ export class ExuluAgent {
         this.config = config;
         this.type = type;
         this.capabilities = capabilities || {
+            text: false,
             images: [],
             files: [],
             audio: [],

@@ -23,6 +23,9 @@ import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
 import bodyParser from 'body-parser';
 import CryptoJS from 'crypto-js';
 import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
+import OpenAI from "openai";
+import fs from "fs";
+import { randomUUID } from "node:crypto";
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -258,6 +261,7 @@ export const createExpressRoutes = async (
                 rights_mode: agent.rights_mode,
                 slug: backend?.slug,
                 rateLimit: backend?.rateLimit,
+                image: agent.image,
                 streaming: backend?.streaming,
                 capabilities: backend?.capabilities,
                 RBAC: agent.RBAC,
@@ -309,6 +313,7 @@ export const createExpressRoutes = async (
                 model: backend?.model?.create({ apiKey: "" }).modelId,
                 active: agent.active,
                 public: agent.public,
+                image: agent.image,
                 type: agent.type,
                 rights_mode: agent.rights_mode,
                 slug: backend?.slug,
@@ -334,6 +339,116 @@ export const createExpressRoutes = async (
             type: tool.type || "tool",
             inputSchema: tool.inputSchema ? zerialize(tool.inputSchema as any) : null,
         })))
+    })
+
+    app.post("/generate/agent/image", async (req: Request, res: Response) => {
+        console.log("[EXULU] generate/agent/image", req.body)
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const { name, description, style } = req.body;
+        if (!name || !description) {
+            res.status(400).json({
+                message: "Missing name or description in request."
+            })
+            return;
+        }
+
+        const { db } = await postgresClient();
+
+        // Look up the variable from the variables table
+        const variable = await db.from("variables").where({ name: "OPENAI_IMAGE_GENERATION_API_KEY" }).first();
+        if (!variable) {
+            res.status(400).json({
+                message: "Provider API key variable not found."
+            })
+            return;
+        }
+
+        // Get the API key from the variable (decrypt if encrypted)
+        let providerApiKey = variable.value;
+
+        if (!variable.encrypted) {
+            res.status(400).json({
+                message: "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys."
+            })
+            return;
+        }
+
+        if (variable.encrypted) {
+            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+            providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+        }
+
+        const openai = new OpenAI({
+            apiKey: providerApiKey
+        });
+
+        let style_reference = "";
+        if (style === "origami") {
+            style_reference = "minimalistic origami-style, futuristic robot, portrait, focus on face."
+        } else if (style === "anime") {
+            style_reference = "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face."
+        } else if (style === "japanese_anime") {
+            style_reference = "minimalistic, make it in the style of japanese anime, futuristic robot, portrait, focus on face."
+        } else if (style === "vaporwave") {
+            style_reference = "minimalistic, make it in the style of a vaporwave album cover, futuristic robot, portrait, focus on face."
+        } else if (style === "lego") {
+            style_reference = "minimalistic, make it in the style of LEGO minifigures, futuristic robot, portrait, focus on face."
+        } else if (style === "paper_cut") {
+            style_reference = "minimalistic, make it in the style of Paper-cut style portrait with color layers, futuristic robot, portrait, focus on face."
+        } else if (style === "felt_puppet") {
+            style_reference = "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face."
+        } else if (style === "app_icon") {
+            style_reference = "A playful and modern app icon design of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024."
+        } else if (style === "pixel_art") {
+            style_reference = "A pixel art style of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024."
+        } else if (style === "isometric") {
+            style_reference = "3D isometric icon of a robot, centered composition, on a transparent background, no text, no details outside the frame, size is 1024x1024."
+        } else {
+            style_reference = "A minimalist 3D, robot, portrait, focus on face, floating in space, low-poly design with pastel colors."
+        }
+
+        const prompt = `
+        A digital portrait of ${name}, visualized as a futuristic robot.  
+The robot’s design reflects '${description}', with props, tools, or symbolic objects that represent its expertise or area of work.  
+Example: if the agent is a financial analyst, it may hold a stack of papers; if it’s a creative strategist it may be painting on a canvas.  
+Style: ${style_reference}.  
+The portrait should have a clean background.  
+Framing: bust portrait, centered.  
+Mood: friendly and intelligent.  
+            `;
+
+        const result = await openai.images.generate({
+            model: "gpt-image-1",
+            prompt,
+        });
+
+        // Save the image to a file
+        const image_base64 = result.data?.[0]?.b64_json;
+
+        if (!image_base64) {
+            res.status(500).json({
+                message: "Failed to generate image."
+            })
+            return;
+        }
+
+        const image_bytes = Buffer.from(image_base64, "base64");
+        const uuid = randomUUID();
+        // check if public directory exists
+        if (!fs.existsSync("public")) {
+            fs.mkdirSync("public");
+        }
+        fs.writeFileSync(`public/${uuid}.png`, image_bytes);
+        // update the agent with the image
+        res.status(200).json({
+            message: "Image generated successfully.",
+            image: `${process.env.BACKEND}/${uuid}.png`
+        });
     })
 
     app.get("/tools/:id", async (req: Request, res: Response) => {
@@ -1165,7 +1280,7 @@ export const createExpressRoutes = async (
                 })
                 // Returns a response that can be used by the "useChat" hook
                 // on the client side from the vercel "ai" SDK.
-               
+
                 return;
             } else {
                 const response = await agent.generateSync({
@@ -1384,6 +1499,8 @@ export const createExpressRoutes = async (
             }
         }
     });
+
+    app.use(express.static('public'))
 
     return app;
 }

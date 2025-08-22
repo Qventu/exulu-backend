@@ -5,6 +5,7 @@ export type User = {
   type?: "api" | "user"
   anthropic_token?: string;
   super_admin?: boolean;
+  favourite_agents?: string[];
   role: {
     id: string;
     name: string;

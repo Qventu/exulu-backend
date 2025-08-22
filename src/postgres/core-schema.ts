@@ -138,6 +138,10 @@ const agentsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "image",
+            type: "text"
+        },
+        {
             name: "description",
             type: "text"
         },
@@ -179,6 +183,10 @@ const usersSchema: ExuluTableDefinition = {
             name: "id",
             type: "number",
             index: true
+        },
+        {
+            name: "favourite_agents",
+            type: "json"
         },
         {
             name: "firstname",

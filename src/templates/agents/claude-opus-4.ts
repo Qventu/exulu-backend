@@ -8,6 +8,7 @@ export const defaultAgent = new ExuluAgent({
     description: `Basic agent without any defined tools, that can support MCP's.`,
     type: "agent",
     capabilities: {
+        text: true,
         images: [],
         files: [],
         audio: [],

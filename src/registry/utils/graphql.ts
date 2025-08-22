@@ -766,6 +766,14 @@ function createQueries(table: ExuluTableDefinition) {
             const result = await query.first();
             return result;
         },
+        [`${tableNameSingular}ByIds`]: async (_, args, context, info) => {
+            const { db } = context;
+            const requestedFields = getRequestedFields(info)
+            let query = db.from(tableNamePlural).select(requestedFields).whereIn('id', args.ids);
+            query = applyAccessControl(table, context.user, query);
+            const result = await query;
+            return result;
+        },
         [`${tableNameSingular}One`]: async (_, args, context, info) => {
             const { filters = [], sort } = args;
             const { db } = context;
@@ -972,6 +980,7 @@ export function createSDL(tables: ExuluTableDefinition[]) {
         console.log("[EXULU] Adding table >>>>>", tableNamePlural)
         typeDefs += `
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
+      ${tableNameSingular}ByIds(ids: [ID!]!): [${tableNameSingular}]!
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
       ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String): [StatisticsResult]!
