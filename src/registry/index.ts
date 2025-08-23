@@ -59,7 +59,7 @@ export class ExuluApp {
                 []
             )
         ]
-        
+
         this._queues = [...new Set(queues.filter(o => !!o))] as any;
 
         if (!this._expressApp) {

@@ -37,7 +37,7 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string): Record<string, Tool> => {
+const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string, user?: string, role?: string): Record<string, Tool> => {
     if (!tools) return {};
     const sanitizedTools = tools ? tools.map(tool => ({
         ...tool,
@@ -78,6 +78,8 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: Exul
                             // is available, after we added the .value property
                             // by hydrating it from the variables table.
                             providerApiKey: providerApiKey,
+                            user: user,
+                            role: role,
                             config: config ? config.config.reduce((acc, curr) => {
                                 acc[curr.name] = curr.value;
                                 return acc;
@@ -292,10 +294,12 @@ export class ExuluAgent {
             }),
             description: `A function that calls an AI agent named: ${this.name}. The agent does the following: ${this.description}.`,
             config: [],
-            execute: async ({ prompt, config, providerApiKey }: any) => {
+            execute: async ({ prompt, config, providerApiKey, user, role }: any) => {
                 return await this.generateSync({
                     prompt: prompt,
                     providerApiKey: providerApiKey,
+                    user: user,
+                    role: role,
                     statistics: {
                         label: "",
                         trigger: "tool"
@@ -305,9 +309,10 @@ export class ExuluAgent {
         });
     }
 
-    generateSync = async ({ prompt, user, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+    generateSync = async ({ prompt, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
         prompt?: string,
         user?: string,
+        role?: string,
         session?: string,
         message?: UIMessage,
         tools?: ExuluTool[],
@@ -360,7 +365,7 @@ export class ExuluAgent {
             messages: messages ? convertToModelMessages(messages) : undefined,
             prompt: prompt,
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
+            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
             stopWhen: [stepCountIs(5)]
         });
 
@@ -370,19 +375,21 @@ export class ExuluAgent {
                 label: statistics.label,
                 type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                 trigger: statistics.trigger,
-                count: 1
+                count: 1,
+                user: user,
+                role: role
             })
         }
 
         return text;
     }
 
-    generateStream = async ({ express, user, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+    generateStream = async ({ express, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
         express: {
             res: Response,
             req: Request,
         },
-        user: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
+        user: string, role: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
     }) => {
 
         if (!this.model) {
@@ -427,7 +434,7 @@ export class ExuluAgent {
             messages: messages ? convertToModelMessages(messages) : undefined,
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey),
+            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
             onError: error => console.error("[EXULU] chat stream error.", error),
             stopWhen: [stepCountIs(5)],
         });
@@ -460,7 +467,9 @@ export class ExuluAgent {
                         label: statistics.label,
                         type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                         trigger: statistics.trigger,
-                        count: 1
+                        count: 1,
+                        user: user,
+                        role: role
                     })
                 }
             },
@@ -546,7 +555,7 @@ export class ExuluEmbedder {
         this.generateEmbeddings = generateEmbeddings;
     }
 
-    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams): VectorGenerationResponse {
+    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams, user?: string, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -554,7 +563,9 @@ export class ExuluEmbedder {
                 label: statistics.label,
                 type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
                 trigger: statistics.trigger,
-                count: 1
+                count: 1,
+                user: user,
+                role: role
             })
         }
 
@@ -569,7 +580,7 @@ export class ExuluEmbedder {
         })
     }
 
-    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams): VectorGenerationResponse {
+    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams, user?: string, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -577,7 +588,9 @@ export class ExuluEmbedder {
                 label: statistics.label,
                 type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
                 trigger: statistics.trigger,
-                count: 1
+                count: 1,
+                user: user,
+                role: role
             })
         }
 
@@ -997,7 +1010,7 @@ export class ExuluContext {
         return tableExists;
     }
 
-    public async updateItem(user: string, id: string, item: Item): Promise<{
+    public async updateItem(user: string, id: string, item: Item, role?: string): Promise<{
         id: string,
         job?: string
     }> {
@@ -1055,7 +1068,7 @@ export class ExuluContext {
             }, {
                 label: this.name,
                 trigger: "agent"
-            })
+            }, user, role)
 
             const exists = await db.schema.hasTable(this.getChunksTableName());
             if (!exists) {
@@ -1084,7 +1097,7 @@ export class ExuluContext {
         };
     }
 
-    public async insertItem(user: string, item: Item, upsert: boolean = false): Promise<{
+    public async insertItem(user: string, item: Item, upsert: boolean = false, role?: string): Promise<{
         id: string,
         job?: string
     }> {
@@ -1101,7 +1114,7 @@ export class ExuluContext {
                 throw new Error("Item with external id " + item.external_id + " already exists.")
             }
             if (existingItem && upsert) {
-                await this.updateItem(user, existingItem.id, item);
+                await this.updateItem(user, existingItem.id, item, role);
                 return existingItem.id;
             }
         }
@@ -1109,7 +1122,7 @@ export class ExuluContext {
         if (upsert && item.id) {
             const existingItem = await db.from(this.getTableName()).where({ id: item.id }).first();
             if (existingItem && upsert) {
-                await this.updateItem(user, existingItem.id, item);
+                await this.updateItem(user, existingItem.id, item, role);
                 return existingItem.id;
             }
         }
@@ -1160,7 +1173,7 @@ export class ExuluContext {
             }, {
                 label: this.name,
                 trigger: "agent"
-            })
+            }, user, role)
 
             const exists = await db.schema.hasTable(this.getChunksTableName());
             if (!exists) {
@@ -1193,6 +1206,8 @@ export class ExuluContext {
         order,
         page,
         name,
+        user,
+        role,
         archived,
         query,
         method
@@ -1203,6 +1218,8 @@ export class ExuluContext {
         order?: "desc" | "asc",
         limit: number,
         name?: string,
+        user?: string,
+        role?: string,
         archived?: boolean,
         query?: string,
         method?: VectorMethod
@@ -1291,7 +1308,9 @@ export class ExuluContext {
                     name: "count",
                     label: statistics.label,
                     type: STATISTICS_TYPE_ENUM.CONTEXT_RETRIEVE as STATISTICS_TYPE,
-                    trigger: statistics.trigger
+                    trigger: statistics.trigger,
+                    user: user,
+                    role: role
                 })
             }
             if (this.queryRewriter) {
@@ -1311,7 +1330,10 @@ export class ExuluContext {
             itemsQuery.select(chunksTable + ".created_at as chunk_created_at")
             itemsQuery.select(chunksTable + ".updated_at as chunk_updated_at")
 
-            const { chunks } = await this.embedder.generateFromQuery(query)
+            const { chunks } = await this.embedder.generateFromQuery(query, {
+                label: this.name,
+                trigger: "agent"
+            }, user, role)
 
             if (!chunks?.[0]?.vector) {
                 throw new Error("No vector generated for query.")
@@ -1499,12 +1521,14 @@ export class ExuluContext {
             }),
             config: [],
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-            execute: async ({ query }: any) => {
+            execute: async ({ query, user, role }: any) => {
                 // todo make trigger more specific with the agent name
                 return await this.getItems({
                     page: 1,
                     limit: 10,
                     query: query,
+                    user: user,
+                    role: role,
                     statistics: {
                         label: this.name,
                         trigger: "agent"
@@ -1567,11 +1591,13 @@ type ExuluSourceUpdaterArgs = {
     }>
 }
 
+export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code"
+
 export type ExuluStatistic = {
     name: string,
     label: string,
     type: STATISTICS_TYPE,
-    trigger: "tool" | "agent" | "flow" | "api" | "claude-code",
+    trigger: STATISTICS_LABELS,
     total: number,
 }
 

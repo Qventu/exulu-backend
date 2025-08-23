@@ -684,7 +684,7 @@ Mood: friendly and intelligent.
             await context.createItemsTable();
         }
 
-        const result = await context.updateItem(authenticationResult.user.id, req.params.id, req.body);
+        const result = await context.updateItem(authenticationResult.user.id, req.params.id, req.body, authenticationResult.user.role?.id);
 
         res.status(200).json({
             message: "Item updated successfully.",
@@ -744,7 +744,7 @@ Mood: friendly and intelligent.
             }
 
             console.log("[EXULU] inserting item", req.body)
-            const result = await context.insertItem(authenticationResult.user.id, req.body, !!req.body.upsert);
+            const result = await context.insertItem(authenticationResult.user.id, req.body, !!req.body.upsert, authenticationResult.user.role?.id);
 
             console.log("[EXULU] result", result)
 
@@ -818,6 +818,8 @@ Mood: friendly and intelligent.
         const result = await context.getItems({
             sort: sort as "created_at" | "embeddings_updated_at",
             order: order as "desc" | "asc",
+            user: authenticationResult.user?.id,
+            role: authenticationResult.user?.role?.id,
             page,
             limit,
             archived: req.query.archived === "true",
@@ -1000,6 +1002,8 @@ Mood: friendly and intelligent.
         }
         const items = await context.getItems({
             page: 1, // todo add pagination
+            user: authenticationResult.user?.id,
+            role: authenticationResult.user?.role?.id,
             limit: 500
         });
         const csv = Papa.unparse(items);
@@ -1267,7 +1271,8 @@ Mood: friendly and intelligent.
                         res,
                         req,
                     },
-                    user: headers.user as string,
+                    user: user?.id,
+                    role: user?.role?.id,
                     session: headers.session as string,
                     message: req.body.message,
                     tools: enabledTools,
@@ -1284,8 +1289,9 @@ Mood: friendly and intelligent.
                 return;
             } else {
                 const response = await agent.generateSync({
-                    user: headers.user as string,
+                    user: user?.id,
                     session: headers.session as string,
+                    role: user?.role?.id,
                     message: req.body.message,
                     tools: enabledTools.map(tool => tool.tool),
                     providerApiKey,
@@ -1450,7 +1456,9 @@ Mood: friendly and intelligent.
                 label: "Claude Code",
                 type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                 trigger: "claude-code",
-                count: 1
+                count: 1,
+                user: authenticationResult.user?.id,
+                role: authenticationResult.user.role?.id
             })
 
             // Copy response headers

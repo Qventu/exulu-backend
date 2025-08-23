@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import { redisServer } from "./server"
 
+// Used for workflows and embedders
 export class ExuluQueues {
     queues: Queue[]
     constructor() {
