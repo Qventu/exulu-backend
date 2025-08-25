@@ -6,11 +6,19 @@ import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
 import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
+import { trace, type Tracer } from "@opentelemetry/api";
+import createLogger from "./logger.ts";
 
 export type ExuluConfig = {
+    telemetry?: {
+        enabled: boolean,
+    }
     workers: {
         enabled: boolean,
         logsDir?: string,
+        telemetry?: {
+            enabled: boolean,
+        }
     }
     MCP: {
         enabled: boolean,
@@ -104,10 +112,24 @@ export class ExuluApp {
     public bullmq = {
         workers: {
             create: async () => {
+
+                let tracer: Tracer | undefined;
+
+                if (this._config?.telemetry?.enabled) {
+                    console.log("[EXULU] telemetry enabled")
+                    tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
+                }
+
+                const logger = createLogger({
+                    enableOtel: this._config?.workers?.telemetry?.enabled ?? false
+                })
+
                 return await createWorkers(
                     this._queues,
+                    logger,
                     Object.values(this._contexts ?? {}),
-                    this._config?.workers?.logsDir
+                    this._config?.workers?.logsDir,
+                    tracer
                 )
             }
         }
@@ -123,11 +145,24 @@ export class ExuluApp {
 
                 const app = this._expressApp;
 
+                let tracer: Tracer | undefined;
+                if (this._config?.telemetry?.enabled) {
+                    console.log("[EXULU] telemetry enabled")
+                    tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
+                }
+
+                const logger = createLogger({
+                    enableOtel: this._config?.telemetry?.enabled ?? false
+                })
+
                 await createExpressRoutes(
                     app,
+                    logger,
                     this._agents,
                     this._tools,
-                    Object.values(this._contexts ?? {})
+                    Object.values(this._contexts ?? {}),
+                    this._config,
+                    tracer
                 )
 
                 if (this._config?.MCP.enabled) {
@@ -137,8 +172,11 @@ export class ExuluApp {
                         contexts: this._contexts,
                         agents: this._agents,
                         config: this._config,
-                        tools: this._tools
+                        tools: this._tools,
+                        tracer,
+                        logger
                     });
+                    
                     await mcp.connect();
                 }
 

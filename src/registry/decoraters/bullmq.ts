@@ -1,120 +1,69 @@
 import { Queue } from "bullmq";
-import type { SourceDocument } from "../classes.ts";
-import { postgresClient } from "../../postgres/client.ts";
+import type { STATISTICS_LABELS } from "../classes.ts";
 import { v4 as uuidv4 } from 'uuid';
 
-export const bullmqDecorator = async ({
-    label,
-    type,
-    workflow,
-    embedder,
-    inputs,
-    queue,
-    user,
-    agent,
-    session,
-    configuration,
-    updater,
-    context,
-    steps,
-    source,
-    documents,
-    trigger,
-    item
-}: {
+export type ExuluJobType = "embedder" | "workflow"
+
+export type ExuluBullMqDecoratorData = {
+    queue: Queue,
     label: string,
     embedder?: string,
-    trigger?: string,
-    updater?: string,
+    inputs: any,
+    user: string,
+    role?: string,
+    trigger: STATISTICS_LABELS,
     workflow?: string,
     item?: string,
-    session?: string,
-    context?: string,
-    source?: string,
-    documents?: SourceDocument[],
-    type: "workflow" | "embedder"
-    configuration?: Record<string, {
-        type: "string" | "number" | "query"
-        example: string
-    }>
-    agent?: string
-    steps?: number,
-    inputs: any,
-    queue: Queue,
-    user: String
-}) => {
+    context?: string
+}
+
+export const bullmqDecorator = async ({
+    queue,
+    label,    
+    embedder,
+    inputs,
+    user,
+    role,
+    trigger,
+    workflow,
+    item,
+    context
+}: ExuluBullMqDecoratorData) => {
+
+    if (embedder && workflow) {
+        throw new Error("Cannot have both embedder and workflow in the same job.")
+    }
+
+    if (workflow && item) {
+        throw new Error("Cannot have both workflow and item in the same job.")
+    }
+
+    let type: ExuluJobType = "embedder";
+
+    if (workflow) {
+        type = "workflow";
+    }
 
     const redisId = uuidv4();
     const job = await queue.add(`${embedder || workflow}`, {
-        type: `${type}`,
-        ...(embedder && { embedder }),
-        ...(workflow && { workflow }),
-        ...(configuration && { configuration }),
-        ...(updater && { updater }),
-        ...(context && { context }),
-        ...(source && { source }),
-        ...(documents && { documents }),
-        ...(steps && { steps }),
-        ...(trigger && { trigger }),
-        ...(item && { item }),
-        agent: agent,
-        user: user,
-        inputs,
         label,
-        session
+        ...(embedder && { embedder }),
+        type: `${type}`,
+        inputs,
+        ...(user && { user }),
+        ...(role && { role }),
+        ...(trigger && { trigger }),
+        ...(workflow && { workflow }),
+        ...(item && { item }),
+        ...(context && { context })
     },
         {
             jobId: redisId,
         },
     )
 
-    const { db } = await postgresClient()
-
-    const now = new Date();
-    console.log("[EXULU] scheduling new job", inputs)
-    const insertData = {
-        name: `${label}`,
-        redis: job.id,
-        status: "waiting",
-        type,
-        inputs,
-        agent,
-        item,
-        createdAt: now,
-        updatedAt: now,
-        user,
-        session,
-        ...(embedder && { embedder }),
-        ...(workflow && { workflow }),
-        ...(configuration && { configuration }),
-        ...(steps && { steps }),
-        ...(updater && { updater }),
-        ...(context && { context }),
-        ...(source && { source }),
-        ...(documents && { documents: documents.map(doc => doc.id) }),
-        ...(trigger && { trigger })
-    };
-
-    // Upsert by redis key
-    await db('jobs')
-        .insert(insertData)
-        .onConflict('redis') // upsert by redis key
-        .merge({
-            ...insertData,
-            updatedAt: now // Only updatedAt changes on updates
-        });
-
-    const doc = await db.from("jobs").where({ redis: job.id }).first();
-
-    if (!doc?.id) {
-        throw new Error('Failed to get job ID after insert/update');
-    }
-
-    console.log("[EXULU] created job", doc?.id)
-
     return {
         ...job,
-        id: doc?.id,
         redis: job.id,
     };
 }

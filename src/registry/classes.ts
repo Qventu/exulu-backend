@@ -1,9 +1,8 @@
 import { ZodSchema } from "zod";
-import { Queue } from "bullmq";
+import { Job, Queue } from "bullmq";
 import { z } from "zod"
 import * as fs from 'fs';
 import * as path from 'path';
-import { type Job as ExuluJob } from "@EXULU_TYPES/models/job";
 import { convertToModelMessages, createIdGenerator, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
@@ -18,6 +17,7 @@ import { sanitizeName } from "./utils/sanitize-name";
 import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
 import { type Request, type Response } from "express";
+import { trace } from "@opentelemetry/api";
 
 export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
@@ -179,7 +179,7 @@ export type ExuluAgentConfig = {
     name: string,
     instructions: string,
     model: {
-        create: ({ apiKey }: { apiKey: string }) => LanguageModel 
+        create: ({ apiKey }: { apiKey: string }) => LanguageModel
     },
     outputSchema?: ZodSchema;
     custom?: {
@@ -333,6 +333,10 @@ export class ExuluAgent {
             throw new Error("Message and prompt cannot be provided at the same time.")
         }
 
+        if (!prompt && !message) {
+            throw new Error("Prompt or message is required for generating.")
+        }
+
         const model = this.model.create({
             apiKey: providerApiKey
         })
@@ -358,30 +362,56 @@ export class ExuluAgent {
         console.log("[EXULU] Model provider key", providerApiKey)
 
         console.log("[EXULU] Tool configs", toolConfigs)
+        
+        
+        if (prompt) {
+            const { text } = await generateText({
+                model: model, // Should be a LanguageModelV1
+                system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
+                prompt: prompt,
+                maxRetries: 2,
+                tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
+                stopWhen: [stepCountIs(5)],
+            });
 
-        const { text } = await generateText({
-            model: model, // Should be a LanguageModelV1
-            system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
-            messages: messages ? convertToModelMessages(messages) : undefined,
-            prompt: prompt,
-            maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
-            stopWhen: [stepCountIs(5)]
-        });
-
-        if (statistics) {
-            await updateStatistic({
-                name: "count",
-                label: statistics.label,
-                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                trigger: statistics.trigger,
-                count: 1,
-                user: user,
-                role: role
-            })
+            if (statistics) {
+                await updateStatistic({
+                    name: "count",
+                    label: statistics.label,
+                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                    trigger: statistics.trigger,
+                    count: 1,
+                    user: user,
+                    role: role
+                })
+            }
+    
+            return text;
         }
+        if (messages) {
+            const { text } = await generateText({
+                model: model, // Should be a LanguageModelV1
+                system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
+                messages: convertToModelMessages(messages),
+                maxRetries: 2,
+                tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
+                stopWhen: [stepCountIs(5)],
+            });
 
-        return text;
+            if (statistics) {
+                await updateStatistic({
+                    name: "count",
+                    label: statistics.label,
+                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                    trigger: statistics.trigger,
+                    count: 1,
+                    user: user,
+                    role: role
+                })
+            }
+    
+            return text;
+        }
     }
 
     generateStream = async ({ express, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
@@ -431,7 +461,7 @@ export class ExuluAgent {
 
         const result = streamText({
             model: model, // Should be a LanguageModelV1
-            messages: messages ? convertToModelMessages(messages) : undefined,
+            messages: convertToModelMessages(messages),
             system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
             maxRetries: 2,
             tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
@@ -493,7 +523,7 @@ const saveChat = async ({ session, user, messages }: { session: string, user: st
             user,
             content: JSON.stringify(message),
             title: message.role === "user" ? "User" : "Assistant"
-        })  
+        })
     })
     await Promise.all(promises)
 }
@@ -612,9 +642,9 @@ export class ExuluEmbedder {
 
 export class ExuluLogger {
     private readonly logPath?: string;
-    private readonly job?: ExuluJob;
+    private readonly job?: Job;
 
-    constructor(job?: ExuluJob, logsDir?: string) {
+    constructor(job?: Job, logsDir?: string) {
         this.job = job;
         if (logsDir && job) {
             // Create logs directory if it doesn't exist
@@ -1010,12 +1040,51 @@ export class ExuluContext {
         return tableExists;
     }
 
-    public async updateItem(user: string, id: string, item: Item, role?: string): Promise<{
+
+    public createAndUpsertEmbeddings = async (item: Item, user: string, statistics: ExuluStatisticParams, role?: string,) => {
+        
+        const { db } = await postgresClient();
+
+        const { id: source, chunks } = await this.embedder.generateFromDocument({
+            ...item,
+            id: item.id
+        }, {
+            label: statistics.label || this.name,
+            trigger: statistics.trigger || "agent"
+        }, user, role)
+
+        const exists = await db.schema.hasTable(this.getChunksTableName());
+        if (!exists) {
+            await this.createChunksTable();
+        }
+
+        // first delete all chunks with source = id
+        await db.from(this.getChunksTableName()).where({ source }).delete();
+
+        // then insert the new / updated chunks
+        await db.from(this.getChunksTableName()).insert(chunks.map(chunk => ({
+            source,
+            content: chunk.content,
+            chunk_index: chunk.index,
+            embedding: pgvector.toSql(chunk.vector)
+        })))
+
+        await db.from(this.getTableName()).where({ id: item.id }).update({
+            embeddings_updated_at: new Date().toISOString()
+        }).returning("id")
+
+        return {
+            id: item.id,
+            chunks: chunks?.length || 0
+        };
+    }
+
+    public async updateItem(user: string, item: Item, role?: string, trigger?: STATISTICS_LABELS): Promise<{
         id: string,
         job?: string
     }> {
 
-        if (!id) {
+        if (!item.id) {
             throw new Error("Id is required for updating an item.")
         }
 
@@ -1037,7 +1106,7 @@ export class ExuluContext {
         item.updated_at = db.fn.now();
 
         const result = await db.from(this.getTableName())
-            .where({ id })
+            .where({ id: item.id })
             .update(item)
             .returning("id");
 
@@ -1049,12 +1118,15 @@ export class ExuluContext {
             if (this.embedder.queue?.name) {
                 console.log("[EXULU] embedder is in queue mode, scheduling job.")
                 const job = await bullmqDecorator({
-                    label: `Job running '${this.embedder.name}' for '${item.name} (${item.id}).'`,
+                    label: `${this.embedder.name}`,
                     embedder: this.embedder.id,
-                    type: "embedder",
+                    context: this.id,
                     inputs: item,
+                    item: item.id,
                     queue: this.embedder.queue,
-                    user: user
+                    user: user,
+                    role: role,
+                    trigger: trigger || "agent",
                 })
                 return {
                     id: result[0].id,
@@ -1062,33 +1134,11 @@ export class ExuluContext {
                 };
             }
 
-            const { id: source, chunks } = await this.embedder.generateFromDocument({
-                ...item,
-                id: id
-            }, {
-                label: this.name,
-                trigger: "agent"
-            }, user, role)
-
-            const exists = await db.schema.hasTable(this.getChunksTableName());
-            if (!exists) {
-                await this.createChunksTable();
-            }
-
-            // first delete all chunks with source = id
-            await db.from(this.getChunksTableName()).where({ source }).delete();
-
-            // then insert the new / updated chunks
-            await db.from(this.getChunksTableName()).insert(chunks.map(chunk => ({
-                source,
-                content: chunk.content,
-                chunk_index: chunk.index,
-                embedding: pgvector.toSql(chunk.vector)
-            })))
-
-            await db.from(this.getTableName()).where({ id }).update({
-                embeddings_updated_at: new Date().toISOString()
-            }).returning("id")
+            // If no queue set, calculate embeddings directly.
+            await this.createAndUpsertEmbeddings(item, user, {
+                label: this.embedder.name,
+                trigger: trigger || "agent"
+            }, role);
         }
 
         return {
@@ -1097,7 +1147,8 @@ export class ExuluContext {
         };
     }
 
-    public async insertItem(user: string, item: Item, upsert: boolean = false, role?: string): Promise<{
+
+    public async insertItem(user: string, item: Item, upsert: boolean = false, role?: string, trigger?: STATISTICS_LABELS): Promise<{
         id: string,
         job?: string
     }> {
@@ -1114,7 +1165,10 @@ export class ExuluContext {
                 throw new Error("Item with external id " + item.external_id + " already exists.")
             }
             if (existingItem && upsert) {
-                await this.updateItem(user, existingItem.id, item, role);
+                await this.updateItem(user, {
+                    ...item,
+                    id: existingItem.id
+                }, role, trigger);
                 return existingItem.id;
             }
         }
@@ -1122,7 +1176,10 @@ export class ExuluContext {
         if (upsert && item.id) {
             const existingItem = await db.from(this.getTableName()).where({ id: item.id }).first();
             if (existingItem && upsert) {
-                await this.updateItem(user, existingItem.id, item, role);
+                await this.updateItem(user, {
+                    ...item,
+                    id: existingItem.id
+                }, role, trigger);
                 return existingItem.id;
             }
         }
@@ -1152,12 +1209,15 @@ export class ExuluContext {
             if (this.embedder.queue?.name) {
                 console.log("[EXULU] embedder is in queue mode, scheduling job.")
                 const job = await bullmqDecorator({
-                    label: `Job running '${this.embedder.name}' for '${item.name} (${item.id}).'`,
+                    label: `${this.embedder.name}`,
                     embedder: this.embedder.id,
-                    type: "embedder",
+                    context: this.id,
                     inputs: item,
+                    item: item.id,
                     queue: this.embedder.queue,
-                    user: user
+                    user: user,
+                    role: role,
+                    trigger: trigger || "agent"
                 })
 
                 return {
@@ -1165,32 +1225,14 @@ export class ExuluContext {
                     job: job.id
                 };
             }
-
             console.log("[EXULU] embedder is not in queue mode, calculating vectors directly.")
-            const { id: source, chunks } = await this.embedder.generateFromDocument({
+            await this.createAndUpsertEmbeddings({
                 ...item,
                 id: result[0].id
-            }, {
-                label: this.name,
-                trigger: "agent"
-            }, user, role)
-
-            const exists = await db.schema.hasTable(this.getChunksTableName());
-            if (!exists) {
-                await this.createChunksTable();
-            }
-
-            console.log("[EXULU] Inserting chunks.")
-            await db.from(this.getChunksTableName()).insert(chunks.map(chunk => ({
-                source,
-                content: chunk.content,
-                chunk_index: chunk.index,
-                embedding: pgvector.toSql(chunk.vector)
-            })))
-
-            await db.from(this.getTableName()).where({ id: result[0].id }).update({
-                embeddings_updated_at: new Date().toISOString()
-            }).returning("id")
+            }, user, {
+                label: this.embedder.name,
+                trigger: trigger || "agent"
+            }, role);
         }
 
         return {
@@ -1591,7 +1633,7 @@ type ExuluSourceUpdaterArgs = {
     }>
 }
 
-export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code"
+export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code" | "user"
 
 export type ExuluStatistic = {
     name: string,

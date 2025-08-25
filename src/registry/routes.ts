@@ -26,6 +26,9 @@ import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
 import OpenAI from "openai";
 import fs from "fs";
 import { randomUUID } from "node:crypto";
+import { type Span, type Tracer } from "@opentelemetry/api";
+import type { ExuluConfig } from "./index.ts";
+import type { Logger } from "winston";
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -93,12 +96,16 @@ export type ExuluTableDefinition = {
 
 export const createExpressRoutes = async (
     app: Express,
+    logger: Logger,
     agents: ExuluAgent[],
     tools: ExuluTool[],
     contexts: ExuluContext[],
+    config?: ExuluConfig,
+    tracer?: Tracer
 ): Promise<Express> => {
     const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
     // Add route logs instead of individual console.logs
+
 
     // todo make this more secure / configurable
     var corsOptions = {
@@ -125,6 +132,8 @@ export const createExpressRoutes = async (
     Intelligence Management Platform
 
     `);
+
+    // Show status box if telemetry is enabled
 
     console.log("Agents:")
     console.table(agents.map(agent => {
@@ -209,6 +218,16 @@ export const createExpressRoutes = async (
         express.json({ limit: REQUEST_SIZE_LIMIT }),
         expressMiddleware(server, {
             context: async ({ req }) => {
+                logger.info("================")
+                logger.info({
+                    message: 'Incoming Request',
+                    method: req.method,
+                    path: req.path,
+                    requestId: 'req-' + Date.now(),
+                    ipAddress: req.ip,
+                    userAgent: req.get('User-Agent'),
+                });
+                logger.info("================")
                 const authenticationResult = await requestValidators.authenticate(req);
                 if (!authenticationResult.user?.id) {
                     throw new Error(authenticationResult.message);
@@ -684,7 +703,15 @@ Mood: friendly and intelligent.
             await context.createItemsTable();
         }
 
-        const result = await context.updateItem(authenticationResult.user.id, req.params.id, req.body, authenticationResult.user.role?.id);
+        const result = await context.updateItem(
+            authenticationResult.user.id,
+            {
+                ...req.body,
+                id: req.params.id
+            },
+            authenticationResult.user.role?.id,
+            authenticationResult.user.type === "api" ? "api" : "user"
+        );
 
         res.status(200).json({
             message: "Item updated successfully.",
@@ -744,7 +771,13 @@ Mood: friendly and intelligent.
             }
 
             console.log("[EXULU] inserting item", req.body)
-            const result = await context.insertItem(authenticationResult.user.id, req.body, !!req.body.upsert, authenticationResult.user.role?.id);
+            const result = await context.insertItem(
+                authenticationResult.user.id,
+                req.body,
+                !!req.body.upsert,
+                authenticationResult.user.role?.id,
+                authenticationResult.user.type === "api" ? "api" : "user"
+            );
 
             console.log("[EXULU] result", result)
 

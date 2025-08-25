@@ -6,7 +6,8 @@ import { z } from "zod";
 import type { ExuluAgent, ExuluContext, ExuluTool } from "../registry/classes";
 import type { ExuluConfig } from "../registry";
 import { type Express, type Request, type Response } from "express";
-
+import { type Tracer } from "@opentelemetry/api";
+import type { Logger } from "winston";
 export const SESSION_ID_HEADER = "mcp-session-id";
 
 // Create an MCP server
@@ -20,12 +21,14 @@ export class ExuluMCP {
     constructor() {
     }
 
-    create = async ({ express, contexts, agents, config, tools }: {
+    create = async ({ express, contexts, agents, config, tools, tracer, logger }: {
         contexts?: Record<string, ExuluContext>,
         express?: Express,
         config: ExuluConfig,
         agents?: ExuluAgent[],
-        tools?: ExuluTool[]
+        tools?: ExuluTool[],
+        tracer?: Tracer,
+        logger: Logger
     }) => {
         this.express = express;
 

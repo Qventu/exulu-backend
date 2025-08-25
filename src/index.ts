@@ -3,7 +3,6 @@ import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
 export { ExuluContext, ExuluEmbedder, ExuluSource, ExuluAgent, ExuluTool, ExuluEval, ExuluZodFileType } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
-export { type Job as ExuluJob } from "@EXULU_TYPES/models/job"
 export { ExuluLogger } from "./registry/classes"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
@@ -12,11 +11,30 @@ import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db"
 import { generateApiKey } from './auth/generate-key'
+import { create } from './registry/otel'
 
 export const ExuluJobs = {
     redis: redisClient,
     jobs: {
         validate: validateJob
+    }
+}
+
+export const ExuluOtel = {
+    create: ({
+        SIGNOZ_ACCESS_TOKEN,
+        SIGNOZ_TRACES_URL,
+        SIGNOZ_LOGS_URL
+    }: {
+        SIGNOZ_ACCESS_TOKEN: string;
+        SIGNOZ_TRACES_URL: string;
+        SIGNOZ_LOGS_URL: string;
+    }) => {
+        return create({
+            SIGNOZ_ACCESS_TOKEN,
+            SIGNOZ_TRACES_URL,
+            SIGNOZ_LOGS_URL
+        })
     }
 }
 
