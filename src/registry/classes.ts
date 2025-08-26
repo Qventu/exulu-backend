@@ -362,8 +362,8 @@ export class ExuluAgent {
         console.log("[EXULU] Model provider key", providerApiKey)
 
         console.log("[EXULU] Tool configs", toolConfigs)
-        
-        
+
+
         if (prompt) {
             const { text } = await generateText({
                 model: model, // Should be a LanguageModelV1
@@ -385,7 +385,7 @@ export class ExuluAgent {
                     role: role
                 })
             }
-    
+
             return text;
         }
         if (messages) {
@@ -409,7 +409,7 @@ export class ExuluAgent {
                     role: role
                 })
             }
-    
+
             return text;
         }
     }
@@ -639,51 +639,6 @@ export class ExuluEmbedder {
         return await this.generateEmbeddings(output)
     };
 }
-
-export class ExuluLogger {
-    private readonly logPath?: string;
-    private readonly job?: Job;
-
-    constructor(job?: Job, logsDir?: string) {
-        this.job = job;
-        if (logsDir && job) {
-            // Create logs directory if it doesn't exist
-            if (!fs.existsSync(logsDir)) {
-                fs.mkdirSync(logsDir, { recursive: true });
-            }
-            this.logPath = path.join(logsDir, `${job.id}_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`);
-        }
-    }
-
-    async write(message: string, level: "INFO" | "ERROR" | "WARNING"): Promise<void> {
-        // Append newline to message if it doesn't have one
-        const logMessage = message.endsWith('\n') ? message : message + '\n';
-
-        if (!this.logPath) {
-            switch (level) {
-                case "INFO":
-                    console.log(message)
-                    break;
-                case "WARNING":
-                    console.warn(message)
-                    break;
-                case "ERROR":
-                    console.error(message)
-                    break;
-            }
-            return;
-        }
-
-        try {
-            await fs.promises.appendFile(this.logPath, `[EXULU][${level}] - ${new Date().toISOString()}: ${logMessage}`);
-        } catch (error) {
-            console.error(`Error writing to log file ${this.job ? this.job.id : "unknown job"}:`, error);
-            throw error;
-        }
-    }
-}
-
-type AddSourceArgs = Omit<ExuluSourceConstructorArgs, "context">;
 
 interface WorkflowVariable {
     name: string
@@ -973,10 +928,9 @@ export class ExuluContext {
     public fields: ExuluContextFieldDefinition[]
     public rateLimit?: RateLimiterRule;
     public description: string;
-    public embedder: ExuluEmbedder
+    public embedder?: ExuluEmbedder
     public queryRewriter?: (query: string) => Promise<string>;
     public resultReranker?: (results: any[]) => Promise<any[]>; // todo typings
-    private _sources: ExuluSource[] = [];
     public configuration: {
         calculateVectors: "manual" | "onUpdate" | "onInsert" | "always"
     };
@@ -986,7 +940,7 @@ export class ExuluContext {
         name: string,
         fields: ExuluContextFieldDefinition[],
         description: string,
-        embedder: ExuluEmbedder,
+        embedder?: ExuluEmbedder,
         active: boolean,
         rateLimit?: RateLimiterRule,
         queryRewriter?: (query: string) => Promise<string>,
@@ -1005,7 +959,6 @@ export class ExuluContext {
         this.embedder = embedder;
         this.active = active;
         this.rateLimit = rateLimit;
-        this._sources = [];
         this.queryRewriter = queryRewriter;
         this.resultReranker = resultReranker;
     }
@@ -1042,7 +995,11 @@ export class ExuluContext {
 
 
     public createAndUpsertEmbeddings = async (item: Item, user: string, statistics: ExuluStatisticParams, role?: string,) => {
-        
+
+        if (!this.embedder) {
+            throw new Error("Embedder is not set for this context.")
+        }
+
         const { db } = await postgresClient();
 
         const { id: source, chunks } = await this.embedder.generateFromDocument({
@@ -1091,28 +1048,37 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         Object.keys(item).forEach(key => {
-            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
+            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
                 return;
             }
-            const field = this.fields.find(field => field.name === key);
+            const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
             if (!field) {
-                throw new Error("Trying to uppdate value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
+                throw new Error("Trying to update value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
             }
         })
 
-        delete item.id; // not allowed to update id
-        delete item.created_at; // not allowed to update created_at
-        delete item.upsert;
-        item.updated_at = db.fn.now();
+        const payloadWithSanitizedPropertyNames: Item = {}
+
+        Object.keys(item).forEach(key => {
+            payloadWithSanitizedPropertyNames[sanitizeName(key)] = item[key];
+        })
+
+        const id = payloadWithSanitizedPropertyNames.id;
+        delete payloadWithSanitizedPropertyNames.id; // not allowed to update id
+        delete payloadWithSanitizedPropertyNames.created_at; // not allowed to update created_at
+        delete payloadWithSanitizedPropertyNames.upsert;
+        payloadWithSanitizedPropertyNames.updated_at = db.fn.now();
 
         const result = await db.from(this.getTableName())
-            .where({ id: item.id })
-            .update(item)
+            .where({ id: id })
+            .update(payloadWithSanitizedPropertyNames)
             .returning("id");
 
         if (
-            this.configuration.calculateVectors === "onUpdate" ||
-            this.configuration.calculateVectors === "always"
+            this.embedder && (
+                this.configuration.calculateVectors === "onUpdate" ||
+                this.configuration.calculateVectors === "always"
+            )
         ) {
 
             if (this.embedder.queue?.name) {
@@ -1185,26 +1151,36 @@ export class ExuluContext {
         }
 
         Object.keys(item).forEach(key => {
-            if (key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
+            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
                 return;
             }
-            const field = this.fields.find(field => field.name === key);
+            const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
             if (!field) {
                 throw new Error("Trying to insert value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
             }
         })
-        delete item.id; // not allowed to update id
-        delete item.upsert;
+
+        const payloadWithSanitizedPropertyNames: Item = {}
+
+        Object.keys(item).forEach(key => {
+            payloadWithSanitizedPropertyNames[sanitizeName(key)] = item[key];
+        })
+
+        delete payloadWithSanitizedPropertyNames.id; // not allowed to set id
+        delete payloadWithSanitizedPropertyNames.upsert;
+
         const result = await db.from(this.getTableName()).insert({
-            ...item,
+            ...payloadWithSanitizedPropertyNames,
             id: db.fn.uuid(),
             created_at: db.fn.now(),
             updated_at: db.fn.now()
         }).returning("id");
 
         if (
-            this.configuration.calculateVectors === "onInsert" ||
-            this.configuration.calculateVectors === "always"
+            this.embedder && (
+                this.configuration.calculateVectors === "onInsert" ||
+                this.configuration.calculateVectors === "always"
+            )
         ) {
             if (this.embedder.queue?.name) {
                 console.log("[EXULU] embedder is in queue mode, scheduling job.")
@@ -1329,13 +1305,13 @@ export class ExuluContext {
                 context: {
                     name: this.name,
                     id: this.id,
-                    embedder: this.embedder.name
+                    embedder: this.embedder?.name || undefined
                 },
                 items: items
             };
         }
 
-        if (typeof query === "string") {
+        if (typeof query === "string" && this.embedder) {
 
             if (!method) {
                 method = "cosineDistance";
@@ -1539,10 +1515,14 @@ export class ExuluContext {
     }
 
     public createChunksTable = async () => {
+
         const { db } = await postgresClient();
         const tableName = this.getChunksTableName();
         console.log("[EXULU] Creating table: " + tableName);
         return await db.schema.createTable(tableName, (table) => {
+            if (!this.embedder) {
+                throw new Error("Embedder must be set for context " + this.name + " to create chunks table.")
+            }
             table.uuid("id").primary().defaultTo(db.fn.uuid());
             table.uuid("source").references("id").inTable(this.getTableName());
             table.text("content");
@@ -1579,58 +1559,6 @@ export class ExuluContext {
             },
         });
     }
-
-    public sources = {
-        add: (inputs: AddSourceArgs): ExuluSource => {
-            const source = new ExuluSource({
-                ...inputs,
-                context: this.id
-            })
-            this._sources.push(source);
-            return source;
-        },
-        get: (id?: string): ExuluSource[] | (ExuluSource | undefined) => {
-            if (id) {
-                return this._sources.find(source => source.id === id);
-            }
-            return this._sources ?? [];
-        }
-    }
-}
-
-/**
- * @param updaters - Defines how this source decides when and which data to send to the embedder for updating vectors
- * @param updaters.type - The type of update mechanism:
- *   - "manual": Will be shown in the Exulu frontend UI via a Button for manual triggering
- *   - "cron": Will automatically update on a schedule
- *   - "webhook": Will update when triggered by an external webhook
- * @param updaters.fn - The function that handles the update logic
- * @param configuration - Defines fields shown in the UI that admins can set for each instance of the Source
- *   This allows reusing logic while exposing configurable variables (e.g. a "query" field)
- *   that admins can set differently for different instances in the UI
- */
-type ExuluSourceConstructorArgs = {
-    id: string,
-    name: string,
-    description: string,
-    updaters: ExuluSourceUpdaterArgs[],
-    context: string
-}
-
-export type SourceDocument = {
-    id: string,
-    content: string,
-    metadata?: Record<string, any>
-}
-
-type ExuluSourceUpdaterArgs = {
-    id: string,
-    type: "manual" | "cron" | "webhook",
-    fn: (configuration: Record<string, any>) => Promise<SourceDocument[]>,
-    configuration: Record<string, {
-        type: "string" | "number" | "query"
-        example: string
-    }>
 }
 
 export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code" | "user"
@@ -1644,35 +1572,6 @@ export type ExuluStatistic = {
 }
 
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
-
-export type ExuluSourceUpdater = ExuluSourceUpdaterArgs & {
-    slug?: string,
-}
-
-export class ExuluSource {
-    public id: string;
-    public name: string;
-    public description: string;
-    public updaters: ExuluSourceUpdater[]
-    public context: string;
-
-    constructor({ id, name, description, updaters, context }: ExuluSourceConstructorArgs) {
-        this.id = id;
-        this.name = name;
-        this.description = description;
-        this.context = context;
-        this.updaters = updaters.map(updater => {
-            if (updater.type === "webhook") {
-                return {
-                    ...updater,
-                    slug: `/contexts/${context}/sources/${this.id}/${updater.id}/webhook`
-                }
-            }
-            return updater;
-        })
-
-    }
-}
 
 export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: string, role?: string }) => {
     const currentDate = new Date().toISOString().split('T')[0];

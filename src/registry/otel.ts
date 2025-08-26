@@ -18,10 +18,7 @@ const create = ({
     SIGNOZ_LOGS_URL: string;
 }) => {
 
-    console.log("SIGNOZ_ACCESS_TOKEN", SIGNOZ_ACCESS_TOKEN)
-    console.log("SIGNOZ_TRACES_URL", SIGNOZ_TRACES_URL)
-    console.log("SIGNOZ_LOGS_URL", SIGNOZ_LOGS_URL)
-
+    console.log("[EXULU] Setting up OpenTelemetry")
     // do not set headers in exporterOptions, the OTel spec recommends setting headers through ENV variables
     // https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md#specifying-headers-via-environment-variables
 
@@ -46,7 +43,7 @@ const create = ({
         logRecordProcessors: [new BatchLogRecordProcessor(logExporter)],
         instrumentations: [getNodeAutoInstrumentations()],
         resource: resourceFromAttributes({
-            [ATTR_SERVICE_NAME]: 'Test-Exulu'
+            [ATTR_SERVICE_NAME]: 'Exulu'
         })
     });
 

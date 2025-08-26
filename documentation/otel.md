@@ -80,7 +80,7 @@ if (config?.telemetry?.enabled) {
 
 The current implementation is specifically designed for SigNoz integration (supports both SigNoz Cloud and self-hosted deployments):
 
-- **Service Name**: `Test-Exulu`
+- **Service Name**: `Exulu`
 - **Traces**: Exported to `SIGNOZ_TRACES_URL`
 - **Logs**: Exported to `SIGNOZ_LOGS_URL` 
 - **Authentication**: Uses `signoz-access-token` header

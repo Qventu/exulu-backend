@@ -17,7 +17,7 @@ const createLogger = ({
             winston.format.json()
         ),
         defaultMeta: {
-            service: 'Test-Exulu',
+            service: 'Exulu',
             environment: process.env.NODE_ENV || 'development',
         },
         transports: [

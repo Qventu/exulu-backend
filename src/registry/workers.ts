@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker } from "bullmq";
 import { bullmq } from "./utils";
-import { ExuluContext, ExuluLogger, ExuluSource } from "./classes";
+import { ExuluContext } from "./classes";
 import * as fs from 'fs';
 import path from "path";
 import { global_queues } from "./routes";
@@ -37,9 +37,6 @@ export const createWorkers = async (queues: string[], logger: Logger, contexts: 
         const worker = new Worker(
             `${queue}`,
             async (bullmqJob: Job) => {
-
-                const logger = new ExuluLogger(bullmqJob, logsDir)
-
                 const { db } = await postgresClient()
                 try {
                    // Type casting data here, couldn't get it to merge

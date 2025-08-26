@@ -3,7 +3,7 @@ export const CLAUDE_MESSAGES = {
 \x1b[41m -- Anthropic token variable set by your admin is not encrypted. This poses a security risk. Please contact your admin to fix the variable used for your key. --
 \x1b[0m`,
     anthropic_token_variable_not_found: `
-\x1b[41m -- Anthropic token variable not found. Please contact to fix the variable used for your key. --
+\x1b[41m -- Anthropic token variable not found. Please contact your Exulu adminto fix the variable used for your key. --
 \x1b[0m`,
     authentication_error: `
 \x1b[41m -- Authentication error please check your IMP token and try again. --

@@ -1,9 +1,8 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluEmbedder, ExuluSource, ExuluAgent, ExuluTool, ExuluEval, ExuluZodFileType } from "./registry/classes"
+export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, ExuluZodFileType } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
-export { ExuluLogger } from "./registry/classes"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
 import { RecursiveChunker } from "./chunking/recursive";

@@ -8,6 +8,7 @@ import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
 import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
+import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 
 export type ExuluConfig = {
     telemetry?: {
@@ -43,7 +44,10 @@ export class ExuluApp {
         agents?: ExuluAgent[],
         tools?: ExuluTool[]
     }): Promise<Express> => {
-        this._contexts = contexts ?? {};
+        this._contexts = {
+            ...contexts,
+            codeStandardsContext
+        };
         this._agents = [
             claudeCodeAgent,
             defaultAgent,
@@ -63,7 +67,7 @@ export class ExuluApp {
 
         const queues = [
             ...(contextsArray?.length ?
-                contextsArray.map(context => context.embedder.queue?.name || null) :
+                contextsArray.map(context => context.embedder?.queue?.name || null) :
                 []
             )
         ]

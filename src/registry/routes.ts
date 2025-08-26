@@ -29,6 +29,7 @@ import { randomUUID } from "node:crypto";
 import { type Span, type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
+import { sanitizeName } from "./utils/sanitize-name.ts";
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -148,16 +149,13 @@ export const createExpressRoutes = async (
 
     console.log("Contexts:")
     console.table(contexts.map(context => {
-        const sources = context.sources.get();
         return {
             id: context.id,
             name: context.name,
             description: context.description,
-            embedder: context.embedder.name,
+            embedder: context.embedder?.name || undefined,
             slug: "/contexts/" + context.id,
-            active: context.active,
-            sources: Array.isArray(sources) ? sources.length : 0,
-            sources_details: Array.isArray(sources) ? sources.map(source => `${source.name} (${source.id})`).join(', ') : 'No sources'
+            active: context.active
         }
     }))
 
@@ -191,7 +189,7 @@ export const createExpressRoutes = async (
         variablesSchema(),
         workflowTemplatesSchema(),
         statisticsSchema(),
-        rbacSchema()]
+        rbacSchema()
     );
 
     interface GraphqlContext {
@@ -328,8 +326,8 @@ export const createExpressRoutes = async (
                 name: agent.name,
                 id: agent.id,
                 description: agent.description,
-                provider: backend?.model?.create({ apiKey: "" }).provider,
-                model: backend?.model?.create({ apiKey: "" }).modelId,
+                provider: backend?.providerName,
+                model: backend?.modelName,
                 active: agent.active,
                 public: agent.public,
                 image: agent.image,
@@ -534,15 +532,17 @@ Mood: friendly and intelligent.
             return null;
         }
 
-        const chunks = await db.from(context.getChunksTableName())
-            .where({ source: item.id })
-            .select("id");
-
-        if (chunks.length > 0) {
-            // delete chunks first
-            await db.from(context.getChunksTableName())
+        if (context.embedder) {
+            const chunks = await db.from(context.getChunksTableName())
                 .where({ source: item.id })
-                .delete();
+                .select("id");
+
+            if (chunks.length > 0) {
+                // delete chunks first
+                await db.from(context.getChunksTableName())
+                    .where({ source: item.id })
+                    .delete();
+            }
         }
 
         const mutation = db.from(context.getTableName())
@@ -628,7 +628,7 @@ Mood: friendly and intelligent.
         }
 
         const chunksTableExists = await db.schema.hasTable(context.getChunksTableName());
-        if (!chunksTableExists) {
+        if (!chunksTableExists && context.embedder) {
             await context.createChunksTable();
         }
 
@@ -640,6 +640,13 @@ Mood: friendly and intelligent.
         if (!item) {
             res.status(404).json({
                 message: "Item not found."
+            })
+            return;
+        }
+
+        if (!context.embedder) {
+            res.status(200).json({
+                ...item,
             })
             return;
         }
@@ -989,22 +996,17 @@ Mood: friendly and intelligent.
                 id: context.id,
                 name: context.name,
                 description: context.description,
-                embedder: context.embedder.name,
+                embedder: context.embedder?.name || undefined,
                 slug: "/contexts/" + context.id,
                 active: context.active,
-                fields: context.fields,
-                configuration: context.configuration,
-                sources: context.sources.get().map(source => ({
-                    id: source.id,
-                    name: source.name,
-                    description: source.description,
-                    updaters: source.updaters.map(updater => ({
-                        id: updater.id,
-                        slug: updater.slug,
-                        type: updater.type,
-                        configuration: updater.configuration
-                    }))
-                }))
+                fields: context.fields.map( field => {
+                    return {
+                        ...field,
+                        name: sanitizeName(field.name),
+                        label: field.name
+                    }
+                }),
+                configuration: context.configuration
             },
             agents: [] // todo
         })
@@ -1058,114 +1060,17 @@ Mood: friendly and intelligent.
             id: context.id,
             name: context.name,
             description: context.description,
-            embedder: context.embedder.name,
+            embedder: context.embedder?.name || undefined,
             slug: "/contexts/" + context.id,
             active: context.active,
-            fields: context.fields,
-            sources: context.sources.get().map(source => ({
-                id: source.id,
-                name: source.name,
-                description: source.description,
-                updaters: source.updaters.map(updater => ({
-                    id: updater.id,
-                    slug: updater.slug,
-                    type: updater.type,
-                    configuration: updater.configuration
-                }))
-            }))
-        })))
-    })
-
-    console.log("[EXULU] contexts")
-    contexts.forEach(context => {
-        const sources = context.sources.get();
-        if (!Array.isArray(sources)) {
-            return;
-        }
-        sources.forEach(source => {
-            source.updaters.forEach(updater => {
-                if (!updater.slug) return;
-                if (
-                    updater.type === "webhook" ||
-                    updater.type === "manual"
-                ) {
-                    routeLogs.push({
-                        route: `${updater.slug}/${updater.type}/:context`,
-                        method: "POST",
-                        note: `Webhook updater for ${context.name}`
-                    });
-
-                    app.post(`${updater.slug}/${updater.type}/:context`, async (req: Request, res: Response) => {
-
-                        /* const { context: id } = req.params;
-                        if (!id) {
-                            res.status(400).json({
-                                message: "Missing context id in request."
-                            })
-                            return;
-                        }
-
-                        const context = contexts.find(context => context.id === id);
-                        if (!context) {
-                            res.status(400).json({
-                                message: `Context for provided id: ${id} not found.`
-                            })
-                            return;
-                        }
-
-                        if (!context.embedder.queue) {
-                            res.status(500).json({ detail: 'No queue set for embedder.' });
-                            return;
-                        }
-
-                        const authenticationResult = await requestValidators.authenticate(req);
-                        if (!authenticationResult.user?.id) {
-                            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-                            return;
-                        }
-
-                        const requestValidationResult = requestValidators.embedders(req, updater.configuration)
-
-                        if (requestValidationResult.error) {
-                            res.status(requestValidationResult.code || 500).json({ detail: `${requestValidationResult.message}` });
-                            return;
-                        }
-
-                        const documents = await updater.fn(req.body.configuration)
-
-                        const batches: SourceDocument[][] = [];
-                        for (let i = 0; i < documents.length; i += context.embedder.batchSize) {
-                            batches.push(documents.slice(i, i + context.embedder.batchSize));
-                        }
-
-                        let promises: Promise<any>[] = [];
-                        if (batches.length > 0) {
-                            promises = batches.map(documents => {
-                                return bullmqDecorator({
-                                    label: `Job running context '${context.name}' with embedder '${context.embedder.name}' for '${req.body.label}'`,
-                                    type: "embedder",
-                                    embedder: context.embedder.id,
-                                    updater: updater.id,
-                                    context: context.id,
-                                    trigger: updater.type,
-                                    source: source.id,
-                                    inputs: req.body.inputs,
-                                    ...(updater.configuration && { configuration: req.body.configuration }),
-                                    documents: documents,
-                                    queue: context.embedder.queue!,
-                                    user: authenticationResult.user!.id
-                                })
-                            })
-                        }
-
-                        const jobs = await Promise.all(promises); */
-
-                        res.status(200).json([]);
-                        return;
-                    })
+            fields: context.fields.map( field => {
+                return {
+                    ...field,
+                    name: sanitizeName(field.name),
+                    label: field.name
                 }
             })
-        })
+        })))
     })
 
     console.log("[EXULU] agents")
@@ -1265,7 +1170,7 @@ Mood: friendly and intelligent.
 
             console.log("[EXULU] agent tools", agentInstance.tools)
 
-            const enabledTools = agentInstance.tools.map(({ config, toolId }) => tools.find(({ id }) => id === toolId)).filter(Boolean)
+            const enabledTools = agentInstance.tools ? agentInstance.tools.map(({ config, toolId }) => tools.find(({ id }) => id === toolId)).filter(Boolean) : [];
 
             console.log("[EXULU] enabled tools", enabledTools)
 
@@ -1582,7 +1487,7 @@ const getPresignedFileUrl = async (key: string) => {
             "Internal-Key": process.env.INTERNAL_SECRET,
         },
     });
-    const json = await response.json()
+    const json: any = await response.json()
     if (!json.url) {
         throw new Error(`Could not generate presigned url for file with key: ${key}`)
     }
