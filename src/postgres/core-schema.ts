@@ -1,5 +1,7 @@
 import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics"
 import type { ExuluTableDefinition } from "../registry/routes"
+import type { ExuluContext } from "../registry/classes"
+import { sanitizeName } from "../registry/utils/sanitize-name"
 
 const agentMessagesSchema: ExuluTableDefinition = {
     name: {
@@ -31,6 +33,7 @@ const agentSessionsSchema: ExuluTableDefinition = {
         plural: "agent_sessions",
         singular: "agent_session"
     },
+    RBAC: true,
     fields: [
         {
             name: "agent",
@@ -148,10 +151,6 @@ const agentsSchema: ExuluTableDefinition = {
         {
             name: "providerApiKey",
             type: "text"
-        },
-        {
-            name: "extensions",
-            type: "json"
         },
         {
             name: "backend",
@@ -440,7 +439,6 @@ const jobsSchema: ExuluTableDefinition = {
     ]
 }
 
-
 const rbacSchema: ExuluTableDefinition = {
     name: {
         plural: "rbac",
@@ -479,7 +477,7 @@ const rbacSchema: ExuluTableDefinition = {
     ]
 }
 
-const addRBACfields = (schema: ExuluTableDefinition) => {
+export const addRBACfields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
     if (schema.RBAC) {
         console.log(`[EXULU] Adding rights_mode field to ${schema.name.plural} table.`)
         schema.fields.push({
@@ -501,17 +499,17 @@ const addRBACfields = (schema: ExuluTableDefinition) => {
 export const coreSchemas = {
     get: () => {
         return {
-            agentsSchema: () => addRBACfields(agentsSchema),
-            agentMessagesSchema: () => addRBACfields(agentMessagesSchema),
-            agentSessionsSchema: () => addRBACfields(agentSessionsSchema),
-            usersSchema: () => addRBACfields(usersSchema),
-            rolesSchema: () => addRBACfields(rolesSchema),
-            statisticsSchema: () => addRBACfields(statisticsSchema),
-            evalResultsSchema: () => addRBACfields(evalResultsSchema),
-            jobsSchema: () => addRBACfields(jobsSchema),
-            variablesSchema: () => addRBACfields(variablesSchema),
-            rbacSchema: () => addRBACfields(rbacSchema),
-            workflowTemplatesSchema: () => addRBACfields(workflowTemplatesSchema)
+            agentsSchema: (): ExuluTableDefinition => addRBACfields(agentsSchema),
+            agentMessagesSchema: (): ExuluTableDefinition => addRBACfields(agentMessagesSchema),
+            agentSessionsSchema: (): ExuluTableDefinition => addRBACfields(agentSessionsSchema),
+            usersSchema: (): ExuluTableDefinition => addRBACfields(usersSchema),
+            rolesSchema: (): ExuluTableDefinition => addRBACfields(rolesSchema),
+            statisticsSchema: (): ExuluTableDefinition => addRBACfields(statisticsSchema),
+            evalResultsSchema: (): ExuluTableDefinition => addRBACfields(evalResultsSchema),
+            jobsSchema: (): ExuluTableDefinition => addRBACfields(jobsSchema),
+            variablesSchema: (): ExuluTableDefinition => addRBACfields(variablesSchema),
+            rbacSchema: (): ExuluTableDefinition => addRBACfields(rbacSchema),
+            workflowTemplatesSchema: (): ExuluTableDefinition => addRBACfields(workflowTemplatesSchema),
         }
     }
 }

@@ -9,6 +9,7 @@ import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
+import { projectsContext } from "../templates/contexts/projects.ts";
 
 export type ExuluConfig = {
     telemetry?: {
@@ -25,6 +26,7 @@ export type ExuluConfig = {
         enabled: boolean,
     }
 }
+
 export class ExuluApp {
 
     private _agents: ExuluAgent[] = []
@@ -46,6 +48,7 @@ export class ExuluApp {
     }): Promise<Express> => {
         this._contexts = {
             ...contexts,
+            projectsContext,
             codeStandardsContext
         };
         this._agents = [
@@ -120,7 +123,7 @@ export class ExuluApp {
                 let tracer: Tracer | undefined;
 
                 if (this._config?.telemetry?.enabled) {
-                    console.log("[EXULU] telemetry enabled")
+                    console.log("[EXULU] telemetry enabled.")
                     tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
                 }
 
@@ -144,7 +147,7 @@ export class ExuluApp {
             init: async (): Promise<Express> => {
 
                 if (!this._expressApp) {
-                    throw new Error("Express app not initialized")
+                    throw new Error("Express app not initialized.")
                 }
 
                 const app = this._expressApp;

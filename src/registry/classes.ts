@@ -273,11 +273,17 @@ export class ExuluAgent {
     }
 
     get providerName(): string {
+        if (!this.config?.model?.create) {
+            return ""
+        }
         const model = this.config?.model?.create({ apiKey: "" });
         return typeof model === 'string' ? model : model?.provider || "";
     }
 
     get modelName(): string {
+        if (!this.config?.model?.create) {
+            return ""
+        }
         const model = this.config?.model?.create({ apiKey: "" });
         return typeof model === 'string' ? model : model?.modelId || "";
     }
@@ -920,6 +926,18 @@ type ExuluContextFieldDefinition = {
     unique?: boolean
 }
 
+
+export const getTableName = (name: string) => {
+    return sanitizeName(name) + "_items";
+}
+
+export const getChunksTableName = (name: string) => {
+    return sanitizeName(name) + "_chunks";
+}
+
+export type ExuluRightsMode = "private" | "users" | "roles" | "public" | "projects"
+
+
 export class ExuluContext {
 
     public id: string;
@@ -932,7 +950,8 @@ export class ExuluContext {
     public queryRewriter?: (query: string) => Promise<string>;
     public resultReranker?: (results: any[]) => Promise<any[]>; // todo typings
     public configuration: {
-        calculateVectors: "manual" | "onUpdate" | "onInsert" | "always"
+        calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
+        defaultRightsMode?: ExuluRightsMode
     };
 
     constructor({ id, name, description, embedder, active, rateLimit, fields, queryRewriter, resultReranker, configuration }: {
@@ -946,7 +965,8 @@ export class ExuluContext {
         queryRewriter?: (query: string) => Promise<string>,
         resultReranker?: (results: any[]) => Promise<any[]>,
         configuration?: {
-            calculateVectors: "manual" | "onUpdate" | "onInsert" | "always"
+            calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
+            defaultRightsMode?: ExuluRightsMode
         }
     }) {
         this.id = id;
@@ -963,33 +983,19 @@ export class ExuluContext {
         this.resultReranker = resultReranker;
     }
 
-    public deleteOne = async (id: string): VectorOperationResponse => {
-        // todo
-        // delete the item
-        // also delete any chunks in the chunks table
-        // @ts-ignore
-        return {}
-    }
-
-    public deleteAll = async (): VectorOperationResponse => {
-        // todo
-        // delete all items
-        // also delete all chunks in the chunks table
-        // @ts-ignore
-        return {}
-    }
-
-    public getTableName = () => {
-        return sanitizeName(this.name) + "_items";
-    }
-
-    public getChunksTableName = () => {
-        return sanitizeName(this.name) + "_chunks";
+    public deleteAll = async (): Promise<VectorOperationResponse> => {
+        const { db } = await postgresClient();
+        await db.from(getTableName(this.name)).delete();
+        await db.from(getChunksTableName(this.name)).delete();
+        return {
+            count: 0,
+            results: []
+        }
     }
 
     public tableExists = async () => {
         const { db } = await postgresClient();
-        const tableExists = await db.schema.hasTable(this.getTableName());
+        const tableExists = await db.schema.hasTable(getTableName(this.name));
         return tableExists;
     }
 
@@ -1010,23 +1016,23 @@ export class ExuluContext {
             trigger: statistics.trigger || "agent"
         }, user, role)
 
-        const exists = await db.schema.hasTable(this.getChunksTableName());
+        const exists = await db.schema.hasTable(getChunksTableName(this.name));
         if (!exists) {
             await this.createChunksTable();
         }
 
         // first delete all chunks with source = id
-        await db.from(this.getChunksTableName()).where({ source }).delete();
+        await db.from(getChunksTableName(this.name)).where({ source }).delete();
 
         // then insert the new / updated chunks
-        await db.from(this.getChunksTableName()).insert(chunks.map(chunk => ({
+        await db.from(getChunksTableName(this.name)).insert(chunks.map(chunk => ({
             source,
             content: chunk.content,
             chunk_index: chunk.index,
             embedding: pgvector.toSql(chunk.vector)
         })))
 
-        await db.from(this.getTableName()).where({ id: item.id }).update({
+        await db.from(getTableName(this.name)).where({ id: item.id }).update({
             embeddings_updated_at: new Date().toISOString()
         }).returning("id")
 
@@ -1048,7 +1054,7 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         Object.keys(item).forEach(key => {
-            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
+            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
@@ -1069,7 +1075,7 @@ export class ExuluContext {
         delete payloadWithSanitizedPropertyNames.upsert;
         payloadWithSanitizedPropertyNames.updated_at = db.fn.now();
 
-        const result = await db.from(this.getTableName())
+        const result = await db.from(getTableName(this.name))
             .where({ id: id })
             .update(payloadWithSanitizedPropertyNames)
             .returning("id");
@@ -1126,7 +1132,7 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         if (item.external_id) {
-            const existingItem = await db.from(this.getTableName()).where({ external_id: item.external_id }).first();
+            const existingItem = await db.from(getTableName(this.name)).where({ external_id: item.external_id }).first();
             if (existingItem && !upsert) {
                 throw new Error("Item with external id " + item.external_id + " already exists.")
             }
@@ -1140,7 +1146,7 @@ export class ExuluContext {
         }
 
         if (upsert && item.id) {
-            const existingItem = await db.from(this.getTableName()).where({ id: item.id }).first();
+            const existingItem = await db.from(getTableName(this.name)).where({ id: item.id }).first();
             if (existingItem && upsert) {
                 await this.updateItem(user, {
                     ...item,
@@ -1151,7 +1157,7 @@ export class ExuluContext {
         }
 
         Object.keys(item).forEach(key => {
-            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textLength" || key === "upsert" || key === "archived") {
+            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
@@ -1169,7 +1175,7 @@ export class ExuluContext {
         delete payloadWithSanitizedPropertyNames.id; // not allowed to set id
         delete payloadWithSanitizedPropertyNames.upsert;
 
-        const result = await db.from(this.getTableName()).insert({
+        const result = await db.from(getTableName(this.name)).insert({
             ...payloadWithSanitizedPropertyNames,
             id: db.fn.uuid(),
             created_at: db.fn.now(),
@@ -1255,7 +1261,7 @@ export class ExuluContext {
         if (limit < 1) limit = 10;
         let offset = (page - 1) * limit;
 
-        const mainTable = this.getTableName();
+        const mainTable = getTableName(this.name);
         const { db } = await postgresClient();
         const columns = await db(mainTable).columnInfo();
 
@@ -1335,7 +1341,7 @@ export class ExuluContext {
                 query = await this.queryRewriter(query);
             }
 
-            const chunksTable = this.getChunksTableName();
+            const chunksTable = getChunksTableName(this.name);
 
             itemsQuery.leftJoin(chunksTable, function () {
                 this.on(chunksTable + ".source", "=", mainTable + ".id")
@@ -1490,7 +1496,7 @@ export class ExuluContext {
 
     public createItemsTable = async () => {
         const { db } = await postgresClient();
-        const tableName = this.getTableName();
+        const tableName = getTableName(this.name);
         console.log("[EXULU] Creating table: " + tableName);
         return await db.schema.createTable(tableName, (table) => {
             console.log("[EXULU] Creating fields for table.", this.fields);
@@ -1500,7 +1506,8 @@ export class ExuluContext {
             table.text('tags');
             table.boolean('archived').defaultTo(false);
             table.text('external_id');
-            table.integer('textLength');
+            table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
+            table.integer('textlength');
             table.text('source');
             table.timestamp('embeddings_updated_at')
             for (const field of this.fields) {
@@ -1517,14 +1524,14 @@ export class ExuluContext {
     public createChunksTable = async () => {
 
         const { db } = await postgresClient();
-        const tableName = this.getChunksTableName();
+        const tableName = getChunksTableName(this.name);
         console.log("[EXULU] Creating table: " + tableName);
         return await db.schema.createTable(tableName, (table) => {
             if (!this.embedder) {
                 throw new Error("Embedder must be set for context " + this.name + " to create chunks table.")
             }
             table.uuid("id").primary().defaultTo(db.fn.uuid());
-            table.uuid("source").references("id").inTable(this.getTableName());
+            table.uuid("source").references("id").inTable(getTableName(this.name));
             table.text("content");
             table.integer("chunk_index");
             table.specificType('embedding', `vector(${this.embedder.vectorDimensions})`);

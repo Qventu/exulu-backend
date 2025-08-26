@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, type ExuluTool, getChunksTableName, getTableName, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { requestValidators } from "./route-validators";
 import { zerialize } from "zodex";
@@ -26,7 +26,7 @@ import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
 import OpenAI from "openai";
 import fs from "fs";
 import { randomUUID } from "node:crypto";
-import { type Span, type Tracer } from "@opentelemetry/api";
+import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
 import { sanitizeName } from "./utils/sanitize-name.ts";
@@ -37,7 +37,19 @@ export const global_queues = {
     logs_cleaner: "logs-cleaner"
 }
 
-const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, variablesSchema, workflowTemplatesSchema, rbacSchema, statisticsSchema } = coreSchemas.get();
+const { 
+    agentsSchema,
+    evalResultsSchema,
+    jobsSchema,
+    agentSessionsSchema,
+    agentMessagesSchema,
+    rolesSchema,
+    usersSchema,
+    variablesSchema,
+    workflowTemplatesSchema,
+    rbacSchema,
+    statisticsSchema
+ } = coreSchemas.get();
 
 const createRecurringJobs = async () => {
 
@@ -107,6 +119,7 @@ export const createExpressRoutes = async (
     const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
     // Add route logs instead of individual console.logs
 
+    console.log("============= agents =============", agents?.length)
 
     // todo make this more secure / configurable
     var corsOptions = {
@@ -160,12 +173,8 @@ export const createExpressRoutes = async (
     }))
 
     routeLogs.push(
-        { route: "/agents", method: "GET", note: "List all agents" },
-        { route: "/agents/:id", method: "GET", note: "Get specific agent" },
         { route: "/contexts", method: "GET", note: "List all contexts" },
         { route: "/contexts/:id", method: "GET", note: "Get specific context" },
-        { route: "/tools", method: "GET", note: "List all tools" },
-        { route: "/tools/:id", method: "GET", note: "Get specific tool" },
         { route: "/items/:context", method: "POST", note: "Create new item in context" },
         { route: "/items/:context", method: "GET", note: "Get items from context" },
         { route: "/items/export/:context", method: "GET", note: "Export items from context" },
@@ -190,7 +199,7 @@ export const createExpressRoutes = async (
         workflowTemplatesSchema(),
         statisticsSchema(),
         rbacSchema()
-    );
+    ], contexts, agents, tools);
 
     interface GraphqlContext {
         db: Knex;
@@ -239,124 +248,6 @@ export const createExpressRoutes = async (
             },
         }),
     );
-
-    app.get(`/providers`, async (req: Request, res: Response) => {
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-        res.status(200).json(agents)
-    })
-
-    app.get(`/agents`, async (req: Request, res: Response) => {
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-        const { db } = await postgresClient();
-
-        let query = db('agents');
-        query.select("*");
-        query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
-        const agentsFromDb = await query;
-
-        res.status(200).json(agentsFromDb.map((agent: any) => {
-            const backend = agents.find(a => a.id === agent.backend);
-            if (!backend) {
-                return null;
-            }
-            return {
-                name: agent.name,
-                id: agent.id,
-                description: agent.description,
-                provider: backend.providerName,
-                model: backend.modelName,
-                active: agent.active,
-                type: agent.type,
-                rights_mode: agent.rights_mode,
-                slug: backend?.slug,
-                rateLimit: backend?.rateLimit,
-                image: agent.image,
-                streaming: backend?.streaming,
-                capabilities: backend?.capabilities,
-                RBAC: agent.RBAC,
-                // todo add contexts
-                availableTools: tools,
-                enabledTools: agent.tools
-            }
-        }).filter(Boolean))
-    })
-
-    app.get(`/agents/:id`, async (req: Request, res: Response) => {
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-        const { db } = await postgresClient();
-        const id = req.params.id;
-        if (!id) {
-            res.status(400).json({
-                message: "Missing id in request."
-            })
-            return;
-        }
-        let query = db("agents");
-        query.select("*");
-        query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
-        query.where({ id });
-        const agent = await query.first();
-        if (!agent) {
-            res.status(400).json({
-                message: "Agent not found in database."
-            })
-            return;
-        }
-        console.log("[EXULU] agent", agent)
-        const backend = agents.find(a => a.id === agent.backend);
-
-        console.log("[EXULU] agent", agent)
-
-        const RBAC = await RBACResolver(db, agentsSchema(), agentsSchema().name.singular, agent.id, agent.rights_mode)
-
-        res.status(200).json({
-            ...{
-                name: agent.name,
-                id: agent.id,
-                description: agent.description,
-                provider: backend?.providerName,
-                model: backend?.modelName,
-                active: agent.active,
-                public: agent.public,
-                image: agent.image,
-                type: agent.type,
-                rights_mode: agent.rights_mode,
-                slug: backend?.slug,
-                rateLimit: backend?.rateLimit,
-                streaming: backend?.streaming,
-                RBAC: RBAC,
-                capabilities: backend?.capabilities,
-                providerApiKey: agent.providerApiKey,
-                // todo add contexts
-                availableTools: tools,
-                enabledTools: agent.tools
-            }
-        })
-    })
-
-    app.get("/tools", async (req: Request, res: Response) => {
-        // todo add auth
-
-        res.status(200).json(tools.map(tool => ({
-            id: tool.id,
-            name: tool.name,
-            description: tool.description,
-            type: tool.type || "tool",
-            inputSchema: tool.inputSchema ? zerialize(tool.inputSchema as any) : null,
-        })))
-    })
 
     app.post("/generate/agent/image", async (req: Request, res: Response) => {
         console.log("[EXULU] generate/agent/image", req.body)
@@ -468,25 +359,6 @@ Mood: friendly and intelligent.
         });
     })
 
-    app.get("/tools/:id", async (req: Request, res: Response) => {
-        // todo add auth  
-        const id = req.params.id;
-        if (!id) {
-            res.status(400).json({
-                message: "Missing id in request."
-            })
-            return;
-        }
-        const tool = tools.find(tool => tool.id === id);
-        if (!tool) {
-            res.status(400).json({
-                message: "Tool not found."
-            })
-            return;
-        }
-        res.status(200).json(tool)
-    })
-
     const deleteItem = async ({
         id,
         external_id,
@@ -513,10 +385,10 @@ Mood: friendly and intelligent.
         const exists = await context.tableExists();
 
         if (!exists) {
-            throw new Error("Table with name " + context.getTableName() + " does not exist.")
+            throw new Error("Table with name " + getTableName(context.name) + " does not exist.")
         }
 
-        const query = db.from(context.getTableName())
+        const query = db.from(getTableName(context.name))
             .select("id");
 
         if (id) {
@@ -533,19 +405,19 @@ Mood: friendly and intelligent.
         }
 
         if (context.embedder) {
-            const chunks = await db.from(context.getChunksTableName())
+            const chunks = await db.from(getChunksTableName(context.name))
                 .where({ source: item.id })
                 .select("id");
 
             if (chunks.length > 0) {
                 // delete chunks first
-                await db.from(context.getChunksTableName())
+                await db.from(getChunksTableName(context.name))
                     .where({ source: item.id })
                     .delete();
             }
         }
 
-        const mutation = db.from(context.getTableName())
+        const mutation = db.from(getTableName(context.name))
             .where({ id: item.id })
             .delete()
             .returning("id");
@@ -627,12 +499,12 @@ Mood: friendly and intelligent.
             await context.createItemsTable()
         }
 
-        const chunksTableExists = await db.schema.hasTable(context.getChunksTableName());
+        const chunksTableExists = await db.schema.hasTable(getChunksTableName(context.name));
         if (!chunksTableExists && context.embedder) {
             await context.createChunksTable();
         }
 
-        const item = await db.from(context.getTableName())
+        const item = await db.from(getTableName(context.name))
             .where({ id: req.params.id })
             .select("*")
             .first();
@@ -651,9 +523,9 @@ Mood: friendly and intelligent.
             return;
         }
 
-        console.log("[EXULU] chunks table name.", context.getChunksTableName())
+        console.log("[EXULU] chunks table name.", getChunksTableName(context.name))
 
-        const chunks = await db.from(context.getChunksTableName())
+        const chunks = await db.from(getChunksTableName(context.name))
             .where({ source: req.params.id })
             .select("id", "content", "source", "embedding", "chunk_index", "created_at", "updated_at");
 
@@ -875,82 +747,6 @@ Mood: friendly and intelligent.
         res.status(200).json(result);
     })
 
-    routeLogs.push({
-        route: "/items/:context",
-        method: "DELETE",
-        note: `Delete all embeddings for a context.`
-    });
-    app.delete(`items/:context`, async (req: Request, res: Response) => {
-        if (!req.params.context) {
-            res.status(400).json({
-                message: "Missing context in request."
-            })
-            return;
-        }
-        const context = contexts.find(context => context.id === req.params.context)
-        if (!context) {
-            res.status(400).json({
-                message: "Context not found in registry."
-            })
-            return;
-        }
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        // todo check if super admin
-
-        await context.deleteAll()
-        res.status(200).json({
-            message: "All embeddings deleted."
-        })
-    })
-
-    // DELETE EMBEDDING
-    routeLogs.push({
-        route: `/items/:context/:id`,
-        method: "DELETE",
-        note: `Delete specific embedding for a context.`
-    });
-
-    console.log("[EXULU] delete embedding by id")
-    app.delete(`items/:context/:id`, async (req: Request, res: Response) => {
-        const id = req.params.id;
-        if (!req.params.context) {
-            res.status(400).json({
-                message: "Missing context in request."
-            })
-            return;
-        }
-        const context = contexts.find(context => context.id === req.params.context)
-        if (!context) {
-            res.status(400).json({
-                message: "Context not found in registry."
-            })
-            return;
-        }
-        if (!id) {
-            res.status(400).json({
-                message: "Missing id in request."
-            })
-            return;
-        }
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        await context.deleteOne(id)
-        res.status(200).json({
-            message: "Embedding deleted."
-        })
-    })
-
     // Ping route that can be used to check if the request
     // is authenticated and the server is running.
     app.get("/ping", async (req: Request, res: Response) => {
@@ -966,114 +762,6 @@ Mood: friendly and intelligent.
         })
     })
 
-    console.log("[EXULU] context by id")
-    app.get(`/contexts/:id`, async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const id = req.params.id;
-        if (!id) {
-            res.status(400).json({
-                message: "Missing id in request."
-            })
-            return;
-        }
-        const context = contexts.find(context => context.id === id);
-        if (!context) {
-            res.status(400).json({
-                message: "Context not found."
-            })
-            return;
-        }
-        // todo get list of agents using this context as a tool
-        // from the database (each agent in mongodb has a list of tools)
-        res.status(200).json({
-            ...{
-                id: context.id,
-                name: context.name,
-                description: context.description,
-                embedder: context.embedder?.name || undefined,
-                slug: "/contexts/" + context.id,
-                active: context.active,
-                fields: context.fields.map( field => {
-                    return {
-                        ...field,
-                        name: sanitizeName(field.name),
-                        label: field.name
-                    }
-                }),
-                configuration: context.configuration
-            },
-            agents: [] // todo
-        })
-    })
-
-    console.log("[EXULU] items export by context")
-    app.get(`/items/export/:context`, async (req: Request, res: Response) => {
-
-        if (!req.params.context) {
-            res.status(400).json({
-                message: "Missing context in request."
-            })
-            return;
-        }
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const context = contexts.find(context => context.id === req.params.context);
-        if (!context) {
-            res.status(400).json({
-                message: "Context not found."
-            })
-            return;
-        }
-        const items = await context.getItems({
-            page: 1, // todo add pagination
-            user: authenticationResult.user?.id,
-            role: authenticationResult.user?.role?.id,
-            limit: 500
-        });
-        const csv = Papa.unparse(items);
-
-        const ISOTime = new Date().toISOString();
-        res.status(200).attachment(`${context.name}-items-export-${ISOTime}.csv`).send(csv)
-    })
-
-    console.log("[EXULU] contexts get list")
-    app.get(`/contexts`, async (req: Request, res: Response) => {
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        res.status(200).json(contexts.map(context => ({
-            id: context.id,
-            name: context.name,
-            description: context.description,
-            embedder: context.embedder?.name || undefined,
-            slug: "/contexts/" + context.id,
-            active: context.active,
-            fields: context.fields.map( field => {
-                return {
-                    ...field,
-                    name: sanitizeName(field.name),
-                    label: field.name
-                }
-            })
-        })))
-    })
-
-    console.log("[EXULU] agents")
     agents.forEach(agent => {
         const slug = agent.slug as string;
         if (!slug) return;

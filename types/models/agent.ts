@@ -2,7 +2,6 @@ export interface Agent {
     id: string;
     backend: string;
     type: "chat" | "flow";
-    extensions: string[];
     name: string;
     active?: boolean;
     public?: boolean;

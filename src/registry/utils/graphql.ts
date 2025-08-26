@@ -5,6 +5,9 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
+import { ExuluAgent, ExuluTool, getTableName, type ExuluContext } from "../classes";
+import { addRBACfields } from "../../postgres/core-schema";
+import { sanitizeName } from "./sanitize-name";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -96,12 +99,21 @@ ${enumValues}
         })
         .join("\n");
 
-    const fields = table.fields.map(field => {
+    let fields = table.fields.map(field => {
         let type: string;
         type = map(field);
         const required = field.required ? "!" : "";
         return `  ${field.name}: ${type}${required}`;
     });
+
+    if (table.name.singular === "agent") {
+        fields.push("  providerName: String")
+        fields.push("  modelName: String")
+        fields.push("  rateLimit: RateLimiterRule")
+        fields.push("  streaming: Boolean")
+        fields.push("  capabilities: AgentCapabilities")
+        fields.push("  slug: String")
+    }
 
     // Add RBAC field if enabled
     const rbacField = table.RBAC ? '  RBAC: RBACData' : '';
@@ -218,7 +230,7 @@ ${fieldFilters.join("\n")}
     return operatorTypes;
 }
 
-const getRequestedFields = (info: any) => {
+const getRequestedFields = (info: any): string[] => {
     const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
     const itemsSelection = selections.find(s => s.name.value === 'items');
     const fields = itemsSelection
@@ -308,7 +320,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     }
 };
 
-function createMutations(table: ExuluTableDefinition) {
+function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], contexts: ExuluContext[], tools: ExuluTool[]) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const validateWriteAccess = async (id: string, context: any) => {
 
@@ -422,6 +434,7 @@ function createMutations(table: ExuluTableDefinition) {
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
             let { input } = args;
 
             // Handle RBAC input
@@ -461,7 +474,7 @@ function createMutations(table: ExuluTableDefinition) {
                 ...(table.RBAC ? { rights_mode: 'private' } : {}),
                 createdAt: new Date(),
                 updatedAt: new Date()
-            }).returning(requestedFields);
+            }).returning(sanitizedFields);
 
             // Handle RBAC records if provided
             if (table.RBAC && rbacData && results[0]) {
@@ -469,7 +482,7 @@ function createMutations(table: ExuluTableDefinition) {
             }
 
             // Filter result to only include requested fields
-            return results[0];
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0] })
         },
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
             const { db, req } = context;
@@ -520,8 +533,9 @@ function createMutations(table: ExuluTableDefinition) {
             }
 
             const requestedFields = getRequestedFields(info)
-            const result = await db.from(tableNamePlural).select(requestedFields).where(where).first();
-            return result;
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            const result = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         },
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
             const { db, req } = context;
@@ -570,35 +584,16 @@ function createMutations(table: ExuluTableDefinition) {
             }
 
             const requestedFields = getRequestedFields(info)
-            const result = await db.from(tableNamePlural).select(requestedFields).where({ id }).first();
-            return result;
-        },
-        [`${tableNamePlural}RemoveOne`]: async (_, args, context, info) => {
-            const { db } = context;
-            const { where } = args;
-            const requestedFields = getRequestedFields(info)
-            const result = await db.from(tableNamePlural).select(requestedFields).where(where).first();
-
-            if (!result) {
-                throw new Error('Record not found');
-            }
-
-            await db(tableNamePlural).where(where).del();
-
-            if (table.RBAC) {
-                await db.from('rbac').where({
-                    entity: table.name.singular,
-                    target_resource_id: result.id
-                }).del();
-            }
-
-            return result;
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            const result = await db.from(tableNamePlural).select(sanitizedFields).where({ id }).first();
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         },
         [`${tableNamePlural}RemoveOneById`]: async (_, args, context, info) => {
             const { id } = args;
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            const result = await db.from(tableNamePlural).select(requestedFields).where({ id }).first();
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            const result = await db.from(tableNamePlural).select(sanitizedFields).where({ id }).first();
 
             if (!result) {
                 throw new Error('Record not found');
@@ -613,7 +608,7 @@ function createMutations(table: ExuluTableDefinition) {
                 }).del();
             }
 
-            return result;
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         }
     };
 }
@@ -721,7 +716,98 @@ const converOperatorToQuery = (query: any, fieldName: string, operators: any) =>
     return query;
 }
 
-function createQueries(table: ExuluTableDefinition) {
+const backendAgentFields = [
+    "providerName",
+    "modelName",
+    "slug",
+    "rateLimit",
+    "streaming",
+    "capabilities"
+]
+
+const removeAgentFields = (requestedFields: string[]) => {
+    const filtered = requestedFields.filter(field => !backendAgentFields.includes(field));
+    // Always add the backend field as we need it to get specific fields
+    // we sanitize this out again in the finalizeRequestedFields step.
+    filtered.push("backend")
+    return filtered;
+}
+
+const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result: any) => {
+    let backend = agents.find(a => a.id === result?.backend);
+    if (requestedFields.includes("providerName")) {
+        result.providerName = backend?.providerName || ""
+    }
+    if (requestedFields.includes("modelName")) {
+        result.modelName = backend?.modelName || ""
+    }
+    if (requestedFields.includes("slug")) {
+        result.slug = backend?.slug || ""
+    }
+    if (requestedFields.includes("rateLimit")) {
+        result.rateLimit = backend?.rateLimit || ""
+    }
+    if (requestedFields.includes("streaming")) {
+        result.streaming = backend?.streaming || false
+    }
+    if (requestedFields.includes("capabilities")) {
+        result.capabilities = backend?.capabilities || []
+    }
+    if (!requestedFields.includes("backend")) {
+        delete result.backend
+    }
+    return result;
+}
+
+const sanitizeRequestedFields = (table: ExuluTableDefinition, requestedFields: string[]) => {
+
+    if (table.name.singular === "agent") {
+        requestedFields = removeAgentFields(requestedFields)
+    }
+    if (!requestedFields.includes("id")) {
+        // We always add the id for the postgres selection
+        // to avoid issues with rbac, which needs this field.
+        // We remove it again during the "finalizeRequestedFields"
+        // step in case it wasnt requested for the final payload.
+        requestedFields.push("id")
+    }
+    return requestedFields;
+}
+
+const finalizeRequestedFields = ({
+    table,
+    requestedFields,
+    agents,
+    contexts,
+    tools,
+    result
+}: {
+    table: ExuluTableDefinition,
+    requestedFields: string[],
+    agents: ExuluAgent[],
+    contexts: ExuluContext[],
+    tools: ExuluTool[],
+    result: any | []
+}) => {
+    if (!result) {
+        return result;
+    }
+    if (Array.isArray(result)) {
+        result = result.map(item => {
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: item })
+        })
+    } else {
+        if (table.name.singular === "agent") {
+            result = addAgentFields(requestedFields, agents, result)
+            if (!requestedFields.includes("backend")) {
+                delete result.backend
+            }
+        }
+    }
+    return result;
+}
+
+function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools: ExuluTool[], contexts: ExuluContext[]) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const tableNameSingular = table.name.singular.toLowerCase();
 
@@ -748,8 +834,6 @@ function createQueries(table: ExuluTableDefinition) {
         return query;
     };
 
-
-
     const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }) => {
         if (sort) {
             query = query.orderBy(sort.field, sort.direction.toLowerCase());
@@ -761,29 +845,32 @@ function createQueries(table: ExuluTableDefinition) {
         [`${tableNameSingular}ById`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            let query = db.from(tableNamePlural).select(requestedFields).where({ id: args.id });
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            let query = db.from(tableNamePlural).select(sanitizedFields).where({ id: args.id });
             query = applyAccessControl(table, context.user, query);
-            const result = await query.first();
-            return result;
+            let result = await query.first();
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         },
         [`${tableNameSingular}ByIds`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            let query = db.from(tableNamePlural).select(requestedFields).whereIn('id', args.ids);
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            let query = db.from(tableNamePlural).select(sanitizedFields).whereIn('id', args.ids);
             query = applyAccessControl(table, context.user, query);
-            const result = await query;
-            return result;
+            let result = await query;
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         },
         [`${tableNameSingular}One`]: async (_, args, context, info) => {
             const { filters = [], sort } = args;
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            let query = db.from(tableNamePlural).select(requestedFields);
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            let query = db.from(tableNamePlural).select(sanitizedFields);
             query = applyFilters(query, filters);
             query = applyAccessControl(table, context.user, query);
             query = applySorting(query, sort);
-            const result = await query.first();
-            return result;
+            let result = await query.first();
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         },
         [`${tableNamePlural}Pagination`]: async (_, args, context, info) => {
             const { limit = 10, page = 0, filters = [], sort } = args;
@@ -815,7 +902,8 @@ function createQueries(table: ExuluTableDefinition) {
             if (page > 1) {
                 dataQuery = dataQuery.offset((page - 1) * limit);
             }
-            const items = await dataQuery.select(requestedFields).limit(limit);
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            let items = await dataQuery.select(sanitizedFields).limit(limit);
             return {
                 pageInfo: {
                     pageCount,
@@ -824,7 +912,7 @@ function createQueries(table: ExuluTableDefinition) {
                     hasPreviousPage,
                     hasNextPage
                 },
-                items: items
+                items: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: items })
             };
         },
         // Add generic statistics query for all tables
@@ -877,6 +965,8 @@ function createQueries(table: ExuluTableDefinition) {
     };
 }
 
+
+
 export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityName: string, resourceId: string, rights_mode: string) => {
 
     // Get RBAC records for this resource
@@ -907,7 +997,60 @@ export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityN
     };
 }
 
-export function createSDL(tables: ExuluTableDefinition[]) {
+export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext[], agents: ExuluAgent[], tools: ExuluTool[]) {
+
+    const contextSchemas: ExuluTableDefinition[] = []
+
+    console.log("============= Agents =============", agents?.length)
+
+    contexts.forEach(context => {
+        const tableName = getTableName(context.name) as any;
+        const definition: ExuluTableDefinition = {
+            name: {
+                singular: tableName,
+                plural: tableName?.endsWith("s") ? tableName : tableName + "s" as any,
+            },
+            RBAC: true,
+            fields: context.fields.map(field => ({
+                name: sanitizeName(field.name) as any,
+                type: field.type
+            }))
+        }
+        contextSchemas.push(addRBACfields(definition))
+    })
+
+    // Adding fields to SDL that are not defined via
+    // ExuluContext instances but added in the
+    // backend at createItemsTable().
+    contextSchemas.forEach(contextSchema => {
+        contextSchema.fields.push({
+            // important: the contexts use the default knex timestamp 
+            // fields which are different to the regular 
+            // ExuluTableDefinition, i.e. created_at vs. createdAt.
+            name: "created_at",
+            type: "date",
+        })
+        contextSchema.fields.push({
+            name: "updated_at",
+            type: "date",
+        })
+        contextSchema.fields.push({
+            name: "name",
+            type: "text",
+        })
+        contextSchema.fields.push({
+            name: "description",
+            type: "text",
+        })
+        contextSchema.fields.push({
+            name: "tags",
+            type: "text",
+        })
+        contextSchema.fields.push({
+            name: "archived",
+            type: "boolean",
+        })
+    })
 
     tables.forEach(table => {
         table.fields.push({
@@ -919,6 +1062,8 @@ export function createSDL(tables: ExuluTableDefinition[]) {
             type: "date",
         })
     })
+
+    tables = [...tables, ...contextSchemas]
 
     console.log("[EXULU] Creating SDL")
     let typeDefs = `
@@ -990,7 +1135,6 @@ export function createSDL(tables: ExuluTableDefinition[]) {
       ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!): ${tableNameSingular}
       ${tableNamePlural}UpdateOne(where: JSON!, input: ${tableNameSingular}Input!): ${tableNameSingular}
       ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!): ${tableNameSingular}
-      ${tableNamePlural}RemoveOne(where: JSON!): ${tableNameSingular}
       ${tableNamePlural}RemoveOneById(id: ID!): ${tableNameSingular}
     `;
         modelDefs += createTypeDefs(table);
@@ -1000,7 +1144,6 @@ type ${tableNameSingularUpperCaseFirst}PaginationResult {
   pageInfo: PageInfo!
   items: [${tableNameSingular}]!
 }
-
 type PageInfo {
   pageCount: Int!
   itemCount: Int!
@@ -1009,8 +1152,8 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-        Object.assign(resolvers.Query, createQueries(table));
-        Object.assign(resolvers.Mutation, createMutations(table));
+        Object.assign(resolvers.Query, createQueries(table, agents, tools, contexts));
+        Object.assign(resolvers.Mutation, createMutations(table, agents, contexts, tools));
 
         // Add RBAC resolver if enabled
         if (table.RBAC) {
@@ -1028,11 +1171,195 @@ type PageInfo {
         }
     }
 
+    // add additional resolvers
+
+    typeDefs += `
+   providers: ProviderPaginationResult
+    `
+
+    typeDefs += `
+    contexts: ContextPaginationResult
+    `
+
+    typeDefs += `
+    contextById(id: ID!): Context
+    `
+
+    typeDefs += `
+   tools: ToolPaginationResult
+    `
+
+    resolvers.Query["providers"] = async (_, args, context, info) => {
+        const requestedFields = getRequestedFields(info)
+        return {
+            items: agents.map(agent => {
+                const object = {}
+                requestedFields.forEach(field => {
+                    object[field] = agent[field]
+                })
+                return object
+            })
+        }
+    }
+
+    resolvers.Query["contexts"] = async (_, args, context, info) => {
+
+        const data = contexts.map(context => ({
+            id: context.id,
+            name: context.name,
+            description: context.description,
+            embedder: context.embedder?.name || undefined,
+            slug: "/contexts/" + context.id,
+            active: context.active,
+            fields: context.fields.map(field => {
+                return {
+                    ...field,
+                    name: sanitizeName(field.name),
+                    label: field.name
+                }
+            })
+        }))
+
+        const requestedFields = getRequestedFields(info)
+        return {
+            items: data.map(context => {
+                const object = {}
+                requestedFields.forEach(field => {
+                    object[field] = context[field]
+                })
+                return object
+            })
+        }
+    }
+
+    resolvers.Query["contextById"] = async (_, args, context, info) => {
+
+        let data: ExuluContext | undefined = contexts.find(context => context.id === args.id);
+
+        if (!data) {
+            return null;
+        }
+
+        const clean = {
+            id: data.id,
+            name: data.name,
+            description: data.description,
+            embedder: data.embedder?.name || undefined,
+            slug: "/contexts/" + data.id,
+            active: data.active,
+            fields: data.fields.map(field => {
+                return {
+                    ...field,
+                    name: sanitizeName(field.name),
+                    label: field.name
+                }
+            }),
+            configuration: data.configuration
+        }
+
+        const requestedFields = getRequestedFields(info)
+        const mapped = {}
+        requestedFields.forEach(field => {
+            mapped[field] = clean[field]
+        })
+        return mapped
+    }
+
+    resolvers.Query["tools"] = async (_, args, context, info) => {
+        const requestedFields = getRequestedFields(info)
+        return {
+            items: tools.map(tool => {
+                const object = {}
+                requestedFields.forEach(field => {
+                    object[field] = tool[field]
+                })
+                return object
+            })
+        }
+    }
+
+    modelDefs += `
+    type ProviderPaginationResult {
+    items: [Provider]!
+    }
+    `
+
+    modelDefs += `
+    type ContextPaginationResult {
+    items: [Context]!
+    }
+    `
+
+    modelDefs += `
+    type ToolPaginationResult {
+    items: [Tool]!
+    }
+    `
+
     typeDefs += "}\n";
     mutationDefs += "}\n";
 
     // Add generic types used across all tables
     const genericTypes = `
+
+type RateLimiterRule {
+    name: String
+    rate_limit: RateLimiterRuleRateLimit
+}
+
+type RateLimiterRuleRateLimit {
+    time: Int
+    limit: Int
+}
+
+type AgentCapabilities {
+    text: Boolean
+    images: [String]
+    files: [String]
+    audio: [String]
+    video: [String]
+}
+
+type Provider {
+  id: ID!
+  name: String!
+  description: String
+  providerName: String
+  modelName: String
+  type: EnumProviderType!
+}
+
+type Context {
+    id: ID!
+    name: String!
+    description: String
+    embedder: String
+    slug: String
+    active: Boolean
+    fields: JSON
+    configuration: JSON
+}
+
+type ContextField {
+    name: String!
+    type: String!
+    unique: Boolean
+    label: String
+}
+
+type Tool {
+  id: ID!
+  name: String!
+  description: String
+  type: String
+  config: JSON
+}
+
+enum EnumProviderType {
+  agent
+  custom
+}
+
 type StatisticsResult {
   group: String!
   count: Int!

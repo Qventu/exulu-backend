@@ -1,5 +1,4 @@
 import type { ExuluFieldTypes } from "../enums/field-types"
-import type { Agent } from "./agent"
 
 export interface Context {
     id: string
@@ -13,5 +12,4 @@ export interface Context {
       type: ExuluFieldTypes
       label: string
     }[]
-    agents: Agent[]
   }
