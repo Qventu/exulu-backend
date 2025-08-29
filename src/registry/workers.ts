@@ -66,7 +66,7 @@ export const createWorkers = async (queues: string[], logger: Logger, contexts: 
                         const result =await context.createAndUpsertEmbeddings(data.inputs, data.user, {
                             label: embedder.name,
                             trigger: data.trigger
-                        });
+                        }, data.role, bullmqJob.id);
 
                         return result;
                     }

@@ -1526,7 +1526,7 @@ export class ExuluContext {
                         COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
                         +
                         COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
-                      ) AS hybrid_score
+                      )::float AS hybrid_score
                 
                     FROM full_text ft
                     FULL OUTER JOIN semantic se
@@ -1560,7 +1560,7 @@ export class ExuluContext {
                     items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
             }
 
-            console.log("items", items.map(item => item.name + " " + item.id))
+            console.log("items", items)
             // Filter out duplicate sources, keeping only the first occurrence
             // because the vector search returns multiple chunks for the same
             // source.
@@ -1605,6 +1605,8 @@ export class ExuluContext {
                 return acc;
             }, []);
 
+            console.log("items", items)
+
             items.forEach(item => {
                 if (!item.chunks?.length) { return; }
 
@@ -1629,7 +1631,9 @@ export class ExuluContext {
                     item.totalRelevance = total;
 
                 } else if (method === "hybridSearch") {
-                    const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? c.hybrid_score : 0));
+                    console.log("item.chunks", item.chunks)
+                    // we multiply by 10 and add 1 to somewhat normalize the score against when cosine distance is used
+                    const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? (c.hybrid_score * 10) + 1 : 0));
                     const total = scores.reduce((a, b) => a + b, 0);
                     const average = scores.length ? total / scores.length : 0;
                     item.averageRelevance = average;
