@@ -229,6 +229,9 @@ interface ExuluAgentToolConfig {
 
 export class ExuluAgent {
 
+    // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
+    // underscores and be a max length of 80 characters and at least 5 characters long.
+    // The ID is used for storing references to agents so it is important it does not change.
     public id: string;
     public name: string;
     public description: string = "";
@@ -838,51 +841,11 @@ export class ExuluEval {
 
 }
 
-const calculateStatistics = (items: any[], method: VectorMethod): {
-    average: number,
-    total: number
-} => {
-    let methodProperty = "";
-
-    if (method === "l1Distance") {
-        methodProperty = "l1_distance";
-    }
-
-    if (method === "l2Distance") {
-        methodProperty = "l2_distance";
-    }
-
-    if (method === "hammingDistance") {
-        methodProperty = "hamming_distance";
-    }
-
-    if (method === "jaccardDistance") {
-        methodProperty = "jaccard_distance";
-    }
-
-    if (method === "maxInnerProduct") {
-        methodProperty = "inner_product";
-    }
-
-    if (method === "cosineDistance") {
-        methodProperty = "cosine_distance";
-    }
-
-    const average = items.reduce((acc, item) => {
-        return acc + item[methodProperty];
-    }, 0) / items.length;
-
-    const total = items.reduce((acc, item) => {
-        return acc + item[methodProperty];
-    }, 0);
-
-    return {
-        average,
-        total
-    }
-}
-
 export class ExuluTool {
+
+    // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
+    // underscores and be a max length of 80 characters and at least 5 characters long.
+    // The ID is used for storing references to tools so it is important it does not change.
     public id: string;
     public name: string;
     public description: string;
@@ -927,12 +890,12 @@ type ExuluContextFieldDefinition = {
 }
 
 
-export const getTableName = (name: string) => {
-    return sanitizeName(name) + "_items";
+export const getTableName = (id: string) => {
+    return sanitizeName(id) + "_items";
 }
 
-export const getChunksTableName = (name: string) => {
-    return sanitizeName(name) + "_chunks";
+export const getChunksTableName = (id: string) => {
+    return sanitizeName(id) + "_chunks";
 }
 
 export type ExuluRightsMode = "private" | "users" | "roles" | "public" | "projects"
@@ -940,6 +903,9 @@ export type ExuluRightsMode = "private" | "users" | "roles" | "public" | "projec
 
 export class ExuluContext {
 
+    // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
+    // underscores and be a max length of 80 characters and at least 5 characters long.
+    // The ID is used for the table name in the database, so it is important it does not change.
     public id: string;
     public name: string;
     public active: boolean;
@@ -952,6 +918,7 @@ export class ExuluContext {
     public configuration: {
         calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
         defaultRightsMode?: ExuluRightsMode
+        language?: "german" | "english"
     };
 
     constructor({ id, name, description, embedder, active, rateLimit, fields, queryRewriter, resultReranker, configuration }: {
@@ -966,14 +933,17 @@ export class ExuluContext {
         resultReranker?: (results: any[]) => Promise<any[]>,
         configuration?: {
             calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
-            defaultRightsMode?: ExuluRightsMode
+            defaultRightsMode?: ExuluRightsMode,
+            language?: "german" | "english"
         }
     }) {
         this.id = id;
         this.name = name;
         this.fields = fields || [];
         this.configuration = configuration || {
-            calculateVectors: "manual"
+            calculateVectors: "manual",
+            language: "english",
+            defaultRightsMode: "private"
         };
         this.description = description;
         this.embedder = embedder;
@@ -985,8 +955,8 @@ export class ExuluContext {
 
     public deleteAll = async (): Promise<VectorOperationResponse> => {
         const { db } = await postgresClient();
-        await db.from(getTableName(this.name)).delete();
-        await db.from(getChunksTableName(this.name)).delete();
+        await db.from(getTableName(this.id)).delete();
+        await db.from(getChunksTableName(this.id)).delete();
         return {
             count: 0,
             results: []
@@ -995,15 +965,38 @@ export class ExuluContext {
 
     public tableExists = async () => {
         const { db } = await postgresClient();
-        const tableExists = await db.schema.hasTable(getTableName(this.name));
+        const tableName = getTableName(this.id);
+        console.log("[EXULU] checking if table exists.", tableName)
+        const tableExists = await db.schema.hasTable(tableName);
         return tableExists;
     }
 
+    public chunksTableExists = async () => {
+        const { db } = await postgresClient();
+        const chunksTableName = getChunksTableName(this.id);
+        const chunksTableExists = await db.schema.hasTable(chunksTableName);
+        return chunksTableExists;
+    }
 
-    public createAndUpsertEmbeddings = async (item: Item, user: string, statistics: ExuluStatisticParams, role?: string,) => {
+
+    public createAndUpsertEmbeddings = async (
+        item: Item, 
+        user?: string, 
+        statistics?: ExuluStatisticParams, 
+        role?: string,
+        job?: string
+    ): Promise<{
+        id: string,
+        chunks?: number
+        job?: string
+    }> => {
 
         if (!this.embedder) {
             throw new Error("Embedder is not set for this context.")
+        }
+
+        if (!item.id) {
+            throw new Error("Item id is required for generating embeddings.")
         }
 
         const { db } = await postgresClient();
@@ -1012,33 +1005,34 @@ export class ExuluContext {
             ...item,
             id: item.id
         }, {
-            label: statistics.label || this.name,
-            trigger: statistics.trigger || "agent"
+            label: statistics?.label || this.name,
+            trigger: statistics?.trigger || "agent"
         }, user, role)
 
-        const exists = await db.schema.hasTable(getChunksTableName(this.name));
+        const exists = await db.schema.hasTable(getChunksTableName(this.id));
         if (!exists) {
             await this.createChunksTable();
         }
 
         // first delete all chunks with source = id
-        await db.from(getChunksTableName(this.name)).where({ source }).delete();
+        await db.from(getChunksTableName(this.id)).where({ source }).delete();
 
         // then insert the new / updated chunks
-        await db.from(getChunksTableName(this.name)).insert(chunks.map(chunk => ({
+        await db.from(getChunksTableName(this.id)).insert(chunks.map(chunk => ({
             source,
             content: chunk.content,
             chunk_index: chunk.index,
             embedding: pgvector.toSql(chunk.vector)
         })))
 
-        await db.from(getTableName(this.name)).where({ id: item.id }).update({
+        await db.from(getTableName(this.id)).where({ id: item.id }).update({
             embeddings_updated_at: new Date().toISOString()
         }).returning("id")
 
         return {
             id: item.id,
-            chunks: chunks?.length || 0
+            chunks: chunks?.length || 0,
+            job
         };
     }
 
@@ -1054,7 +1048,7 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         Object.keys(item).forEach(key => {
-            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
+            if (key === "id" || key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
@@ -1075,7 +1069,7 @@ export class ExuluContext {
         delete payloadWithSanitizedPropertyNames.upsert;
         payloadWithSanitizedPropertyNames.updated_at = db.fn.now();
 
-        const result = await db.from(getTableName(this.name))
+        const result = await db.from(getTableName(this.id))
             .where({ id: id })
             .update(payloadWithSanitizedPropertyNames)
             .returning("id");
@@ -1086,31 +1080,19 @@ export class ExuluContext {
                 this.configuration.calculateVectors === "always"
             )
         ) {
-
-            if (this.embedder.queue?.name) {
-                console.log("[EXULU] embedder is in queue mode, scheduling job.")
-                const job = await bullmqDecorator({
-                    label: `${this.embedder.name}`,
-                    embedder: this.embedder.id,
-                    context: this.id,
-                    inputs: item,
-                    item: item.id,
-                    queue: this.embedder.queue,
-                    user: user,
-                    role: role,
-                    trigger: trigger || "agent",
-                })
-                return {
-                    id: result[0].id,
-                    job: job.id
-                };
-            }
-
-            // If no queue set, calculate embeddings directly.
-            await this.createAndUpsertEmbeddings(item, user, {
-                label: this.embedder.name,
+            const { job } = await this.embeddings.generate.one({
+                item: {
+                    ...item,
+                    id: result[0].id
+                },
+                user,
+                role: role,
                 trigger: trigger || "agent"
-            }, role);
+            });
+            return {
+                id: result[0].id,
+                job
+            };
         }
 
         return {
@@ -1119,6 +1101,107 @@ export class ExuluContext {
         };
     }
 
+    public embeddings = {
+        generate: {
+            one: async ({
+                item,
+                user,
+                role,
+                trigger
+            }: {
+                item: Item,
+                user?: string,
+                role?: string,
+                trigger: STATISTICS_LABELS
+            }): Promise<{
+                id: string,
+                job?: string,
+                chunks?: number
+            }> => {
+        
+                if (!this.embedder) {
+                    throw new Error("Embedder is not set for this context.")
+                }
+        
+                if (!item.id) {
+                    throw new Error("Item id is required for generating embeddings.")
+                }
+        
+                if (this.embedder.queue?.name) {
+                    console.log("[EXULU] embedder is in queue mode, scheduling job.")
+                    const job = await bullmqDecorator({
+                        label: `${this.embedder.name}`,
+                        embedder: this.embedder.id,
+                        context: this.id,
+                        inputs: item,
+                        item: item.id,
+                        queue: this.embedder.queue,
+                        user: user,
+                        role: role,
+                        trigger: trigger || "agent",
+                    })
+        
+                    return {
+                        id: item.id,
+                        job: job.id,
+                        chunks: 0
+                    };
+                }
+        
+                // If no queue set, calculate embeddings directly.
+                return await this.createAndUpsertEmbeddings(item, user, {
+                    label: this.embedder.name,
+                    trigger: trigger || "agent"
+                }, role, undefined);
+            },
+            all: async (context: ExuluContext, userId?: string, roleId?: string) => {
+
+                const exists = await context.tableExists();
+
+                if (!exists) {
+                    await context.createItemsTable();
+                }
+
+                const chunksTableExists = await context.chunksTableExists();
+                if (!chunksTableExists && context.embedder) {
+                    await context.createChunksTable();
+                }
+
+                const { db } = await postgresClient();
+
+                const items = await db.from(getTableName(context.id))
+                    .select("*");
+
+                const jobs: string[] = [];
+
+                // Safeguard against too many items
+                if (
+                    !context.embedder?.queue?.name &&
+                    items.length > 2000
+                ) {
+                    throw new Error(`Embedder is not in queue mode, cannot generate embeddings for more than 
+                        2.000 items at once, if you need to generate embeddings for more items please configure 
+                        the embedder to use a queue. You can configure the embedder to use a queue by setting 
+                        the queue property in the embedder configuration.`)
+                }
+
+                for (const item of items) {
+                    const { job } = await context.embeddings.generate.one({
+                        item,
+                        user: userId,
+                        role: roleId,
+                        trigger: "api"
+                    });
+                    if (job) {
+                        jobs.push(job);
+                    }
+                }
+
+                return jobs || [];
+
+            }
+        }
+    }
 
     public async insertItem(user: string, item: Item, upsert: boolean = false, role?: string, trigger?: STATISTICS_LABELS): Promise<{
         id: string,
@@ -1132,7 +1215,7 @@ export class ExuluContext {
         const { db } = await postgresClient();
 
         if (item.external_id) {
-            const existingItem = await db.from(getTableName(this.name)).where({ external_id: item.external_id }).first();
+            const existingItem = await db.from(getTableName(this.id)).where({ external_id: item.external_id }).first();
             if (existingItem && !upsert) {
                 throw new Error("Item with external id " + item.external_id + " already exists.")
             }
@@ -1146,7 +1229,7 @@ export class ExuluContext {
         }
 
         if (upsert && item.id) {
-            const existingItem = await db.from(getTableName(this.name)).where({ id: item.id }).first();
+            const existingItem = await db.from(getTableName(this.id)).where({ id: item.id }).first();
             if (existingItem && upsert) {
                 await this.updateItem(user, {
                     ...item,
@@ -1157,7 +1240,7 @@ export class ExuluContext {
         }
 
         Object.keys(item).forEach(key => {
-            if (key === "id" ||key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
+            if (key === "id" || key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
                 return;
             }
             const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
@@ -1175,7 +1258,7 @@ export class ExuluContext {
         delete payloadWithSanitizedPropertyNames.id; // not allowed to set id
         delete payloadWithSanitizedPropertyNames.upsert;
 
-        const result = await db.from(getTableName(this.name)).insert({
+        const result = await db.from(getTableName(this.id)).insert({
             ...payloadWithSanitizedPropertyNames,
             id: db.fn.uuid(),
             created_at: db.fn.now(),
@@ -1188,33 +1271,20 @@ export class ExuluContext {
                 this.configuration.calculateVectors === "always"
             )
         ) {
-            if (this.embedder.queue?.name) {
-                console.log("[EXULU] embedder is in queue mode, scheduling job.")
-                const job = await bullmqDecorator({
-                    label: `${this.embedder.name}`,
-                    embedder: this.embedder.id,
-                    context: this.id,
-                    inputs: item,
-                    item: item.id,
-                    queue: this.embedder.queue,
-                    user: user,
-                    role: role,
-                    trigger: trigger || "agent"
-                })
-
-                return {
-                    id: result[0].id,
-                    job: job.id
-                };
-            }
-            console.log("[EXULU] embedder is not in queue mode, calculating vectors directly.")
-            await this.createAndUpsertEmbeddings({
-                ...item,
-                id: result[0].id
-            }, user, {
-                label: this.embedder.name,
+            const { job } = await this.embeddings.generate.one({
+                item: {
+                    ...item,
+                    id: result[0].id
+                },
+                user,
+                role: role,
                 trigger: trigger || "agent"
-            }, role);
+            });
+
+            return {
+                id: result[0].id,
+                job
+            };
         }
 
         return {
@@ -1261,7 +1331,7 @@ export class ExuluContext {
         if (limit < 1) limit = 10;
         let offset = (page - 1) * limit;
 
-        const mainTable = getTableName(this.name);
+        const mainTable = getTableName(this.id);
         const { db } = await postgresClient();
         const columns = await db(mainTable).columnInfo();
 
@@ -1341,7 +1411,7 @@ export class ExuluContext {
                 query = await this.queryRewriter(query);
             }
 
-            const chunksTable = getChunksTableName(this.name);
+            const chunksTable = getChunksTableName(this.id);
 
             itemsQuery.leftJoin(chunksTable, function () {
                 this.on(chunksTable + ".source", "=", mainTable + ".id")
@@ -1367,62 +1437,144 @@ export class ExuluContext {
             const vectorStr = `ARRAY[${vector.join(",")}]`;
             const vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
 
+            const language = (this.configuration.language || 'english');
+
+            let items: any[] = [];
+
             switch (method) {
-                case "l1Distance":
-                    itemsQuery.select(db.raw(`?? <-> ${vectorExpr} as l1_distance`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`?? <-> ${vectorExpr} ASC`, [`${chunksTable}.embedding`]));
-                    break;
-
-                case "l2Distance":
-                    itemsQuery.select(db.raw(`?? <-> ${vectorExpr} as l2_distance`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`?? <-> ${vectorExpr} ASC`, [`${chunksTable}.embedding`]));
-                    break;
-
-                case "hammingDistance":
-                    itemsQuery.select(db.raw(`?? <#> ${vectorExpr} as hamming_distance`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`?? <#> ${vectorExpr} ASC`, [`${chunksTable}.embedding`]));
-                    break;
-
-                case "jaccardDistance":
-                    itemsQuery.select(db.raw(`?? <#> ${vectorExpr} as jaccard_distance`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`?? <#> ${vectorExpr} ASC`, [`${chunksTable}.embedding`]));
-                    break;
-
-                case "maxInnerProduct":
-                    itemsQuery.select(db.raw(`?? <#> ${vectorExpr} as inner_product`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`?? <#> ${vectorExpr} ASC`, [`${chunksTable}.embedding`]));
+                case "tsvector":
+                    // rank + filter + sort (DESC)
+                    itemsQuery
+                        .select(db.raw(
+                            `ts_rank(${chunksTable}.fts, websearch_to_tsquery(?, ?)) as fts_rank`,
+                            [language, query]
+                        ))
+                        .whereRaw(
+                            `${chunksTable}.fts @@ websearch_to_tsquery(?, ?)`,
+                            [language, query]
+                        )
+                        .orderByRaw(`fts_rank DESC`);
+                    items = await itemsQuery;
                     break;
 
                 case "cosineDistance":
                 default:
-                    itemsQuery.select(db.raw(`1 - (?? <#> ${vectorExpr}) as cosine_distance`, [`${chunksTable}.embedding`]));
-                    itemsQuery.orderByRaw(db.raw(`1 - (?? <#> ${vectorExpr}) DESC`, [`${chunksTable}.embedding`]));
+                    // Ensure we don't rank rows without embeddings
+                    itemsQuery.whereNotNull(`${chunksTable}.embedding`);
+
+                    // Select cosine *similarity* for display/stats:
+                    // similarity = 1 - cosine_distance  (cosine_distance in [0,2])
+                    // If you prefer pure distance in your stats, change the alias below accordingly.
+                    itemsQuery.select(
+                        db.raw(`1 - (${chunksTable}.embedding <=> ${vectorExpr}) AS cosine_distance`)
+                    );
+
+                    // Very important: ORDER BY the raw distance expression so pgvector can use the index
+                    itemsQuery.orderByRaw(
+                        `${chunksTable}.embedding <=> ${vectorExpr} ASC NULLS LAST`
+                    );
+                    items = await itemsQuery;
                     break;
+                case "hybridSearch":
+
+                    // Tunables
+                    const matchCount = Math.min(limit * 5, 30);
+                    const fullTextWeight = 1.0;
+                    const semanticWeight = 1.0;
+                    const rrfK = 50;
+
+                    const hybridSQL = `
+                    WITH full_text AS (
+                      SELECT
+                        c.id,
+                        c.source,
+                        row_number() OVER (
+                          ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery(?, ?)) DESC
+                        ) AS rank_ix
+                      FROM ${chunksTable} c
+                      WHERE c.fts @@ websearch_to_tsquery(?, ?)
+                      ORDER BY rank_ix
+                      LIMIT LEAST(?, 30) * 2
+                    ),
+                    semantic AS (
+                      SELECT
+                        c.id,
+                        c.source,
+                        row_number() OVER (
+                          ORDER BY c.embedding <=> ${vectorExpr} ASC
+                        ) AS rank_ix
+                      FROM ${chunksTable} c
+                      WHERE c.embedding IS NOT NULL
+                      ORDER BY rank_ix
+                      LIMIT LEAST(?, 30) * 2
+                    )
+                    SELECT
+                      m.*,
+                      c.id AS chunk_id,
+                      c.source,
+                      c.content,
+                      c.chunk_index,
+                      c.created_at AS chunk_created_at,
+                      c.updated_at AS chunk_updated_at,
+                
+                      /* Per-signal scores for introspection */
+                      ts_rank(c.fts, websearch_to_tsquery(?, ?)) AS fts_rank,
+                      (1 - (c.embedding <=> ${vectorExpr})) AS cosine_distance,
+                
+                      /* Hybrid RRF score */
+                      (
+                        COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
+                        +
+                        COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
+                      ) AS hybrid_score
+                
+                    FROM full_text ft
+                    FULL OUTER JOIN semantic se
+                      ON ft.id = se.id
+                    JOIN ${chunksTable} c
+                      ON COALESCE(ft.id, se.id) = c.id
+                    JOIN ${mainTable} m
+                      ON m.id = c.source
+                    ORDER BY hybrid_score DESC
+                    LIMIT LEAST(?, 30)
+                    OFFSET 0
+                  `;
+
+                    const bindings = [
+                        // full_text: websearch_to_tsquery(lang, query) in rank and where
+                        language, query,
+                        language, query,
+                        matchCount,                    // full_text limit
+
+                        matchCount,                    // semantic limit
+
+                        // fts_rank (ts_rank) call
+                        language, query,
+
+                        // RRF fusion parameters
+                        rrfK, fullTextWeight,
+                        rrfK, semanticWeight,
+
+                        matchCount                     // final limit
+                    ];
+                    items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
             }
 
-
-            // todo allow for receiving "name" req.query param to filter by specific
-            // properties of items. I.e. name=John Doe will filter items where the name
-            // field is equal to John Doe.
-
-            let items = await itemsQuery;
+            console.log("items", items.map(item => item.name + " " + item.id))
             // Filter out duplicate sources, keeping only the first occurrence
             // because the vector search returns multiple chunks for the same
             // source.
             const seenSources = new Map();
             items = items.reduce((acc, item) => {
-
                 if (!seenSources.has(item.source)) {
                     seenSources.set(item.source, {
                         ...Object.fromEntries(
                             Object.keys(item)
                                 .filter(key =>
-                                    key !== "l1_distance" &&
-                                    key !== "l2_distance" &&
-                                    key !== "hamming_distance" &&
-                                    key !== "jaccard_distance" &&
-                                    key !== "inner_product" &&
-                                    key !== "cosine_distance" &&
+                                    key !== "cosine_distance" &&   // kept per chunk below
+                                    key !== "fts_rank" &&          // kept per chunk below
+                                    key !== "hybrid_score" &&      // we will compute per item below
+
                                     key !== "content" &&
                                     key !== "source" &&
                                     key !== "chunk_index" &&
@@ -1435,12 +1587,9 @@ export class ExuluContext {
                         chunks: [{
                             content: item.content,
                             chunk_index: item.chunk_index,
-                            ...(method === "l1Distance" && { l1_distance: item.l1_distance }),
-                            ...(method === "l2Distance" && { l2_distance: item.l2_distance }),
-                            ...(method === "hammingDistance" && { hamming_distance: item.hamming_distance }),
-                            ...(method === "jaccardDistance" && { jaccard_distance: item.jaccard_distance }),
-                            ...(method === "maxInnerProduct" && { inner_product: item.inner_product }),
-                            ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance })
+                            ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
+                            ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
+                            ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
                         }]
                     });
                     acc.push(seenSources.get(item.source));
@@ -1448,33 +1597,52 @@ export class ExuluContext {
                     seenSources.get(item.source).chunks.push({
                         content: item.content,
                         chunk_index: item.chunk_index,
-                        ...(method === "l1Distance" && { l1_distance: item.l1_distance }),
-                        ...(method === "l2Distance" && { l2_distance: item.l2_distance }),
-                        ...(method === "hammingDistance" && { hamming_distance: item.hamming_distance }),
-                        ...(method === "jaccardDistance" && { jaccard_distance: item.jaccard_distance }),
-                        ...(method === "maxInnerProduct" && { inner_product: item.inner_product }),
-                        ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance })
+                        ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
+                        ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
+                        ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
                     });
                 }
                 return acc;
             }, []);
 
             items.forEach(item => {
-                if (!item.chunks?.length) {
-                    return;
+                if (!item.chunks?.length) { return; }
+
+                if (method === "tsvector") {
+                    const ranks = item.chunks
+                        .map(c => (typeof c.fts_rank === 'number' ? c.fts_rank : 0));
+                    const total = ranks.reduce((a, b) => a + b, 0);
+                    const average = ranks.length ? total / ranks.length : 0;
+                    item.averageRelevance = average;
+                    item.totalRelevance = total;
+
+                } else if (method === "cosineDistance") {
+                    let methodProperty = "cosine_distance";
+                    const average = item.chunks.reduce((acc, item) => {
+                        return acc + item[methodProperty];
+                    }, 0) / item.chunks.length;
+
+                    const total = item.chunks.reduce((acc, item) => {
+                        return acc + item[methodProperty];
+                    }, 0);
+                    item.averageRelevance = average;
+                    item.totalRelevance = total;
+
+                } else if (method === "hybridSearch") {
+                    const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? c.hybrid_score : 0));
+                    const total = scores.reduce((a, b) => a + b, 0);
+                    const average = scores.length ? total / scores.length : 0;
+                    item.averageRelevance = average;
+                    item.totalRelevance = total;
                 }
-                const {
-                    average,
-                    total
-                } = calculateStatistics(item.chunks, method ?? "cosineDistance");
-                item.averageRelevance = average;
-                item.totalRelevance = total;
             })
 
             // todo if query && resultReranker, rerank the results
             if (this.resultReranker && query) {
                 items = await this.resultReranker(items);
             }
+
+            items = items.slice(0, limit);
 
             return {
                 filters: {
@@ -1487,16 +1655,14 @@ export class ExuluContext {
                     id: this.id,
                     embedder: this.embedder.name
                 },
-                items: items
+                items
             };
         }
-
-
     }
 
     public createItemsTable = async () => {
         const { db } = await postgresClient();
-        const tableName = getTableName(this.name);
+        const tableName = getTableName(this.id);
         console.log("[EXULU] Creating table: " + tableName);
         return await db.schema.createTable(tableName, (table) => {
             console.log("[EXULU] Creating fields for table.", this.fields);
@@ -1524,19 +1690,41 @@ export class ExuluContext {
     public createChunksTable = async () => {
 
         const { db } = await postgresClient();
-        const tableName = getChunksTableName(this.name);
+        const tableName = getChunksTableName(this.id);
         console.log("[EXULU] Creating table: " + tableName);
-        return await db.schema.createTable(tableName, (table) => {
+        await db.schema.createTable(tableName, (table) => {
             if (!this.embedder) {
                 throw new Error("Embedder must be set for context " + this.name + " to create chunks table.")
             }
             table.uuid("id").primary().defaultTo(db.fn.uuid());
-            table.uuid("source").references("id").inTable(getTableName(this.name));
+            table.uuid("source").references("id").inTable(getTableName(this.id));
             table.text("content");
             table.integer("chunk_index");
             table.specificType('embedding', `vector(${this.embedder.vectorDimensions})`);
+
+            // Generated tsvector column (PG 12+)
+            table.specificType(
+                "fts",
+                `tsvector GENERATED ALWAYS AS (to_tsvector('${this.configuration.language || "english"}', coalesce(content, ''))) STORED`
+            );
+
+            // GIN index on the tsvector and hnsw index on the embedding
+            table.index(["fts"], `${tableName}_fts_gin_idx`, "gin");
+            table.index(["source"], `${tableName}_source_idx`);
+
             table.timestamps(true, true);
         });
+
+        // HNSW for ANN search (pgvector >= 0.5)
+        await db.raw(`
+            CREATE INDEX IF NOT EXISTS ${tableName}_embedding_hnsw_cosine
+            ON ${tableName}
+            USING hnsw (embedding vector_cosine_ops)
+            WHERE embedding IS NOT NULL
+            WITH (m = 16, ef_construction = 64)
+        `);
+
+        return;
     }
 
     // Exports the context as a tool that can be used by an agent

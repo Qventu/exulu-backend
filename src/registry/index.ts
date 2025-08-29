@@ -1,4 +1,4 @@
-import { ExuluAgent, ExuluContext, type ExuluTool } from "./classes.ts";
+import { ExuluAgent, ExuluContext, getTableName, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
 import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
@@ -10,6 +10,16 @@ import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 import { projectsContext } from "../templates/contexts/projects.ts";
+import { postgresClient } from "../postgres/client.ts";
+
+// Add a helper function to validate PostgreSQL table names
+const isValidPostgresName = (id: string): boolean => {
+    console.log("[EXULU] validating context id.", id)
+    const regex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+    const isValid = regex.test(id);
+    const length = id.length;
+    return isValid && length <= 80 && length > 5;
+};
 
 export type ExuluConfig = {
     telemetry?: {
@@ -46,11 +56,13 @@ export class ExuluApp {
         agents?: ExuluAgent[],
         tools?: ExuluTool[]
     }): Promise<Express> => {
+
         this._contexts = {
             ...contexts,
             projectsContext,
             codeStandardsContext
         };
+
         this._agents = [
             claudeCodeAgent,
             defaultAgent,
@@ -65,6 +77,37 @@ export class ExuluApp {
             // Add agents as tools
             ...(agents || []).map(agent => agent.tool())
         ]
+
+        const checks: {
+            name: string,
+            id: string,
+            type: "context" | "agent" | "tool"
+        }[] = [
+                ...Object.keys(this._contexts || {}).map(x => ({
+                    name: this._contexts?.[x]?.name ?? "",
+                    id: this._contexts?.[x]?.id ?? "",
+                    type: "context" as const
+                })),
+                ...this._agents.map(agent => ({
+                    name: agent.name ?? "",
+                    id: agent.id ?? "",
+                    type: "agent" as const
+                })),
+                ...this._tools.map(tool => ({
+                    name: tool.name ?? "",
+                    id: tool.id ?? "",
+                    type: "tool" as const
+                }))
+            ]
+
+        // Integrate validation into the create method
+        const invalid = checks.filter(x => !isValidPostgresName(x?.id ?? ""));
+        if (invalid.length > 0) {
+            console.error(`%c[EXULU] Invalid ID found for a context, tool or agent: ${invalid.map(x => x.id).join(', ')}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`, 'color: orange; font-weight: bold; \n \n');
+            throw new Error(`Invalid ID found for a context, tool or agent: ${invalid.map(x => x.id).join(', ')}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`);
+        }
+
+        // todo check for duplicate IDs across tools, agents and contexts
 
         const contextsArray = Object.values(contexts || {});
 
@@ -114,6 +157,43 @@ export class ExuluApp {
 
     public get agents(): ExuluAgent[] {
         return this._agents;
+    }
+
+    public embeddings = {
+        generate: {
+            one: async ({
+                context: contextId,
+                item: itemId
+            }: {
+                context: string,
+                item: string
+            }) => {
+                const { db } = await postgresClient();
+                const item = await db.from(getTableName(contextId)).where({ id: itemId }).select("*").first()
+                ;
+                const context = this.contexts.find(x => contextId === x.id)
+
+                if (!context) {
+                    throw new Error(`Context ${contextId} not found in registry.`)
+                }
+
+                return await context.embeddings.generate.one({
+                    item,
+                    trigger: "api"
+                })
+            },
+            all: async ({
+                context: contextId
+            }: {
+                context: string
+            }) => {
+                const context = this.contexts.find(x => contextId === x.id)
+                if (!context) { 
+                    throw new Error(`Context ${contextId} not found in registry.`)
+                }
+                return await context.embeddings.generate.all(context, undefined, undefined)
+            }
+        }
     }
 
     public bullmq = {
@@ -183,7 +263,7 @@ export class ExuluApp {
                         tracer,
                         logger
                     });
-                    
+
                     await mcp.connect();
                 }
 

@@ -2,18 +2,16 @@ import { type Express, type Request, type Response } from "express";
 import { type ExuluAgent, ExuluContext, type ExuluTool, getChunksTableName, getTableName, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { requestValidators } from "./route-validators";
-import { zerialize } from "zodex";
 import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods.ts";
 import express from 'express';
 import { ApolloServer } from '@apollo/server';
-import * as Papa from 'papaparse';
 import cors from 'cors';
 import 'reflect-metadata'
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
-import { createSDL, applyAccessControl, RBACResolver } from "./utils/graphql.ts";
+import { createSDL, applyAccessControl } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { coreSchemas } from "../postgres/core-schema.ts";
@@ -29,7 +27,6 @@ import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
-import { sanitizeName } from "./utils/sanitize-name.ts";
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -37,7 +34,7 @@ export const global_queues = {
     logs_cleaner: "logs-cleaner"
 }
 
-const { 
+const {
     agentsSchema,
     evalResultsSchema,
     jobsSchema,
@@ -49,7 +46,7 @@ const {
     workflowTemplatesSchema,
     rbacSchema,
     statisticsSchema
- } = coreSchemas.get();
+} = coreSchemas.get();
 
 const createRecurringJobs = async () => {
 
@@ -83,9 +80,6 @@ const createRecurringJobs = async () => {
         },
     );
 
-    console.log("[EXULU] recurring job schedulers:")
-    console.table(recurringJobSchedulersLogs);
-
     return queue;
 }
 
@@ -116,8 +110,6 @@ export const createExpressRoutes = async (
     config?: ExuluConfig,
     tracer?: Tracer
 ): Promise<Express> => {
-    const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
-    // Add route logs instead of individual console.logs
 
     console.log("============= agents =============", agents?.length)
 
@@ -147,40 +139,6 @@ export const createExpressRoutes = async (
 
     `);
 
-    // Show status box if telemetry is enabled
-
-    console.log("Agents:")
-    console.table(agents.map(agent => {
-        return {
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            slug: "/agents/" + agent.id,
-            active: true,
-        }
-    }))
-
-    console.log("Contexts:")
-    console.table(contexts.map(context => {
-        return {
-            id: context.id,
-            name: context.name,
-            description: context.description,
-            embedder: context.embedder?.name || undefined,
-            slug: "/contexts/" + context.id,
-            active: context.active
-        }
-    }))
-
-    routeLogs.push(
-        { route: "/contexts", method: "GET", note: "List all contexts" },
-        { route: "/contexts/:id", method: "GET", note: "Get specific context" },
-        { route: "/items/:context", method: "POST", note: "Create new item in context" },
-        { route: "/items/:context", method: "GET", note: "Get items from context" },
-        { route: "/items/export/:context", method: "GET", note: "Export items from context" },
-        { route: "/graphql", method: "POST", note: "GraphQL endpoint" },
-    );
-
     if (redisServer.host?.length && redisServer.port?.length) {
         await createRecurringJobs();
     } else {
@@ -206,7 +164,6 @@ export const createExpressRoutes = async (
         req: Request;
     }
 
-    console.log("[EXULU] graphql server")
     const server = new ApolloServer<GraphqlContext>({
         cache: new InMemoryLRUCache(),
         schema,
@@ -215,10 +172,9 @@ export const createExpressRoutes = async (
 
     // Note you must call `start()` on the `ApolloServer`
     // instance before passing the instance to `expressMiddleware`
-    console.log("[EXULU] starting graphql server")
+
     await server.start();
 
-    console.log("[EXULU] graphql server started")
     app.use(
         "/graphql",
         cors(corsOptions),
@@ -385,10 +341,10 @@ Mood: friendly and intelligent.
         const exists = await context.tableExists();
 
         if (!exists) {
-            throw new Error("Table with name " + getTableName(context.name) + " does not exist.")
+            throw new Error("Table with name " + getTableName(context.id) + " does not exist.")
         }
 
-        const query = db.from(getTableName(context.name))
+        const query = db.from(getTableName(context.id))
             .select("id");
 
         if (id) {
@@ -405,19 +361,19 @@ Mood: friendly and intelligent.
         }
 
         if (context.embedder) {
-            const chunks = await db.from(getChunksTableName(context.name))
+            const chunks = await db.from(getChunksTableName(context.id))
                 .where({ source: item.id })
                 .select("id");
 
             if (chunks.length > 0) {
                 // delete chunks first
-                await db.from(getChunksTableName(context.name))
+                await db.from(getChunksTableName(context.id))
                     .where({ source: item.id })
                     .delete();
             }
         }
 
-        const mutation = db.from(getTableName(context.name))
+        const mutation = db.from(getTableName(context.id))
             .where({ id: item.id })
             .delete()
             .returning("id");
@@ -467,6 +423,64 @@ Mood: friendly and intelligent.
         res.status(200).json(result);
     })
 
+    app.delete("/items/:context/:id/chunks/delete", async (req: Request, res: Response) => {
+
+        // Delete all chunks for an item
+
+        console.log("[EXULU] deleting chunks for item.", req.params.id)
+
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const { db } = await postgresClient();
+        const context = contexts.find(context => context.id === req.params.context)
+        if (!context) {
+            res.status(400).json({
+                message: "Context not found in registry."
+            })
+            return;
+        }
+        await db.from(getChunksTableName(context.id))
+            .where({ source: req.params.id })
+            .delete();
+
+        res.status(200).json({
+            message: "Chunks deleted successfully.",
+        });
+    })
+
+    app.delete("/items/:context/chunks/delete", async (req: Request, res: Response) => {
+
+        // Delete all chunks for an entire context
+
+        console.log("[EXULU] deleting chunks for context.", req.params.context)
+
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const { db } = await postgresClient();
+        const context = contexts.find(context => context.id === req.params.context)
+        if (!context) {
+            res.status(400).json({
+                message: "Context not found in registry."
+            })
+            return;
+        }
+
+        console.log("[EXULU] truncating chunks table for context.", context.id)
+        await db.from(getChunksTableName(context.id)).truncate();
+
+        res.status(200).json({
+            message: "Chunks deleted successfully.",
+        });
+    })
+
     app.get("/items/:context/:id", async (req: Request, res: Response) => {
 
         if (!req.params.context) {
@@ -495,16 +509,18 @@ Mood: friendly and intelligent.
 
         const itemsTableExists = await context.tableExists();
 
+        console.log("[EXULU] items table exists.", itemsTableExists)
+
         if (!itemsTableExists) {
             await context.createItemsTable()
         }
 
-        const chunksTableExists = await db.schema.hasTable(getChunksTableName(context.name));
+        const chunksTableExists = await context.chunksTableExists();
         if (!chunksTableExists && context.embedder) {
             await context.createChunksTable();
         }
 
-        const item = await db.from(getTableName(context.name))
+        const item = await db.from(getTableName(context.id))
             .where({ id: req.params.id })
             .select("*")
             .first();
@@ -523,9 +539,9 @@ Mood: friendly and intelligent.
             return;
         }
 
-        console.log("[EXULU] chunks table name.", getChunksTableName(context.name))
+        console.log("[EXULU] chunks table name.", getChunksTableName(context.id))
 
-        const chunks = await db.from(getChunksTableName(context.name))
+        const chunks = await db.from(getChunksTableName(context.id))
             .where({ source: req.params.id })
             .select("id", "content", "source", "embedding", "chunk_index", "created_at", "updated_at");
 
@@ -542,6 +558,109 @@ Mood: friendly and intelligent.
                 createdAt: chunk.created_at,
                 updatedAt: chunk.updated_at
             }))
+        });
+    })
+
+    app.post("/items/:context/chunks/generate/all", async (req: Request, res: Response) => {
+
+        if (!req.params.context) {
+            res.status(400).json({
+                message: "Missing context in request."
+            })
+            return;
+        }
+
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const user = authenticationResult.user;
+        const context = contexts.find(context => context.id === req.params.context)
+        if (!context) {
+            res.status(400).json({
+                message: "Context not found in registry."
+            })
+            return;
+        }
+        const jobs = await context.embeddings.generate.all(context, user.id, user.role?.id);
+
+        res.status(200).json({
+            message: "Embeddings generated successfully.",
+            jobs: jobs
+        });
+
+    })
+
+    app.post("/items/:context/chunks/generate/one/:id", async (req: Request, res: Response) => {
+        if (!req.params.context) {
+            res.status(400).json({
+                message: "Missing context in request."
+            })
+            return;
+        }
+        if (!req.params.id) {
+            res.status(400).json({
+                message: "Missing id in request."
+            })
+            return;
+        }
+
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const user = authenticationResult.user;
+
+        const context = contexts.find(context => context.id === req.params.context)
+        if (!context) {
+            res.status(400).json({
+                message: "Context not found in registry."
+            })
+            return;
+        }
+
+        const exists = await context.tableExists();
+
+        if (!exists) {
+            await context.createItemsTable();
+        }
+
+        const chunksTableExists = await context.chunksTableExists();
+        if (!chunksTableExists && context.embedder) {
+            await context.createChunksTable();
+        }
+
+        const { db } = await postgresClient();
+
+        const item = await db.from(getTableName(context.id))
+            .where({ id: req.params.id })
+            .select("*")
+            .first();
+
+        if (!item) {
+            res.status(404).json({
+                message: "Item not found."
+            })
+            return;
+        }
+
+        const { job } = await context.embeddings.generate.one({
+            item: {
+                ...item,
+                id: item.id
+            },
+            user: user.id,
+            role: user.role?.id,
+            trigger: "api"
+        });
+
+        res.status(200).json({
+            message: job ? "Job scheduled to generate embeddings successfully." : "Embeddings generated successfully.",
+            job: job
         });
 
     })
@@ -602,7 +721,6 @@ Mood: friendly and intelligent.
     app.post("/items/:context", async (req: Request, res: Response) => {
 
         try {
-            console.log("[EXULU] post items")
             if (!req.params.context) {
                 res.status(400).json({
                     message: "Missing context in request."
@@ -720,6 +838,11 @@ Mood: friendly and intelligent.
             await context.createItemsTable();
         }
 
+        const chunksTableExists = await context.chunksTableExists();
+        if (!chunksTableExists && context.embedder) {
+            await context.createChunksTable();
+        }
+
         if (req.query.method && !Object.values(VectorMethodEnum).includes(req.query.method as VectorMethod)) {
             res.status(400).json({
                 message: "Invalid vector lookup method, must be one of: " + Object.values(VectorMethodEnum).join(", ")
@@ -765,12 +888,6 @@ Mood: friendly and intelligent.
     agents.forEach(agent => {
         const slug = agent.slug as string;
         if (!slug) return;
-
-        routeLogs.push({
-            route: slug + "/:instance",
-            method: "POST",
-            note: `Agent endpoint for ${agent.id}`
-        });
 
         app.post(slug + "/:instance", async (req: Request, res: Response) => {
 
@@ -943,10 +1060,6 @@ Mood: friendly and intelligent.
     } else {
         console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in the environment.")
     }
-
-    // Output all routes in table format at the end
-    console.log("Routes:")
-    console.table(routeLogs);
 
     const TARGET_API = 'https://api.anthropic.com';
 

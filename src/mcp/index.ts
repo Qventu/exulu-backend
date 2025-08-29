@@ -92,10 +92,6 @@ export class ExuluMCP {
                 }]
             })
         );
-
-        console.log("Contexts:")
-        // todo log tools, resources and prompts
-        console.table()
     }
 
     connect = async (): Promise<Express> => {
@@ -172,19 +168,8 @@ export class ExuluMCP {
 
         // Handle GET requests for server-to-client notifications via SSE
         this.express.get('/mcp', handleSessionRequest);
-
         // Handle DELETE requests for session termination
         this.express.delete('/mcp', handleSessionRequest);
-
-        const routeLogs: Array<{ route: string; method: string; note?: string }> = [];
-        routeLogs.push(
-            { route: "/mcp", method: "GET", note: "Get MCP server status" },
-            { route: "/mcp", method: "POST", note: "Send MCP request" },
-            { route: "/mcp", method: "DELETE", note: "Terminate MCP session" },
-        )
-        console.log("MCP Routes:")
-        console.table(routeLogs);
-
         return this.express;
     }
 

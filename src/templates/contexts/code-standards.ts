@@ -1,7 +1,7 @@
 import { ExuluContext } from "../../registry/classes";
 
 export const codeStandardsContext = new ExuluContext({
-    id: "code-standards",
+    id: "code_standards",
     name: "Code Standards",
     description: "Code standards that can be used with the Exulu CLI.",
     configuration: {

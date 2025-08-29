@@ -1,9 +1,8 @@
 import { ExuluAgent } from "../../registry/classes"
 import { createAnthropic } from '@ai-sdk/anthropic';
 
-const agentId = "5434-5678-9143-2590";
 export const defaultAgent = new ExuluAgent({
-    id: `${agentId}-default-claude-4-opus-agent`,
+    id: `default_claude_4_opus_agent`,
     name: `Default Claude 4 Opus Agent`,
     description: `Basic agent without any defined tools, that can support MCP's.`,
     type: "agent",

@@ -1004,7 +1004,7 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
     console.log("============= Agents =============", agents?.length)
 
     contexts.forEach(context => {
-        const tableName = getTableName(context.name) as any;
+        const tableName = getTableName(context.id) as any;
         const definition: ExuluTableDefinition = {
             name: {
                 singular: tableName,
@@ -1374,40 +1374,6 @@ type StatisticsResult {
         typeDefs: fullSDL,
         resolvers
     });
-
-    // Log schema information in table format
-    console.log('\n📊 GraphQL Schema Overview\n');
-
-    // Prepare data for tables
-    const queriesTable = Object.keys(resolvers.Query).map(query => ({
-        'Operation Type': 'Query',
-        'Name': query,
-        'Description': 'Retrieves data'
-    }));
-
-    const mutationsTable = Object.keys(resolvers.Mutation).map(mutation => ({
-        'Operation Type': 'Mutation',
-        'Name': mutation,
-        'Description': 'Modifies data'
-    }));
-
-    const typesTable = tables.flatMap(table =>
-        table.fields.map(field => ({
-            'Type': table.name.singular,
-            'Field': field.name,
-            'Field Type': field.type,
-            'Required': field.required ? 'Yes' : 'No'
-        }))
-    );
-
-    // Log tables
-    console.log('🔍 Operations:');
-    console.table([...queriesTable, ...mutationsTable]);
-
-    console.log('\n📝 Types and Fields:');
-    console.table(typesTable);
-
-    console.log('\n');
 
     return schema;
 }
