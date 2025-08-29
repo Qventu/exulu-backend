@@ -1135,15 +1135,15 @@ Mood: friendly and intelligent.
                 return;
             }
 
-            if (!authenticationResult.user?.anthropic_token) {
+            if (!agent.providerApiKey) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
                 res.setHeader('Content-Type', 'application/json');
                 res.end(Buffer.from(arrayBuffer));
                 return;
             }
 
-            // Get the variable name from user's anthropic_token field
-            const variableName = authenticationResult.user.anthropic_token;
+            // Get the variable name from agent's providerApiKey field
+            const variableName = agent.providerApiKey;
 
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
