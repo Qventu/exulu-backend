@@ -1,16 +1,33 @@
 export interface Agent {
     id: string;
+    modelName?: string;
+    providerName?: string;
     backend: string;
-    type: "chat" | "flow";
+    type: "chat" | "flow" | "custom";
     name: string;
+    image?: string;
+    providerApiKey?: string;
+    firewall?: {
+        enabled: boolean;
+        scanners?: {
+            promptGuard: boolean;
+            codeShield: boolean;
+            agentAlignment: boolean;
+            hiddenAscii: boolean;
+            piiDetection: boolean;
+        }
+    }
     active?: boolean;
-    public?: boolean;
     description?: string;
     slug?: string;
     tools?: {
-        id: string;
+        toolId: string;
+        config: {
+            name: string;
+            variable: string;
+        }[];
+        name: string;
         description: string;
-        type?: "context";
     }[];
     capabilities?: {
         text: boolean;
@@ -19,4 +36,13 @@ export interface Agent {
         audio: string[];
         video: string[];
     }
+    // New RBAC fields
+    rights_mode?: 'private' | 'users' | 'roles' | 'public';
+    RBAC?: {
+        type?: string;
+        users?: Array<{ id: string; rights: 'read' | 'write' }>;
+        roles?: Array<{ id: string; rights: 'read' | 'write' }>;
+    };
+    createdAt?: string;
+    updatedAt?: string;
 }

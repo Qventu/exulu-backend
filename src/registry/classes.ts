@@ -18,6 +18,7 @@ import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
 import { type Request, type Response } from "express";
 import { trace } from "@opentelemetry/api";
+import { vectorSearch } from "./utils/graphql";
 
 export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
@@ -1036,71 +1037,6 @@ export class ExuluContext {
         };
     }
 
-    public async updateItem(user: string, item: Item, role?: string, trigger?: STATISTICS_LABELS): Promise<{
-        id: string,
-        job?: string
-    }> {
-
-        if (!item.id) {
-            throw new Error("Id is required for updating an item.")
-        }
-
-        const { db } = await postgresClient();
-
-        Object.keys(item).forEach(key => {
-            if (key === "id" || key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
-                return;
-            }
-            const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
-            if (!field) {
-                throw new Error("Trying to update value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
-            }
-        })
-
-        const payloadWithSanitizedPropertyNames: Item = {}
-
-        Object.keys(item).forEach(key => {
-            payloadWithSanitizedPropertyNames[sanitizeName(key)] = item[key];
-        })
-
-        const id = payloadWithSanitizedPropertyNames.id;
-        delete payloadWithSanitizedPropertyNames.id; // not allowed to update id
-        delete payloadWithSanitizedPropertyNames.created_at; // not allowed to update created_at
-        delete payloadWithSanitizedPropertyNames.upsert;
-        payloadWithSanitizedPropertyNames.updated_at = db.fn.now();
-
-        const result = await db.from(getTableName(this.id))
-            .where({ id: id })
-            .update(payloadWithSanitizedPropertyNames)
-            .returning("id");
-
-        if (
-            this.embedder && (
-                this.configuration.calculateVectors === "onUpdate" ||
-                this.configuration.calculateVectors === "always"
-            )
-        ) {
-            const { job } = await this.embeddings.generate.one({
-                item: {
-                    ...item,
-                    id: result[0].id
-                },
-                user,
-                role: role,
-                trigger: trigger || "agent"
-            });
-            return {
-                id: result[0].id,
-                job
-            };
-        }
-
-        return {
-            id: result[0].id,
-            job: undefined
-        };
-    }
-
     public embeddings = {
         generate: {
             one: async ({
@@ -1118,6 +1054,8 @@ export class ExuluContext {
                 job?: string,
                 chunks?: number
             }> => {
+
+                console.log("[EXULU] Generating embeddings for item", item.id)
         
                 if (!this.embedder) {
                     throw new Error("Embedder is not set for this context.")
@@ -1154,29 +1092,21 @@ export class ExuluContext {
                     trigger: trigger || "agent"
                 }, role, undefined);
             },
-            all: async (context: ExuluContext, userId?: string, roleId?: string) => {
-
-                const exists = await context.tableExists();
-
-                if (!exists) {
-                    await context.createItemsTable();
-                }
-
-                const chunksTableExists = await context.chunksTableExists();
-                if (!chunksTableExists && context.embedder) {
-                    await context.createChunksTable();
-                }
+            all: async (userId?: string, roleId?: string): Promise<{
+                jobs: string[],
+                items: number
+            }> => {
 
                 const { db } = await postgresClient();
 
-                const items = await db.from(getTableName(context.id))
+                const items = await db.from(getTableName(this.id))
                     .select("*");
 
                 const jobs: string[] = [];
 
                 // Safeguard against too many items
                 if (
-                    !context.embedder?.queue?.name &&
+                    !this.embedder?.queue?.name &&
                     items.length > 2000
                 ) {
                     throw new Error(`Embedder is not in queue mode, cannot generate embeddings for more than 
@@ -1186,7 +1116,7 @@ export class ExuluContext {
                 }
 
                 for (const item of items) {
-                    const { job } = await context.embeddings.generate.one({
+                    const { job } = await this.embeddings.generate.one({
                         item,
                         user: userId,
                         role: roleId,
@@ -1197,100 +1127,13 @@ export class ExuluContext {
                     }
                 }
 
-                return jobs || [];
+                return {
+                    jobs: jobs || [],
+                    items: items.length
+                };
 
             }
         }
-    }
-
-    public async insertItem(user: string, item: Item, upsert: boolean = false, role?: string, trigger?: STATISTICS_LABELS): Promise<{
-        id: string,
-        job?: string
-    }> {
-
-        if (!item.name) {
-            throw new Error("Name field is required.")
-        }
-
-        const { db } = await postgresClient();
-
-        if (item.external_id) {
-            const existingItem = await db.from(getTableName(this.id)).where({ external_id: item.external_id }).first();
-            if (existingItem && !upsert) {
-                throw new Error("Item with external id " + item.external_id + " already exists.")
-            }
-            if (existingItem && upsert) {
-                await this.updateItem(user, {
-                    ...item,
-                    id: existingItem.id
-                }, role, trigger);
-                return existingItem.id;
-            }
-        }
-
-        if (upsert && item.id) {
-            const existingItem = await db.from(getTableName(this.id)).where({ id: item.id }).first();
-            if (existingItem && upsert) {
-                await this.updateItem(user, {
-                    ...item,
-                    id: existingItem.id
-                }, role, trigger);
-                return existingItem.id;
-            }
-        }
-
-        Object.keys(item).forEach(key => {
-            if (key === "id" || key === "name" || key === "description" || key === "external_id" || key === "tags" || key === "source" || key === "textlength" || key === "upsert" || key === "archived") {
-                return;
-            }
-            const field = this.fields.find(field => sanitizeName(field.name) === sanitizeName(key));
-            if (!field) {
-                throw new Error("Trying to insert value for field '" + key + "' that does not exist on the context fields definition. Available fields: " + this.fields.map(field => sanitizeName(field.name)).join(", ") + " ,name, description, external_id")
-            }
-        })
-
-        const payloadWithSanitizedPropertyNames: Item = {}
-
-        Object.keys(item).forEach(key => {
-            payloadWithSanitizedPropertyNames[sanitizeName(key)] = item[key];
-        })
-
-        delete payloadWithSanitizedPropertyNames.id; // not allowed to set id
-        delete payloadWithSanitizedPropertyNames.upsert;
-
-        const result = await db.from(getTableName(this.id)).insert({
-            ...payloadWithSanitizedPropertyNames,
-            id: db.fn.uuid(),
-            created_at: db.fn.now(),
-            updated_at: db.fn.now()
-        }).returning("id");
-
-        if (
-            this.embedder && (
-                this.configuration.calculateVectors === "onInsert" ||
-                this.configuration.calculateVectors === "always"
-            )
-        ) {
-            const { job } = await this.embeddings.generate.one({
-                item: {
-                    ...item,
-                    id: result[0].id
-                },
-                user,
-                role: role,
-                trigger: trigger || "agent"
-            });
-
-            return {
-                id: result[0].id,
-                job
-            };
-        }
-
-        return {
-            id: result[0].id,
-            job: undefined
-        };
     }
 
     public getItems = async ({
@@ -1676,10 +1519,12 @@ export class ExuluContext {
             table.text('tags');
             table.boolean('archived').defaultTo(false);
             table.text('external_id');
+            table.text('created_by');
             table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
             table.integer('textlength');
             table.text('source');
             table.timestamp('embeddings_updated_at')
+            table.unique(["id", "external_id"])
             for (const field of this.fields) {
                 const { type, name, unique } = field;
                 if (!type || !name) {
@@ -1687,7 +1532,8 @@ export class ExuluContext {
                 }
                 mapType(table, type, sanitizeName(name), undefined, unique);
             }
-            table.timestamps(true, true);
+            table.timestamp('createdAt').defaultTo(db.fn.now());
+            table.timestamp('updatedAt').defaultTo(db.fn.now());
         });
     }
 
@@ -1715,8 +1561,8 @@ export class ExuluContext {
             // GIN index on the tsvector and hnsw index on the embedding
             table.index(["fts"], `${tableName}_fts_gin_idx`, "gin");
             table.index(["source"], `${tableName}_source_idx`);
-
-            table.timestamps(true, true);
+            table.timestamp('createdAt').defaultTo(db.fn.now());
+            table.timestamp('updatedAt').defaultTo(db.fn.now());
         });
 
         // HNSW for ANN search (pgvector >= 0.5)
@@ -1743,17 +1589,22 @@ export class ExuluContext {
             config: [],
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
             execute: async ({ query, user, role }: any) => {
+                const { db } = await postgresClient();
                 // todo make trigger more specific with the agent name
-                return await this.getItems({
+                // todo roadmap, auto add the normal filter criteria of a context as input schema so the agent can
+                //   next to semantic search also add regular filters.
+                await vectorSearch({
                     page: 1,
                     limit: 10,
-                    query: query,
-                    user: user,
-                    role: role,
-                    statistics: {
-                        label: this.name,
-                        trigger: "agent"
-                    }
+                    query,
+                    filters: [],
+                    user,
+                    role,
+                    method: "hybridSearch",
+                    context: this,
+                    db,
+                    sort: undefined,
+                    trigger: "agent"
                 })
             },
         });

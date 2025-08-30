@@ -13,7 +13,7 @@ export interface Item {
         index: number;
         content: string;
         source: string;
-        embedding: number;
+        embedding_size: number;
         createdAt: string;
         updatedAt: string;
     }[];

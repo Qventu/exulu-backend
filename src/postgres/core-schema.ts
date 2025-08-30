@@ -1,9 +1,8 @@
 import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics"
 import type { ExuluTableDefinition } from "../registry/routes"
-import type { ExuluContext } from "../registry/classes"
-import { sanitizeName } from "../registry/utils/sanitize-name"
 
 const agentMessagesSchema: ExuluTableDefinition = {
+    type: "agent_messages",
     name: {
         plural: "agent_messages",
         singular: "agent_message"
@@ -29,6 +28,7 @@ const agentMessagesSchema: ExuluTableDefinition = {
 }
 
 const agentSessionsSchema: ExuluTableDefinition = {
+    type: "agent_sessions",
     name: {
         plural: "agent_sessions",
         singular: "agent_session"
@@ -56,6 +56,7 @@ const agentSessionsSchema: ExuluTableDefinition = {
 
 
 const variablesSchema: ExuluTableDefinition = {
+    type: "variables",
     name: {
         plural: "variables",
         singular: "variable"
@@ -80,6 +81,7 @@ const variablesSchema: ExuluTableDefinition = {
 }
 
 const workflowTemplatesSchema: ExuluTableDefinition = {
+    type: "workflow_templates",
     name: {
         plural: "workflow_templates",
         singular: "workflow_template"
@@ -130,6 +132,7 @@ const workflowTemplatesSchema: ExuluTableDefinition = {
 }
 
 const agentsSchema: ExuluTableDefinition = {
+    type: "agents",
     name: {
         plural: "agents",
         singular: "agent"
@@ -173,6 +176,7 @@ const agentsSchema: ExuluTableDefinition = {
 }
 
 const usersSchema: ExuluTableDefinition = {
+    type: "users",
     name: {
         plural: "users",
         singular: "user"
@@ -254,6 +258,7 @@ const usersSchema: ExuluTableDefinition = {
 }
 
 const rolesSchema: ExuluTableDefinition = {
+    type: "roles",
     name: {
         plural: "roles",
         singular: "role"
@@ -287,6 +292,7 @@ const rolesSchema: ExuluTableDefinition = {
 }
 
 const statisticsSchema: ExuluTableDefinition = {
+    type: "tracking",
     name: {
         plural: "tracking",
         singular: "tracking"
@@ -321,6 +327,7 @@ const statisticsSchema: ExuluTableDefinition = {
 }
 
 const evalResultsSchema: ExuluTableDefinition = {
+    type: "eval_results",
     name: {
         plural: "eval_results",
         singular: "eval_result"
@@ -374,6 +381,7 @@ const evalResultsSchema: ExuluTableDefinition = {
 }
 
 const jobsSchema: ExuluTableDefinition = {
+    type: "jobs",
     name: {
         plural: "jobs",
         singular: "job"
@@ -440,6 +448,7 @@ const jobsSchema: ExuluTableDefinition = {
 }
 
 const rbacSchema: ExuluTableDefinition = {
+    type: "rbac",
     name: {
         plural: "rbac",
         singular: "rbac"

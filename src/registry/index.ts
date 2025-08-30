@@ -191,7 +191,7 @@ export class ExuluApp {
                 if (!context) { 
                     throw new Error(`Context ${contextId} not found in registry.`)
                 }
-                return await context.embeddings.generate.all(context, undefined, undefined)
+                return await context.embeddings.generate.all(undefined, undefined)
             }
         }
     }

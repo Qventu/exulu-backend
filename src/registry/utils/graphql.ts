@@ -5,9 +5,14 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
-import { ExuluAgent, ExuluTool, getTableName, type ExuluContext } from "../classes";
+import { ExuluAgent, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type STATISTICS_LABELS } from "../classes";
 import { addRBACfields } from "../../postgres/core-schema";
 import { sanitizeName } from "./sanitize-name";
+import type { User } from "@EXULU_TYPES/models/user";
+import { postgresClient } from "../../postgres/client";
+import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods";
+import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
+import { Knex as KnexType } from 'knex';
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -106,6 +111,12 @@ ${enumValues}
         return `  ${field.name}: ${type}${required}`;
     });
 
+    if (table.type === "items") {
+        fields.push("  averageRelevance: Float")
+        fields.push("  totalRelevance: Float")
+        fields.push("  chunks: [ItemChunks]")
+    }
+
     if (table.name.singular === "agent") {
         fields.push("  providerName: String")
         fields.push("  modelName: String")
@@ -153,10 +164,12 @@ function createFilterTypeDefs(table: ExuluTableDefinition): string {
   ${field.name}: FilterOperator${type}`;
     });
 
+    let operatorTypes = "";
+    let enumFilterOperators: string[] = [];
     const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
     // Create enum-specific filter operators
-    const enumFilterOperators = table.fields
+    enumFilterOperators = table.fields
         .filter(field => field.type === "enum" && field.enumValues)
         .map(field => {
             const enumTypeName = `${field.name}Enum`;
@@ -168,11 +181,10 @@ input FilterOperator${enumTypeName} {
   and: [FilterOperator${enumTypeName}]
   or: [FilterOperator${enumTypeName}]
 }`;
-        })
-        .join("\n");
+        });
 
     // Create filter operator types for each field type
-    const operatorTypes = `
+    operatorTypes += `
 input FilterOperatorString {
   eq: String
   ne: String
@@ -221,7 +233,7 @@ enum SortDirection {
   DESC
 }
 
-${enumFilterOperators}
+${enumFilterOperators.join("\n")}
 
 input Filter${tableNameSingularUpperCaseFirst} {
 ${fieldFilters.join("\n")}
@@ -232,18 +244,35 @@ ${fieldFilters.join("\n")}
 
 const getRequestedFields = (info: any): string[] => {
     const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
+    const itemSelection = selections.find(s => s.name.value === 'item');
     const itemsSelection = selections.find(s => s.name.value === 'items');
-    const fields = itemsSelection
-        ? Object.keys(itemsSelection.selectionSet.selections.reduce((acc, field) => {
-            acc[field.name.value] = true;
-            return acc;
-        }, {}))
-        : Object.keys(selections.reduce((acc, field) => {
+    let fields: string[] = [];
+    if (itemSelection) {
+        fields = Object.keys(itemSelection.selectionSet.selections.reduce((acc, field) => {
             acc[field.name.value] = true;
             return acc;
         }, {}));
-    // remove pageInfo and items
+
+        return fields.filter(field => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+    }
+    if (itemsSelection) {
+        fields = Object.keys(itemsSelection.selectionSet.selections.reduce((acc, field) => {
+            acc[field.name.value] = true;
+            return acc;
+        }, {}))
+
+        return fields.filter(field => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+    }
+
+    fields = Object.keys(selections.reduce((acc, field) => {
+        acc[field.name.value] = true;
+        return acc;
+    }, {}))
+
     return fields.filter(field => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+
+    // remove pageInfo and items
+
 }
 
 // Helper function to handle RBAC updates
@@ -332,12 +361,12 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 return true; // todo roadmap - scoping api users to specific resources
             }
 
-            if (!user.role || (
+            if (!user.super_admin && (!user.role || (
                 !(table.name.plural === "agents" && user.role.agents === "write") &&
                 !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
                 !(table.name.plural === "variables" && user.role.variables === "write") &&
                 !(table.name.plural === "users" && user.role.users === "write")
-            )) {
+            ))) {
                 console.error('Access control error: no role found for current user or no access to entity type.');
                 // Return empty result on error
                 throw new Error('Access control error: no role found for current user or no access to entity type.');
@@ -368,8 +397,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                     throw new Error('You are not authorized to edit this record');
                 }
             }
-
-
 
             // Check if record is public (any user can edit)
             if (record.rights_mode === 'public') {
@@ -430,7 +457,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
         }
     };
 
-    return {
+    const mutations = {
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
@@ -469,20 +496,38 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }
             });
 
-            const results = await db(tableNamePlural).insert({
+            if (!input.id) {
+                input.id = db.fn.uuid();
+            }
+
+            // We need to retrieve all the columns for potential post processing
+            // operations that might need to be performed on the fields.
+            const columns = await db(tableNamePlural).columnInfo();
+            console.log("[EXULU] Columns", columns)
+
+            const insert = db(tableNamePlural).insert({
                 ...input,
-                ...(table.RBAC ? { rights_mode: 'private' } : {}),
-                createdAt: new Date(),
-                updatedAt: new Date()
-            }).returning(sanitizedFields);
+                ...(table.RBAC ? { rights_mode: 'private' } : {})
+            }).returning(Object.keys(columns));
+
+            // https://knexjs.org/guide/query-builder.html#onconflict
+            if (args.upsert) {
+                insert.onConflict().merge()
+            }
+
+            let results = await insert;
 
             // Handle RBAC records if provided
             if (table.RBAC && rbacData && results[0]) {
                 await handleRBACUpdate(db, table.name.singular, results[0].id, rbacData, []);
             }
 
-            // Filter result to only include requested fields
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0] })
+            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result: results[0], user: context.user.id, role: context.user.role?.id })
+            return {
+                // Filter result to only include requested fields
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0] }),
+                job
+            }
         },
         [`${tableNamePlural}UpdateOne`]: async (_, args, context, info) => {
             const { db, req } = context;
@@ -491,9 +536,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             await validateCreateOrRemoveSuperAdminPermission(tableNamePlural, input, req);
 
             // For access-controlled tables, validate write access
-            if (where.id) {
-                await validateWriteAccess(where.id, context);
-            }
 
             // Handle RBAC input
             const rbacData = input.RBAC;
@@ -515,27 +557,48 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }
             });
 
-            await db(tableNamePlural).where(where).update({
+            const requestedFields = getRequestedFields(info)
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+
+            // Get item and validate access
+            const item = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
+            if (!item) {
+                throw new Error('Record not found');
+            }
+            await validateWriteAccess(item.id, context);
+
+
+            // We need to retrieve all the columns for potential post processing
+            // operations that might need to be performed on the fields.
+            const columns = await db(tableNamePlural).columnInfo();
+
+            // Update item
+            const result = await db(tableNamePlural).where({ id: item.id }).update({
                 ...input,
                 updatedAt: new Date()
-            });
+            }).returning(Object.keys(columns));
 
-            // Handle RBAC records if provided
-            if (table.RBAC && rbacData && where.id) {
+            if (!result.id) {
+                throw new Error("Something went wrong with the update, no id returned.");
+            }
+
+            // Update RBAC records if provided
+            if (table.RBAC && rbacData && result.id) {
                 const existingRbacRecords = await db.from('rbac')
                     .where({
                         entity: table.name.singular,
-                        target_resource_id: where.id
+                        target_resource_id: result.id
                     })
                     .select('*');
 
-                await handleRBACUpdate(db, table.name.singular, where.id, rbacData, existingRbacRecords);
+                await handleRBACUpdate(db, table.name.singular, result.id, rbacData, existingRbacRecords);
             }
 
-            const requestedFields = getRequestedFields(info)
-            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
-            const result = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
+            return {
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result }),
+                job
+            }
         },
         [`${tableNamePlural}UpdateOneById`]: async (_, args, context, info) => {
             const { db, req } = context;
@@ -584,19 +647,42 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             }
 
             const requestedFields = getRequestedFields(info)
-            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
-            const result = await db.from(tableNamePlural).select(sanitizedFields).where({ id }).first();
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            // We need to retrieve all the columns for potential post processing
+            // operations that might need to be performed on the fields.
+            const columns = await db(tableNamePlural).columnInfo();
+            const result = await db.from(tableNamePlural).select(Object.keys(columns)).where({ id }).first();
+            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
+            return {
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result }),
+                job
+            }
         },
         [`${tableNamePlural}RemoveOneById`]: async (_, args, context, info) => {
             const { id } = args;
             const { db } = context;
+
+            // For access-controlled tables, validate write access
+            await validateWriteAccess(id, context);
+
             const requestedFields = getRequestedFields(info)
             const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
             const result = await db.from(tableNamePlural).select(sanitizedFields).where({ id }).first();
 
             if (!result) {
                 throw new Error('Record not found');
+            }
+
+            if (table.type === "items") {
+                const context = contexts.find(context => context.id === table.id)
+                if (!context) {
+                    throw new Error("Context " + table.id + " not found in registry.")
+                }
+                const chunksTableExists = await context.chunksTableExists();
+                if (chunksTableExists) {
+                    await db.from(getChunksTableName(context.id))
+                        .where({ source: result.id })
+                        .del();
+                }
             }
 
             await db(tableNamePlural).where({ id }).del();
@@ -608,12 +694,145 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }).del();
             }
 
+            await postprocessDeletion({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+        },
+        [`${tableNamePlural}RemoveOne`]: async (_, args, context, info) => {
+            const { where } = args;
+            const { db } = context;
+
+            const requestedFields = getRequestedFields(info)
+            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
+            const result = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
+            if (!result) {
+                throw new Error('Record not found');
+            }
+            // For access-controlled tables, validate write access
+            await validateWriteAccess(result.id, context);
+
+            if (table.type === "items") {
+                const context = contexts.find(context => context.id === table.id)
+                if (!context) {
+                    throw new Error("Context " + table.id + " not found in registry.")
+                }
+                const chunksTableExists = await context.chunksTableExists();
+                if (chunksTableExists) {
+                    await db.from(getChunksTableName(context.id))
+                        .where({ source: result.id })
+                        .del();
+                }
+            }
+
+            // Delete the record
+            await db(tableNamePlural).where(where).del();
+            await postprocessDeletion({ table, requestedFields, agents, contexts, tools, result })
             return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
         }
     };
+
+    if (table.type === "items") {
+        mutations[`${tableNamePlural}GenerateChunks`] = async (_, args, context, info) => {
+            if (!context.user?.super_admin) {
+                throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+            }
+            // Dont need to validate write access here, as we limit it to super admin only.
+
+            const { db } = await postgresClient();
+            const exists = contexts.find(context => context.id === table.id)
+            if (!exists) {
+                throw new Error(`Context ${table.id} not found.`);
+            }
+
+            const { id, embeddings } = exists;
+
+            const mainTable = getTableName(id);
+
+            // Make sure we get all columns as they are needed for
+            // the embeddings generation.
+            const columns = await db(mainTable).columnInfo();
+            let query = db.from(mainTable).select(Object.keys(columns));
+
+            // Generating all chunks for the context.
+            if (!args.where) {
+                const {
+                    jobs,
+                    items
+                } = await embeddings.generate.all(context.user.id, context.user.role?.id);
+                return {
+                    message: "Chunks generated successfully.",
+                    items: items,
+                    jobs: jobs.slice(0, 100)
+                }
+            }
+
+            // Generating chunks for the items in the context 
+            // that match the where clause.
+            query = applyFilters(query, args.where);
+
+            const items = await query;
+            if (items.length === 0) {
+                throw new Error("No items found to generate chunks for.");
+            }
+
+            const jobs: string[] = [];
+            for (const item of items) {
+                const { job } = await embeddings.generate.one({
+                    item,
+                    user: context.user.id,
+                    role: context.user.role?.id,
+                    trigger: "api"
+                });
+                if (job) {
+                    jobs.push(job);
+                }
+            }
+            return {
+                message: "Chunks deleted successfully.",
+                items: items.length,
+                jobs: jobs.slice(0, 100)
+            }
+
+        },
+            mutations[`${tableNamePlural}DeleteChunks`] = async (_, args, context, info) => {
+                if (!context.user?.super_admin) {
+                    throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+                }
+
+                // Dont need to validate write access here, as we limit it to super admin only.
+
+                const { db } = await postgresClient();
+                const id = contexts.find(context => context.id === table.id)?.id
+                if (!id) {
+                    throw new Error(`Context ${table.id} not found.`);
+                }
+
+                let query = db.from(getTableName(id)).select("id");
+
+                if (args.where) {
+                    query = applyFilters(query, args.where);
+                }
+
+                const items = await query;
+                if (items.length === 0) {
+                    throw new Error("No items found to delete chunks for.");
+                }
+
+                for (const item of items) {
+                    await db.from(getChunksTableName(id)).where({ source: item.id }).delete();
+                }
+                return {
+                    message: "Chunks deleted successfully.",
+                    items: items.length,
+                    jobs: []
+                }
+
+            }
+    }
+
+    return mutations;
 }
 
-export const applyAccessControl = (table: ExuluTableDefinition, user: any, query: any) => {
+export const applyAccessControl = (table: ExuluTableDefinition, user: User, query: any) => {
 
     console.log("table", table)
     const tableNamePlural = table.name.plural.toLowerCase();
@@ -638,13 +857,13 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
         return query; // todo roadmap - scoping api users to specific resources
     }
 
-    if (!user.role || (
+    if (!user.super_admin && (!user.role || (
         !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
         !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
         !(table.name.plural === "variables" && (user.role.variables === "read" || user.role.variables === "write")) &&
         !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write"))
-    )) {
-        console.error('Access control error: no role found or no access to entity type.');
+    ))) {
+        console.error('==== Access control error: no role found or no access to entity type. ====');
         // Return empty result on error
         return query.where('1', '=', '0');
     }
@@ -680,7 +899,7 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: any, query
                                 .whereRaw('rbac.target_resource_id = ' + tableNamePlural + '.id')
                                 .where('rbac.entity', table.name.singular)
                                 .where('rbac.access_type', 'Role')
-                                .where('rbac.role_id', user.role);
+                                .where('rbac.role_id', user.role.id);
                         });
                 });
             }
@@ -733,7 +952,7 @@ const removeAgentFields = (requestedFields: string[]) => {
     return filtered;
 }
 
-const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result: any) => {
+const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result: any, tools: ExuluTool[]) => {
     let backend = agents.find(a => a.id === result?.backend);
     if (requestedFields.includes("providerName")) {
         result.providerName = backend?.providerName || ""
@@ -746,6 +965,18 @@ const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result:
     }
     if (requestedFields.includes("rateLimit")) {
         result.rateLimit = backend?.rateLimit || ""
+    }
+    if (requestedFields.includes("tools")) {
+        result.tools = result.tools ? result.tools.map((tool: {
+            config: any,
+            toolId: string,
+        }) => {
+            return {
+                ...tool,
+                name: tools.find(t => t.id === tool.toolId)?.name || "",
+                description: tools.find(t => t.id === tool.toolId)?.description || "",
+            }
+        }) : []
     }
     if (requestedFields.includes("streaming")) {
         result.streaming = backend?.streaming || false
@@ -771,10 +1002,86 @@ const sanitizeRequestedFields = (table: ExuluTableDefinition, requestedFields: s
         // step in case it wasnt requested for the final payload.
         requestedFields.push("id")
     }
+    if (requestedFields.includes("chunks")) {
+        // remove from array
+        requestedFields = requestedFields.filter(field => field !== "chunks")
+    }
     return requestedFields;
 }
 
-const finalizeRequestedFields = ({
+const postprocessUpdate = async ({
+    table,
+    requestedFields,
+    agents,
+    contexts,
+    tools,
+    result,
+    user,
+    role
+}: {
+    table: ExuluTableDefinition,
+    requestedFields: string[],
+    agents: ExuluAgent[],
+    contexts: ExuluContext[],
+    tools: ExuluTool[],
+    result: any | [],
+    user: string,
+    role: string
+}): Promise<{
+    result: any | []
+    job?: string
+}> => {
+    if (!result) {
+        return result;
+    }
+    if (Array.isArray(result)) {
+        result = result.map(item => {
+            return postprocessDeletion({ table, requestedFields, agents, contexts, tools, result: item })
+        })
+    } else {
+        if (table.type === "items") {
+            if (!result.id) {
+                return result;
+            }
+            const context = contexts.find(context => context.id === table.id)
+            if (!context) {
+                throw new Error("Context " + table.id + " not found in registry.")
+            }
+            if (!context.embedder) {
+                return result;
+            }
+            const { db } = await postgresClient();
+            console.log("[EXULU] Deleting chunks for item", result.id)
+            // delete chunks first
+            await db.from(getChunksTableName(context.id))
+                .where({ source: result.id })
+                .delete();
+
+            if (
+                context.embedder && (
+                    context.configuration.calculateVectors === "onUpdate" ||
+                    context.configuration.calculateVectors === "always"
+                )
+            ) {
+                const { job } = await context.embeddings.generate.one({
+                    item: result,
+                    user: user,
+                    role: role,
+                    trigger: "api"
+                });
+                return {
+                    result: result,
+                    job
+                };
+            }
+
+            return result;
+        }
+    }
+    return result;
+}
+
+const postprocessDeletion = async ({
     table,
     requestedFields,
     agents,
@@ -794,54 +1101,145 @@ const finalizeRequestedFields = ({
     }
     if (Array.isArray(result)) {
         result = result.map(item => {
+            return postprocessDeletion({ table, requestedFields, agents, contexts, tools, result: item })
+        })
+    } else {
+        if (table.type === "items") {
+            if (!result.id) {
+                return result;
+            }
+            const context = contexts.find(context => context.id === table.id)
+            if (!context) {
+                throw new Error("Context " + table.id + " not found in registry.")
+            }
+            if (!context.embedder) {
+                return result;
+            }
+            const { db } = await postgresClient();
+            console.log("[EXULU] Deleting chunks for item", result.id)
+            const chunks = await db.from(getChunksTableName(context.id))
+                .where({ source: result.id })
+                .select("id");
+
+            if (chunks.length > 0) {
+                // delete chunks first
+                await db.from(getChunksTableName(context.id))
+                    .where({ source: result.id })
+                    .delete();
+            }
+            return result;
+        }
+    }
+    return result;
+}
+
+const finalizeRequestedFields = async ({
+    table,
+    requestedFields,
+    agents,
+    contexts,
+    tools,
+    result,
+}: {
+    table: ExuluTableDefinition,
+    requestedFields: string[],
+    agents: ExuluAgent[],
+    contexts: ExuluContext[],
+    tools: ExuluTool[],
+    result: any | []
+}) => {
+    if (!result) {
+        return result;
+    }
+    if (!requestedFields.includes("id")) {
+        delete result.id
+    }
+    if (Array.isArray(result)) {
+        result = result.map(item => {
             return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: item })
         })
     } else {
         if (table.name.singular === "agent") {
-            result = addAgentFields(requestedFields, agents, result)
+            result = addAgentFields(requestedFields, agents, result, tools)
             if (!requestedFields.includes("backend")) {
                 delete result.backend
+            }
+        }
+        if (table.type === "items") {
+            if (requestedFields.includes("chunks")) {
+                if (!result.id) {
+                    result.chunks = []
+                    return result;
+                }
+                const context = contexts.find(context => context.id === table.id)
+                if (!context) {
+                    throw new Error("Context " + table.id + " not found in registry.")
+                }
+                if (!context.embedder) {
+                    result.chunks = []
+                    return result;
+                }
+                const { db } = await postgresClient();
+                const query = db.from(getChunksTableName(context.id))
+                    .where({ source: result.id })
+                    .select("id", "content", "source", "chunk_index", "createdAt", "updatedAt");
+                query.select(
+                    db.raw('vector_dims(??) as embedding_size', [`embedding`])
+                );
+                const chunks = await query;
+
+                result.chunks = chunks.map((chunk: any) => ({
+                    cosine_distance: 0,
+                    fts_rank: 0,
+                    hybrid_score: 0,
+                    content: chunk.content,
+                    source: chunk.source,
+                    chunk_index: chunk.chunk_index,
+                    chunk_id: chunk.id,
+                    chunk_created_at: chunk.createdAt,
+                    chunk_updated_at: chunk.updatedAt,
+                    embedding_size: chunk.embedding_size,
+                }))
             }
         }
     }
     return result;
 }
 
+const applyFilters = (query: any, filters: any[]) => {
+    filters.forEach(filter => {
+        Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
+            if (operators) {
+                if (operators.and !== undefined) {
+                    console.log("operators.and", operators.and)
+                    operators.and.forEach(operator => {
+                        query = converOperatorToQuery(query, fieldName, operator);
+                    });
+                }
+                if (operators.or !== undefined) {
+                    operators.or.forEach(operator => {
+                        query = converOperatorToQuery(query, fieldName, operator);
+                    });
+                }
+                query = converOperatorToQuery(query, fieldName, operators)
+                console.log("query", query)
+            }
+        });
+    });
+    return query;
+};
+
+const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }) => {
+    if (sort) {
+        query = query.orderBy(sort.field, sort.direction.toLowerCase());
+    }
+    return query;
+};
+
 function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools: ExuluTool[], contexts: ExuluContext[]) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const tableNameSingular = table.name.singular.toLowerCase();
-
-    const applyFilters = (query: any, filters: any[]) => {
-        filters.forEach(filter => {
-            Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
-                if (operators) {
-                    if (operators.and !== undefined) {
-                        console.log("operators.and", operators.and)
-                        operators.and.forEach(operator => {
-                            query = converOperatorToQuery(query, fieldName, operator);
-                        });
-                    }
-                    if (operators.or !== undefined) {
-                        operators.or.forEach(operator => {
-                            query = converOperatorToQuery(query, fieldName, operator);
-                        });
-                    }
-                    query = converOperatorToQuery(query, fieldName, operators)
-                    console.log("query", query)
-                }
-            });
-        });
-        return query;
-    };
-
-    const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }) => {
-        if (sort) {
-            query = query.orderBy(sort.field, sort.direction.toLowerCase());
-        }
-        return query;
-    };
-
-    return {
+    const queries = {
         [`${tableNameSingular}ById`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
@@ -875,6 +1273,10 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
         [`${tableNamePlural}Pagination`]: async (_, args, context, info) => {
             const { limit = 10, page = 0, filters = [], sort } = args;
             const { db } = context;
+
+            if (limit > 500) {
+                throw new Error("Limit cannot be greater than 500.")
+            }
 
             // Create count query  
             let countQuery = db(tableNamePlural);
@@ -962,10 +1364,389 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                 }
             }
         }
-    };
+    }
+    if (table.type === "items") {
+        queries[`${tableNamePlural}VectorSearch`] = async (_, args, context, info) => {
+            const exists = contexts.find(context => context.id === table.id)
+            if (!exists) {
+                throw new Error("Context " + table.id + " not found in registry.")
+            }
+            const { limit = 10, page = 0, filters = [], sort } = args;
+            return await vectorSearch({
+                limit,
+                page,
+                filters,
+                sort,
+                context: exists,
+                db: context.db,
+                query: args.query,
+                method: args.method,
+                user: context.user,
+                role: context.user?.role?.id,
+                trigger: "api"
+            })
+        }
+    }
+
+    return queries;
 }
 
+export const vectorSearch = async ({
+    limit,
+    page,
+    filters,
+    sort,
+    context,
+    db,
+    query,
+    method,
+    user,
+    role,
+    trigger
+}: {
+    limit: number
+    page: number
+    filters: any[]
+    sort: any
+    context: ExuluContext
+    db: KnexType
+    query: string
+    method: VectorMethod
+    user: User
+    role: string
+    trigger: STATISTICS_LABELS
+}) => {
 
+    const table = contextToTableDefinition(context)
+
+    console.log("[EXULU] Called vector search.", {
+        limit,
+        page,
+        filters,
+        sort,
+        context: context.id,
+        query,
+        method,
+        user,
+        role
+    })
+
+    if (limit > 50) {
+        throw new Error("Limit cannot be greater than 50.")
+    }
+
+    if (!query) {
+        throw new Error("Query is required.")
+    }
+
+    if (!method) {
+        throw new Error("Method is required.")
+    }
+
+    if (!Object.values(VectorMethodEnum).includes(method)) {
+        throw new Error("Invalid method, must be one of: " + Object.values(VectorMethodEnum).join(", "))
+    }
+
+    const { id, queryRewriter, embedder, configuration, resultReranker } = context
+
+    if (!embedder) {
+        throw new Error("Embedder is not set for this context.")
+    }
+
+    const mainTable = getTableName(id)
+    const chunksTable = getChunksTableName(id);
+    // Create count query  
+    let countQuery = db(mainTable);
+    countQuery = applyFilters(countQuery, filters);
+    countQuery = applyAccessControl(table, user, countQuery);
+
+    console.log("countQuery", countQuery)
+
+    // Create separate data query
+    const columns = await db(mainTable).columnInfo();
+
+    let itemsQuery = db(mainTable).select((Object.keys(columns).map(column => mainTable + "." + column)));
+    itemsQuery = applyFilters(itemsQuery, filters);
+    itemsQuery = applyAccessControl(table, user, itemsQuery);
+    itemsQuery = applySorting(itemsQuery, sort);
+    if (queryRewriter) {
+        query = await queryRewriter(query);
+    }
+
+    // For semantic search we increase the scope, so we 
+    // can rerank the results.
+    itemsQuery.limit(limit * 3);
+
+    itemsQuery.leftJoin(chunksTable, function () {
+        // @ts-ignore
+        this.on(chunksTable + ".source", "=", mainTable + ".id")
+    })
+
+    itemsQuery.select(chunksTable + ".id as chunk_id")
+    itemsQuery.select(chunksTable + ".source")
+    itemsQuery.select(chunksTable + ".content")
+    itemsQuery.select(chunksTable + ".chunk_index")
+    itemsQuery.select(chunksTable + ".createdAt as chunk_created_at")
+    itemsQuery.select(chunksTable + ".updatedAt as chunk_updated_at")
+    itemsQuery.select(db.raw('vector_dims(??) as embedding_size', [`${chunksTable}.embedding`]))
+
+    const { chunks } = await embedder.generateFromQuery(query, {
+        label: table.name.singular,
+        trigger
+    }, user.id, role)
+
+    if (!chunks?.[0]?.vector) {
+        throw new Error("No vector generated for query.")
+    }
+
+    const vector = chunks[0].vector;
+    const vectorStr = `ARRAY[${vector.join(",")}]`;
+    const vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
+
+    const language = (configuration.language || 'english');
+
+    let items: any[] = [];
+
+
+    switch (method) {
+        case "tsvector":
+            // rank + filter + sort (DESC)
+            itemsQuery
+                .select(db.raw(
+                    `ts_rank(${chunksTable}.fts, websearch_to_tsquery(?, ?)) as fts_rank`,
+                    [language, query]
+                ))
+                .whereRaw(
+                    `${chunksTable}.fts @@ websearch_to_tsquery(?, ?)`,
+                    [language, query]
+                )
+                .orderByRaw(`fts_rank DESC`);
+            items = await itemsQuery;
+            break;
+
+        case "cosineDistance":
+        default:
+            // Ensure we don't rank rows without embeddings
+            itemsQuery.whereNotNull(`${chunksTable}.embedding`);
+
+            // Select cosine *similarity* for display/stats:
+            // similarity = 1 - cosine_distance  (cosine_distance in [0,2])
+            // If you prefer pure distance in your stats, change the alias below accordingly.
+            itemsQuery.select(
+                db.raw(`1 - (${chunksTable}.embedding <=> ${vectorExpr}) AS cosine_distance`)
+            );
+
+            // Very important: ORDER BY the raw distance expression so pgvector can use the index
+            itemsQuery.orderByRaw(
+                `${chunksTable}.embedding <=> ${vectorExpr} ASC NULLS LAST`
+            );
+            items = await itemsQuery;
+            break;
+        case "hybridSearch":
+
+            // Tunables
+            const matchCount = Math.min(limit * 5, 30);
+            const fullTextWeight = 1.0;
+            const semanticWeight = 1.0;
+            const rrfK = 50;
+
+            const hybridSQL = `
+            WITH full_text AS (
+              SELECT
+                c.id,
+                c.source,
+                row_number() OVER (
+                  ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery(?, ?)) DESC
+                ) AS rank_ix
+              FROM ${chunksTable} c
+              WHERE c.fts @@ websearch_to_tsquery(?, ?)
+              ORDER BY rank_ix
+              LIMIT LEAST(?, 30) * 2
+            ),
+            semantic AS (
+              SELECT
+                c.id,
+                c.source,
+                row_number() OVER (
+                  ORDER BY c.embedding <=> ${vectorExpr} ASC
+                ) AS rank_ix
+              FROM ${chunksTable} c
+              WHERE c.embedding IS NOT NULL
+              ORDER BY rank_ix
+              LIMIT LEAST(?, 30) * 2
+            )
+            SELECT
+              m.*,
+              c.id AS chunk_id,
+              c.source,
+              c.content,
+              c.chunk_index,
+              c."createdAt" AS chunk_created_at,
+              c."updatedAt" AS chunk_updated_at,
+              vector_dims(c.embedding) as embedding_size,
+        
+              /* Per-signal scores for introspection */
+              ts_rank(c.fts, websearch_to_tsquery(?, ?)) AS fts_rank,
+              (1 - (c.embedding <=> ${vectorExpr})) AS cosine_distance,
+        
+              /* Hybrid RRF score */
+              (
+                COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
+                +
+                COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
+              )::float AS hybrid_score
+        
+            FROM full_text ft
+            FULL OUTER JOIN semantic se
+              ON ft.id = se.id
+            JOIN ${chunksTable} c
+              ON COALESCE(ft.id, se.id) = c.id
+            JOIN ${mainTable} m
+              ON m.id = c.source
+            ORDER BY hybrid_score DESC
+            LIMIT LEAST(?, 30)
+            OFFSET 0
+          `;
+
+            const bindings = [
+                // full_text: websearch_to_tsquery(lang, query) in rank and where
+                language, query,
+                language, query,
+                matchCount,                    // full_text limit
+
+                matchCount,                    // semantic limit
+
+                // fts_rank (ts_rank) call
+                language, query,
+
+                // RRF fusion parameters
+                rrfK, fullTextWeight,
+                rrfK, semanticWeight,
+
+                matchCount                     // final limit
+            ];
+            items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
+    }
+
+    console.log("items", items)
+    // Filter out duplicate sources, keeping only the first occurrence
+    // because the vector search returns multiple chunks for the same
+    // source.
+    const seenSources = new Map();
+    items = items.reduce((acc, item) => {
+        if (!seenSources.has(item.source)) {
+            seenSources.set(item.source, {
+                ...Object.fromEntries(
+                    Object.keys(item)
+                        .filter(key =>
+                            key !== "cosine_distance" &&   // kept per chunk below
+                            key !== "fts_rank" &&          // kept per chunk below
+                            key !== "hybrid_score" &&      // we will compute per item below
+                            key !== "content" &&
+                            key !== "source" &&
+                            key !== "chunk_index" &&
+                            key !== "chunk_id" &&
+                            key !== "chunk_created_at" &&
+                            key !== "chunk_updated_at" &&
+                            key !== "embedding_size"
+                        )
+                        .map(key => [key, item[key]])
+                ),
+                chunks: [{
+                    content: item.content,
+                    chunk_index: item.chunk_index,
+                    chunk_id: item.chunk_id,
+                    source: item.source,
+                    chunk_created_at: item.chunk_created_at,
+                    chunk_updated_at: item.chunk_updated_at,
+                    embedding_size: item.embedding_size,
+                    ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
+                    ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
+                    ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
+                }]
+            });
+            acc.push(seenSources.get(item.source));
+        } else {
+            seenSources.get(item.source).chunks.push({
+                content: item.content,
+                chunk_index: item.chunk_index,
+                chunk_id: item.chunk_id,
+                chunk_created_at: item.chunk_created_at,
+                embedding_size: item.embedding_size,
+                source: item.source,
+                chunk_updated_at: item.chunk_updated_at,
+                ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
+                ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
+                ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
+            });
+        }
+        return acc;
+    }, []);
+
+    console.log("items", items)
+
+    items.forEach(item => {
+        if (!item.chunks?.length) { return; }
+
+        if (method === "tsvector") {
+            const ranks = item.chunks
+                .map(c => (typeof c.fts_rank === 'number' ? c.fts_rank : 0));
+            const total = ranks.reduce((a, b) => a + b, 0);
+            const average = ranks.length ? total / ranks.length : 0;
+            item.averageRelevance = average;
+            item.totalRelevance = total;
+
+        } else if (method === "cosineDistance") {
+            let methodProperty = "cosine_distance";
+            const average = item.chunks.reduce((acc, item) => {
+                return acc + item[methodProperty];
+            }, 0) / item.chunks.length;
+
+            const total = item.chunks.reduce((acc, item) => {
+                return acc + item[methodProperty];
+            }, 0);
+            item.averageRelevance = average;
+            item.totalRelevance = total;
+
+        } else if (method === "hybridSearch") {
+            console.log("item.chunks", item.chunks)
+            // we multiply by 10 and add 1 to somewhat normalize the score against when cosine distance is used
+            const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? (c.hybrid_score * 10) + 1 : 0));
+            const total = scores.reduce((a, b) => a + b, 0);
+            const average = scores.length ? total / scores.length : 0;
+            item.averageRelevance = average;
+            item.totalRelevance = total;
+        }
+    })
+
+    // todo if query && resultReranker, rerank the results
+    if (resultReranker && query) {
+        items = await resultReranker(items);
+    }
+
+    items = items.slice(0, limit);
+
+    await updateStatistic({
+        name: "count",
+        label: table.name.singular,
+        type: STATISTICS_TYPE_ENUM.CONTEXT_RETRIEVE as STATISTICS_TYPE,
+        trigger,
+        user: user?.id,
+        role: role
+    })
+
+    return {
+        filters,
+        query,
+        method,
+        context: {
+            name: table.name.singular,
+            id: table.id,
+            embedder: embedder.name
+        },
+        items
+    }
+}
 
 export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityName: string, resourceId: string, rights_mode: string) => {
 
@@ -979,11 +1760,11 @@ export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityN
 
     const users = rbacRecords
         .filter(r => r.access_type === 'User')
-        .map(r => ({ id: r.user_id, rights: r.rights }));
+        ?.map(r => ({ id: r.user_id, rights: r.rights }));
 
     const roles = rbacRecords
         .filter(r => r.access_type === 'Role')
-        .map(r => ({ id: r.role_id, rights: r.rights }));
+        ?.map(r => ({ id: r.role_id, rights: r.rights }));
 
     // Determine the type based on rights_mode or presence of records
     let type = rights_mode || 'private';
@@ -997,70 +1778,92 @@ export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityN
     };
 }
 
+const contextToTableDefinition = (context: ExuluContext): ExuluTableDefinition => {
+
+    const tableName = getTableName(context.id) as any;
+    const definition: ExuluTableDefinition = {
+        type: "items",
+        id: context.id,
+        name: {
+            singular: tableName,
+            plural: tableName?.endsWith("s") ? tableName : tableName + "s" as any,
+        },
+        RBAC: true,
+        fields: context.fields.map(field => ({
+            name: sanitizeName(field.name) as any,
+            type: field.type
+        }))
+    }
+    definition.fields.push({
+        name: "id",
+        type: "text",
+    })
+    definition.fields.push({
+        // important: the contexts use the default knex timestamp 
+        // fields which are different to the regular 
+        // ExuluTableDefinition, i.e. created_at vs. createdAt.
+        name: "createdAt",
+        type: "date",
+    })
+    definition.fields.push({
+        name: "source",
+        type: "text",
+    })
+    definition.fields.push({
+        name: "updatedAt",
+        type: "date",
+    })
+    definition.fields.push({
+        name: "textlength",
+        type: "number",
+    })
+    definition.fields.push({
+        name: "embeddings_updated_at",
+        type: "date",
+    })
+    definition.fields.push({
+        name: "name",
+        type: "text",
+    })
+    definition.fields.push({
+        name: "description",
+        type: "text",
+    })
+    definition.fields.push({
+        name: "external_id",
+        type: "text",
+    })
+    definition.fields.push({
+        name: "tags",
+        type: "text",
+    })
+    definition.fields.push({
+        name: "archived",
+        type: "boolean",
+    })
+    return addRBACfields(definition)
+}
+
 export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext[], agents: ExuluAgent[], tools: ExuluTool[]) {
 
-    const contextSchemas: ExuluTableDefinition[] = []
-
-    console.log("============= Agents =============", agents?.length)
-
-    contexts.forEach(context => {
-        const tableName = getTableName(context.id) as any;
-        const definition: ExuluTableDefinition = {
-            name: {
-                singular: tableName,
-                plural: tableName?.endsWith("s") ? tableName : tableName + "s" as any,
-            },
-            RBAC: true,
-            fields: context.fields.map(field => ({
-                name: sanitizeName(field.name) as any,
-                type: field.type
-            }))
-        }
-        contextSchemas.push(addRBACfields(definition))
-    })
+    const contextSchemas: ExuluTableDefinition[] = contexts.map(context => contextToTableDefinition(context))
 
     // Adding fields to SDL that are not defined via
     // ExuluContext instances but added in the
     // backend at createItemsTable().
-    contextSchemas.forEach(contextSchema => {
-        contextSchema.fields.push({
-            // important: the contexts use the default knex timestamp 
-            // fields which are different to the regular 
-            // ExuluTableDefinition, i.e. created_at vs. createdAt.
-            name: "created_at",
-            type: "date",
-        })
-        contextSchema.fields.push({
-            name: "updated_at",
-            type: "date",
-        })
-        contextSchema.fields.push({
-            name: "name",
-            type: "text",
-        })
-        contextSchema.fields.push({
-            name: "description",
-            type: "text",
-        })
-        contextSchema.fields.push({
-            name: "tags",
-            type: "text",
-        })
-        contextSchema.fields.push({
-            name: "archived",
-            type: "boolean",
-        })
-    })
-
     tables.forEach(table => {
-        table.fields.push({
-            name: "createdAt",
-            type: "date",
-        })
-        table.fields.push({
-            name: "updatedAt",
-            type: "date",
-        })
+        if (!table.fields.some(field => field.name === "createdAt")) {
+            table.fields.push({
+                name: "createdAt",
+                type: "date",
+            })
+        }
+        if (!table.fields.some(field => field.name === "updatedAt")) {
+            table.fields.push({
+                name: "updatedAt",
+                type: "date",
+            })
+        }
     })
 
     tables = [...tables, ...contextSchemas]
@@ -1130,15 +1933,69 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
       ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String): [StatisticsResult]!
     `;
+        if (table.type === "items") {
+            typeDefs += `
+      ${tableNamePlural}VectorSearch(query: String!, method: VectorMethodEnum!, filters: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}VectorSearchResult
+    `;
+        }
         // todo add the fields of each table as filter options
         mutationDefs += `
-      ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!): ${tableNameSingular}
-      ${tableNamePlural}UpdateOne(where: JSON!, input: ${tableNameSingular}Input!): ${tableNameSingular}
-      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!): ${tableNameSingular}
+      ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
       ${tableNamePlural}RemoveOneById(id: ID!): ${tableNameSingular}
+      ${tableNamePlural}RemoveOne(where: JSON!): ${tableNameSingular}
     `;
+
+        if (table.type === "items") {
+            mutationDefs += `
+    ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}GenerateChunksReturnPayload
+    ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}DeleteChunksReturnPayload
+    `
+
+            modelDefs += `
+    type ${tableNameSingular}GenerateChunksReturnPayload {
+        message: String!
+        items: Int!
+        jobs: [String!]
+    }
+
+    type ${tableNameSingular}DeleteChunksReturnPayload {
+        message: String!
+        items: Int!
+        jobs: [String!]
+    }
+
+    enum VectorMethodEnum {
+        cosineDistance
+        hybridSearch
+        tsvector
+    }
+
+  type ${tableNameSingular}VectorSearchResult {
+        items: [${tableNameSingular}]!
+        context: VectoSearchResultContext!
+        filters: JSON!
+        query: String!
+        method: VectorMethodEnum!
+    }
+
+    type VectoSearchResultContext {
+        name: String!
+        id: ID!
+        embedder: String!
+    }
+
+`
+        }
+
         modelDefs += createTypeDefs(table);
         modelDefs += createFilterTypeDefs(table);
+
+        modelDefs += `type ${tableNameSingular}MutationPayload {
+        item: ${tableNameSingular}!
+        job: String
+      }`
         modelDefs += `
 type ${tableNameSingularUpperCaseFirst}PaginationResult {
   pageInfo: PageInfo!
@@ -1187,6 +2044,11 @@ type PageInfo {
 
     typeDefs += `
    tools: ToolPaginationResult
+    `
+
+    typeDefs += `
+    generateChunks(item: ID): String
+    deleteChunks(item: ID): String
     `
 
     resolvers.Query["providers"] = async (_, args, context, info) => {
@@ -1318,6 +2180,19 @@ type AgentCapabilities {
     files: [String]
     audio: [String]
     video: [String]
+}
+
+type ItemChunks {
+    cosine_distance: Float
+    fts_rank: Float
+    hybrid_score: Float
+    content: String
+    source: ID
+    chunk_index: Int
+    chunk_id: ID
+    chunk_created_at: Date
+    chunk_updated_at: Date
+    embedding_size: Float
 }
 
 type Provider {

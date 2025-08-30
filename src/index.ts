@@ -11,6 +11,7 @@ import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db"
 import { generateApiKey } from './auth/generate-key'
 import { create } from './registry/otel'
+import type { ExuluContext } from './registry/classes'
 
 export const ExuluJobs = {
     redis: redisClient,
@@ -41,8 +42,12 @@ export { STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM, type STATISTICS_TYP
 export { JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM, type JOB_STATUS as EXULU_JOB_STATUS } from "@EXULU_TYPES/enums/jobs"
 
 export const db = {
-    init: async () => {
-        await initDb()
+    init: async ({
+        contexts
+    }: {
+        contexts: ExuluContext[]
+    }) => {
+        await initDb({ contexts })
     },
     api: {
         key: {

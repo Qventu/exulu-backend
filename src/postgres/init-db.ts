@@ -5,8 +5,9 @@ import { mapType } from "../registry/utils/map-types";
 import { sanitizeName } from "../registry/utils/sanitize-name";
 import { encryptString, generateApiKey } from "../auth/generate-key";
 import type { ExuluTableDefinition } from "../registry/routes";
+import type { ExuluContext } from "../registry/classes";
 
-const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, statisticsSchema, variablesSchema, workflowTemplatesSchema, rbacSchema} = coreSchemas.get();
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, statisticsSchema, variablesSchema, workflowTemplatesSchema, rbacSchema } = coreSchemas.get();
 
 const addMissingFields = async (knex: Knex, tableName: string, fields: any[], skipFields: string[] = []) => {
     for (const field of fields) {
@@ -14,13 +15,13 @@ const addMissingFields = async (knex: Knex, tableName: string, fields: any[], sk
         if (!type || !name) {
             continue;
         }
-        
+
         const sanitizedName = sanitizeName(name);
-        
+
         if (skipFields.includes(name)) {
             continue;
         }
-        
+
         const hasColumn = await knex.schema.hasColumn(tableName, sanitizedName);
         if (!hasColumn) {
             console.log(`[EXULU] Adding missing field '${sanitizedName}' to ${tableName} table.`);
@@ -55,7 +56,7 @@ const up = async function (knex: Knex) {
                 table.uuid("id").primary().defaultTo(knex.fn.uuid());
                 table.timestamp('createdAt').defaultTo(knex.fn.now());
                 table.timestamp('updatedAt').defaultTo(knex.fn.now());
-        
+
                 for (const field of schema.fields) {
                     const { type, name, default: defaultValue, unique } = field;
                     if (!type || !name) {
@@ -137,23 +138,39 @@ const up = async function (knex: Knex) {
         });
     }
 
-   /*  if (!await knex.schema.hasTable('sessions')) {
-        await knex.schema.createTable('sessions', table => {
-            table.increments('id').primary();
-            table.integer('userId').notNullable();
-            table.timestamp('expires', { useTz: true }).notNullable();
-            table.string('sessionToken', 255).notNullable();
-        });
-    } */
+    /*  if (!await knex.schema.hasTable('sessions')) {
+         await knex.schema.createTable('sessions', table => {
+             table.increments('id').primary();
+             table.integer('userId').notNullable();
+             table.timestamp('expires', { useTz: true }).notNullable();
+             table.string('sessionToken', 255).notNullable();
+         });
+     } */
 };
 
-export const execute = async () => {
-    
-    const { db } = await postgresClient()
+const contextDatabases = async (contexts: ExuluContext[]) => {
+    for (const context of contexts) {
+        const itemsTableExists = await context.tableExists();
+        if (!itemsTableExists) {
+            console.log("[EXULU] items table does not exist, creating it.")
+            await context.createItemsTable()
+        }
+        const chunksTableExists = await context.chunksTableExists();
+        if (!chunksTableExists && context.embedder) {
+            console.log("[EXULU] chunks table does not exist, creating it.")
+            await context.createChunksTable();
+        }
+    }
+}
 
+export const execute = async ({ contexts }: {
+    contexts: ExuluContext[]
+}) => {
+
+    const { db } = await postgresClient()
     console.log("[EXULU] Checking Exulu IMP database status.")
     await up(db)
-
+    await contextDatabases(contexts)
     console.log("[EXULU] Inserting default user and admin role.")
     const existingRole = await db.from("roles").where({ name: "admin" }).first();
     let roleId;
