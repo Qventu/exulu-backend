@@ -464,11 +464,6 @@ export class ExuluAgent {
             messages: [...previousMessagesContent, message],
         });
 
-
-        console.log("[EXULU] Model provider key", providerApiKey)
-
-        console.log("[EXULU] Tool configs", toolConfigs)
-
         const result = streamText({
             model: model, // Should be a LanguageModelV1
             messages: convertToModelMessages(messages),
@@ -495,12 +490,14 @@ export class ExuluAgent {
                     "[EXULU] chat stream finished.",
                     messages
                 )
-                // save chat
-                await saveChat({
-                    session,
-                    user,
-                    messages
-                })
+                if (session) {
+                    // save chat
+                    await saveChat({
+                        session,
+                        user,
+                        messages
+                    })
+                }
                 if (statistics) {
                     await updateStatistic({
                         name: "count",
@@ -666,18 +663,19 @@ interface WorkflowStep {
     toolName?: string
     variablesUsed?: string[]
 }
-
 export interface ExuluWorkflow {
     id: string
     name: string
     description?: string
-    rights_mode?: 'private' | 'users' | 'roles' | 'public'
-    RBAC?: {
-        users?: Array<{ id: string; rights: 'read' | 'write' }>
-        roles?: Array<{ id: string; rights: 'read' | 'write' }>
-    }
+    rights_mode?: ExuluRightsMode
+    RBAC?: ExuluRBAC
     variables?: WorkflowVariable[]
     steps_json?: WorkflowStep[]
+}
+
+export interface ExuluRBAC {
+    users?: Array<{ id: string; rights: 'read' | 'write' }>
+    roles?: Array<{ id: string; rights: 'read' | 'write' }>
 }
 
 type ExuluEvalRunnerInstance = {
@@ -981,9 +979,9 @@ export class ExuluContext {
 
 
     public createAndUpsertEmbeddings = async (
-        item: Item, 
-        user?: string, 
-        statistics?: ExuluStatisticParams, 
+        item: Item,
+        user?: string,
+        statistics?: ExuluStatisticParams,
         role?: string,
         job?: string
     ): Promise<{
@@ -1056,15 +1054,15 @@ export class ExuluContext {
             }> => {
 
                 console.log("[EXULU] Generating embeddings for item", item.id)
-        
+
                 if (!this.embedder) {
                     throw new Error("Embedder is not set for this context.")
                 }
-        
+
                 if (!item.id) {
                     throw new Error("Item id is required for generating embeddings.")
                 }
-        
+
                 if (this.embedder.queue?.name) {
                     console.log("[EXULU] embedder is in queue mode, scheduling job.")
                     const job = await bullmqDecorator({
@@ -1078,14 +1076,14 @@ export class ExuluContext {
                         role: role,
                         trigger: trigger || "agent",
                     })
-        
+
                     return {
                         id: item.id,
                         job: job.id,
                         chunks: 0
                     };
                 }
-        
+
                 // If no queue set, calculate embeddings directly.
                 return await this.createAndUpsertEmbeddings(item, user, {
                     label: this.embedder.name,

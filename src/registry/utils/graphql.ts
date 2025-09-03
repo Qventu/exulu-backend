@@ -1748,7 +1748,7 @@ export const vectorSearch = async ({
     }
 }
 
-export const RBACResolver = async (db: any, table: ExuluTableDefinition, entityName: string, resourceId: string, rights_mode: string) => {
+export const RBACResolver = async (db: any, entityName: string, resourceId: string, rights_mode: string): Promise<{ type: string, users: any[], roles: any[] }> => {
 
     // Get RBAC records for this resource
     const rbacRecords = await db.from('rbac')
@@ -2023,7 +2023,7 @@ type PageInfo {
                 const resourceId = parent.id;
                 const entityName = table.name.singular
                 const rights_mode = parent.rights_mode;
-                return RBACResolver(db, table, entityName, resourceId, rights_mode)
+                return RBACResolver(db, entityName, resourceId, rights_mode)
             }
         }
     }

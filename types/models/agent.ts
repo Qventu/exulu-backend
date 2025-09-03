@@ -38,6 +38,7 @@ export interface Agent {
     }
     // New RBAC fields
     rights_mode?: 'private' | 'users' | 'roles' | 'public';
+    created_by?: string;
     RBAC?: {
         type?: string;
         users?: Array<{ id: string; rights: 'read' | 'write' }>;

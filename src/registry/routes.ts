@@ -1,17 +1,16 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluTool, getChunksTableName, getTableName, updateStatistic } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { requestValidators } from "./route-validators";
 import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
-import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods.ts";
 import express from 'express';
 import { ApolloServer } from '@apollo/server';
 import cors from 'cors';
 import 'reflect-metadata'
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
-import { createSDL, applyAccessControl } from "./utils/graphql.ts";
+import { createSDL, applyAccessControl, RBACResolver } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { coreSchemas } from "../postgres/core-schema.ts";
@@ -27,6 +26,7 @@ import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
+import type { Agent } from "@EXULU_TYPES/models/agent.ts"
 
 export const REQUEST_SIZE_LIMIT = '50mb';
 
@@ -347,9 +347,11 @@ Mood: friendly and intelligent.
             }
 
             const { db } = await postgresClient();
-            const agentInstance = await db.from("agents").where({
+            const agentInstance: Agent = await db.from("agents").where({
                 id: instance
             }).first();
+            const agentRbac = await RBACResolver(db, "agent", agentInstance.id, agentInstance.rights_mode || "private");
+            agentInstance.RBAC = agentRbac;
 
             if (!agentInstance) {
                 res.status(400).json({
@@ -409,6 +411,101 @@ Mood: friendly and intelligent.
 
             const user = authenticationResult.user;
 
+            // Check access rights
+            const agentIsPublic = agentInstance.rights_mode === "public";
+            const agentByUsers = agentInstance.rights_mode === "users";
+            const agentByRoles = agentInstance.rights_mode === "roles";
+            const isAgentCreator = agentInstance.created_by === user.id;
+            const isAdmin = user.super_admin;
+            const isApi = user.type === "api";
+
+            let hasAccessToAgent: "read" | "write" | "none" = "none";
+
+            if (agentIsPublic || isAgentCreator || isAdmin || isApi) {
+                hasAccessToAgent = "write"
+            }
+
+            if (agentByUsers) {
+                hasAccessToAgent = agentInstance.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
+                if (!hasAccessToAgent || hasAccessToAgent === "none" || hasAccessToAgent === "read") {
+                    res.status(410).json({
+                        message: `Your current user ${user.id} does not have access to this agent.`
+                    })
+                    return;
+                }
+            }
+
+            if (agentByRoles) {
+                hasAccessToAgent = agentInstance.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
+                if (!hasAccessToAgent || hasAccessToAgent === "none" || hasAccessToAgent === "read") {
+                    res.status(410).json({
+                        message: `Your current role ${user.role?.name} does not have access to this agent.`
+                    })
+                    return;
+                }
+            }
+
+            let hasAccessToSession: "read" | "write" | "none" = "none";;
+
+            if (headers.session) {
+                // Check session RBAC
+                const session = await db.from("agents").where({
+                    id: instance
+                }).first();
+
+                const sessionIsPublic = agentInstance.rights_mode === "public";
+                const sessionByUsers = agentInstance.rights_mode === "users";
+                const sessionByRoles = agentInstance.rights_mode === "roles";
+                const isSessionCreator = agentInstance.created_by === user.id;
+                const isAdmin = user.super_admin;
+                const isApi = user.type === "api";
+
+                if (sessionIsPublic || isSessionCreator || isAdmin || isApi) {
+                    hasAccessToSession = "write"
+                }
+
+                if (sessionByUsers) {
+                    hasAccessToSession = session.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
+                    if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
+                        res.status(410).json({
+                            message: `Your current user ${user.id} does not have access to this session.`
+                        })
+                        return;
+                    }
+                }
+                if (sessionByRoles) {
+                    hasAccessToSession = session.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
+                    if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
+                        res.status(410).json({
+                            message: `Your current role ${user.role?.name} does not have access to this session.`
+                        })
+                        return;
+                    }
+                }
+            }
+
+            if (!hasAccessToAgent || hasAccessToAgent === "none") {
+                res.status(410).json({
+                    message: "You don't have access to this agent."
+                })
+                return;
+            }
+
+
+            if (!hasAccessToSession || hasAccessToSession === "none") {
+                res.status(410).json({
+                    message: "You don't have access to this session."
+                })
+                return;
+            }
+
+            if (headers.session && !hasAccessToSession) {
+                res.status(410).json({
+                    message: "You don't have access to this session."
+                })
+                return;
+            }
+
             if (
                 user.type !== "api" &&
                 !user.super_admin &&
@@ -424,7 +521,7 @@ Mood: friendly and intelligent.
 
             let enabledTools: ExuluTool[] = agentInstance.tools ? agentInstance.tools.map(
                 ({ config, toolId }) => tools.find(({ id }) => id === toolId)
-            ).filter(Boolean) : [];
+            ).filter(Boolean) as ExuluTool[] : [];
 
             console.log("[EXULU] available tools", enabledTools?.length)
 
