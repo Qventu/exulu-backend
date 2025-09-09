@@ -2044,7 +2044,6 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
         const tableNameSingular = table.name.singular.toLowerCase();
         const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
-        console.log("[EXULU] Adding table >>>>>", tableNamePlural)
         typeDefs += `
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
       ${tableNameSingular}ByIds(ids: [ID!]!): [${tableNameSingular}]!

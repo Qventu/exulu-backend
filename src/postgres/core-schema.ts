@@ -532,7 +532,6 @@ const rbacSchema: ExuluTableDefinition = {
 
 export const addRBACfields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
     if (schema.RBAC) {
-        console.log(`[EXULU] Adding rights_mode field to ${schema.name.plural} table.`)
         schema.fields.push({
             name: "rights_mode",
             type: "text",
