@@ -277,7 +277,7 @@ const getRequestedFields = (info: any): string[] => {
 
 // Helper function to handle RBAC updates
 const handleRBACUpdate = async (db: any, entityName: string, resourceId: string, rbacData: any, existingRbacRecords: any[]) => {
-    const { users = [], roles = [] } = rbacData;
+    const { users = [], roles = [], projects = [] } = rbacData;
 
     // Get existing RBAC records if not provided
     if (!existingRbacRecords) {
@@ -292,22 +292,29 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     // Create sets for comparison
     const newUserRecords = new Set(users.map((u: any) => `${u.id}:${u.rights}`));
     const newRoleRecords = new Set(roles.map((r: any) => `${r.id}:${r.rights}`));
+    const newProjectRecords = new Set(projects.map((p: any) => `${p.id}:${p.rights}`));
     const existingUserRecords = new Set(existingRbacRecords
         .filter(r => r.access_type === 'User')
         .map(r => `${r.user_id}:${r.rights}`));
     const existingRoleRecords = new Set(existingRbacRecords
         .filter(r => r.access_type === 'Role')
         .map(r => `${r.role_id}:${r.rights}`));
+    const existingProjectRecords = new Set(existingRbacRecords
+        .filter(r => r.access_type === 'Project')
+        .map(r => `${r.project_id}:${r.rights}`));
 
     // Records to create
     const usersToCreate = users.filter((u: any) => !existingUserRecords.has(`${u.id}:${u.rights}`));
     const rolesToCreate = roles.filter((r: any) => !existingRoleRecords.has(`${r.id}:${r.rights}`));
+    const projectsToCreate = projects.filter((p: any) => !existingProjectRecords.has(`${p.id}:${p.rights}`));
 
     // Records to remove
     const usersToRemove = existingRbacRecords
         .filter(r => r.access_type === 'User' && !newUserRecords.has(`${r.user_id}:${r.rights}`));
     const rolesToRemove = existingRbacRecords
         .filter(r => r.access_type === 'Role' && !newRoleRecords.has(`${r.role_id}:${r.rights}`));
+    const projectsToRemove = existingRbacRecords
+        .filter(r => r.access_type === 'Project' && !newProjectRecords.has(`${r.project_id}:${r.rights}`));
 
     // Remove obsolete records
     if (usersToRemove.length > 0) {
@@ -315,6 +322,9 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     }
     if (rolesToRemove.length > 0) {
         await db.from('rbac').whereIn('id', rolesToRemove.map(r => r.id)).del();
+    }
+    if (projectsToRemove.length > 0) {
+        await db.from('rbac').whereIn('id', projectsToRemove.map(r => r.id)).del();
     }
 
     // Create new records
@@ -339,6 +349,18 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
             target_resource_id: resourceId,
             role_id: role.id,
             rights: role.rights,
+            createdAt: new Date(),
+            updatedAt: new Date()
+        });
+    });
+
+    projectsToCreate.forEach((project: any) => {
+        recordsToInsert.push({
+            entity: entityName,
+            access_type: 'Project',
+            target_resource_id: resourceId,
+            project_id: project.id,
+            rights: project.rights,
             createdAt: new Date(),
             updatedAt: new Date()
         });
@@ -445,6 +467,75 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                     return true;
                 }
                 throw new Error('Insufficient role permissions to edit this record');
+            }
+
+            if (record.rights_mode === 'projects') {
+                // For example when retrieving an item
+                // we check if that item has the rights_mode
+                // project, and if so, retrieve all RBAC entries
+                // which is an array of projects the item has
+                // been shared with, we then check if the user
+                // has read access to the item via any of the projects.
+                const projects = await db.from('rbac')
+                    .where({
+                        entity: table.name.singular,
+                        target_resource_id: id,
+                        access_type: 'Project',
+                        rights: 'write'
+                    })
+
+                if (projects.length === 0) {
+                    throw new Error('Entity ${table.name.singular} has its rights mode set to projects, but is not shared with any projects.');
+                }
+
+                const checks = await Promise.all(projects.map(async (project) => {
+                    if (
+                        project.rights_mode === 'private' &&
+                        project.created_by !== user.id
+                    ) {
+                        return false
+                    }
+                    // Check if user has write access via RBAC table
+                    if (project.rights_mode === 'users') {
+                        const rbacRecord = await db.from('rbac')
+                            .where({
+                                entity: "project",
+                                target_resource_id: project.id,
+                                access_type: 'User',
+                                user_id: user.id,
+                                rights: 'write'
+                            })
+                            .first();
+                        if (rbacRecord) {
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    // Check if user has write access via role in RBAC table
+                    if (record.rights_mode === 'roles' && user.role) {
+                        const rbacRecord = await db.from('rbac')
+                            .where({
+                                entity: "project",
+                                target_resource_id: project.id,
+                                access_type: 'Role',
+                                role_id: user.role,
+                                rights: 'write'
+                            })
+                            .first();
+
+                        if (rbacRecord) {
+                            return true;
+                        }
+                        return false;
+                    }
+
+                    return false;
+                }));
+
+                if (checks.some(check => check)) {
+                    return true;
+                }
             }
 
             throw new Error('Insufficient permissions to edit this record');
@@ -1748,7 +1839,17 @@ export const vectorSearch = async ({
     }
 }
 
-export const RBACResolver = async (db: any, entityName: string, resourceId: string, rights_mode: string): Promise<{ type: string, users: any[], roles: any[] }> => {
+export const RBACResolver = async (
+    db: any,
+    entityName: string,
+    resourceId: string,
+    rights_mode: string
+): Promise<{
+    type: string,
+    users: any[],
+    roles: any[],
+    projects: any[]
+}> => {
 
     // Get RBAC records for this resource
     const rbacRecords = await db.from('rbac')
@@ -1766,15 +1867,21 @@ export const RBACResolver = async (db: any, entityName: string, resourceId: stri
         .filter(r => r.access_type === 'Role')
         ?.map(r => ({ id: r.role_id, rights: r.rights }));
 
+    const projects = rbacRecords
+        .filter(r => r.access_type === 'Project')
+        ?.map(r => ({ id: r.project_id, rights: r.rights }));
+
     // Determine the type based on rights_mode or presence of records
     let type = rights_mode || 'private';
     if (type === 'users' && users.length === 0) type = 'private';
     if (type === 'roles' && roles.length === 0) type = 'private';
+    if (type === 'projects' && projects.length === 0) type = 'private';
 
     return {
         type,
         users,
-        roles
+        roles,
+        projects
     };
 }
 
@@ -1877,6 +1984,7 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
       type: String!
       users: [RBACUser!]
       roles: [RBACRole!]
+      projects: [RBACProject!]
     }
     
     type RBACUser {
@@ -1889,9 +1997,15 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
       rights: String!
     }
     
+    type RBACProject {
+      id: ID!
+      rights: String!
+    }
+    
     input RBACInput {
       users: [RBACUserInput!]
       roles: [RBACRoleInput!]
+      projects: [RBACProjectInput!]
     }
     
     input RBACUserInput {
@@ -1900,6 +2014,11 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
     }
     
     input RBACRoleInput {
+      id: ID!
+      rights: String!
+    }
+    
+    input RBACProjectInput {
       id: ID!
       rights: String!
     }

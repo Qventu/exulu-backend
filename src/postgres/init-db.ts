@@ -7,7 +7,7 @@ import { encryptString, generateApiKey } from "../auth/generate-key";
 import type { ExuluTableDefinition } from "../registry/routes";
 import type { ExuluContext } from "../registry/classes";
 
-const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, statisticsSchema, variablesSchema, workflowTemplatesSchema, rbacSchema } = coreSchemas.get();
+const { agentsSchema, evalResultsSchema, jobsSchema, agentSessionsSchema, agentMessagesSchema, rolesSchema, usersSchema, statisticsSchema, variablesSchema, workflowTemplatesSchema, rbacSchema, projectsSchema } = coreSchemas.get();
 
 const addMissingFields = async (knex: Knex, tableName: string, fields: any[], skipFields: string[] = []) => {
     for (const field of fields) {
@@ -42,6 +42,7 @@ const up = async function (knex: Knex) {
         rolesSchema(),
         evalResultsSchema(),
         statisticsSchema(),
+        projectsSchema(),
         jobsSchema(),
         rbacSchema(),
         agentsSchema(),

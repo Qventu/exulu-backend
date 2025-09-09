@@ -37,12 +37,13 @@ export interface Agent {
         video: string[];
     }
     // New RBAC fields
-    rights_mode?: 'private' | 'users' | 'roles' | 'public';
+    rights_mode?: 'private' | 'users' | 'roles' | 'public' | 'projects';
     created_by?: string;
     RBAC?: {
         type?: string;
         users?: Array<{ id: string; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
+        projects?: Array<{ id: string; rights: 'read' | 'write' }>;
     };
     createdAt?: string;
     updatedAt?: string;

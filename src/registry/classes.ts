@@ -142,40 +142,6 @@ interface RateLimiterRule {
     }
 }
 
-export const ExuluZodFileType = ({
-    name,
-    label,
-    description,
-    allowedFileTypes
-}: {
-    name: string, label: string, description: string, allowedFileTypes: (
-        ".mp4" |
-        ".m4a" |
-        ".mp3" |
-        ".pdf" |
-        ".jpeg" |
-        ".png" |
-        ".plain" |
-        ".mpeg" |
-        ".wav" |
-        ".docx" |
-        ".xlsx" |
-        ".xls" |
-        ".csv" |
-        ".pptx" |
-        ".ppt"
-    )[]
-}) => {
-    return z.object({
-        [`exulu_file_${name}`]: z.string().describe(JSON.stringify({
-            label: label,
-            isFile: true,
-            description: description,
-            allowedFileTypes: allowedFileTypes
-        }))
-    });
-}
-
 export type ExuluAgentConfig = {
     name: string,
     instructions: string,
@@ -209,10 +175,10 @@ interface ExuluAgentParams {
     config?: ExuluAgentConfig | undefined;
     capabilities?: {
         text: boolean;
-        images: string[];
-        files: string[];
-        audio: string[];
-        video: string[];
+        images: ('.png' | '.jpg' | '.jpeg' | '.gif' | '.webp')[];
+        files: ('.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt')[];
+        audio: ('.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg')[];
+        video: ('.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav')[];
     };
     evals?: ExuluAgentEval[];
     outputSchema?: ZodSchema;

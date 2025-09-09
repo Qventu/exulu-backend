@@ -50,6 +50,10 @@ const agentSessionsSchema: ExuluTableDefinition = {
         {
             name: "title",
             type: "text"
+        },
+        {
+            name: "project",
+            type: "uuid"
         }
     ]
 }
@@ -131,6 +135,38 @@ const workflowTemplatesSchema: ExuluTableDefinition = {
     ]
 }
 
+const projectsSchema: ExuluTableDefinition = {
+    type: "projects",
+    name: {
+        plural: "projects",
+        singular: "project"
+    },
+    RBAC: true,
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        },
+        {
+            name: "image",
+            type: "text"
+        },
+        {
+            name: "custom_instructions",
+            type: "longText"
+        },
+        {
+            name: "context_files",
+            type: "json"
+        }
+    ]
+}
+
 const agentsSchema: ExuluTableDefinition = {
     type: "agents",
     name: {
@@ -189,6 +225,10 @@ const usersSchema: ExuluTableDefinition = {
         },
         {
             name: "favourite_agents",
+            type: "json"
+        },
+        {
+            name: "favourite_projects",
             type: "json"
         },
         {
@@ -479,6 +519,10 @@ const rbacSchema: ExuluTableDefinition = {
             type: "number"
         },
         {
+            name: "project_id",
+            type: "uuid"
+        },
+        {
             name: "rights",
             type: "text",
             required: true
@@ -511,6 +555,7 @@ export const coreSchemas = {
             agentsSchema: (): ExuluTableDefinition => addRBACfields(agentsSchema),
             agentMessagesSchema: (): ExuluTableDefinition => addRBACfields(agentMessagesSchema),
             agentSessionsSchema: (): ExuluTableDefinition => addRBACfields(agentSessionsSchema),
+            projectsSchema: (): ExuluTableDefinition => addRBACfields(projectsSchema),
             usersSchema: (): ExuluTableDefinition => addRBACfields(usersSchema),
             rolesSchema: (): ExuluTableDefinition => addRBACfields(rolesSchema),
             statisticsSchema: (): ExuluTableDefinition => addRBACfields(statisticsSchema),

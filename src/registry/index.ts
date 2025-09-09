@@ -11,6 +11,7 @@ import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 import { projectsContext } from "../templates/contexts/projects.ts";
 import { postgresClient } from "../postgres/client.ts";
+import { filesContext } from "../templates/contexts/files.ts";
 
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
@@ -34,6 +35,13 @@ export type ExuluConfig = {
     }
     MCP: {
         enabled: boolean,
+    },
+    fileUploads: {
+        s3region: string,
+        s3key: string,
+        s3secret: string,
+        s3Bucket: string,
+        s3endpoint?: string,
     }
 }
 
@@ -60,7 +68,8 @@ export class ExuluApp {
         this._contexts = {
             ...contexts,
             projectsContext,
-            codeStandardsContext
+            codeStandardsContext,
+            filesContext
         };
 
         this._agents = [

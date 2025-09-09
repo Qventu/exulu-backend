@@ -8,8 +8,8 @@ export const defaultAgent = new ExuluAgent({
     type: "agent",
     capabilities: {
         text: true,
-        images: [],
-        files: [],
+        images: [".png", ".jpg", ".jpeg", ".webp"],
+        files: [".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx", ".ppt"],
         audio: [],
         video: [],
     },

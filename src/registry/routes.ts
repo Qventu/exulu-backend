@@ -36,6 +36,7 @@ export const global_queues = {
 
 const {
     agentsSchema,
+    projectsSchema,
     evalResultsSchema,
     jobsSchema,
     agentSessionsSchema,
@@ -84,11 +85,11 @@ const createRecurringJobs = async () => {
 }
 
 export type ExuluTableDefinition = {
-    type?: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items",
+    type?: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects",
     id?: string,
     name: {
-        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents",
-        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent",
+        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects",
+        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project",
     },
     fields: {
         name: string,
@@ -151,6 +152,7 @@ export const createExpressRoutes = async (
         usersSchema(),
         rolesSchema(),
         agentsSchema(),
+        projectsSchema(),
         jobsSchema(),
         evalResultsSchema(),
         agentSessionsSchema(),
@@ -606,13 +608,14 @@ Mood: friendly and intelligent.
     })
 
     if (
-        process.env.COMPANION_S3_REGION &&
-        process.env.COMPANION_S3_KEY &&
-        process.env.COMPANION_S3_SECRET
+        config?.fileUploads?.s3region &&
+        config?.fileUploads?.s3key &&
+        config?.fileUploads?.s3secret &&
+        config?.fileUploads?.s3Bucket
     ) {
-        await createUppyRoutes(app)
+        await createUppyRoutes(app, config)
     } else {
-        console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in the environment.")
+        console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in ExuluApp instance.")
     }
 
     const TARGET_API = 'https://api.anthropic.com';

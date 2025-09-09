@@ -2,27 +2,30 @@ import { type Express } from "express";
 import { authentication } from "../auth/auth";
 import { getToken } from "../auth/get-token"
 import { postgresClient } from "../postgres/client";
+import type { ExuluConfig } from "./index";
+import {
+    S3Client,
+    AbortMultipartUploadCommand,
+    CompleteMultipartUploadCommand,
+    CreateMultipartUploadCommand,
+    GetObjectCommand,
+    ListPartsCommand,
+    PutObjectCommand,
+    UploadPartCommand,
+    ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import {
+    STSClient,
+    GetFederationTokenCommand,
+} from '@aws-sdk/client-sts';
+import { randomUUID } from 'node:crypto';
 
 export const createUppyRoutes = async (
     app: Express,
+    config: ExuluConfig
 ) => {
 
-    const {
-        S3Client,
-        AbortMultipartUploadCommand,
-        CompleteMultipartUploadCommand,
-        CreateMultipartUploadCommand,
-        GetObjectCommand,
-        ListPartsCommand,
-        PutObjectCommand,
-        UploadPartCommand,
-        ListObjectsV2Command,
-    } = require('@aws-sdk/client-s3')
-    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner')
-    const {
-        STSClient,
-        GetFederationTokenCommand,
-    } = require('@aws-sdk/client-sts')
 
     const policy = {
         Version: '2012-10-17',
@@ -33,8 +36,8 @@ export const createUppyRoutes = async (
                     's3:PutObject',
                 ],
                 Resource: [
-                    `arn:aws:s3:::${process.env.COMPANION_S3_BUCKET}/*`,
-                    `arn:aws:s3:::${process.env.COMPANION_S3_BUCKET}`,
+                    `arn:aws:s3:::${config.fileUploads.s3Bucket}/*`,
+                    `arn:aws:s3:::${config.fileUploads.s3Bucket}`,
                 ],
             },
         ],
@@ -54,14 +57,14 @@ export const createUppyRoutes = async (
 
     function getS3Client() {
         s3Client ??= new S3Client({
-            region: process.env.COMPANION_S3_REGION,
-            ...(process.env.COMPANION_S3_ENDPOINT && {
+            region: config.fileUploads.s3region,
+            ...(config.fileUploads.s3endpoint && {
                 forcePathStyle: true,
-                endpoint: process.env.COMPANION_S3_ENDPOINT
+                endpoint: config.fileUploads.s3endpoint
             }),
             credentials: {
-                accessKeyId: process.env.COMPANION_S3_KEY,
-                secretAccessKey: process.env.COMPANION_S3_SECRET,
+                accessKeyId: config.fileUploads.s3key,
+                secretAccessKey: config.fileUploads.s3secret,
             },
         })
         return s3Client
@@ -69,11 +72,11 @@ export const createUppyRoutes = async (
 
     function getSTSClient() {
         stsClient ??= new STSClient({
-            region: process.env.COMPANION_S3_REGION,
-            ...(process.env.COMPANION_S3_ENDPOINT && { endpoint: process.env.COMPANION_S3_ENDPOINT }),
+            region: config.fileUploads.s3region,
+            ...(config.fileUploads.s3endpoint && { endpoint: config.fileUploads.s3endpoint }),
             credentials: {
-                accessKeyId: process.env.COMPANION_S3_KEY,
-                secretAccessKey: process.env.COMPANION_S3_SECRET,
+                accessKeyId: config.fileUploads.s3key,
+                secretAccessKey: config.fileUploads.s3secret,
             },
         })
         return stsClient
@@ -115,7 +118,7 @@ export const createUppyRoutes = async (
 
         try {
             const command = new ListObjectsV2Command({
-                Bucket: process.env.COMPANION_S3_BUCKET,
+                Bucket: config.fileUploads.s3Bucket,
                 Prefix: prefix,
                 MaxKeys: 1000, // Adjust this value based on your needs
             });
@@ -179,7 +182,7 @@ export const createUppyRoutes = async (
             const url = await getSignedUrl(
                 getS3Client(),
                 new GetObjectCommand({
-                    Bucket: process.env.COMPANION_S3_BUCKET,
+                    Bucket: config.fileUploads.s3Bucket,
                     Key: key,
                 }),
                 { expiresIn }
@@ -211,8 +214,8 @@ export const createUppyRoutes = async (
             res.setHeader('Cache-Control', `public,max-age=${expiresIn}`)
             res.json({
                 credentials: response.Credentials,
-                bucket: process.env.COMPANION_S3_BUCKET,
-                region: process.env.COMPANION_S3_REGION,
+                bucket: config.fileUploads.s3Bucket,
+                region: config.fileUploads.s3region,
             })
         }, next)
     })
@@ -233,7 +236,7 @@ export const createUppyRoutes = async (
         }
     }
 
-    const generateS3Key = (filename) => `${crypto.randomUUID()}-${filename}`
+    const generateS3Key = (filename) => `${randomUUID()}-${filename}`
 
     const signOnServer = async (req, res, next) => {
         // Before giving the signature to the user, you should first check is they
@@ -274,7 +277,7 @@ export const createUppyRoutes = async (
         getSignedUrl(
             getS3Client(),
             new PutObjectCommand({
-                Bucket: process.env.COMPANION_S3_BUCKET,
+                Bucket: config.fileUploads.s3Bucket,
                 Key: folder + key,
                 ContentType: contentType,
             }),
@@ -282,6 +285,7 @@ export const createUppyRoutes = async (
         ).then((url) => {
             res.setHeader('Access-Control-Allow-Origin', "*")
             res.json({
+                key,
                 url,
                 method: 'PUT',
             })
@@ -329,7 +333,7 @@ export const createUppyRoutes = async (
         if (typeof type !== 'string') {
             return res.status(400).json({ error: 's3: content type must be a string' })
         }
-        const key = `${crypto.randomUUID()}-${filename}`
+        const key = `${randomUUID()}-${filename}`
 
         let folder = "";
         if (authenticationResult.user.type === "api") {
@@ -339,7 +343,7 @@ export const createUppyRoutes = async (
         }
 
         const params = {
-            Bucket: process.env.COMPANION_S3_BUCKET,
+            Bucket: config.fileUploads.s3Bucket,
             Key: folder + key,
             ContentType: type,
             Metadata: metadata,
@@ -354,7 +358,7 @@ export const createUppyRoutes = async (
             }
             res.setHeader('Access-Control-Allow-Origin', "*")
             res.json({
-                key: data.Key,
+                key,
                 uploadId: data.UploadId,
             })
         })
@@ -378,10 +382,10 @@ export const createUppyRoutes = async (
         }
 
         return getSignedUrl(getS3Client(), new UploadPartCommand({
-            Bucket: process.env.COMPANION_S3_BUCKET,
+            Bucket: config.fileUploads.s3Bucket,
             Key: key,
             UploadId: uploadId,
-            PartNumber: partNumber,
+            PartNumber: Number(partNumber),
             Body: '',
         }), { expiresIn }).then((url) => {
             res.setHeader('Access-Control-Allow-Origin', '*')
@@ -403,8 +407,8 @@ export const createUppyRoutes = async (
 
         function listPartsPage(startAt) {
             client.send(new ListPartsCommand({
-                Bucket: process.env.COMPANION_S3_BUCKET,
-                Key: key,
+                Bucket: config.fileUploads.s3Bucket,
+                Key: key as string,
                 UploadId: uploadId,
                 PartNumberMarker: startAt,
             }), (err, data) => {
@@ -439,13 +443,14 @@ export const createUppyRoutes = async (
         if (typeof key !== 'string') {
             return res.status(400).json({ error: 's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"' })
         }
+
         if (!Array.isArray(parts) || !parts.every(isValidPart)) {
             return res.status(400).json({ error: 's3: `parts` must be an array of {ETag, PartNumber} objects.' })
         }
 
         return client.send(new CompleteMultipartUploadCommand({
-            Bucket: process.env.COMPANION_S3_BUCKET,
-            Key: key,
+            Bucket: config.fileUploads.s3Bucket,
+            Key: key,   
             UploadId: uploadId,
             MultipartUpload: {
                 Parts: parts,
@@ -457,6 +462,7 @@ export const createUppyRoutes = async (
             }
             res.setHeader('Access-Control-Allow-Origin', '*')
             res.json({
+                key,
                 location: data.Location,
             })
         })
@@ -472,7 +478,7 @@ export const createUppyRoutes = async (
         }
 
         return client.send(new AbortMultipartUploadCommand({
-            Bucket: process.env.COMPANION_S3_BUCKET,
+            Bucket: config.fileUploads.s3Bucket,
             Key: key,
             UploadId: uploadId,
         }), (err) => {
@@ -480,7 +486,9 @@ export const createUppyRoutes = async (
                 next(err)
                 return
             }
-            res.json({})
+            res.json({
+                key,
+            })
         })
     })
 
