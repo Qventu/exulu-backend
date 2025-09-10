@@ -114,8 +114,6 @@ export const createExpressRoutes = async (
     tracer?: Tracer
 ): Promise<Express> => {
 
-    console.log("============= agents =============", agents?.length)
-
     // todo make this more secure / configurable
     var corsOptions = {
         origin: '*',
@@ -145,7 +143,7 @@ export const createExpressRoutes = async (
     if (redisServer.host?.length && redisServer.port?.length) {
         await createRecurringJobs();
     } else {
-        console.log("===========================", "[EXULU] no redis server configured, not setting up recurring jobs.", "===========================")
+        console.log("[o_o]", "[EXULU] no redis server configured, not setting up recurring jobs.", "[o_o]")
     }
 
     const schema = createSDL([

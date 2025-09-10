@@ -15,7 +15,6 @@ import { filesContext } from "../templates/contexts/files.ts";
 
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
-    console.log("[EXULU] validating context id.", id)
     const regex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
     const isValid = regex.test(id);
     const length = id.length;
@@ -212,7 +211,6 @@ export class ExuluApp {
                 let tracer: Tracer | undefined;
 
                 if (this._config?.telemetry?.enabled) {
-                    console.log("[EXULU] telemetry enabled.")
                     tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
                 }
 
@@ -243,7 +241,6 @@ export class ExuluApp {
 
                 let tracer: Tracer | undefined;
                 if (this._config?.telemetry?.enabled) {
-                    console.log("[EXULU] telemetry enabled")
                     tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
                 }
 

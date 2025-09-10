@@ -1975,7 +1975,7 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
 
     tables = [...tables, ...contextSchemas]
 
-    console.log("[EXULU] Creating SDL")
+    console.log("[EXULU] Creating SDL.")
     let typeDefs = `
     scalar JSON
     scalar Date
