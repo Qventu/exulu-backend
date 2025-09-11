@@ -9,7 +9,7 @@ export type ExuluBullMqDecoratorData = {
     label: string,
     embedder?: string,
     inputs: any,
-    user?: string,
+    user?: number,
     role?: string,
     trigger: STATISTICS_LABELS,
     workflow?: string,

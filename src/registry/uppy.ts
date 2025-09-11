@@ -13,6 +13,7 @@ import {
     PutObjectCommand,
     UploadPartCommand,
     ListObjectsV2Command,
+    DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
@@ -82,20 +83,20 @@ export const createUppyRoutes = async (
         return stsClient
     }
 
-    app.get('/s3/list', async (req, res, next) => {
-        req.accepts
+    app.delete('/s3/delete', async (req, res, next) => {
         const apikey: any = req.headers['exulu-api-key'] || null;
-        
+        const internalkey: any = req.headers['internal-key'] || null;
+        const { db } = await postgresClient()
+
         let authtoken: any = null;
-        if (typeof apikey !== "string") { // default to next auth tokens to authenticate
+        if (typeof apikey !== "string" && typeof internalkey !== "string") { // default to next auth tokens to authenticate
             authtoken = await getToken(req.headers.authorization ?? "")
         }
-
-        const { db } = await postgresClient()
         const authenticationResult = await authentication({
             authtoken,
             apikey,
-            db: db
+            internalkey,
+            db: db,
         })
 
         if (!authenticationResult.user?.id) {
@@ -103,44 +104,43 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const { prefix = '' } = req.query;
+        const { key } = req.query;
 
-        if (typeof prefix !== 'string') {
-            res.status(400).json({ error: 'Invalid prefix parameter. Must be a string.' });
+        if (typeof key !== 'string' || key.trim() === '') {
+            res.status(400).json({ error: 'Missing or invalid `key` query parameter.' });
             return;
         }
 
-        // If not an API user, ensure they can only list their own files
-        if (authenticationResult.user.type !== "api" && !prefix.includes(authenticationResult.user.id)) {
-            res.status(405).json({ error: 'Not allowed to list files in this folder based on authenticated user.' });
+        const userPrefix = key.split("/")[0];
+
+        console.log("userPrefix", userPrefix)
+        console.log("authenticationResult.user.id", authenticationResult.user.id)
+
+        if (!userPrefix) {
+            res.status(405).json({ error: 'Invalid key, does not contain a user prefix like "<user_id>/<key>.' });
             return;
         }
 
-        try {
-            const command = new ListObjectsV2Command({
-                Bucket: config.fileUploads.s3Bucket,
-                Prefix: prefix,
-                MaxKeys: 1000, // Adjust this value based on your needs
-            });
-
-            const data = await getS3Client().send(command);
-
-            const files = data.Contents?.map(item => ({
-                key: item.Key,
-                size: item.Size,
-                lastModified: item.LastModified,
-            })) || [];
-
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.status(200).json({
-                files,
-                isTruncated: data.IsTruncated,
-                nextContinuationToken: data.NextContinuationToken
-            });
-        } catch (err) {
-            next(err);
+        if (userPrefix !== authenticationResult.user.id.toString()) {
+            res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
+            return;
         }
-    });
+
+        // If access key is an api user we allow access to all folders. If not, we limit
+        // to the user's own upload folders.
+        if (authenticationResult.user.type !== "api" && !key.includes(authenticationResult.user.id.toString())) {
+            res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
+            return;
+        }
+
+        const client = getS3Client()
+        const command = new DeleteObjectCommand({
+            Bucket: config.fileUploads.s3Bucket,
+            Key: key,
+        })
+        await client.send(command)
+        res.json({ key })
+    })
 
     app.get('/s3/download', async (req, res, next) => {
 
@@ -171,9 +171,21 @@ export const createUppyRoutes = async (
             return;
         }
 
+        const userPrefix = key.split("/")[0];
+
+        if (!userPrefix) {
+            res.status(405).json({ error: 'Invalid key, does not contain a user prefix like "<user_id>/<key>.' });
+            return;
+        }
+
+        if (userPrefix !== authenticationResult.user.id.toString()) {
+            res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
+            return;
+        }
+
         // If access key is an api user we allow access to all folders. If not, we limit
         // to the user's own upload folders.
-        if (authenticationResult.user.type !== "api" && !key.includes(authenticationResult.user.id)) {
+        if (authenticationResult.user.type !== "api" && !key.includes(authenticationResult.user.id.toString())) {
             res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
             return;
         }

@@ -85,11 +85,11 @@ const createRecurringJobs = async () => {
 }
 
 export type ExuluTableDefinition = {
-    type?: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects",
+    type?: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items",
     id?: string,
     name: {
-        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects",
-        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project",
+        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items",
+        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item",
     },
     fields: {
         name: string,
@@ -415,7 +415,7 @@ Mood: friendly and intelligent.
             const agentIsPublic = agentInstance.rights_mode === "public";
             const agentByUsers = agentInstance.rights_mode === "users";
             const agentByRoles = agentInstance.rights_mode === "roles";
-            const isAgentCreator = agentInstance.created_by === user.id;
+            const isAgentCreator = agentInstance.created_by === user.id.toString();
             const isAdmin = user.super_admin;
             const isApi = user.type === "api";
 
@@ -426,10 +426,12 @@ Mood: friendly and intelligent.
             }
 
             if (agentByUsers) {
+                console.log("agentInstance.RBAC?.users", agentInstance.RBAC?.users)
+                console.log("user.id", user.id.toString())
                 hasAccessToAgent = agentInstance.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
-                if (!hasAccessToAgent || hasAccessToAgent === "none" || hasAccessToAgent === "read") {
-                    res.status(410).json({
-                        message: `Your current user ${user.id} does not have access to this agent.`
+                if (!hasAccessToAgent || hasAccessToAgent === "none") {
+                    res.status(401).json({
+                        message: `Your current user ${user.id} does not have access to this agent, current access type is: ${hasAccessToAgent}.`
                     })
                     return;
                 }
@@ -437,8 +439,8 @@ Mood: friendly and intelligent.
 
             if (agentByRoles) {
                 hasAccessToAgent = agentInstance.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
-                if (!hasAccessToAgent || hasAccessToAgent === "none" || hasAccessToAgent === "read") {
-                    res.status(410).json({
+                if (!hasAccessToAgent || hasAccessToAgent === "none") {
+                    res.status(401).json({
                         message: `Your current role ${user.role?.name} does not have access to this agent.`
                     })
                     return;
@@ -456,7 +458,7 @@ Mood: friendly and intelligent.
                 const sessionIsPublic = agentInstance.rights_mode === "public";
                 const sessionByUsers = agentInstance.rights_mode === "users";
                 const sessionByRoles = agentInstance.rights_mode === "roles";
-                const isSessionCreator = agentInstance.created_by === user.id;
+                const isSessionCreator = agentInstance.created_by === user.id.toString();
                 const isAdmin = user.super_admin;
                 const isApi = user.type === "api";
 
@@ -464,28 +466,33 @@ Mood: friendly and intelligent.
                     hasAccessToSession = "write"
                 }
 
-                if (sessionByUsers) {
-                    hasAccessToSession = session.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
-                    if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
-                        res.status(410).json({
-                            message: `Your current user ${user.id} does not have access to this session.`
-                        })
-                        return;
+                console.log("agentInstance.created_by", agentInstance.created_by)
+                console.log("user.id", user.id)
+
+                if (!isSessionCreator && !isAdmin && !isApi && !sessionIsPublic) {
+                    if (sessionByUsers) {
+                        hasAccessToSession = session.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
+                        if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
+                            res.status(401).json({
+                                message: `Your current user does not have access to this session.`
+                            })
+                            return;
+                        }
                     }
-                }
-                if (sessionByRoles) {
-                    hasAccessToSession = session.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
-                    if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
-                        res.status(410).json({
-                            message: `Your current role ${user.role?.name} does not have access to this session.`
-                        })
-                        return;
+                    if (sessionByRoles) {
+                        hasAccessToSession = session.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
+                        if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
+                            res.status(401).json({
+                                message: `Your current role '${user.role?.name}' does not have access to this session.`
+                            })
+                            return;
+                        }
                     }
                 }
             }
 
             if (!hasAccessToAgent || hasAccessToAgent === "none") {
-                res.status(410).json({
+                res.status(401).json({
                     message: "You don't have access to this agent."
                 })
                 return;
@@ -493,14 +500,14 @@ Mood: friendly and intelligent.
 
 
             if (!hasAccessToSession || hasAccessToSession === "none") {
-                res.status(410).json({
+                res.status(401).json({
                     message: "You don't have access to this session."
                 })
                 return;
             }
 
             if (headers.session && !hasAccessToSession) {
-                res.status(410).json({
+                res.status(401).json({
                     message: "You don't have access to this session."
                 })
                 return;

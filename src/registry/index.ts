@@ -9,7 +9,6 @@ import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
-import { projectsContext } from "../templates/contexts/projects.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
 
@@ -66,7 +65,6 @@ export class ExuluApp {
 
         this._contexts = {
             ...contexts,
-            projectsContext,
             codeStandardsContext,
             filesContext
         };

@@ -53,7 +53,8 @@ const agentSessionsSchema: ExuluTableDefinition = {
         },
         {
             name: "project",
-            type: "uuid"
+            type: "uuid",
+            required: false
         }
     ]
 }
@@ -157,12 +158,12 @@ const projectsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
-            name: "custom_instructions",
-            type: "longText"
+            name: "project_items", // array of items as global ids ('<context_id>/<item_id>')
+            type: "json",
         },
         {
-            name: "context_files",
-            type: "json"
+            name: "custom_instructions",
+            type: "longText"
         }
     ]
 }

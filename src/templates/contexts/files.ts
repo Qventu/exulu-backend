@@ -14,23 +14,11 @@ export const filesContext = new ExuluContext({
             type: "text"
         },
         {
-            name: "s3bucket",
-            type: "text"
-        },
-        {
-            name: "s3region",
-            type: "text"
-        },
-        {
             name: "url",
             type: "text"
         },
         {
             name: "s3key",  // ID of the file in S3 storage
-            type: "text"
-        },
-        {
-            name: "s3endpoint",
             type: "text"
         },
         {

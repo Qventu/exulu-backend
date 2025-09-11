@@ -38,7 +38,7 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string, user?: string, role?: string): Record<string, Tool> => {
+const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string, user?: number, role?: string): Record<string, Tool> => {
     if (!tools) return {};
     const sanitizedTools = tools ? tools.map(tool => ({
         ...tool,
@@ -167,6 +167,12 @@ export type ExuluAgentEval = {
     runner: ExuluEvalRunnerInstance,
 }
 
+export type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
+export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt';
+export type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
+export type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
+export type allFileTypes = imageTypes | fileTypes | audioTypes | videoTypes;
+
 interface ExuluAgentParams {
     id: string;
     name: string;
@@ -175,10 +181,10 @@ interface ExuluAgentParams {
     config?: ExuluAgentConfig | undefined;
     capabilities?: {
         text: boolean;
-        images: ('.png' | '.jpg' | '.jpeg' | '.gif' | '.webp')[];
-        files: ('.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt')[];
-        audio: ('.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg')[];
-        video: ('.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav')[];
+        images: imageTypes[];
+        files: fileTypes[];
+        audio: audioTypes[];
+        video: videoTypes[];
     };
     evals?: ExuluAgentEval[];
     outputSchema?: ZodSchema;
@@ -287,7 +293,7 @@ export class ExuluAgent {
 
     generateSync = async ({ prompt, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
         prompt?: string,
-        user?: string,
+        user?: number,
         role?: string,
         session?: string,
         message?: UIMessage,
@@ -395,7 +401,7 @@ export class ExuluAgent {
             res: Response,
             req: Request,
         },
-        user: string, role: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
+        user: number, role: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
     }) => {
 
         if (!this.model) {
@@ -482,13 +488,13 @@ export class ExuluAgent {
 }
 
 // todo check how to deal with pagination
-const getAgentMessages = async ({ session, user, limit, page }: { session: string, user: string, limit: number, page: number }) => {
+const getAgentMessages = async ({ session, user, limit, page }: { session: string, user: number, limit: number, page: number }) => {
     const { db } = await postgresClient();
     const messages = await db.from("agent_messages").where({ session, user }).limit(limit).offset(page * limit);
     return messages;
 }
 
-const saveChat = async ({ session, user, messages }: { session: string, user: string, messages: UIMessage[] }) => {
+const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
     const { db } = await postgresClient();
     const promises = messages.map((message) => {
         return db.from("agent_messages").insert({
@@ -558,7 +564,7 @@ export class ExuluEmbedder {
         this.generateEmbeddings = generateEmbeddings;
     }
 
-    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams, user?: string, role?: string): VectorGenerationResponse {
+    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -583,7 +589,7 @@ export class ExuluEmbedder {
         })
     }
 
-    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams, user?: string, role?: string): VectorGenerationResponse {
+    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -946,7 +952,7 @@ export class ExuluContext {
 
     public createAndUpsertEmbeddings = async (
         item: Item,
-        user?: string,
+        user?: number,
         statistics?: ExuluStatisticParams,
         role?: string,
         job?: string
@@ -973,11 +979,6 @@ export class ExuluContext {
             label: statistics?.label || this.name,
             trigger: statistics?.trigger || "agent"
         }, user, role)
-
-        const exists = await db.schema.hasTable(getChunksTableName(this.id));
-        if (!exists) {
-            await this.createChunksTable();
-        }
 
         // first delete all chunks with source = id
         await db.from(getChunksTableName(this.id)).where({ source }).delete();
@@ -1010,7 +1011,7 @@ export class ExuluContext {
                 trigger
             }: {
                 item: Item,
-                user?: string,
+                user?: number,
                 role?: string,
                 trigger: STATISTICS_LABELS
             }): Promise<{
@@ -1056,7 +1057,7 @@ export class ExuluContext {
                     trigger: trigger || "agent"
                 }, role, undefined);
             },
-            all: async (userId?: string, roleId?: string): Promise<{
+            all: async (userId?: number, roleId?: string): Promise<{
                 jobs: string[],
                 items: number
             }> => {
@@ -1097,377 +1098,6 @@ export class ExuluContext {
                 };
 
             }
-        }
-    }
-
-    public getItems = async ({
-        statistics,
-        limit,
-        sort,
-        order,
-        page,
-        name,
-        user,
-        role,
-        archived,
-        query,
-        method
-    }: {
-        statistics?: ExuluStatisticParams,
-        page: number,
-        sort?: "created_at" | "embeddings_updated_at",
-        order?: "desc" | "asc",
-        limit: number,
-        name?: string,
-        user?: string,
-        role?: string,
-        archived?: boolean,
-        query?: string,
-        method?: VectorMethod
-    }) => {
-
-        if (!query && limit > 500) {
-            throw new Error("Limit cannot be greater than 500.")
-        }
-
-        if (query && limit > 50) {
-            throw new Error("Limit cannot be greater than 50 when using a vector search query.")
-        }
-
-        if (page < 1) page = 1;
-        if (limit < 1) limit = 10;
-        let offset = (page - 1) * limit;
-
-        const mainTable = getTableName(this.id);
-        const { db } = await postgresClient();
-        const columns = await db(mainTable).columnInfo();
-
-        const totalQuery = db.count('* as count').from(mainTable).first()
-        const itemsQuery = db.select(Object.keys(columns).map(column => mainTable + "." + column)).from(mainTable).offset(offset).limit(limit)
-
-        if (sort) {
-            itemsQuery.orderBy(sort, order === "desc" ? "desc" : "asc")
-        }
-
-        if (typeof name === "string") {
-            itemsQuery.whereILike("name", `%${name}%`)
-            totalQuery.whereILike("name", `%${name}%`)
-        }
-
-        if (typeof archived === "boolean") {
-            itemsQuery.where("archived", archived)
-            totalQuery.where("archived", archived)
-        }
-
-        if (!query) {
-            // todo allow for receiving "name" req.query param to filter by specific
-            // properties of items. I.e. name=John Doe will filter items where the name
-            // field is equal to John Doe.
-
-            const total = await totalQuery;
-            let items = await itemsQuery;
-            const last = Math.ceil(total.count / limit)
-
-            return {
-                pagination: {
-                    totalCount: parseInt(total.count),
-                    currentPage: page,
-                    limit: limit,
-                    from: offset,
-                    pageCount: last || 1,
-                    to: offset + items.length,
-                    lastPage: last || 1,
-                    nextPage: page + 1 > last ? null : page + 1,
-                    previousPage: page - 1 || null,
-                },
-                filters: {
-                    archived: archived,
-                    name: name,
-                    query: query
-                },
-                context: {
-                    name: this.name,
-                    id: this.id,
-                    embedder: this.embedder?.name || undefined
-                },
-                items: items
-            };
-        }
-
-        if (typeof query === "string" && this.embedder) {
-
-            if (!method) {
-                method = "cosineDistance";
-            }
-
-            itemsQuery.limit(limit * 5) // for semantic search we increase the scope, so we can rerank the results
-
-            // Without blocking the main thread, upsert an entry 
-            // into mongdb of type ExuluStatistic.
-            if (statistics) {
-                await updateStatistic({
-                    name: "count",
-                    label: statistics.label,
-                    type: STATISTICS_TYPE_ENUM.CONTEXT_RETRIEVE as STATISTICS_TYPE,
-                    trigger: statistics.trigger,
-                    user: user,
-                    role: role
-                })
-            }
-            if (this.queryRewriter) {
-                query = await this.queryRewriter(query);
-            }
-
-            const chunksTable = getChunksTableName(this.id);
-
-            itemsQuery.leftJoin(chunksTable, function () {
-                this.on(chunksTable + ".source", "=", mainTable + ".id")
-            })
-
-            itemsQuery.select(chunksTable + ".id as chunk_id")
-            itemsQuery.select(chunksTable + ".source")
-            itemsQuery.select(chunksTable + ".content")
-            itemsQuery.select(chunksTable + ".chunk_index")
-            itemsQuery.select(chunksTable + ".created_at as chunk_created_at")
-            itemsQuery.select(chunksTable + ".updated_at as chunk_updated_at")
-
-            const { chunks } = await this.embedder.generateFromQuery(query, {
-                label: this.name,
-                trigger: "agent"
-            }, user, role)
-
-            if (!chunks?.[0]?.vector) {
-                throw new Error("No vector generated for query.")
-            }
-
-            const vector = chunks[0].vector;
-            const vectorStr = `ARRAY[${vector.join(",")}]`;
-            const vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
-
-            const language = (this.configuration.language || 'english');
-
-            let items: any[] = [];
-
-            switch (method) {
-                case "tsvector":
-                    // rank + filter + sort (DESC)
-                    itemsQuery
-                        .select(db.raw(
-                            `ts_rank(${chunksTable}.fts, websearch_to_tsquery(?, ?)) as fts_rank`,
-                            [language, query]
-                        ))
-                        .whereRaw(
-                            `${chunksTable}.fts @@ websearch_to_tsquery(?, ?)`,
-                            [language, query]
-                        )
-                        .orderByRaw(`fts_rank DESC`);
-                    items = await itemsQuery;
-                    break;
-
-                case "cosineDistance":
-                default:
-                    // Ensure we don't rank rows without embeddings
-                    itemsQuery.whereNotNull(`${chunksTable}.embedding`);
-
-                    // Select cosine *similarity* for display/stats:
-                    // similarity = 1 - cosine_distance  (cosine_distance in [0,2])
-                    // If you prefer pure distance in your stats, change the alias below accordingly.
-                    itemsQuery.select(
-                        db.raw(`1 - (${chunksTable}.embedding <=> ${vectorExpr}) AS cosine_distance`)
-                    );
-
-                    // Very important: ORDER BY the raw distance expression so pgvector can use the index
-                    itemsQuery.orderByRaw(
-                        `${chunksTable}.embedding <=> ${vectorExpr} ASC NULLS LAST`
-                    );
-                    items = await itemsQuery;
-                    break;
-                case "hybridSearch":
-
-                    // Tunables
-                    const matchCount = Math.min(limit * 5, 30);
-                    const fullTextWeight = 1.0;
-                    const semanticWeight = 1.0;
-                    const rrfK = 50;
-
-                    const hybridSQL = `
-                    WITH full_text AS (
-                      SELECT
-                        c.id,
-                        c.source,
-                        row_number() OVER (
-                          ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery(?, ?)) DESC
-                        ) AS rank_ix
-                      FROM ${chunksTable} c
-                      WHERE c.fts @@ websearch_to_tsquery(?, ?)
-                      ORDER BY rank_ix
-                      LIMIT LEAST(?, 30) * 2
-                    ),
-                    semantic AS (
-                      SELECT
-                        c.id,
-                        c.source,
-                        row_number() OVER (
-                          ORDER BY c.embedding <=> ${vectorExpr} ASC
-                        ) AS rank_ix
-                      FROM ${chunksTable} c
-                      WHERE c.embedding IS NOT NULL
-                      ORDER BY rank_ix
-                      LIMIT LEAST(?, 30) * 2
-                    )
-                    SELECT
-                      m.*,
-                      c.id AS chunk_id,
-                      c.source,
-                      c.content,
-                      c.chunk_index,
-                      c.created_at AS chunk_created_at,
-                      c.updated_at AS chunk_updated_at,
-                
-                      /* Per-signal scores for introspection */
-                      ts_rank(c.fts, websearch_to_tsquery(?, ?)) AS fts_rank,
-                      (1 - (c.embedding <=> ${vectorExpr})) AS cosine_distance,
-                
-                      /* Hybrid RRF score */
-                      (
-                        COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
-                        +
-                        COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
-                      )::float AS hybrid_score
-                
-                    FROM full_text ft
-                    FULL OUTER JOIN semantic se
-                      ON ft.id = se.id
-                    JOIN ${chunksTable} c
-                      ON COALESCE(ft.id, se.id) = c.id
-                    JOIN ${mainTable} m
-                      ON m.id = c.source
-                    ORDER BY hybrid_score DESC
-                    LIMIT LEAST(?, 30)
-                    OFFSET 0
-                  `;
-
-                    const bindings = [
-                        // full_text: websearch_to_tsquery(lang, query) in rank and where
-                        language, query,
-                        language, query,
-                        matchCount,                    // full_text limit
-
-                        matchCount,                    // semantic limit
-
-                        // fts_rank (ts_rank) call
-                        language, query,
-
-                        // RRF fusion parameters
-                        rrfK, fullTextWeight,
-                        rrfK, semanticWeight,
-
-                        matchCount                     // final limit
-                    ];
-                    items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
-            }
-
-            console.log("items", items)
-            // Filter out duplicate sources, keeping only the first occurrence
-            // because the vector search returns multiple chunks for the same
-            // source.
-            const seenSources = new Map();
-            items = items.reduce((acc, item) => {
-                if (!seenSources.has(item.source)) {
-                    seenSources.set(item.source, {
-                        ...Object.fromEntries(
-                            Object.keys(item)
-                                .filter(key =>
-                                    key !== "cosine_distance" &&   // kept per chunk below
-                                    key !== "fts_rank" &&          // kept per chunk below
-                                    key !== "hybrid_score" &&      // we will compute per item below
-
-                                    key !== "content" &&
-                                    key !== "source" &&
-                                    key !== "chunk_index" &&
-                                    key !== "chunk_id" &&
-                                    key !== "chunk_created_at" &&
-                                    key !== "chunk_updated_at"
-                                )
-                                .map(key => [key, item[key]])
-                        ),
-                        chunks: [{
-                            content: item.content,
-                            chunk_index: item.chunk_index,
-                            ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
-                            ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
-                            ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
-                        }]
-                    });
-                    acc.push(seenSources.get(item.source));
-                } else {
-                    seenSources.get(item.source).chunks.push({
-                        content: item.content,
-                        chunk_index: item.chunk_index,
-                        ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
-                        ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
-                        ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
-                    });
-                }
-                return acc;
-            }, []);
-
-            console.log("items", items)
-
-            items.forEach(item => {
-                if (!item.chunks?.length) { return; }
-
-                if (method === "tsvector") {
-                    const ranks = item.chunks
-                        .map(c => (typeof c.fts_rank === 'number' ? c.fts_rank : 0));
-                    const total = ranks.reduce((a, b) => a + b, 0);
-                    const average = ranks.length ? total / ranks.length : 0;
-                    item.averageRelevance = average;
-                    item.totalRelevance = total;
-
-                } else if (method === "cosineDistance") {
-                    let methodProperty = "cosine_distance";
-                    const average = item.chunks.reduce((acc, item) => {
-                        return acc + item[methodProperty];
-                    }, 0) / item.chunks.length;
-
-                    const total = item.chunks.reduce((acc, item) => {
-                        return acc + item[methodProperty];
-                    }, 0);
-                    item.averageRelevance = average;
-                    item.totalRelevance = total;
-
-                } else if (method === "hybridSearch") {
-                    console.log("item.chunks", item.chunks)
-                    // we multiply by 10 and add 1 to somewhat normalize the score against when cosine distance is used
-                    const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? (c.hybrid_score * 10) + 1 : 0));
-                    const total = scores.reduce((a, b) => a + b, 0);
-                    const average = scores.length ? total / scores.length : 0;
-                    item.averageRelevance = average;
-                    item.totalRelevance = total;
-                }
-            })
-
-            // todo if query && resultReranker, rerank the results
-            if (this.resultReranker && query) {
-                items = await this.resultReranker(items);
-            }
-
-            items = items.slice(0, limit);
-
-            return {
-                filters: {
-                    archived: archived,
-                    name: name,
-                    query: query,
-                },
-                context: {
-                    name: this.name,
-                    id: this.id,
-                    embedder: this.embedder.name
-                },
-                items
-            };
         }
     }
 
@@ -1587,7 +1217,7 @@ export type ExuluStatistic = {
 
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
-export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: string, role?: string }) => {
+export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string }) => {
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
 

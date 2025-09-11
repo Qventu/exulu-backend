@@ -243,10 +243,13 @@ ${fieldFilters.join("\n")}
 }
 
 const getRequestedFields = (info: any): string[] => {
+    console.log("info.operation.selectionSet.selections[0].selectionSet.selections", info.operation.selectionSet.selections[0].selectionSet.selections)
     const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
     const itemSelection = selections.find(s => s.name.value === 'item');
     const itemsSelection = selections.find(s => s.name.value === 'items');
     let fields: string[] = [];
+    console.log("itemSelection", itemSelection)
+    console.log("itemsSelection", itemsSelection)
     if (itemSelection) {
         fields = Object.keys(itemSelection.selectionSet.selections.reduce((acc, field) => {
             acc[field.name.value] = true;
@@ -376,9 +379,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
     const validateWriteAccess = async (id: string, context: any) => {
 
         try {
-
             const { db, req, user } = context;
-
             if (user.super_admin === true) {
                 return true; // todo roadmap - scoping api users to specific resources
             }
@@ -2147,7 +2148,6 @@ type PageInfo {
     }
 
     // add additional resolvers
-
     typeDefs += `
    providers: ProviderPaginationResult
     `
