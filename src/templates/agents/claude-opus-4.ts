@@ -1,19 +1,20 @@
 import { ExuluAgent } from "../../registry/classes"
 import { createAnthropic } from '@ai-sdk/anthropic';
 
-export const defaultAgent = new ExuluAgent({
+export const claudeOpus4Agent = new ExuluAgent({
     id: `default_claude_4_opus_agent`,
-    name: `Default Claude 4 Opus Agent`,
-    description: `Basic agent without any defined tools, that can support MCP's.`,
+    name: `Default Claude 4 Opus anthropic provider`,
+    description: `Basic agent claude 4 opus agent you can use to chat with.`,
     type: "agent",
     capabilities: {
         text: true,
         images: [".png", ".jpg", ".jpeg", ".webp"],
-        files: [".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx", ".ppt"],
+        files: [".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx", ".ppt", ".json"],
         audio: [],
         video: [],
     },
     evals: [],
+    maxContextLength: 200000,
     config: {
         name: `Default agent`,
         instructions: "You are a helpful assistant.",

@@ -38,7 +38,7 @@ export const authentication = async ({
             code: 200,
             user: {
                 type: "api",
-                id: "XXXX-XXXX-XXXX-XXXX",
+                id: 192837465,
                 email: "internal@exulu.com",
                 role: {
                     id: "internal",

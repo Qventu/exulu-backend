@@ -19,6 +19,15 @@ export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", na
         if (unique) t.unique(name);
         return;
     }
+    if (type === "markdown") {
+        if (defaultValue) {
+            t.text(name).defaultTo(defaultValue);
+        } else {
+            t.text(name);
+        }
+        if (unique) t.unique(name);
+        return;
+    }
     if (type === "shortText") {
         if (defaultValue) {
             t.string(name, 100).defaultTo(defaultValue);

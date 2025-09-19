@@ -85,6 +85,7 @@ const up = async function (knex: Knex) {
         }
     }
     for (const schema of schemas) {
+        console.log(`[EXULU] Creating ${schema.name.plural} table.`, schema.fields)
         await createTable(schema)
     }
 

@@ -1,15 +1,11 @@
-import { ZodSchema } from "zod";
-import { Job, Queue } from "bullmq";
+import { Queue } from "bullmq";
 import { z } from "zod"
-import * as fs from 'fs';
-import * as path from 'path';
 import { convertToModelMessages, createIdGenerator, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
-import { postgresClient } from "../postgres/client";
+import { postgresClient, refreshPostgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
-import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
@@ -17,8 +13,21 @@ import { sanitizeName } from "./utils/sanitize-name";
 import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
 import { type Request, type Response } from "express";
-import { trace } from "@opentelemetry/api";
 import { vectorSearch } from "./utils/graphql";
+import {
+    PutObjectCommand,
+    S3Client,
+    S3ServiceException,
+} from "@aws-sdk/client-s3";
+import type { ExuluConfig } from ".";
+import { randomUUID } from 'node:crypto';
+import { checkRecordAccess, getEnabledTools, loadAgent } from "./utils";
+import type { User } from "@EXULU_TYPES/models/user";
+
+/**
+ * @type {S3Client}
+ */
+let s3Client
 
 export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
@@ -38,20 +47,31 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: ExuluAgentToolConfig[] | undefined, providerApiKey: string, user?: number, role?: string): Record<string, Tool> => {
-    if (!tools) return {};
-    const sanitizedTools = tools ? tools.map(tool => ({
+const convertToolsArrayToObject = (
+    currentTools: ExuluTool[] | undefined,
+    allExuluTools: ExuluTool[] | undefined,
+    configs: ExuluAgentToolConfig[] | undefined,
+    providerapikey: string,
+    contexts: ExuluContext[] | undefined,
+    user?: User,
+    exuluConfig?: ExuluConfig,
+    filesContext?: ExuluContext
+): Record<string, Tool> => {
+
+    if (!currentTools) return {};
+    if (!allExuluTools) return {};
+    const sanitizedTools = currentTools ? currentTools.map(tool => ({
         ...tool,
         name: sanitizeToolName(tool.name)
     })) : [];
 
-    console.log("[EXULU] Sanitized tools", sanitizedTools)
+    console.log("[EXULU] Sanitized tools", sanitizedTools.map(x => x.name + " (" + x.id + ")"))
 
     const askForConfirmation: Tool = {
         description: 'Ask the user for confirmation.',
         inputSchema: z.object({
             message: z.string().describe('The message to ask for confirmation.'),
-        }),
+        })
     }
 
     return {
@@ -60,32 +80,121 @@ const convertToolsArrayToObject = (tools: ExuluTool[] | undefined, configs: Exul
             ({
                 ...prev, [cur.name]: {
                     ...cur.tool,
-                    execute: async (inputs: any, options: any) => {
+                    async *execute(inputs: any, options: any) { // generator function allows to use yield to stream tool call results
                         if (!cur.tool?.execute) {
                             console.error("[EXULU] Tool execute function is undefined.", cur.tool)
                             throw new Error("Tool execute function is undefined.")
                         }
-                        let config = configs?.find(config => config.toolId === cur.id);
+                        let config = configs?.find(config => config.id === cur.id);
 
                         if (config) {
                             config = await hydrateVariables(config || []);
                         }
 
-                        console.log("[EXULU] Config", config)
+                        let upload: undefined | (
+                            (file: {
+                                name: string,
+                                data: string | Uint8Array | Buffer,
+                                type: allFileTypes,
+                                tags?: string[]
+                            }) => Promise<Item | undefined>) = undefined;
 
-                        return await cur.tool.execute({
+                        if (
+                            exuluConfig?.fileUploads?.s3endpoint &&
+                            exuluConfig?.fileUploads?.s3key &&
+                            exuluConfig?.fileUploads?.s3secret &&
+                            exuluConfig?.fileUploads?.s3Bucket &&
+                            filesContext
+                        ) {
+                            s3Client ??= new S3Client({
+                                region: exuluConfig?.fileUploads?.s3region,
+                                ...(exuluConfig?.fileUploads?.s3endpoint && {
+                                    forcePathStyle: true,
+                                    endpoint: exuluConfig?.fileUploads?.s3endpoint
+                                }),
+                                credentials: {
+                                    accessKeyId: exuluConfig?.fileUploads?.s3key ?? "",
+                                    secretAccessKey: exuluConfig?.fileUploads?.s3secret ?? "",
+                                },
+                            })
+
+                            upload = async ({
+                                name,
+                                data,
+                                type,
+                                tags
+                            }: {
+                                name: string,
+                                type: allFileTypes,
+                                data: string | Uint8Array | Buffer,
+                                tags?: string[]
+                            }): Promise<Item | undefined> => {
+                                const mime = getMimeType(type)
+                                const key = `${user}/${generateS3Key(name)}${type}`;
+                                const command = new PutObjectCommand({
+                                    Bucket: exuluConfig?.fileUploads?.s3Bucket,
+                                    Key: key,
+                                    Body: data,
+                                    ContentType: mime
+                                });
+                                try {
+                                    const response = await s3Client.send(command);
+                                    console.log(response);
+                                    const { item } = await filesContext.createItem({
+                                        name: `${name}${type}`,
+                                        type: mime,
+                                        rights_mode: "private",
+                                        s3key: key,
+                                        tags
+                                    }, user?.id, user?.role?.id, false)
+
+                                    return item;
+                                } catch (caught) {
+                                    if (
+                                        caught instanceof S3ServiceException &&
+                                        caught.name === "EntityTooLarge"
+                                    ) {
+                                        console.error(
+                                            `Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
+                                The object was too large. To upload objects larger than 5GB, use the S3 console (160GB max) \
+                                or the multipart upload API (5TB max).`,
+                                        );
+                                    } else if (caught instanceof S3ServiceException) {
+                                        console.error(
+                                            `Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}.  ${caught.name}: ${caught.message}`,
+                                        );
+                                    } else {
+                                        throw caught;
+                                    }
+                                }
+                            }
+                        }
+
+                        const contextsMap = contexts?.reduce((acc, curr) => {
+                            acc[curr.id] = curr;
+                            return acc;
+                        }, {});
+
+                        console.log("[EXULU] Config", config)
+                        const response = await cur.tool.execute({
                             ...inputs,
                             // Convert config to object format if a config object 
                             // is available, after we added the .value property
                             // by hydrating it from the variables table.
-                            providerApiKey: providerApiKey,
-                            user: user,
-                            role: role,
+                            providerapikey: providerapikey,
+                            allExuluTools,
+                            currentTools,
+                            user,
+                            contexts: contextsMap,
+                            upload,
                             config: config ? config.config.reduce((acc, curr) => {
                                 acc[curr.name] = curr.value;
                                 return acc;
                             }, {}) : {}
                         }, options);
+
+                        yield response;
+                        return response;
                     }
                 }
             }), {}
@@ -148,7 +257,7 @@ export type ExuluAgentConfig = {
     model: {
         create: ({ apiKey }: { apiKey: string }) => LanguageModel
     },
-    outputSchema?: ZodSchema;
+    outputSchema?: z.ZodType;
     custom?: {
         name: string,
         description: string
@@ -168,7 +277,7 @@ export type ExuluAgentEval = {
 }
 
 export type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
-export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt';
+export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
 export type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
 export type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
 export type allFileTypes = imageTypes | fileTypes | audioTypes | videoTypes;
@@ -176,9 +285,10 @@ export type allFileTypes = imageTypes | fileTypes | audioTypes | videoTypes;
 interface ExuluAgentParams {
     id: string;
     name: string;
-    type: "agent" | "custom";
+    type: "agent";
     description: string;
     config?: ExuluAgentConfig | undefined;
+    maxContextLength?: number;
     capabilities?: {
         text: boolean;
         images: imageTypes[];
@@ -187,17 +297,31 @@ interface ExuluAgentParams {
         video: videoTypes[];
     };
     evals?: ExuluAgentEval[];
-    outputSchema?: ZodSchema;
+    outputSchema?: z.ZodType;
     rateLimit?: RateLimiterRule;
 }
 
 interface ExuluAgentToolConfig {
-    toolId: string,
+    id: string,
+    type: string,
     config: {
         name: string,
         variable: string // is a variable name
         value?: any // fetched on demand from the database based on the variable name
     }[]
+}
+
+export function errorHandler(error: unknown) {
+    if (error == null) {
+        return 'unknown error';
+    }
+    if (typeof error === 'string') {
+        return error;
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return JSON.stringify(error);
 }
 
 export class ExuluAgent {
@@ -209,8 +333,9 @@ export class ExuluAgent {
     public name: string;
     public description: string = "";
     public slug: string = "";
-    public type: "agent" | "custom";
+    public type: "agent";
     public streaming: boolean = false;
+    public maxContextLength?: number;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
     // private memory: Memory | undefined; // TODO do own implementation
@@ -225,7 +350,7 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, type, evals }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, evals, maxContextLength }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
         this.evals = evals;
@@ -233,6 +358,7 @@ export class ExuluAgent {
         this.rateLimit = rateLimit;
         this.config = config;
         this.type = type;
+        this.maxContextLength = maxContextLength;
         this.capabilities = capabilities || {
             text: false,
             images: [],
@@ -266,42 +392,121 @@ export class ExuluAgent {
 
     // Exports the agent as a tool that can be used by another agent
     // todo test this
-    public tool = (): ExuluTool => {
+    public tool = async (instance: string, agents: ExuluAgent[]): Promise<ExuluTool | null> => {
+
+        const agentInstance = await loadAgent(instance);
+
+        if (!agentInstance) {
+            return null;
+        }
+
         return new ExuluTool({
-            id: this.id,
-            name: `${this.name}`,
+            id: agentInstance.id,
+            name: `${agentInstance.name}`,
             type: "agent",
             inputSchema: z.object({
-                prompt: z.string(),
+                prompt: z.string().describe("The prompt (usually a question for the agent) to send to the agent."),
+                information: z.string().describe("A summary of relevant context / information from the current session")
             }),
-            description: `A function that calls an AI agent named: ${this.name}. The agent does the following: ${this.description}.`,
+            description: `This tool calls an AI agent named: ${agentInstance.name}. The agent does the following: ${agentInstance.description}.`,
             config: [],
-            execute: async ({ prompt, config, providerApiKey, user, role }: any) => {
-                return await this.generateSync({
-                    prompt: prompt,
-                    providerApiKey: providerApiKey,
-                    user: user,
-                    role: role,
+            execute: async ({ prompt, information, user, allExuluTools,  }: any) => {
+
+                const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
+
+                if (!hasAccessToAgent) {
+                    throw new Error("You don't have access to this agent.");
+                }
+
+                let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allExuluTools, [], agents, user)
+
+                // Get the variable name from user's anthropic_token field
+                const variableName = agentInstance.providerapikey;
+
+                if (!variableName) {
+                    throw new Error("Provider API key variable not set for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool.")
+                }
+
+                const { db } = await postgresClient();
+                // Look up the variable from the variables table
+                const variable = await db.from("variables").where({ name: variableName }).first();
+                if (!variable) {
+                    throw new Error("Provider API key variable not found for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool.")
+                }
+
+                // Get the API key from the variable (decrypt if encrypted)
+                let providerapikey = variable.value;
+
+                if (!variable.encrypted) {
+                    throw new Error("Provider API key variable not encrypted for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.")
+                }
+
+                if (variable.encrypted) {
+                    const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                    providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+                }
+
+                console.log("[EXULU] Enabled tools for agent '" + agentInstance.name + " (" + agentInstance.id + ")" + " that is being called as a tool", enabledTools.map(x => x.name + " (" + x.id + ")"))
+                console.log("[EXULU] Prompt for agent '" + agentInstance.name + "' that is being called as a tool", prompt.slice(0, 100) + "...")
+                console.log("[EXULU] Instructions for agent '" + agentInstance.name + "' that is being called as a tool", agentInstance.instructions?.slice(0, 100) + "...")
+
+                // todo cant use outputSchema when calling an agent as a tool for now, maybe look into 
+                // enabling this in the future by adding a "outputSchema" field to the inputSchema of this 
+                // tool definition so agents can dynamically define a desired output schema.
+                const response = await this.generateSync({
+
+                    instructions: agentInstance.instructions,
+                    prompt: "The user has asked the following question: " + prompt + " and the following information is available: " + information,
+                    providerapikey: providerapikey,
+                    user,
+                    currentTools: enabledTools,
+                    allExuluTools: allExuluTools,
                     statistics: {
-                        label: "",
+                        label: agentInstance.name,
                         trigger: "tool"
                     }
                 })
+                return {
+                    result: response,
+                }
             },
         });
     }
 
-    generateSync = async ({ prompt, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+    generateSync = async ({
+        prompt,
+        user,
+        session,
+        message,
+        currentTools,
+        allExuluTools,
+        statistics,
+        toolConfigs,
+        providerapikey,
+        contexts,
+        exuluConfig,
+        filesContext,
+        outputSchema,
+        instructions
+
+    }: {
         prompt?: string,
-        user?: number,
-        role?: string,
+        user?: User,
         session?: string,
         message?: UIMessage,
-        tools?: ExuluTool[],
+        currentTools?: ExuluTool[],
+        allExuluTools?: ExuluTool[],
         statistics?: ExuluStatisticParams,
         toolConfigs?: ExuluAgentToolConfig[],
-        providerApiKey: string,
-    }) => {
+        providerapikey: string,
+        contexts?: ExuluContext[] | undefined
+        exuluConfig?: ExuluConfig,
+        filesContext?: ExuluContext
+        instructions?: string,
+        outputSchema?: z.ZodType
+    }): Promise<string | any> => {
+
+        console.log("[EXULU] Called generate sync for agent: " + this.name, "with prompt: " + prompt?.slice(0, 100) + "...")
 
         if (!this.model) {
             throw new Error("Model is required for streaming.")
@@ -319,16 +524,22 @@ export class ExuluAgent {
             throw new Error("Prompt or message is required for generating.")
         }
 
+        if (outputSchema && !prompt) {
+            throw new Error("Prompt is required for generating with an output schema.")
+        }
+
         const model = this.model.create({
-            apiKey: providerApiKey
+            apiKey: providerapikey
         })
+
+        console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.")
 
         let messages: UIMessage[] = [];
         if (message && session && user) {
             // load the previous messages from the server:
             const previousMessages = await getAgentMessages({
                 session,
-                user,
+                user: user.id,
                 limit: 50,
                 page: 1
             })
@@ -341,67 +552,160 @@ export class ExuluAgent {
             });
         }
 
-        console.log("[EXULU] Model provider key", providerApiKey)
+        console.log("[EXULU] Message count for agent: " + this.name, "loaded for generating sync.", messages.length)
 
-        console.log("[EXULU] Tool configs", toolConfigs)
+        const genericContext =
+            "IMPORTANT: \n\n The current date is " + new Date().toLocaleDateString() + " and the current time is " + new Date().toLocaleTimeString() + ". If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume they are talking with the current date in mind as a reference.";
 
+        let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+        system += "\n\n" + genericContext;
 
         if (prompt) {
-            const { text } = await generateText({
-                model: model, // Should be a LanguageModelV1
-                system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
-                prompt: prompt,
-                maxRetries: 2,
-                tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
-                stopWhen: [stepCountIs(5)],
-            });
+            let result: { object?: any, text?: string } = { object: null, text: "" };
+            let tokens: number = 0;
+            if (outputSchema) {
+                const { object, usage } = await generateObject({
+                    model: model,
+                    system,
+                    prompt: prompt,
+                    maxRetries: 3,
+                    schema: outputSchema,
 
-            if (statistics) {
-                await updateStatistic({
-                    name: "count",
-                    label: statistics.label,
-                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                    trigger: statistics.trigger,
-                    count: 1,
-                    user: user,
-                    role: role
-                })
+                });
+                result.object = object;
+                tokens = usage.totalTokens || 0;
+
+            } else {
+                console.log("[EXULU] Generating text for agent: " + this.name, "with prompt: " + prompt?.slice(0, 100) + "...")
+                const { text, totalUsage } = await generateText({
+                    model: model,
+                    system,
+                    prompt: prompt,
+                    maxRetries: 2,
+                    tools: convertToolsArrayToObject(
+                        currentTools,
+                        allExuluTools,
+                        toolConfigs,
+                        providerapikey,
+                        contexts,
+                        user,
+                        exuluConfig,
+                        filesContext
+                    ),
+                    stopWhen: [stepCountIs(2)],
+                });
+                result.text = text;
+                tokens = totalUsage?.totalTokens || 0;
             }
 
-            return text;
+            if (statistics) {
+                await Promise.all([
+                    updateStatistic({
+                        name: "count",
+                        label: statistics.label,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: statistics.trigger,
+                        count: 1,
+                        user: user?.id,
+                        role: user?.role?.id
+                    }),
+                    ...(tokens ? [
+                        updateStatistic({
+                            name: "tokens",
+                            label: statistics.label,
+                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                            trigger: statistics.trigger,
+                            count: tokens,
+                        })] : []
+                    )
+                ])
+            }
+
+            return result.text || result.object;
         }
         if (messages) {
-            const { text } = await generateText({
+            console.log("[EXULU] Generating text for agent: " + this.name, "with messages: " + messages.length)
+            const { text, totalUsage } = await generateText({
                 model: model, // Should be a LanguageModelV1
-                system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
-                messages: convertToModelMessages(messages),
+                system,
+                messages: convertToModelMessages(messages, {
+                    ignoreIncompleteToolCalls: true
+                }),
                 maxRetries: 2,
-                tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
-                stopWhen: [stepCountIs(5)],
+                tools: convertToolsArrayToObject(
+                    currentTools,
+                    allExuluTools,
+                    toolConfigs,
+                    providerapikey,
+                    contexts,
+                    user,
+                    exuluConfig,
+                    filesContext
+                ),
+                stopWhen: [stepCountIs(2)],
             });
 
             if (statistics) {
-                await updateStatistic({
-                    name: "count",
-                    label: statistics.label,
-                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                    trigger: statistics.trigger,
-                    count: 1,
-                    user: user,
-                    role: role
-                })
+                await Promise.all([
+                    updateStatistic({
+                        name: "count",
+                        label: statistics.label,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: statistics.trigger,
+                        count: 1,
+                        user: user?.id,
+                        role: user?.role?.id
+                    }),
+                    ...(totalUsage?.totalTokens ? [
+                        updateStatistic({
+                            name: "tokens",
+                            label: statistics.label,
+                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                            trigger: statistics.trigger,
+                            count: totalUsage?.totalTokens,
+                            user: user?.id,
+                            role: user?.role?.id
+                        })] : []
+                    )
+                ])
             }
 
             return text;
         }
+        return "";
     }
 
-    generateStream = async ({ express, user, role, session, message, tools, statistics, toolConfigs, providerApiKey }: {
+    generateStream = async ({
+        express,
+        user,
+        session,
+        message,
+        currentTools,
+        allExuluTools,
+        statistics,
+        toolConfigs,
+        providerapikey,
+        contexts,
+        exuluConfig,
+        filesContext,
+        instructions,
+    }: {
         express: {
             res: Response,
             req: Request,
         },
-        user: number, role: string, session: string, message?: UIMessage, tools?: ExuluTool[], statistics?: ExuluStatisticParams, toolConfigs?: ExuluAgentToolConfig[], providerApiKey: string
+        user: User,
+        session: string,
+        message?: UIMessage,
+        currentTools?: ExuluTool[],
+        allExuluTools?: ExuluTool[],
+        statistics?: ExuluStatisticParams,
+        toolConfigs?: ExuluAgentToolConfig[],
+        providerapikey: string,
+        contexts?: ExuluContext[] | undefined
+        exuluConfig?: ExuluConfig,
+        filesContext?: ExuluContext
+        instructions?: string,
     }) => {
 
         if (!this.model) {
@@ -417,33 +721,60 @@ export class ExuluAgent {
         }
 
         const model = this.model.create({
-            apiKey: providerApiKey
+            apiKey: providerapikey
         })
 
         let messages: UIMessage[] = [];
         // load the previous messages from the server:
         const previousMessages = await getAgentMessages({
             session,
-            user,
+            user: user.id,
             limit: 50,
             page: 1
         })
 
-        const previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
+        const previousMessagesContent = previousMessages.map(
+            (message) => JSON.parse(message.content)
+        );
+
         // validate messages
         messages = await validateUIMessages({
             // append the new message to the previous messages:
             messages: [...previousMessagesContent, message],
         });
 
+        // Simple things like the current date, time, etc.
+        // we add these to the context to help the agent
+        // by default.
+        const genericContext =
+            "IMPORTANT: \n\n The current date is " + new Date().toLocaleDateString() + " and the current time is " + new Date().toLocaleTimeString() + ". If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume they are talking with the current date in mind as a reference.";
+
+        let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+        system += "\n\n" + genericContext;
+
+        console.log("[EXULU] tools for agent: " + this.name, currentTools?.map(x => x.name + " (" + x.id + ")"))
+        console.log("[EXULU] system", system.slice(0, 100) + "...")
+
         const result = streamText({
             model: model, // Should be a LanguageModelV1
-            messages: convertToModelMessages(messages),
-            system: "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.",
+            messages: convertToModelMessages(messages, {
+                ignoreIncompleteToolCalls: true
+            }),
+            // prepareStep could be used here to set the model for the first step or change other params
+            system,
             maxRetries: 2,
-            tools: convertToolsArrayToObject(tools, toolConfigs, providerApiKey, user, role),
+            tools: convertToolsArrayToObject(
+                currentTools,
+                allExuluTools,
+                toolConfigs,
+                providerapikey,
+                contexts,
+                user,
+                exuluConfig,
+                filesContext
+            ),
             onError: error => console.error("[EXULU] chat stream error.", error),
-            stopWhen: [stepCountIs(5)],
+            // stopWhen: [stepCountIs(1)],
         });
 
         // consume the stream to ensure it runs to completion & triggers onFinish
@@ -451,35 +782,61 @@ export class ExuluAgent {
         result.consumeStream(); // no await
 
         result.pipeUIMessageStreamToResponse(express.res, {
+            messageMetadata: ({ part }) => {
+                if (part.type === 'finish') {
+                    return {
+                        totalTokens: part.totalUsage.totalTokens,
+                        reasoningTokens: part.totalUsage.reasoningTokens,
+                        inputTokens: part.totalUsage.inputTokens,
+                        outputTokens: part.totalUsage.outputTokens,
+                        cachedInputTokens: part.totalUsage.cachedInputTokens,
+                    };
+                }
+            },
             originalMessages: messages,
             sendReasoning: true,
+            sendSources: true,
+            onError: error => {
+                console.error("[EXULU] chat response error.", error)
+                return errorHandler(error)
+            },
             generateMessageId: createIdGenerator({
                 prefix: 'msg_',
                 size: 16,
             }),
-            onFinish: async ({ messages }) => {
-                console.info(
-                    "[EXULU] chat stream finished.",
-                    messages
-                )
+            onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
                 if (session) {
-                    // save chat
+                    // But only save the new messages, not the previous ones, otherwise we get duplicates.
                     await saveChat({
                         session,
-                        user,
-                        messages
+                        user: user.id,
+                        messages: messages.filter(x => !previousMessagesContent.find(y => y.id === x.id))
                     })
                 }
+                const metadata = messages[messages.length - 1]?.metadata as any;
                 if (statistics) {
-                    await updateStatistic({
-                        name: "count",
-                        label: statistics.label,
-                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                        trigger: statistics.trigger,
-                        count: 1,
-                        user: user,
-                        role: role
-                    })
+                    await Promise.all([
+                        updateStatistic({
+                            name: "count",
+                            label: statistics.label,
+                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                            trigger: statistics.trigger,
+                            count: 1,
+                            user: user.id,
+                            role: user?.role?.id
+                        }),
+                        ...(metadata?.totalTokens ? [
+                            updateStatistic({
+                                name: "tokens",
+                                label: statistics.label,
+                                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                                trigger: statistics.trigger,
+                                count: metadata?.totalTokens,
+                                user: user.id,
+                                role: user?.role?.id
+                            })] : []
+                        )
+                    ])
                 }
             },
         });
@@ -490,7 +847,12 @@ export class ExuluAgent {
 // todo check how to deal with pagination
 const getAgentMessages = async ({ session, user, limit, page }: { session: string, user: number, limit: number, page: number }) => {
     const { db } = await postgresClient();
-    const messages = await db.from("agent_messages").where({ session, user }).limit(limit).offset(page * limit);
+    console.log("[EXULU] getting agent messages for session: " + session + " and user: " + user + " and page: " + page)
+    const query = db.from("agent_messages").where({ session, user }).limit(limit)
+    if (page > 0) {
+        query.offset((page - 1) * limit)
+    }
+    const messages = await query;
     return messages;
 }
 
@@ -659,7 +1021,7 @@ type ExuluEvalRunnerInstance = {
 
 type ExuluEvalRunner = ({ data, runner }: {
     data: ExuluEvalInput, runner: {
-        agent?: ExuluAgent & { providerApiKey: string },
+        agent?: ExuluAgent & { providerapikey: string },
         workflow?: ExuluWorkflow
     }
 }) => Promise<{
@@ -724,29 +1086,29 @@ export class ExuluEval {
 
                             const { db } = await postgresClient();
                             // Get the variable name from user's anthropic_token field
-                            const variableName = runner.agent.providerApiKey;
+                            const variableName = runner.agent.providerapikey;
 
                             // Look up the variable from the variables table
                             const variable = await db.from("variables").where({ name: variableName }).first();
                             if (!variable) {
-                                throw new Error(`Provider API key for variable "${runner.agent.providerApiKey}" not found.`)
+                                throw new Error(`Provider API key for variable "${runner.agent.providerapikey}" not found.`)
                             }
 
                             // Get the API key from the variable (decrypt if encrypted)
-                            let providerApiKey = variable.value;
+                            let providerapikey = variable.value;
 
                             if (!variable.encrypted) {
-                                throw new Error(`Provider API key for variable "${runner.agent.providerApiKey}" is not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.`)
+                                throw new Error(`Provider API key for variable "${runner.agent.providerapikey}" is not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.`)
                             }
 
                             if (variable.encrypted) {
                                 const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                                providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+                                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
                             }
 
                             const result = await runner.agent.generateSync({
                                 prompt: data.prompt,
-                                providerApiKey
+                                providerapikey
                             })
                             data.result = result;
                         }
@@ -820,7 +1182,7 @@ export class ExuluTool {
     public id: string;
     public name: string;
     public description: string;
-    public inputSchema?: ZodSchema;
+    public inputSchema?: z.ZodType;
     public type: "context" | "function" | "agent";
     public tool: Tool
     public config: {
@@ -832,13 +1194,21 @@ export class ExuluTool {
         id: string,
         name: string,
         description: string,
-        inputSchema?: ZodSchema,
+        inputSchema?: z.ZodType,
         type: "context" | "function" | "agent",
         config: {
             name: string,
             description: string
         }[],
-        execute: (inputs: any) => Promise<any>
+        execute: (inputs: any) => Promise<{
+            result?: string
+            job?: string
+            items?: Item[]
+        }> | AsyncGenerator<{
+            result?: string
+            job?: string
+            items?: Item[]
+        }>,
     }) {
         this.id = id;
         this.config = config;
@@ -1002,6 +1372,143 @@ export class ExuluContext {
         };
     }
 
+    public createItem = async (item: Item, user?: number, role?: string, upsert?: boolean): Promise<{
+        item: Item
+        job?: string
+    }> => {
+
+        const { db } = await postgresClient();
+        const mutation = db.from(getTableName(
+            this.id
+        )).insert(
+            {
+                ...item,
+                tags: item.tags ? (Array.isArray(item.tags) ? item.tags.join(",") : item.tags) : undefined
+            }
+        ).returning("id")
+
+        if (upsert) {
+            mutation.onConflict().merge();
+        }
+
+        const results = await mutation;
+
+        if (!results[0]) {
+            throw new Error("Failed to create item.")
+        }
+
+        if (
+            this.embedder && (
+                this.configuration.calculateVectors === "onUpdate" ||
+                this.configuration.calculateVectors === "always"
+            )
+        ) {
+            const { job } = await this.embeddings.generate.one({
+                item: results[0],
+                user: user,
+                role: role,
+                trigger: "api"
+            });
+            return {
+                item: results[0],
+                job
+            };
+        }
+
+        return {
+            item: results[0],
+            job: undefined
+        };
+    }
+
+    public updateItem = async (item: Item, user?: number, role?: string): Promise<{
+        item: Item
+        job?: string
+    }> => {
+        const { db } = await postgresClient();
+
+        const record = await db.from(
+            getTableName(this.id)
+        ).where(
+            { id: item.id }
+        ).first();
+
+        if (!record) {
+            throw new Error("Item not found.")
+        }
+
+        const mutation = db.from(
+            getTableName(this.id)
+        ).where(
+            { id: record.id }
+        ).update(
+            {
+                ...item,
+                tags: item.tags ? (Array.isArray(item.tags) ? item.tags.join(",") : item.tags) : undefined
+            }
+        ).returning("id");
+
+        await mutation;
+
+        if (
+            this.embedder && (
+                this.configuration.calculateVectors === "onUpdate" ||
+                this.configuration.calculateVectors === "always"
+            )
+        ) {
+            const { job } = await this.embeddings.generate.one({
+                item: record, // important we need to full record here with all fields
+                user: user,
+                role: role,
+                trigger: "api"
+            });
+            return {
+                item: record,
+                job
+            };
+        }
+
+        return {
+            item: record,
+            job: undefined
+        };
+    }
+
+    public deleteItem = async (item: Item, user?: number, role?: string): Promise<{
+        id: string
+        job?: string
+    }> => {
+
+        if (!item.id) {
+            throw new Error("Item id is required for deleting item.")
+        }
+
+        const { db } = await postgresClient();
+        await db.from(getTableName(this.id)).where({ id: item.id }).delete();
+
+        if (!this.embedder) {
+            return {
+                id: item.id,
+                job: undefined
+            };
+        }
+
+        const chunks = await db.from(getChunksTableName(this.id))
+            .where({ source: item.id })
+            .select("id");
+
+        if (chunks.length > 0) {
+            // delete chunks first
+            await db.from(getChunksTableName(this.id))
+                .where({ source: item.id })
+                .delete();
+        }
+        return {
+            id: item.id,
+            job: undefined
+        };
+    }
+
     public embeddings = {
         generate: {
             one: async ({
@@ -1114,6 +1621,7 @@ export class ExuluContext {
             table.boolean('archived').defaultTo(false);
             table.text('external_id');
             table.text('created_by');
+            table.text('ttl')
             table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
             table.integer('textlength');
             table.text('source');
@@ -1133,7 +1641,11 @@ export class ExuluContext {
 
     public createChunksTable = async () => {
 
-        const { db } = await postgresClient();
+        // We refresh the connection here because when running this as
+        // part of the database initialization, the connection might not
+        // have all extensions setup yet, which can cause issues with the
+        // the use of vector_cosine_ops.
+        const { db } = await refreshPostgresClient();
         const tableName = getChunksTableName(this.id);
         console.log("[EXULU] Creating table: " + tableName);
         await db.schema.createTable(tableName, (table) => {
@@ -1187,7 +1699,7 @@ export class ExuluContext {
                 // todo make trigger more specific with the agent name
                 // todo roadmap, auto add the normal filter criteria of a context as input schema so the agent can
                 //   next to semantic search also add regular filters.
-                await vectorSearch({
+                const result = await vectorSearch({
                     page: 1,
                     limit: 10,
                     query,
@@ -1200,6 +1712,10 @@ export class ExuluContext {
                     sort: undefined,
                     trigger: "agent"
                 })
+
+                return {
+                    items: result.items
+                }
             },
         });
     }
@@ -1230,8 +1746,6 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
         createdAt: currentDate
     }).first();
 
-    console.log("!!! existing !!!", existing)
-
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.
     // If the statistic exists, it will be updated by incrementing the total count.
@@ -1256,4 +1770,53 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
         })
     }
 
+}
+
+const generateS3Key = (filename) => `${randomUUID()}-${filename}`
+
+const getMimeType = (type: allFileTypes) => {
+    switch (type) {
+        case '.png':
+            return 'image/png'
+        case '.jpg':
+            return 'image/jpg'
+        case '.jpeg':
+            return 'image/jpeg'
+        case '.gif':
+            return 'image/gif'
+        case '.webp':
+            return 'image/webp'
+        case '.pdf':
+            return 'application/pdf'
+        case '.docx':
+            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        case '.xlsx':
+            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        case '.xls':
+            return 'application/vnd.ms-excel'
+        case '.csv':
+            return 'text/csv'
+        case '.pptx':
+            return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        case '.ppt':
+            return 'application/vnd.ms-powerpoint'
+        case '.m4a':
+            return 'audio/mp4'
+        case '.mp4':
+            return 'audio/mp4'
+        case '.mpeg':
+            return 'audio/mpeg'
+        case '.mp3':
+            return 'audio/mp3'
+        case '.wav':
+            return 'audio/wav'
+        case '.txt':
+            return 'text/plain'
+        case '.md':
+            return 'text/markdown'
+        case '.json':
+            return 'application/json'
+        default:
+            return ''
+    }
 }

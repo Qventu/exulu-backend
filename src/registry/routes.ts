@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
+import { errorHandler, type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import { requestValidators } from "./route-validators";
 import { queues } from "../bullmq/queues.ts";
@@ -26,9 +26,11 @@ import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
-import type { Agent } from "@EXULU_TYPES/models/agent.ts"
-
+import { checkAgentRateLimit, checkRecordAccess, getEnabledTools, loadAgent } from "./utils.ts";
+import { convertToModelMessages, createIdGenerator, jsonSchema, pipeTextStreamToResponse, readUIMessageStream, streamText, validateUIMessages, type ModelMessage, type Tool, type UIMessage } from "ai";
 export const REQUEST_SIZE_LIMIT = '50mb';
+import { z } from "zod";
+import { MetadataDirective } from "@aws-sdk/client-s3";
 
 export const global_queues = {
     logs_cleaner: "logs-cleaner"
@@ -109,9 +111,10 @@ export const createExpressRoutes = async (
     logger: Logger,
     agents: ExuluAgent[],
     tools: ExuluTool[],
-    contexts: ExuluContext[],
+    contexts: ExuluContext[] | undefined,
     config?: ExuluConfig,
-    tracer?: Tracer
+    tracer?: Tracer,
+    filesContext?: ExuluContext
 ): Promise<Express> => {
 
     // todo make this more secure / configurable
@@ -143,7 +146,7 @@ export const createExpressRoutes = async (
     if (redisServer.host?.length && redisServer.port?.length) {
         await createRecurringJobs();
     } else {
-        console.log("[o_o]", "[EXULU] no redis server configured, not setting up recurring jobs.", "[o_o]")
+        console.log("[EXULU] no redis server configured, not setting up recurring jobs.")
     }
 
     const schema = createSDL([
@@ -159,7 +162,7 @@ export const createExpressRoutes = async (
         workflowTemplatesSchema(),
         statisticsSchema(),
         rbacSchema()
-    ], contexts, agents, tools);
+    ], contexts ?? [], agents, tools);
 
     interface GraphqlContext {
         db: Knex;
@@ -235,7 +238,7 @@ export const createExpressRoutes = async (
         }
 
         // Get the API key from the variable (decrypt if encrypted)
-        let providerApiKey = variable.value;
+        let providerapikey = variable.value;
 
         if (!variable.encrypted) {
             res.status(400).json({
@@ -246,11 +249,11 @@ export const createExpressRoutes = async (
 
         if (variable.encrypted) {
             const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-            providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+            providerapikey = bytes.toString(CryptoJS.enc.Utf8);
         }
 
         const openai = new OpenAI({
-            apiKey: providerApiKey
+            apiKey: providerapikey
         });
 
         let style_reference = "";
@@ -338,54 +341,6 @@ Mood: friendly and intelligent.
 
         app.post(slug + "/:instance", async (req: Request, res: Response) => {
 
-            const instance = req.params.instance;
-            if (!instance) {
-                res.status(400).json({
-                    message: "Missing instance in request."
-                })
-                return;
-            }
-
-            const { db } = await postgresClient();
-            const agentInstance: Agent = await db.from("agents").where({
-                id: instance
-            }).first();
-            const agentRbac = await RBACResolver(db, "agent", agentInstance.id, agentInstance.rights_mode || "private");
-            agentInstance.RBAC = agentRbac;
-
-            if (!agentInstance) {
-                res.status(400).json({
-                    message: "Agent instance not found."
-                })
-                return;
-            }
-
-            // For agents we dont use bullmq jobs, instead we use a rate limiter to
-            // allow responses in real time while managing availability of infrastructure
-            // or provider limits.
-
-            // todo add "configuration" object to backend agent, and allow setting agent instance
-            // specific configurations that overwrite the global ones.
-            // todo allow setting agent instance specific configurations that overwrite the global ones
-            // todo display rate limit message in the chat UI
-
-            if (agent.rateLimit) {
-                console.log("[EXULU] rate limiting agent.", agent.rateLimit)
-                const limit = await rateLimiter(
-                    agent.rateLimit.name || agent.id,
-                    agent.rateLimit.rate_limit.time,
-                    agent.rateLimit.rate_limit.limit,
-                    1
-                )
-
-                if (!limit.status) {
-                    res.status(429).json({
-                        message: 'Rate limit exceeded.',
-                        retryAfter: limit.retryAfter,
-                    })
-                    return;
-                }
-            }
             const headers: {
                 stream: boolean,
                 user: string | null,
@@ -395,6 +350,28 @@ Mood: friendly and intelligent.
                 user: req.headers['user'] as string || null,
                 session: req.headers['session'] as string || null,
             }
+
+            await checkAgentRateLimit(agent);
+
+            const instance = req.params.instance;
+            if (!instance) {
+                res.status(400).json({
+                    message: "Missing instance in request."
+                })
+                return;
+            }
+
+            const { db } = await postgresClient();
+
+            // For agents we dont use bullmq jobs, instead we use a rate limiter to
+            // allow responses in real time while managing availability of infrastructure
+            // or provider limits.
+            // todo add "configuration" object to backend agent, and allow setting agent instance
+            // specific configurations that overwrite the global ones.
+            // todo allow setting agent instance specific configurations that overwrite the global ones
+            // todo display rate limit message in the chat UI
+
+            const agentInstance = await loadAgent(instance);
 
             const requestValidationResult = requestValidators.agents(req)
 
@@ -411,106 +388,27 @@ Mood: friendly and intelligent.
 
             const user = authenticationResult.user;
 
-            // Check access rights
-            const agentIsPublic = agentInstance.rights_mode === "public";
-            const agentByUsers = agentInstance.rights_mode === "users";
-            const agentByRoles = agentInstance.rights_mode === "roles";
-            const isAgentCreator = agentInstance.created_by === user.id.toString();
-            const isAdmin = user.super_admin;
-            const isApi = user.type === "api";
+            const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
 
-            let hasAccessToAgent: "read" | "write" | "none" = "none";
-
-            if (agentIsPublic || isAgentCreator || isAdmin || isApi) {
-                hasAccessToAgent = "write"
-            }
-
-            if (agentByUsers) {
-                console.log("agentInstance.RBAC?.users", agentInstance.RBAC?.users)
-                console.log("user.id", user.id.toString())
-                hasAccessToAgent = agentInstance.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
-                if (!hasAccessToAgent || hasAccessToAgent === "none") {
-                    res.status(401).json({
-                        message: `Your current user ${user.id} does not have access to this agent, current access type is: ${hasAccessToAgent}.`
-                    })
-                    return;
-                }
-            }
-
-            if (agentByRoles) {
-                hasAccessToAgent = agentInstance.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
-                if (!hasAccessToAgent || hasAccessToAgent === "none") {
-                    res.status(401).json({
-                        message: `Your current role ${user.role?.name} does not have access to this agent.`
-                    })
-                    return;
-                }
-            }
-
-            let hasAccessToSession: "read" | "write" | "none" = "none";;
-
-            if (headers.session) {
-                // Check session RBAC
-                const session = await db.from("agents").where({
-                    id: instance
-                }).first();
-
-                const sessionIsPublic = agentInstance.rights_mode === "public";
-                const sessionByUsers = agentInstance.rights_mode === "users";
-                const sessionByRoles = agentInstance.rights_mode === "roles";
-                const isSessionCreator = agentInstance.created_by === user.id.toString();
-                const isAdmin = user.super_admin;
-                const isApi = user.type === "api";
-
-                if (sessionIsPublic || isSessionCreator || isAdmin || isApi) {
-                    hasAccessToSession = "write"
-                }
-
-                console.log("agentInstance.created_by", agentInstance.created_by)
-                console.log("user.id", user.id)
-
-                if (!isSessionCreator && !isAdmin && !isApi && !sessionIsPublic) {
-                    if (sessionByUsers) {
-                        hasAccessToSession = session.RBAC?.users?.find(x => x.id === user.id)?.rights || "none";
-                        if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
-                            res.status(401).json({
-                                message: `Your current user does not have access to this session.`
-                            })
-                            return;
-                        }
-                    }
-                    if (sessionByRoles) {
-                        hasAccessToSession = session.RBAC?.roles?.find(x => x.id === user.role?.id)?.rights || "none"
-                        if (!hasAccessToSession || hasAccessToSession === "none" || hasAccessToSession === "read") {
-                            res.status(401).json({
-                                message: `Your current role '${user.role?.name}' does not have access to this session.`
-                            })
-                            return;
-                        }
-                    }
-                }
-            }
-
-            if (!hasAccessToAgent || hasAccessToAgent === "none") {
+            if (!hasAccessToAgent) {
                 res.status(401).json({
                     message: "You don't have access to this agent."
                 })
                 return;
             }
 
-
-            if (!hasAccessToSession || hasAccessToSession === "none") {
-                res.status(401).json({
-                    message: "You don't have access to this session."
-                })
-                return;
-            }
-
-            if (headers.session && !hasAccessToSession) {
-                res.status(401).json({
-                    message: "You don't have access to this session."
-                })
-                return;
+            if (headers.session) {
+                // Check session RBAC
+                const session = await db.from("agent_sessions").where({
+                    id: headers.session
+                }).first();
+                let hasAccessToSession = await checkRecordAccess(session, "write", user);
+                if (!hasAccessToSession) {
+                    res.status(401).json({
+                        message: "You don't have access to this session."
+                    })
+                    return;
+                }
             }
 
             if (
@@ -524,24 +422,15 @@ Mood: friendly and intelligent.
                 return;
             }
 
-            console.log("[EXULU] agent tools", agentInstance.tools)
+            console.log("[EXULU] agent tools", agentInstance.tools?.map(x => x.name + " (" + x.id + ")"))
 
-            let enabledTools: ExuluTool[] = agentInstance.tools ? agentInstance.tools.map(
-                ({ config, toolId }) => tools.find(({ id }) => id === toolId)
-            ).filter(Boolean) as ExuluTool[] : [];
-
-            console.log("[EXULU] available tools", enabledTools?.length)
-
-            // Message specific tools, the user can overwrite to disable specific tools
-            // for individual messages.
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
-            console.log("[EXULU] disabled tools", disabledTools?.length)
-            enabledTools = enabledTools.filter(tool => !disabledTools.includes(tool.id));
+            let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
 
-            console.log("[EXULU] enabled tools", enabledTools?.length)
+            console.log("[EXULU] enabled tools", enabledTools?.map(x => x.name + " (" + x.id + ")"))
 
             // Get the variable name from user's anthropic_token field
-            const variableName = agentInstance.providerApiKey;
+            const variableName = agentInstance.providerapikey;
 
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
@@ -553,7 +442,7 @@ Mood: friendly and intelligent.
             }
 
             // Get the API key from the variable (decrypt if encrypted)
-            let providerApiKey = variable.value;
+            let providerapikey = variable.value;
 
             if (!variable.encrypted) {
                 res.status(400).json({
@@ -564,7 +453,7 @@ Mood: friendly and intelligent.
 
             if (variable.encrypted) {
                 const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                providerApiKey = bytes.toString(CryptoJS.enc.Utf8);
+                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
             }
 
             // todo add authentication based on thread id to guarantee privacy
@@ -575,13 +464,17 @@ Mood: friendly and intelligent.
                         res,
                         req,
                     },
-                    user: user?.id,
-                    role: user?.role?.id,
+                    contexts: contexts,
+                    user,
+                    instructions: agentInstance.instructions,
                     session: headers.session as string,
                     message: req.body.message,
-                    tools: enabledTools,
-                    providerApiKey,
+                    currentTools: enabledTools,
+                    allExuluTools: tools,
+                    providerapikey,
                     toolConfigs: agentInstance.tools,
+                    exuluConfig: config,
+                    filesContext,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -593,13 +486,17 @@ Mood: friendly and intelligent.
                 return;
             } else {
                 const response = await agent.generateSync({
-                    user: user?.id,
+                    user,
+                    instructions: agentInstance.instructions,
                     session: headers.session as string,
-                    role: user?.role?.id,
                     message: req.body.message,
-                    tools: enabledTools,
-                    providerApiKey,
+                    contexts: contexts,
+                    currentTools: enabledTools,
+                    allExuluTools: tools,
+                    providerapikey,
+                    exuluConfig: config,
                     toolConfigs: agentInstance.tools,
+                    filesContext,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -629,6 +526,7 @@ Mood: friendly and intelligent.
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
     app.use('/gateway/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+        console.log("[EXULU] Coding request!!!")
         const path = req.url;
         const url = `${TARGET_API}${path}`;
         // const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
@@ -671,6 +569,8 @@ Mood: friendly and intelligent.
                 return;
             }
 
+            console.log("[EXULU] Authenticated call", authenticationResult.user?.email)
+
             const { db } = await postgresClient();
 
             let query = db('agents');
@@ -688,7 +588,20 @@ Mood: friendly and intelligent.
                 return;
             }
 
-            console.log("[EXULU] anthropic proxy called for agent:", agent?.name)
+            console.log("[EXULU] Agent loaded", agent.name)
+
+            const backend = agents.find(x => x.id === agent.backend)
+
+            if (!backend) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+                    \x1b[41m -- Agent ${agent.name} does not have a exulu backend setup, or the exulu backend that was assigned no longer exists. --
+                    \x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("[EXULU] Backend loaded", backend.id)
 
             if (!process.env.NEXTAUTH_SECRET) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
@@ -697,15 +610,15 @@ Mood: friendly and intelligent.
                 return;
             }
 
-            if (!agent.providerApiKey) {
+            if (!agent.providerapikey) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
                 res.setHeader('Content-Type', 'application/json');
                 res.end(Buffer.from(arrayBuffer));
                 return;
             }
 
-            // Get the variable name from agent's providerApiKey field
-            const variableName = agent.providerApiKey;
+            // Get the variable name from agent's providerapikey field
+            const variableName = agent.providerapikey;
 
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
@@ -717,7 +630,7 @@ Mood: friendly and intelligent.
             }
 
             // Get the API key from the variable (decrypt if encrypted)
-            let anthropicApiKey = variable.value;
+            let providerapikey = variable.value;
 
             if (!variable.encrypted) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted);
@@ -728,7 +641,7 @@ Mood: friendly and intelligent.
 
             if (variable.encrypted) {
                 const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
             }
 
             // todo get enabled tools from agent and add them to the request body
@@ -736,7 +649,7 @@ Mood: friendly and intelligent.
 
             // Set the anthropic api key in the headers.
             const headers = {
-                'x-api-key': anthropicApiKey,
+                'x-api-key': providerapikey,
                 'anthropic-version': '2023-06-01',
                 'content-type': req.headers['content-type'] || 'application/json'
             };
@@ -745,57 +658,90 @@ Mood: friendly and intelligent.
             if (req.headers['accept']) headers['accept'] = req.headers['accept'];
             if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
 
-            // Send the request to the anthropic api.
-            const response = await fetch(url, {
-                method: req.method,
-                headers: headers,
-                body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
-            });
-
-            await updateStatistic({
-                name: "count",
-                label: "Claude Code",
-                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                trigger: "claude-code",
-                count: 1,
-                user: authenticationResult.user?.id,
-                role: authenticationResult.user.role?.id
+            console.log("agent", agent.name)
+            const model = backend.model?.create({
+                apiKey: providerapikey
             })
 
-            // Copy response headers
-            response.headers.forEach((value, key) => {
-                res.setHeader(key, value);
-            });
-
-            res.status(response.status);
-
-            // Handle streaming vs non-streaming
-            const isStreaming = response.headers.get('content-type')?.includes('text/event-stream')
-
-            if (isStreaming && !response?.body) {
-                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_body);
+            if (!model) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+                    \x1b[41m -- Could not create language model instance fro agent ${agent.name}. --
+                    \x1b[0m`);
                 res.setHeader('Content-Type', 'application/json');
                 res.end(Buffer.from(arrayBuffer));
                 return;
             }
 
-            if (isStreaming) {
-                const reader = response.body!.getReader();
-                const decoder = new TextDecoder();
+            // The vercel ai sdk expects the system messages to be a single string
+            const systemMessagesConcatenated = req.body.system.map(x => x.text).join("\n\n\n");
 
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+            let messages = convertClaudeCodeMessagesToVercelAISdkMessages(
+                req.body.messages
+            )
 
-                    const chunk = decoder.decode(value, { stream: true });
-                    res.write(chunk);
+            const tools: Record<string, Tool> = convertClaudeCodeToolsToVercelAISdkTools(
+                req.body.tools
+            )
+
+            console.log("STREAMING TEXT")
+            const result = streamText({
+                model: model, // Should be a LanguageModelV1
+                // TIP FOR DEBUGGING IF YOU RUN INTO ISSUES / ERRORS REGARDING THE MESSAGES FORMAT. STORE THE 'raw' VARIABLE TO A FILE (fs.write)
+                // AND COPY THE CONTENT INTO THE messages: BELOW, TYPESCRIPT WILL TELL YOU WHAT IS WRONG WHICH IS USUALLY EASIER TO READ THAN THE
+                // ERROR OUTPUT IN THE LOGS.
+                messages: messages,
+                system: systemMessagesConcatenated || "",
+                // prepareStep could be used here to set the model for the first step or change other params
+                maxOutputTokens: req.body.max_tokens,
+                temperature: req.body.temperature,
+                maxRetries: 2,
+                providerOptions: {
+                    metadata: {
+                        user_id: req.body.metadata?.user_id
+                    }
+                },
+                tools,
+                onFinish: data => console.log("[EXULU] Finished stream"),
+                onError: error => console.error("[EXULU] chat stream error.", error),
+                // stopWhen: [stepCountIs(1)],
+            });
+
+            // consume the stream to ensure it runs to completion & triggers onFinish
+            // even when the client response is aborted:
+            let allChunks = [];
+            result.consumeStream(); // no await
+
+            const responses: any[] = [];
+            try {
+                for await (const uiMessage of readUIMessageStream({
+                    stream: result.toUIMessageStream(),
+                })) {
+                    console.log('Streaming chunk:', uiMessage);
+                    const message = {
+                        type: "message",
+                        role: uiMessage.role,
+                        content: uiMessage.parts.map((part: any) => {
+                            if (part.type.includes("tool-")) {
+                                const type = part.type;
+                                part.type = "tool_use";
+                                part.name = type.replace("tool-", "");
+                                part.id = part.toolCallId
+                            }
+                            return part;
+                        })
+                    }
+                    responses.push(message);
+                    console.log('Wrote message to response', message);
                 }
-                res.end();
+            } catch (err) {
+                console.error("Stream error:", err);
+            } finally {
+                const jsonString = JSON.stringify(responses[responses.length - 1]);
+                const arrayBuffer = new TextEncoder().encode(jsonString).buffer;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
                 return;
             }
-
-            const data = await response.arrayBuffer();
-            res.end(Buffer.from(data));
 
         } catch (error: any) {
             console.error('[PROXY] Manual proxy error:', error);
@@ -812,6 +758,115 @@ Mood: friendly and intelligent.
     app.use(express.static('public'))
 
     return app;
+}
+
+const convertClaudeCodeToolsToVercelAISdkTools = (tools: any[]) => {
+    const result: Record<string, Tool> = {};
+    for (const tool of tools) {
+        const mySchema = jsonSchema(tool.input_schema);
+        tools[tool.name] = {
+            id: tool.name,
+            name: tool.name,
+            description: tool.description,
+            inputSchema: mySchema,
+        }
+    }
+    return result;
+}
+
+const convertClaudeCodeMessagesToVercelAISdkMessages = (messages: any[]) => {
+    // Things we fix here:
+    // - Vercel AI sdk does not allow id's on the message
+    // - It always requires a role, so we set it to assistant if not provided
+    // - It expects a role of 'tool' if the parts have a type of tool_result
+    // - We filter out step-start parts
+    // - We make sure reasoning is not an empty string
+    // - tool_use is called 'tool-call' in the vercel ai sdk
+    // - tool_result is called 'tool-result' in the vercel ai sdk
+    // - tool_use_id is called 'toolCallId' in the vercel ai sdk
+    // - tool_result in the claude code parts does not include the
+    // tool name, so we retrieve it from the tool_use part, which 
+    // does include the name (matching it via the toolCallId)
+    let raw = messages.map(msg => {
+        if (!msg.role) {
+            msg.role = "assistant"
+        }
+        delete msg.id
+        if (!Array.isArray(msg.content)) {
+            return {
+                role: msg.role,
+                content: msg.content
+            }
+        }
+        if (msg.content.some(part => part.type === "tool_result")) {
+            msg.role = "tool"
+        }
+        let parts = msg.content.map(part => {
+            if (part.type === "step-start") {
+                return undefined;
+            }
+            if (part.type === "reasoning") {
+                const content = part.text?.length > 1 ? part.text : part.content
+                return {
+                    type: "reasoning",
+                    text: content || "No reasoning content provided"
+                }
+            }
+            if (part.type === "tool_use") {
+                part.type = "tool-call"
+            }
+            if (part.type === "tool_result") {
+                part.type = "tool-result"
+                part.output = {
+                    type: "text",
+                    value: part.text || part.content
+                }
+                // if an output is provided, vercel does
+                // not allow setting text and content as well
+                part.text = null;
+                part.content = null;
+                if (!part.name && part.tool_use_id) {
+                    // Try to find in the othe msg parts for a part
+                    // with the same tool_use_id and a name set
+                    const allParts = raw.map(x => x.content).flat();
+                    const result = allParts.find(x => {
+                        return x.toolCallId === part.tool_use_id && x.name
+                    })
+                    console.log("FIND RESULT!!!!", result)
+                    if (result) {
+                        part.name = result.name;
+                    } else {
+                        part.name = "..."
+                    }
+                }
+            }
+            if (part.tool_use_id) {
+                part.toolCallId = part.tool_use_id
+                delete part.tool_use_id
+            }
+            return {
+                type: part.type,
+                ...(part.text || part.content ? { text: part.text || part.content } : {}),
+                ...(part.toolCallId ? { toolCallId: part.toolCallId } : {}),
+                ...(part.name ? { toolName: part.name } : {}),
+                ...(part.input ? { input: part.input } : {}),
+                ...(part.output ? { output: part.output } : {}),
+                ...(part.cache_control?.type ? {
+                    providerOptions: {
+                        anthropic: { cacheControl: { type: part.cache_control?.type } },
+                    }
+                } : {})
+            }
+        })
+        parts = parts.filter(part => part !== undefined);
+        return {
+            role: msg.role,
+            id: msg.id,
+            content: parts
+        }
+    })
+    raw = raw.filter(msg => msg !== undefined);
+    return raw;
 }
 
 const preprocessInputs = async (data: any) => {

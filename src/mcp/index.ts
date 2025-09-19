@@ -103,8 +103,6 @@ export class ExuluMCP {
             throw new Error("MCP server not initialized.");
         }
 
-        console.log("[EXULU] Wiring up MCP server routes to express app.");
-
         // Handle POST requests for client-to-server communication
         this.express.post('/mcp', async (req, res) => {
 

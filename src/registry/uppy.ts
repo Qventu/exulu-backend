@@ -279,12 +279,7 @@ export const createUppyRoutes = async (
         // Generate S3 key and prepare command
         const key = generateS3Key(filename)
 
-        let folder = "";
-        if (authenticationResult.user.type === "api") {
-            folder = `api/`
-        } else {
-            folder = `${authenticationResult.user.id}/`
-        }
+        let folder = `${authenticationResult.user.id}/`
 
         getSignedUrl(
             getS3Client(),

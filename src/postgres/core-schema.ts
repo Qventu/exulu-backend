@@ -59,7 +59,6 @@ const agentSessionsSchema: ExuluTableDefinition = {
     ]
 }
 
-
 const variablesSchema: ExuluTableDefinition = {
     type: "variables",
     name: {
@@ -185,19 +184,23 @@ const agentsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "category",
+            type: "text"
+        },
+        {
             name: "description",
             type: "text"
         },
         {
-            name: "providerApiKey",
+            name: "instructions",
+            type: "text"
+        },
+        {
+            name: "providerapikey",
             type: "text"
         },
         {
             name: "backend",
-            type: "text"
-        },
-        {
-            name: "type",
             type: "text"
         },
         {
@@ -533,18 +536,22 @@ const rbacSchema: ExuluTableDefinition = {
 
 export const addRBACfields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
     if (schema.RBAC) {
-        schema.fields.push({
-            name: "rights_mode",
-            type: "text",
-            required: false,
-            default: "private"
-        })
-        schema.fields.push({
-            name: "created_by",
-            type: "number",
-            required: true,
-            default: 0
-        })
+        if (!schema.fields.some(field => field.name === "rights_mode")) {
+            schema.fields.push({
+                name: "rights_mode",
+                type: "text",
+                required: false,
+                default: "private"
+            })
+        }
+        if (!schema.fields.some(field => field.name === "created_by")) {
+            schema.fields.push({
+                name: "created_by",
+                type: "number",
+                required: true,
+                default: 0
+            })
+        }
     }
     return schema;
 }

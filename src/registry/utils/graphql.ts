@@ -13,6 +13,8 @@ import { postgresClient } from "../../postgres/client";
 import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import { Knex as KnexType } from 'knex';
+import { checkRecordAccess, loadAgent, loadAgents } from "../utils";
+import type { Agent } from "@EXULU_TYPES/models/agent";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -56,6 +58,7 @@ const map = (field: any) => {
         case "text":
         case "shortText":
         case "longText":
+        case "markdown":
         case "code":
             type = "String";
             break;
@@ -123,12 +126,12 @@ ${enumValues}
         fields.push("  rateLimit: RateLimiterRule")
         fields.push("  streaming: Boolean")
         fields.push("  capabilities: AgentCapabilities")
+        fields.push("  maxContextLength: Int")
         fields.push("  slug: String")
     }
 
     // Add RBAC field if enabled
     const rbacField = table.RBAC ? '  RBAC: RBACData' : '';
-
 
     // Allow defining a custom id type (for example the users entity has type number because of next-auth)
     const typeDef = `
@@ -243,13 +246,10 @@ ${fieldFilters.join("\n")}
 }
 
 const getRequestedFields = (info: any): string[] => {
-    console.log("info.operation.selectionSet.selections[0].selectionSet.selections", info.operation.selectionSet.selections[0].selectionSet.selections)
     const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
     const itemSelection = selections.find(s => s.name.value === 'item');
     const itemsSelection = selections.find(s => s.name.value === 'items');
     let fields: string[] = [];
-    console.log("itemSelection", itemSelection)
-    console.log("itemsSelection", itemsSelection)
     if (itemSelection) {
         fields = Object.keys(itemSelection.selectionSet.selections.reduce((acc, field) => {
             acc[field.name.value] = true;
@@ -595,8 +595,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             // We need to retrieve all the columns for potential post processing
             // operations that might need to be performed on the fields.
             const columns = await db(tableNamePlural).columnInfo();
-            console.log("[EXULU] Columns", columns)
-
             const insert = db(tableNamePlural).insert({
                 ...input,
                 ...(table.RBAC ? { rights_mode: 'private' } : {})
@@ -617,7 +615,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result: results[0], user: context.user.id, role: context.user.role?.id })
             return {
                 // Filter result to only include requested fields
-                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0] }),
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0], user: context.user }),
                 job
             }
         },
@@ -688,7 +686,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
             const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
             return {
-                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result }),
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id }),
                 job
             }
         },
@@ -745,7 +743,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             const result = await db.from(tableNamePlural).select(Object.keys(columns)).where({ id }).first();
             const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
             return {
-                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result }),
+                item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id }),
                 job
             }
         },
@@ -787,7 +785,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             }
 
             await postprocessDeletion({ table, requestedFields, agents, contexts, tools, result })
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id })
         },
         [`${tableNamePlural}RemoveOne`]: async (_, args, context, info) => {
             const { where } = args;
@@ -818,7 +816,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             // Delete the record
             await db(tableNamePlural).where(where).del();
             await postprocessDeletion({ table, requestedFields, agents, contexts, tools, result })
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id })
         }
     };
 
@@ -926,7 +924,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
 export const applyAccessControl = (table: ExuluTableDefinition, user: User, query: any) => {
 
-    console.log("table", table)
     const tableNamePlural = table.name.plural.toLowerCase();
 
     if (!user.super_admin && table.name.plural === "jobs") {
@@ -982,7 +979,6 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
 
             // Records shared with roles via RBAC table (if user has a role)
             if (user.role) {
-                console.log("user.role", user.role)
                 this.orWhere(function (this: any) {
                     this.where('rights_mode', 'roles')
                         .whereExists(function (this: any) {
@@ -1033,7 +1029,8 @@ const backendAgentFields = [
     "slug",
     "rateLimit",
     "streaming",
-    "capabilities"
+    "capabilities",
+    "maxContextLength"
 ]
 
 const removeAgentFields = (requestedFields: string[]) => {
@@ -1044,7 +1041,7 @@ const removeAgentFields = (requestedFields: string[]) => {
     return filtered;
 }
 
-const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result: any, tools: ExuluTool[]) => {
+const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], result: any, tools: ExuluTool[], user: User) => {
     let backend = agents.find(a => a.id === result?.backend);
     if (requestedFields.includes("providerName")) {
         result.providerName = backend?.providerName || ""
@@ -1059,22 +1056,59 @@ const addAgentFields = (requestedFields: string[], agents: ExuluAgent[], result:
         result.rateLimit = backend?.rateLimit || ""
     }
     if (requestedFields.includes("tools")) {
-        result.tools = result.tools ? result.tools.map((tool: {
-            config: any,
-            toolId: string,
-        }) => {
-            return {
-                ...tool,
-                name: tools.find(t => t.id === tool.toolId)?.name || "",
-                description: tools.find(t => t.id === tool.toolId)?.description || "",
-            }
-        }) : []
+        if (result.tools) {
+            result.tools = await Promise.all(result.tools.map(async (tool: {
+                config: any,
+                id: string
+                type: "function" | "agent" | "context"
+            }): Promise<Omit<ExuluTool, "tool"> | null | undefined> => {
+
+                let hydrated: ExuluTool | null | undefined;
+                if (
+                    tool.type === "agent"
+                ) {
+                    if (tool.id === result.id) {
+                        return null;
+                    }
+                    const instance = await loadAgent(tool.id) // for agents used as tools, the tool id === the agent id
+                    if (!instance) {
+                        throw new Error("Trying to load a tool of type 'agent', but the associated agent with id " + tool.id + " was not found in the database.")
+                    }
+                    const backend = agents.find(a => a.id === instance.backend)
+                    if (!backend) {
+                        throw new Error("Trying to load a tool of type 'agent', but the associated agent with id " + tool.id + " does not have a backend set for it.")
+                    }
+
+                    // if no access do not return it
+                    const hasAccessToAgent = await checkRecordAccess(instance, "read", user);
+
+                    if (!hasAccessToAgent) {
+                        return null;
+                    }
+
+                    hydrated = await backend.tool(instance.id, agents)
+                } else {
+                    hydrated = tools.find(t => t.id === tool.id)
+                }
+                return {
+                    ...tool,
+                    name: hydrated?.name || "",
+                    description: hydrated?.description || "",
+                }
+            }))
+            result.tools = result.tools.filter(tool => tool !== null)
+        } else {
+            result.tools = []
+        }
     }
     if (requestedFields.includes("streaming")) {
         result.streaming = backend?.streaming || false
     }
     if (requestedFields.includes("capabilities")) {
         result.capabilities = backend?.capabilities || []
+    }
+    if (requestedFields.includes("maxContextLength")) {
+        result.maxContextLength = backend?.maxContextLength || 0
     }
     if (!requestedFields.includes("backend")) {
         delete result.backend
@@ -1117,7 +1151,7 @@ const postprocessUpdate = async ({
     contexts: ExuluContext[],
     tools: ExuluTool[],
     result: any | [],
-    user: string,
+    user: number,
     role: string
 }): Promise<{
     result: any | []
@@ -1232,6 +1266,7 @@ const finalizeRequestedFields = async ({
     contexts,
     tools,
     result,
+    user
 }: {
     table: ExuluTableDefinition,
     requestedFields: string[],
@@ -1239,6 +1274,7 @@ const finalizeRequestedFields = async ({
     contexts: ExuluContext[],
     tools: ExuluTool[],
     result: any | []
+    user: User
 }) => {
     if (!result) {
         return result;
@@ -1248,11 +1284,11 @@ const finalizeRequestedFields = async ({
     }
     if (Array.isArray(result)) {
         result = result.map(item => {
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: item })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: item, user: user })
         })
     } else {
         if (table.name.singular === "agent") {
-            result = addAgentFields(requestedFields, agents, result, tools)
+            result = await addAgentFields(requestedFields, agents, result, tools, user)
             if (!requestedFields.includes("backend")) {
                 delete result.backend
             }
@@ -1303,7 +1339,6 @@ const applyFilters = (query: any, filters: any[]) => {
         Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
             if (operators) {
                 if (operators.and !== undefined) {
-                    console.log("operators.and", operators.and)
                     operators.and.forEach(operator => {
                         query = converOperatorToQuery(query, fieldName, operator);
                     });
@@ -1314,7 +1349,6 @@ const applyFilters = (query: any, filters: any[]) => {
                     });
                 }
                 query = converOperatorToQuery(query, fieldName, operators)
-                console.log("query", query)
             }
         });
     });
@@ -1339,7 +1373,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             let query = db.from(tableNamePlural).select(sanitizedFields).where({ id: args.id });
             query = applyAccessControl(table, context.user, query);
             let result = await query.first();
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user })
         },
         [`${tableNameSingular}ByIds`]: async (_, args, context, info) => {
             const { db } = context;
@@ -1348,7 +1382,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             let query = db.from(tableNamePlural).select(sanitizedFields).whereIn('id', args.ids);
             query = applyAccessControl(table, context.user, query);
             let result = await query;
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user })
         },
         [`${tableNameSingular}One`]: async (_, args, context, info) => {
             const { filters = [], sort } = args;
@@ -1360,7 +1394,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             query = applyAccessControl(table, context.user, query);
             query = applySorting(query, sort);
             let result = await query.first();
-            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result })
+            return finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user })
         },
         [`${tableNamePlural}Pagination`]: async (_, args, context, info) => {
             const { limit = 10, page = 0, filters = [], sort } = args;
@@ -1374,8 +1408,6 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             let countQuery = db(tableNamePlural);
             countQuery = applyFilters(countQuery, filters);
             countQuery = applyAccessControl(table, context.user, countQuery);
-
-            console.log("countQuery", countQuery)
 
             // Get total count
             const countResult = await countQuery.count('* as count');
@@ -1406,7 +1438,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                     hasPreviousPage,
                     hasNextPage
                 },
-                items: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: items })
+                items: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: items, user: context.user })
             };
         },
         // Add generic statistics query for all tables
@@ -1431,7 +1463,6 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                     query = query.count('* as count')
                 }
                 const results = await query
-                console.log("!!! results !!!", results)
                 return results.map(r => ({
                     group: r[groupBy],
                     count: r.count ? Number(r.count) : 0
@@ -1442,7 +1473,6 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                 if (tableNamePlural === "tracking") {
                     query = query.sum('total as count');
                     const [{ count }] = await query.sum('total as count');
-                    console.log("!!! count !!!", count)
                     return [{
                         group: 'total',
                         count: count ? Number(count) : 0
@@ -1507,7 +1537,17 @@ export const vectorSearch = async ({
     user: User
     role: string
     trigger: STATISTICS_LABELS
-}) => {
+}): Promise<{
+    filters: any[]
+    query: string
+    method: VectorMethod
+    context: {
+        name: string
+        id: string
+        embedder: string
+    },
+    items: any[]
+}> => {
 
     const table = contextToTableDefinition(context)
 
@@ -1551,8 +1591,6 @@ export const vectorSearch = async ({
     let countQuery = db(mainTable);
     countQuery = applyFilters(countQuery, filters);
     countQuery = applyAccessControl(table, user, countQuery);
-
-    console.log("countQuery", countQuery)
 
     // Create separate data query
     const columns = await db(mainTable).columnInfo();
@@ -1598,7 +1636,6 @@ export const vectorSearch = async ({
     const language = (configuration.language || 'english');
 
     let items: any[] = [];
-
 
     switch (method) {
         case "tsvector":
@@ -1720,7 +1757,6 @@ export const vectorSearch = async ({
             items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
     }
 
-    console.log("items", items)
     // Filter out duplicate sources, keeping only the first occurrence
     // because the vector search returns multiple chunks for the same
     // source.
@@ -1775,8 +1811,6 @@ export const vectorSearch = async ({
         return acc;
     }, []);
 
-    console.log("items", items)
-
     items.forEach(item => {
         if (!item.chunks?.length) { return; }
 
@@ -1801,7 +1835,7 @@ export const vectorSearch = async ({
             item.totalRelevance = total;
 
         } else if (method === "hybridSearch") {
-            console.log("item.chunks", item.chunks)
+
             // we multiply by 10 and add 1 to somewhat normalize the score against when cosine distance is used
             const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? (c.hybrid_score * 10) + 1 : 0));
             const total = scores.reduce((a, b) => a + b, 0);
@@ -1924,6 +1958,10 @@ const contextToTableDefinition = (context: ExuluContext): ExuluTableDefinition =
     definition.fields.push({
         name: "textlength",
         type: "number",
+    })
+    definition.fields.push({
+        name: "ttl",
+        type: "text",
     })
     definition.fields.push({
         name: "embeddings_updated_at",
@@ -2247,8 +2285,22 @@ type PageInfo {
 
     resolvers.Query["tools"] = async (_, args, context, info) => {
         const requestedFields = getRequestedFields(info)
+        // Get all active agents and add them as tools
+        // so agents can call other agents as tools.
+        const instances = await loadAgents();
+        let agentTools = await Promise.all(
+            instances.map(async (instance: Agent) => {
+                const backend: ExuluAgent | undefined = agents.find(a => a.id === instance.backend);
+                if (!backend) {
+                    return null;
+                }
+                return await backend.tool(instance.id, agents);
+            }))
+
+        const filtered: ExuluTool[] = agentTools.filter(tool => tool !== null) as ExuluTool[];
+
         return {
-            items: tools.map(tool => {
+            items: [...filtered, ...tools].map(tool => {
                 const object = {}
                 requestedFields.forEach(field => {
                     object[field] = tool[field]
@@ -2350,7 +2402,6 @@ type Tool {
 
 enum EnumProviderType {
   agent
-  custom
 }
 
 type StatisticsResult {

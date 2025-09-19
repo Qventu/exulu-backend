@@ -4,11 +4,13 @@ import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
-import { claudeCodeAgent } from "../templates/agents/claude-code.ts";
-import { defaultAgent } from "../templates/agents/claude-opus-4.ts";
+import { claudeSonnet4Agent } from "../templates/agents/claude-sonnet-4.ts";
+import { claudeOpus4Agent } from "../templates/agents/claude-opus-4.ts";
+import { gpt5MiniAgent, gpt5agent } from "../templates/agents/gpt-5.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
+import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
 
@@ -66,12 +68,15 @@ export class ExuluApp {
         this._contexts = {
             ...contexts,
             codeStandardsContext,
-            filesContext
+            filesContext,
+            outputsContext
         };
 
         this._agents = [
-            claudeCodeAgent,
-            defaultAgent,
+            claudeSonnet4Agent,
+            claudeOpus4Agent,
+            gpt5MiniAgent,
+            gpt5agent,
             ...(agents ?? [])
         ];
         this._config = config;
@@ -80,8 +85,9 @@ export class ExuluApp {
             ...(tools ?? []),
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),
-            // Add agents as tools
-            ...(agents || []).map(agent => agent.tool())
+            // Because agents are stored in the database,  we add those as tools
+            // at request time, not during ExuluApp initialization. We add them
+            // in the grahql tools resolver.
         ]
 
         const checks: {
@@ -253,7 +259,8 @@ export class ExuluApp {
                     this._tools,
                     Object.values(this._contexts ?? {}),
                     this._config,
-                    tracer
+                    tracer,
+                    filesContext
                 )
 
                 if (this._config?.MCP.enabled) {
