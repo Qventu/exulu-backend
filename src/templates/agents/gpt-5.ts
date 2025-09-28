@@ -36,7 +36,6 @@ export const gpt5MiniAgent = new ExuluAgent({
     }
 })
 
-
 export const gpt5agent = new ExuluAgent({
     id: `default_gpt_5_agent`,
     name: `Default GPT 5 OpenAI provider`,

@@ -69,10 +69,7 @@ export const createWorkers = async (queues: string[], logger: Logger, contexts: 
                         }, data.role, bullmqJob.id);
 
                         return result;
-                    }
-
-                    if (bullmqJob.data.type === "workflow") {
-
+                        
                     }
 
                 } catch (error: unknown) {

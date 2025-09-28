@@ -27,10 +27,12 @@ import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import type { Logger } from "winston";
 import { checkAgentRateLimit, checkRecordAccess, getEnabledTools, loadAgent } from "./utils.ts";
-import { convertToModelMessages, createIdGenerator, jsonSchema, pipeTextStreamToResponse, readUIMessageStream, streamText, validateUIMessages, type ModelMessage, type Tool, type UIMessage } from "ai";
+import { convertToModelMessages, createIdGenerator, createUIMessageStream, jsonSchema, pipeTextStreamToResponse, pipeUIMessageStreamToResponse, readUIMessageStream, streamText, validateUIMessages, type ModelMessage, type Tool, type UIMessage } from "ai";
 export const REQUEST_SIZE_LIMIT = '50mb';
 import { z } from "zod";
 import { MetadataDirective } from "@aws-sdk/client-s3";
+
+import proxy from 'express-http-proxy';
 
 export const global_queues = {
     logs_cleaner: "logs-cleaner"
@@ -754,6 +756,442 @@ Mood: friendly and intelligent.
             }
         }
     });
+
+
+    // inject tools into the request body, publish data to audit logs and implement
+    // custom authentication logic from the IMP UI.
+    app.use('/gateway/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+        console.log("[EXULU] Coding request!!!", req.body)
+        const path = req.url;
+        const url = `${TARGET_API}${path}`;
+        // const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+        // console.log('[PROXY] Manual proxy to:', url);
+        // console.log('[PROXY] Path:', path);
+        // console.log('[PROXY] Full URL:', fullUrl);
+        // console.log('[PROXY] Method:', req.method);
+        // console.log('[PROXY] Headers:', Object.keys(req.headers));
+        // console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
+        // console.log('[PROXY] Request model name:', req.body.model);
+        // console.log('[PROXY] Request stream:', req.body.stream);
+        // console.log('[PROXY] Request messages:', req.body.messages?.length);
+        // console.log('[PROXY] Request id:', req.params.id);
+
+        try {
+
+            // console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
+
+            // TODO
+            /* We can create a special config page for Claude code on the IMP UI which 
+               lists all Tool Definitions and allows switching them on / off for Claude 
+               Code. In the proxy, we then inject these tools into the Claude Code Request, 
+               and if the last part of the response includes a message with content[index]
+               .type === tool_use and name === the name of the tool we defined, we call our 
+               tool, and return the response, inject it into the content array and continue it.
+               This way we can use the tools in Claude Code, and we can use the tools in the IMP UI.
+            */
+            // Todo deal with auth, allow tagging API keys in Exulu so different users
+            //   can use different API keys based on roles etc...
+
+            if (!req.body.tools) {
+                req.body.tools = [];
+            }
+
+            // Authenticate the user, and exchange the user token for an anthropic token.
+            const authenticationResult = await requestValidators.authenticate(req);
+            if (!authenticationResult.user?.id) {
+                console.log("[EXULU] failed authentication result", authenticationResult)
+                res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+                return;
+            }
+
+            console.log("[EXULU] Authenticated call", authenticationResult.user?.email)
+
+            const { db } = await postgresClient();
+
+            let query = db('agents');
+            query.select("*");
+            query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
+            query.where({ id: req.params.id });
+            const agent = await query.first();
+
+            console.log("[EXULU] Agent loaded", agent)
+
+            if (!agent) {
+                console.error("[EXULU] Agent not found", agent)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+\x1b[41m -- Agent ${req.params.id} not found or you do not have access to it. --
+\x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("[EXULU] Agent loaded", agent.name)
+
+            const backend = agents.find(x => x.id === agent.backend)
+
+            console.log("[EXULU] Backend loaded", backend)
+
+            if (!backend) {
+                console.error("[EXULU] Backend not found", backend)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+                    \x1b[41m -- Agent ${agent.name} does not have a exulu backend setup, or the exulu backend that was assigned no longer exists. --
+                    \x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("[EXULU] Backend loaded", backend.id)
+
+            if (!process.env.NEXTAUTH_SECRET) {
+                console.error("[EXULU] Missing NEXTAUTH_SECRET", process.env.NEXTAUTH_SECRET)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (!agent.providerapikey) {
+                return res.status(400).json({
+                    message: "API Key not set for agent"
+                })
+            }
+
+            // Get the variable name from agent's providerapikey field
+            const variableName = agent.providerapikey;
+
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+            if (!variable) {
+                pipeUIMessageStreamToResponse({
+                    response: res,
+                    stream: createUIMessageStream<any>({
+                        execute: ({ writer }) => {
+                            writer.write({
+                                type: 'data-error',
+                                data: { message: 'API Key not set for agent', level: 'error' },
+                                transient: true, // This part won't be added to message history
+                            });
+                        }
+                    })
+                })
+                return;
+            }
+
+            console.log("[EXULU] Variable loaded", variable)
+
+            // Get the API key from the variable (decrypt if encrypted)
+            let providerapikey = variable.value;
+
+            if (!variable.encrypted) {
+                console.error("[EXULU] Variable not encrypted", variable)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+            }
+
+            // todo get enabled tools from agent and add them to the request body
+            // todo build logic to execute tool calls 
+
+            // Set the anthropic api key in the headers.
+            const headers = {
+                'x-api-key': providerapikey,
+                'anthropic-version': '2023-06-01',
+                'content-type': req.headers['content-type'] || 'application/json'
+            };
+
+            // Copy relevant headers
+            if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+            if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
+
+            console.log("agent", agent.name)
+            const model = backend.model?.create({
+                apiKey: providerapikey
+            })
+
+            console.log("[EXULU] Model loaded", model)
+
+            if (!model) {
+                console.error("[EXULU] Model not loaded", model)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+                    \x1b[41m -- Could not create language model instance for agent ${agent.name}. --
+                    \x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("STREAMING TEXT")
+
+            const tools: Record<string, Tool> = convertClaudeCodeToolsToVercelAISdkTools(
+                req.body.tools
+            )
+
+            const result = streamText({
+                model: model, // Should be a LanguageModelV1
+                // TIP FOR DEBUGGING IF YOU RUN INTO ISSUES / ERRORS REGARDING THE MESSAGES FORMAT. STORE THE 'raw' VARIABLE TO A FILE (fs.write)
+                // AND COPY THE CONTENT INTO THE messages: BELOW, TYPESCRIPT WILL TELL YOU WHAT IS WRONG WHICH IS USUALLY EASIER TO READ THAN THE
+                // ERROR OUTPUT IN THE LOGS.
+                messages: req.body.messages,
+                // prepareStep could be used here to set the model for the first step or change other params
+                maxOutputTokens: req.body.max_tokens,
+                temperature: req.body.temperature,
+                maxRetries: 2,
+                providerOptions: {
+                    metadata: {
+                        user_id: req.body.metadata?.user_id
+                    }
+                },
+                tools,
+                onFinish: data => console.log("[EXULU] Finished stream"),
+                onError: error => console.error("[EXULU] chat stream error.", error),
+                // stopWhen: [stepCountIs(1)],
+            });
+
+            // consume the stream to ensure it runs to completion & triggers onFinish
+            // even when the client response is aborted:
+            result.consumeStream(); // no await
+
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+
+            for await (const uiMessage of readUIMessageStream({
+                stream: result.toUIMessageStream()
+            })) {
+                for (const part of uiMessage.parts) {
+                    if (part.type === "text" && part.state === "done") {
+                        const safePart = {
+                            type: "text",
+                            text: part.text,
+                            state: "done",
+                            providerMetadata: part.providerMetadata ?? null
+                        };
+                        console.log("safePart", safePart)
+                        res.write(JSON.stringify(safePart) + "\n");
+                    }
+
+                }
+            }
+
+        } catch (error: any) {
+            console.error('[PROXY] Manual proxy error:', error);
+            if (!res.headersSent) {
+                if (error?.message === "Invalid token") {
+                    res.status(500).json({ error: "Authentication error, please check your IMP token and try again." });
+                } else {
+                    res.status(500).json({ error: error.message });
+                }
+            }
+        }
+    });
+
+
+    app.use('/proxy/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+        console.log("[EXULU] Proxy route!", req.body)
+        const path = req.url;
+        const url = `${TARGET_API}${path}`;
+        console.log("[EXULU] Proxy url!", url)
+        // const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+        // console.log('[PROXY] Manual proxy to:', url);
+        // console.log('[PROXY] Path:', path);
+        // console.log('[PROXY] Full URL:', fullUrl);
+        // console.log('[PROXY] Method:', req.method);
+        // console.log('[PROXY] Headers:', Object.keys(req.headers));
+        // console.log('[PROXY] Request body length:', req.body ? req.body.length : 0);
+        // console.log('[PROXY] Request model name:', req.body.model);
+        // console.log('[PROXY] Request stream:', req.body.stream);
+        // console.log('[PROXY] Request messages:', req.body.messages?.length);
+        // console.log('[PROXY] Request id:', req.params.id);
+
+        try {
+
+            // console.log('[PROXY] Request body tools array length:', req.body.tools?.length);
+
+            // TODO
+            /* We can create a special config page for Claude code on the IMP UI which 
+               lists all Tool Definitions and allows switching them on / off for Claude 
+               Code. In the proxy, we then inject these tools into the Claude Code Request, 
+               and if the last part of the response includes a message with content[index]
+               .type === tool_use and name === the name of the tool we defined, we call our 
+               tool, and return the response, inject it into the content array and continue it.
+               This way we can use the tools in Claude Code, and we can use the tools in the IMP UI.
+            */
+            // Todo deal with auth, allow tagging API keys in Exulu so different users
+            //   can use different API keys based on roles etc...
+
+            if (!req.body.tools) {
+                req.body.tools = [];
+            }
+
+            // Authenticate the user, and exchange the user token for an anthropic token.
+            const authenticationResult = await requestValidators.authenticate(req);
+            if (!authenticationResult.user?.id) {
+                console.log("[EXULU] failed authentication result", authenticationResult)
+                res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+                return;
+            }
+
+            const { db } = await postgresClient();
+
+            let query = db('agents');
+            query.select("*");
+            query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
+            query.where({ id: req.params.id });
+            const agent = await query.first();
+
+            if (!agent) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(`
+\x1b[41m -- Agent ${req.params.id} not found or you do not have access to it. --
+\x1b[0m`);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            console.log("[EXULU] anthropic proxy called for agent:", agent)
+
+            if (!process.env.NEXTAUTH_SECRET) {
+                console.error("[EXULU] Missing NEXTAUTH_SECRET", process.env.NEXTAUTH_SECRET)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_nextauth_secret);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (!agent.providerapikey) {
+                console.error("[EXULU] Missing providerApiKey", agent.providerapikey)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            // Get the variable name from agent's providerApiKey field
+            const variableName = agent.providerapikey;
+
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+            if (!variable) {
+                console.error("[EXULU] Missing variable", variableName)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_found);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            // Get the API key from the variable (decrypt if encrypted)
+            let anthropicApiKey = variable.value;
+
+            if (!variable.encrypted) {
+                console.error("[EXULU] Missing variable", variableName)
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
+            }
+
+            // todo get enabled tools from agent and add them to the request body
+            // todo build logic to execute tool calls 
+
+            // Set the anthropic api key in the headers.
+            const headers = {
+                'x-api-key': anthropicApiKey,
+                'anthropic-version': '2023-06-01',
+                'content-type': req.headers['content-type'] || 'application/json'
+            };
+
+            // Copy relevant headers
+            if (req.headers['accept']) headers['accept'] = req.headers['accept'];
+            if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
+
+            // Send the request to the anthropic api.
+            const response = await fetch(url, {
+                method: req.method,
+                headers: headers,
+                body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
+            });
+
+            await updateStatistic({
+                name: "count",
+                label: "Claude Code",
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: "claude-code",
+                count: 1,
+                user: authenticationResult.user?.id,
+                role: authenticationResult.user.role?.id
+            })
+
+            // Copy response headers
+            response.headers.forEach((value, key) => {
+                res.setHeader(key, value);
+            });
+
+            console.log("[EXULU] Proxy response!", response)
+
+            res.status(response.status);
+
+            // Handle streaming vs non-streaming
+            const isStreaming = response.headers.get('content-type')?.includes('text/event-stream')
+
+            if (isStreaming && !response?.body) {
+                const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_body);
+                res.setHeader('Content-Type', 'application/json');
+                res.end(Buffer.from(arrayBuffer));
+                return;
+            }
+
+            if (isStreaming) {
+                const reader = response.body!.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    console.log("[EXULU] Proxy chunk!", value)
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    res.write(chunk);
+                }
+                res.end();
+                return;
+            }
+
+            const data = await response.arrayBuffer();
+            res.end(Buffer.from(data));
+
+        } catch (error: any) {
+            console.error('[PROXY] Manual proxy error:', error);
+            if (!res.headersSent) {
+                if (error?.message === "Invalid token") {
+                    res.status(500).json({ error: "Authentication error, please check your IMP token and try again." });
+                } else {
+                    res.status(500).json({ error: error.message });
+                }
+            }
+        }
+    });
+
+    // inject tools into the request body, publish data to audit logs and implement
+    // custom authentication logic from the IMP UI.
+    app.use('/test', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+        console.log("[EXULU] Test route!", req.body)
+        res.status(200).json({ message: "Hello, world!" })
+    });
+
 
     app.use(express.static('public'))
 

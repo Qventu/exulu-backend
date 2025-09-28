@@ -41,6 +41,9 @@ async function ensureDatabaseExists(): Promise<void> {
         } else {
             console.log(`[EXULU] Database '${dbName}' already exists.`);
         }
+    } catch (error) {
+        console.error("[EXULU] Error while checking to ensure the database exists, this could be if the user running the server does not have database admin rights, it is fine to ignore this if you are sure the database exists.", error)
+        return;
     } finally {
         await defaultKnex.destroy();
     }

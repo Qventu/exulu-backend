@@ -1183,12 +1183,18 @@ const postprocessUpdate = async ({
                 .where({ source: result.id })
                 .delete();
 
+            console.log("[EXULU] Deleted chunks for item", result.id)
+
+            console.log("[EXULU] Embedder", context.embedder)
+            console.log("[EXULU] Configuration", context.configuration)
+
             if (
                 context.embedder && (
                     context.configuration.calculateVectors === "onUpdate" ||
                     context.configuration.calculateVectors === "always"
                 )
             ) {
+                console.log("[EXULU] Generating embeddings for item", result.id)
                 const { job } = await context.embeddings.generate.one({
                     item: result,
                     user: user,

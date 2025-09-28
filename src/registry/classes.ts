@@ -410,7 +410,7 @@ export class ExuluAgent {
             }),
             description: `This tool calls an AI agent named: ${agentInstance.name}. The agent does the following: ${agentInstance.description}.`,
             config: [],
-            execute: async ({ prompt, information, user, allExuluTools,  }: any) => {
+            execute: async ({ prompt, information, user, allExuluTools, }: any) => {
 
                 const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
 
@@ -748,7 +748,7 @@ export class ExuluAgent {
         // by default.
         const genericContext =
             "IMPORTANT: \n\n The current date is " + new Date().toLocaleDateString() + " and the current time is " + new Date().toLocaleTimeString() + ". If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume they are talking with the current date in mind as a reference.";
-
+            
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
@@ -763,6 +763,11 @@ export class ExuluAgent {
             // prepareStep could be used here to set the model for the first step or change other params
             system,
             maxRetries: 2,
+            providerOptions: {
+                openai: {
+                    reasoningSummary: 'auto',
+                },
+            },
             tools: convertToolsArrayToObject(
                 currentTools,
                 allExuluTools,
@@ -1676,8 +1681,8 @@ export class ExuluContext {
             CREATE INDEX IF NOT EXISTS ${tableName}_embedding_hnsw_cosine
             ON ${tableName}
             USING hnsw (embedding vector_cosine_ops)
-            WHERE embedding IS NOT NULL
             WITH (m = 16, ef_construction = 64)
+            WHERE embedding IS NOT NULL
         `);
 
         return;
@@ -1722,7 +1727,6 @@ export class ExuluContext {
 }
 
 export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code" | "user"
-
 export type ExuluStatistic = {
     name: string,
     label: string,

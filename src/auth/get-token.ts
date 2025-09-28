@@ -3,7 +3,7 @@ import { jwtVerify, importJWK } from "jose";
 export const getToken = async (authHeader: string) => {
     const token = authHeader.split(' ')[1];
     if (!token) {
-        throw new Error("No token provided")
+        throw new Error("No token provided for user authentication in headers.")
     }
     if (!process.env.NEXTAUTH_SECRET) {
         throw new Error("No NEXTAUTH_SECRET provided")
