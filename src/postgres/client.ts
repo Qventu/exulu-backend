@@ -68,7 +68,6 @@ export async function postgresClient(): Promise<{
                 await ensureDatabaseExists();
                 databaseExistsChecked = true;
             }
-
             const knex = Knex({
                 client: 'pg',
                 connection: {
@@ -80,9 +79,13 @@ export async function postgresClient(): Promise<{
                     ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
                 }
             });
-            // @ts-ignore - createExtensionIfNotExists gets added by importing pgvector
-            // but it's not typed so we must ignore this.
-            await knex.schema.createExtensionIfNotExists('vector');
+            try {
+                // @ts-ignore - createExtensionIfNotExists gets added by importing pgvector
+                // but it's not typed so we must ignore this.
+                await knex.schema.createExtensionIfNotExists('vector');
+            } catch (error) {
+                console.error("[EXULU] Error creating vector extension, this might be fine if you already activated the extension and the 'user' running this script does not have higher level database permissions.", error)
+            }
             db["exulu"] = knex
         } catch (error) {
             console.error("[EXULU] Error initializing exulu database.", error)
