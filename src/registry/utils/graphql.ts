@@ -128,6 +128,7 @@ ${enumValues}
         fields.push("  capabilities: AgentCapabilities")
         fields.push("  maxContextLength: Int")
         fields.push("  slug: String")
+        fields.push("  evals: [AgentEvalFunction]")
     }
 
     // Add RBAC field if enabled
@@ -388,7 +389,8 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 !(table.name.plural === "agents" && user.role.agents === "write") &&
                 !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
                 !(table.name.plural === "variables" && user.role.variables === "write") &&
-                !(table.name.plural === "users" && user.role.users === "write")
+                !(table.name.plural === "users" && user.role.users === "write") &&
+                !((table.name.plural === "test_cases" || table.name.plural === "eval_sets" || table.name.plural === "eval_runs") && user.role.evals === "write")
             ))) {
                 console.error('Access control error: no role found for current user or no access to entity type.');
                 // Return empty result on error
@@ -950,7 +952,8 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
         !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
         !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
         !(table.name.plural === "variables" && (user.role.variables === "read" || user.role.variables === "write")) &&
-        !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write"))
+        !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write")) &&
+        !((table.name.plural === "test_cases" || table.name.plural === "eval_sets" || table.name.plural === "eval_runs") && (user.role.evals === "read" || user.role.evals === "write"))
     ))) {
         console.error('==== Access control error: no role found or no access to entity type. ====');
         // Return empty result on error
@@ -1109,6 +1112,14 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
     }
     if (requestedFields.includes("maxContextLength")) {
         result.maxContextLength = backend?.maxContextLength || 0
+    }
+    if (requestedFields.includes("evals")) {
+        result.evals = backend?.evals?.map(evalFunc => ({
+            id: evalFunc.id,
+            name: evalFunc.name,
+            description: evalFunc.description,
+            config: evalFunc.config || []
+        })) || []
     }
     if (!requestedFields.includes("backend")) {
         delete result.backend
@@ -2356,6 +2367,18 @@ type AgentCapabilities {
     files: [String]
     audio: [String]
     video: [String]
+}
+
+type AgentEvalFunction {
+    id: ID!
+    name: String!
+    description: String!
+    config: [AgentEvalFunctionConfig!]
+}
+
+type AgentEvalFunctionConfig {
+    name: String!
+    description: String!
 }
 
 type ItemChunks {

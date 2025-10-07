@@ -2,7 +2,7 @@ import { Queue } from "bullmq";
 import type { STATISTICS_LABELS } from "../classes.ts";
 import { v4 as uuidv4 } from 'uuid';
 
-export type ExuluJobType = "embedder" | "workflow"
+export type ExuluJobType = "embedder" | "workflow" | "eval"
 
 export type ExuluBullMqDecoratorData = {
     queue: Queue,
@@ -59,6 +59,13 @@ export const bullmqDecorator = async ({
     },
         {
             jobId: redisId,
+            // Setting it to 5 as a sensible default, as
+            // many AI services are quite unstable.
+            attempts: 5, // todo make this configurable?
+            backoff: {
+              type: 'exponential',
+              delay: 2000,
+            },
         },
     )
 

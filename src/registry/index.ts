@@ -13,6 +13,7 @@ import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
+import type { Queue } from "bullmq";
 
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
@@ -49,7 +50,11 @@ export class ExuluApp {
 
     private _agents: ExuluAgent[] = []
     private _config?: ExuluConfig;
-    private _queues: string[] = []
+    private _queues: {
+        queue: Queue,
+        ratelimit: number
+        concurrency: number
+    }[] = []
     private _contexts?: Record<string, ExuluContext> = {}
     private _tools: ExuluTool[] = []
     private _expressApp: Express | null = null;
@@ -123,14 +128,20 @@ export class ExuluApp {
 
         const contextsArray = Object.values(contexts || {});
 
-        const queues = [
-            ...(contextsArray?.length ?
-                contextsArray.map(context => context.embedder?.queue?.name || null) :
-                []
-            )
-        ]
 
-        this._queues = [...new Set(queues.filter(o => !!o))] as any;
+        const queueSet = new Set<{
+            queue: Queue,
+            ratelimit: number
+            concurrency: number
+        }>();
+
+        for (const context of contextsArray) {
+            if (context.embedder?.queue) {
+                queueSet.add(context.embedder.queue);
+            }
+        }
+
+        this._queues = [...queueSet];
 
         if (!this._expressApp) {
             this._expressApp = express();

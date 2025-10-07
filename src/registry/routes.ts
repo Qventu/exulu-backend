@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluTool, updateStatistic } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, type ExuluTool, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
 import { requestValidators } from "./route-validators";
 import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
@@ -39,8 +39,9 @@ export const global_queues = {
 const {
     agentsSchema,
     projectsSchema,
-    evalResultsSchema,
-    jobsSchema,
+    testCasesSchema,
+    evalSetsSchema,
+    evalRunsSchema,
     agentSessionsSchema,
     agentMessagesSchema,
     rolesSchema,
@@ -56,7 +57,7 @@ const createRecurringJobs = async () => {
     console.log("[EXULU] creating recurring jobs.")
     const recurringJobSchedulersLogs: Array<{ name: string; pattern: string; ttld?: string; opts?: any }> = [];
 
-    const queue = queues.use(global_queues.logs_cleaner);
+    const queue = await queues.use(global_queues.logs_cleaner);
 
     recurringJobSchedulersLogs.push({
         name: global_queues.logs_cleaner,
@@ -69,7 +70,7 @@ const createRecurringJobs = async () => {
         },
     })
 
-    await queue.upsertJobScheduler(
+    await queue.queue.upsertJobScheduler(
         'logs-cleaner-scheduler',
         { pattern: '0 10 * * * *' }, // every 10 minutes
         {
@@ -87,11 +88,11 @@ const createRecurringJobs = async () => {
 }
 
 export type ExuluTableDefinition = {
-    type?: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items",
+    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items",
     id?: string,
     name: {
-        plural: "jobs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items",
-        singular: "job" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item",
+        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items",
+        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item",
     },
     fields: {
         name: string,
@@ -154,8 +155,9 @@ export const createExpressRoutes = async (
         rolesSchema(),
         agentsSchema(),
         projectsSchema(),
-        jobsSchema(),
-        evalResultsSchema(),
+        evalRunsSchema(),
+        evalSetsSchema(),
+        testCasesSchema(),
         agentSessionsSchema(),
         agentMessagesSchema(),
         variablesSchema(),
@@ -194,6 +196,7 @@ export const createExpressRoutes = async (
                     requestId: 'req-' + Date.now(),
                     ipAddress: req.ip,
                     userAgent: req.get('User-Agent'),
+                    headers: req.headers
                 });
                 logger.info("================")
                 const authenticationResult = await requestValidators.authenticate(req);
@@ -320,6 +323,135 @@ Mood: friendly and intelligent.
         });
     })
 
+    // Eval run endpoint - creates one job per test case for running the agent
+    // Worker will then create child jobs for each eval function
+    app.post("/evals/run/:id", async (req: Request, res: Response) => {
+        console.log("[EXULU] /evals/run/:id", req.params.id);
+
+        const authenticationResult = await requestValidators.authenticate(req);
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const user = authenticationResult.user;
+        const evalRunId = req.params.id;
+
+        // Check user has evals write access or is super admin
+        if (!user.super_admin && (!user.role || user.role.evals !== "write")) {
+            res.status(403).json({
+                message: "You don't have permission to run evals. Required: super_admin or evals write access."
+            });
+            return;
+        }
+
+        const { db } = await postgresClient();
+
+        // Fetch the eval run
+        const evalRun = await db.from("eval_runs").where({ id: evalRunId }).first();
+        if (!evalRun) {
+            res.status(404).json({
+                message: "Eval run not found."
+            });
+            return;
+        }
+
+        // Check RBAC access to eval run
+        const hasAccessToEvalRun = await checkRecordAccess(evalRun, "write", user);
+        if (!hasAccessToEvalRun) {
+            res.status(403).json({
+                message: "You don't have access to this eval run."
+            });
+            return;
+        }
+
+        // Get test case IDs and eval function IDs from eval run
+        const testCaseIds = evalRun.test_case_ids ? (typeof evalRun.test_case_ids === 'string' ? JSON.parse(evalRun.test_case_ids) : evalRun.test_case_ids) : [];
+        const evalFunctionIds = evalRun.eval_function_ids ? (typeof evalRun.eval_function_ids === 'string' ? JSON.parse(evalRun.eval_function_ids) : evalRun.eval_function_ids) : [];
+
+        if (!testCaseIds || testCaseIds.length === 0) {
+            res.status(400).json({
+                message: "No test cases selected for this eval run."
+            });
+            return;
+        }
+
+        if (!evalFunctionIds || evalFunctionIds.length === 0) {
+            res.status(400).json({
+                message: "No eval functions selected for this eval run."
+            });
+            return;
+        }
+
+        // Fetch test cases
+        const testCases = await db.from("test_cases").whereIn("id", testCaseIds);
+        if (testCases.length === 0) {
+            res.status(404).json({
+                message: "No test cases found."
+            });
+            return;
+        }
+
+        // Load the agent instance to validate it exists
+        const agentInstance = await loadAgent(evalRun.agentId);
+        if (!agentInstance) {
+            res.status(404).json({
+                message: "Agent instance not found."
+            });
+            return;
+        }
+
+        // Use a general eval queue for the main eval jobs
+        const evalQueue = await queues.use("evals");
+
+        // Create one job per test case
+        const jobIds: string[] = [];
+
+        for (const testCase of testCases) {
+            // Check for duplicate job (same eval run ID + test case ID combo)
+            const existingJobs = await evalQueue.queue.getJobs(["waiting", "active", "delayed", "paused"]);
+            const duplicateJob = existingJobs.find(job =>
+                job.data.evalRunId === evalRunId &&
+                job.data.testCaseId === testCase.id &&
+                job.data.type === "eval"
+            );
+
+            if (duplicateJob) {
+                console.log(`[EXULU] Skipping duplicate job for eval run ${evalRunId} and test case ${testCase.id}`);
+                continue;
+            }
+
+            // Create job with type "eval" - worker will handle running agent + creating eval function jobs
+            const job = await evalQueue.queue.add(`eval-${testCase.id}`, {
+                type: "eval",
+                evalRunId,
+                testCaseId: testCase.id,
+                evalFunctionIds, // Array of eval function IDs - worker will create child jobs for these
+                agentId: evalRun.agentId,
+                inputs: testCase.inputs,
+                expected_output: testCase.expected_output,
+                expected_tools: testCase.expected_tools,
+                expected_knowledge_sources: testCase.expected_knowledge_sources,
+                expected_agent_tools: testCase.expected_agent_tools,
+                config: evalRun.config,
+                scoring_method: evalRun.scoring_method,
+                pass_threshold: evalRun.pass_threshold,
+                user: user.id,
+                role: user.role?.id
+            });
+
+            jobIds.push(job.id as string);
+        }
+
+        res.status(200).json({
+            message: `Created ${jobIds.length} eval jobs.`,
+            jobIds,
+            evalRunId,
+            testCaseCount: testCases.length,
+            evalFunctionCount: evalFunctionIds.length
+        });
+    })
+
     // Ping route that can be used to check if the request
     // is authenticated and the server is running.
     app.get("/ping", async (req: Request, res: Response) => {
@@ -332,6 +464,31 @@ Mood: friendly and intelligent.
         }
         res.status(200).json({
             authenticated: true
+        })
+    })
+
+    // Route exposes some parts of the ExuluApp instance config options
+    // via API so the frontend can show UI messages based on what is
+    // enabled, for example if workers are disabled, a message is shown
+    // on the evals page that they need to be configured before running evals.
+    app.get("/config", async (req: Request, res: Response) => {
+        res.status(200).json({
+            MCP: {
+                enabled: config?.MCP.enabled
+            },
+            telemetry: {
+                enabled: config?.telemetry?.enabled
+            },
+            fileUploads: {
+                s3endpoint: config?.fileUploads?.s3endpoint
+            },
+            workers: {
+                telemetry: {
+                    enabled: config?.workers?.telemetry?.enabled
+                },
+                redisHost: process.env.REDIS_HOST,
+                enabled: config?.workers?.enabled,
+            }
         })
     })
 
@@ -520,87 +677,6 @@ Mood: friendly and intelligent.
         console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in ExuluApp instance.")
     }
 
-    app.use('/xxx/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), proxy(
-        (req, res, next) => {
-            return "https://api.anthropic.com"
-        }, {
-        limit: '50mb',
-        memoizeHost: false,
-        preserveHostHdr: true,
-        secure: false,
-        reqAsBuffer: true,
-        proxyReqBodyDecorator: function (bodyContent, srcReq) {
-            return bodyContent;
-        }, userResDecorator: function (proxyRes, proxyResData, userReq, userRes) {
-            console.log("[EXULU] Proxy response!", proxyResData)
-            proxyResData = proxyResData.toString(); console.log("[EXULU] Proxy response string!", proxyResData)
-            return proxyResData;
-        }, proxyReqPathResolver: (req) => {
-            const prefix = `/gateway/anthropic/${req.params.id}`;
-            let path = req.url.startsWith(prefix) ? req.url.slice(prefix.length) : req.url;
-            if (!path.startsWith('/')) path = '/' + path;
-            console.log("[EXULU] Provider path:", path);
-            return path;
-        },
-        proxyReqOptDecorator: function (proxyReqOpts, srcReq) {
-            return new Promise(async (resolve, reject) => {
-                try {
-                    const authenticationResult = await requestValidators.authenticate(srcReq);
-                    if (!authenticationResult.user?.id) {
-                        console.log("[EXULU] failed authentication result", authenticationResult)
-                        reject(authenticationResult.message)
-                        return;
-                    }
-                    console.log("[EXULU] Authenticated call", authenticationResult.user?.email)
-                    const { db } = await postgresClient();
-                    let query = db('agents'); query.select("*");
-                    query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
-                    query.where({ id: srcReq.params.id });
-                    const agent = await query.first();
-                    if (!agent) {
-                        reject(new Error("Agent with id " + srcReq.params.id + " not found."))
-                        return;
-                    }
-                    console.log("[EXULU] Agent loaded", agent.name)
-                    const backend = agents.find(x => x.id === agent.backend)
-                    if (!process.env.NEXTAUTH_SECRET) {
-                        reject(new Error("Missing NEXTAUTH_SECRET"))
-                        return;
-                    }
-                    if (!agent.providerapikey) {
-                        reject(new Error("API Key not set for agent"))
-                        return;
-                    }
-                    const variableName = agent.providerapikey;
-                    const variable = await db.from("variables").where({ name: variableName }).first();
-                    console.log("[EXULU] Variable loaded", variable)
-                    let providerapikey = variable.value;
-                    if (!variable.encrypted) {
-                        reject(new Error("API Key not encrypted for agent"))
-                        return;
-                    }
-                    if (variable.encrypted) {
-                        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-                    }
-                    console.log("[EXULU] Provider API key", providerapikey)
-                    proxyReqOpts.headers['x-api-key'] = providerapikey;
-                    proxyReqOpts.rejectUnauthorized = false
-                    delete proxyReqOpts.headers['provider'];
-                    const url = new URL("https://api.anthropic.com");
-                    proxyReqOpts.headers['host'] = url.host;
-                    proxyReqOpts.headers['anthropic-version'] = '2023-06-01';
-                    console.log("[EXULU] Proxy request headers", proxyReqOpts.headers)
-                    resolve(proxyReqOpts);
-                } catch (error: any) {
-                    console.error("[EXULU] Proxy error", error)
-                    reject(error)
-                }
-            })
-        }
-    }));
-
-
     // This route basically passes the request 1:1 to the Anthropic API, but we can
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
@@ -619,6 +695,8 @@ Mood: friendly and intelligent.
                 res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
                 return;
             }
+
+            const user = authenticationResult.user;
 
             const { db } = await postgresClient();
 
@@ -702,6 +780,13 @@ Mood: friendly and intelligent.
 
             // Send the request to the anthropic api.
             // Stream the messages from Anthropic
+            const tokens: Record<string, {
+                input_tokens: number
+                cache_creation_input_tokens: number
+                cache_read_input_tokens: number
+                output_tokens: number
+            }> = {};
+
             for await (const event of client.messages.stream(req.body) as AsyncIterable<{
                 type: string,
                 index: number,
@@ -731,9 +816,62 @@ Mood: friendly and intelligent.
                     // todo register token usage in database (summarize them for this stream and then send to statistics once)
                     // todo check against rate limit
                 }
+                if (event.message?.id) {
+                    tokens[event.message.id] = {
+                        input_tokens: event.message.usage.input_tokens,
+                        cache_creation_input_tokens: event.message.usage.cache_creation_input_tokens,
+                        cache_read_input_tokens: event.message.usage.cache_read_input_tokens,
+                        output_tokens: event.message.usage.output_tokens,
+                    };
+                }
                 const msg = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
                 res.write(msg);
             }
+
+
+            let totalInputTokens = 0;
+            let totalOutputTokens = 0;
+            for (const token of Object.values(tokens)) {
+                totalInputTokens += token.input_tokens;
+                totalOutputTokens += token.output_tokens;
+            }
+
+            const statistics = {
+                label: agent.name,
+                trigger: "agent" as STATISTICS_LABELS
+            }
+
+            await Promise.all([
+                updateStatistic({
+                    name: "count",
+                    label: statistics.label,
+                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                    trigger: statistics.trigger,
+                    count: 1,
+                    user: user.id,
+                    role: user?.role?.id
+                }),
+                ...(totalInputTokens ? [
+                    updateStatistic({
+                        name: "inputTokens",
+                        label: statistics.label,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: statistics.trigger,
+                        count: totalInputTokens,
+                        user: user.id,
+                        role: user?.role?.id
+                    })] : []
+                ),
+                ...(totalOutputTokens ? [
+                    updateStatistic({
+                        name: "outputTokens",
+                        label: statistics.label,
+                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                        trigger: statistics.trigger,
+                        count: totalOutputTokens,
+                    })] : []
+                )
+            ])
 
             res.write('event: done\ndata: [DONE]\n\n');
             res.end();

@@ -4,13 +4,6 @@ import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 let db: Record<string, KnexType | undefined> = {};
 let databaseExistsChecked = false;
 
-// We have 3 databases, that are seperated on purpose. Exulu core is
-// managed by the prisma schema and contains things like agent configurations,
-// users, roles, statistics. The exulu knowledge and mastra
-// databases are managed dynamically. The exulu knowledge database contains
-// all the knowledge base items, while the mastra database contains the
-// chat history and user sessions.
-
 const dbName = process.env.POSTGRES_DB_NAME || "exulu";
 
 async function ensureDatabaseExists(): Promise<void> {
@@ -59,6 +52,7 @@ export async function postgresClient(): Promise<{
             console.log("[EXULU] POSTGRES_DB_PORT:", process.env.POSTGRES_DB_PORT)
             console.log("[EXULU] POSTGRES_DB_USER:", process.env.POSTGRES_DB_USER)
             console.log("[EXULU] POSTGRES_DB_PASSWORD:", process.env.POSTGRES_DB_PASSWORD)
+            console.log("[EXULU] POSTGRES_DB_NAME:", dbName)
             console.log("[EXULU] POSTGRES_DB_SSL:", process.env.POSTGRES_DB_SSL)
             console.log("[EXULU] Database exists checked:", databaseExistsChecked)
 

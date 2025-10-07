@@ -2,7 +2,6 @@ import { Queue } from "bullmq";
 import { z } from "zod"
 import { convertToModelMessages, createIdGenerator, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
-import { EVAL_TYPES_ENUM } from "@EXULU_TYPES/enums/eval-types";
 import { postgresClient, refreshPostgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
@@ -10,7 +9,6 @@ import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
 import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
-import { ExuluEvalUtils } from "../evals/utils";
 import CryptoJS from 'crypto-js';
 import { type Request, type Response } from "express";
 import { vectorSearch } from "./utils/graphql";
@@ -272,10 +270,6 @@ export type ExuluAgentConfig = {
     },
 }
 
-export type ExuluAgentEval = {
-    runner: ExuluEvalRunnerInstance,
-}
-
 export type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
 export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
 export type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
@@ -296,9 +290,9 @@ interface ExuluAgentParams {
         audio: audioTypes[];
         video: videoTypes[];
     };
-    evals?: ExuluAgentEval[];
     outputSchema?: z.ZodType;
     rateLimit?: RateLimiterRule;
+    evals?: ExuluEval[];
 }
 
 interface ExuluAgentToolConfig {
@@ -324,9 +318,77 @@ export function errorHandler(error: unknown) {
     return JSON.stringify(error);
 }
 
+export type ExuluQueueConfig = {
+    queue: Queue,
+    ratelimit: number
+    concurrency: number
+};
+
+export type ExuluEvalTokenMetadata = {
+    totalTokens?: number,
+    reasoningTokens?: number,
+    inputTokens?: number,
+    outputTokens?: number,
+    cachedInputTokens?: number
+};
+
+export type ExuluEvalMetadata = {
+    tokens?: ExuluEvalTokenMetadata,
+    duration?: number
+};
+
+interface ExuluEvalParams {
+    id: string;
+    name: string;
+    description: string;
+    execute: (params: {
+        messages: UIMessage[],
+        metadata: ExuluEvalMetadata,
+        config?: Record<string, any>
+    }) => Promise<number>;
+    config?: {
+        name: string,
+        description: string
+    }[];
+    queue: ExuluQueueConfig;
+}
+
+export class ExuluEval {
+    public id: string;
+    public name: string;
+    public description: string;
+    private execute: (params: {
+        messages: UIMessage[],
+        metadata: ExuluEvalMetadata,
+        config?: Record<string, any>
+    }) => Promise<number>;
+    public config?: {
+        name: string,
+        description: string
+    }[];
+    public queue: ExuluQueueConfig;
+
+    constructor({ id, name, description, execute, config, queue }: ExuluEvalParams) {
+        this.id = id;
+        this.name = name;
+        this.description = description;
+        this.execute = execute;
+        this.config = config;
+        this.queue = queue;
+    }
+
+    public async run(messages: UIMessage[], metadata: ExuluEvalMetadata, config?: Record<string, any>): Promise<number> {
+        const score = await this.execute({ messages, metadata, config });
+        if (score < 0 || score > 100) {
+            throw new Error(`Eval function ${this.name} must return a score between 0 and 100, got ${score}`);
+        }
+        return score;
+    }
+}
+
 export class ExuluAgent {
 
-    // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
+    // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or
     // underscores and be a max length of 80 characters and at least 5 characters long.
     // The ID is used for storing references to agents so it is important it does not change.
     public id: string;
@@ -338,8 +400,8 @@ export class ExuluAgent {
     public maxContextLength?: number;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
+    public evals?: ExuluEval[];
     // private memory: Memory | undefined; // TODO do own implementation
-    public evals?: ExuluAgentEval[];
     public model?: {
         create: ({ apiKey }: { apiKey: string }) => LanguageModel
     };
@@ -350,15 +412,15 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, type, evals, maxContextLength }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, evals }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
-        this.evals = evals;
         this.description = description;
         this.rateLimit = rateLimit;
         this.config = config;
         this.type = type;
         this.maxContextLength = maxContextLength;
+        this.evals = evals;
         this.capabilities = capabilities || {
             text: false,
             images: [],
@@ -562,7 +624,8 @@ export class ExuluAgent {
 
         if (prompt) {
             let result: { object?: any, text?: string } = { object: null, text: "" };
-            let tokens: number = 0;
+            let inputTokens: number = 0;
+            let outputTokens: number = 0;
             if (outputSchema) {
                 const { object, usage } = await generateObject({
                     model: model,
@@ -573,7 +636,8 @@ export class ExuluAgent {
 
                 });
                 result.object = object;
-                tokens = usage.totalTokens || 0;
+                inputTokens = usage.inputTokens || 0;
+                outputTokens = usage.outputTokens || 0;
 
             } else {
                 console.log("[EXULU] Generating text for agent: " + this.name, "with prompt: " + prompt?.slice(0, 100) + "...")
@@ -595,7 +659,8 @@ export class ExuluAgent {
                     stopWhen: [stepCountIs(2)],
                 });
                 result.text = text;
-                tokens = totalUsage?.totalTokens || 0;
+                inputTokens = totalUsage?.inputTokens || 0;
+                outputTokens = totalUsage?.outputTokens || 0;
             }
 
             if (statistics) {
@@ -609,13 +674,22 @@ export class ExuluAgent {
                         user: user?.id,
                         role: user?.role?.id
                     }),
-                    ...(tokens ? [
+                    ...(inputTokens ? [
                         updateStatistic({
-                            name: "tokens",
+                            name: "inputTokens",
                             label: statistics.label,
                             type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                             trigger: statistics.trigger,
-                            count: tokens,
+                            count: inputTokens,
+                        })] : []
+                    ),
+                    ...(outputTokens ? [
+                        updateStatistic({
+                            name: "outputTokens",
+                            label: statistics.label,
+                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                            trigger: statistics.trigger,
+                            count: outputTokens,
                         })] : []
                     )
                 ])
@@ -656,15 +730,24 @@ export class ExuluAgent {
                         user: user?.id,
                         role: user?.role?.id
                     }),
-                    ...(totalUsage?.totalTokens ? [
+                    ...(totalUsage?.inputTokens ? [
                         updateStatistic({
-                            name: "tokens",
+                            name: "inputTokens",
                             label: statistics.label,
                             type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                             trigger: statistics.trigger,
-                            count: totalUsage?.totalTokens,
+                            count: totalUsage?.inputTokens,
                             user: user?.id,
                             role: user?.role?.id
+                        })] : []
+                    ),
+                    ...(totalUsage?.outputTokens ? [
+                        updateStatistic({
+                            name: "outputTokens",
+                            label: statistics.label,
+                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                            trigger: statistics.trigger,
+                            count: totalUsage?.outputTokens,
                         })] : []
                     )
                 ])
@@ -830,15 +913,24 @@ export class ExuluAgent {
                             user: user.id,
                             role: user?.role?.id
                         }),
-                        ...(metadata?.totalTokens ? [
+                        ...(metadata?.inputTokens ? [
                             updateStatistic({
-                                name: "tokens",
+                                name: "inputTokens",
                                 label: statistics.label,
                                 type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                                 trigger: statistics.trigger,
-                                count: metadata?.totalTokens,
+                                count: metadata?.inputTokens,
                                 user: user.id,
                                 role: user?.role?.id
+                            })] : []
+                        ),
+                        ...(metadata?.outputTokens ? [
+                            updateStatistic({
+                                name: "outputTokens",
+                                label: statistics.label,
+                                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                                trigger: statistics.trigger,
+                                count: metadata?.outputTokens,
                             })] : []
                         )
                     ])
@@ -906,7 +998,7 @@ export class ExuluEmbedder {
     public id: string;
     public name: string;
     public slug: string = "";
-    public queue?: Queue;
+    public queue?: ExuluQueueConfig;
     private generateEmbeddings: VectorGenerateOperation;
     public vectorDimensions: number;
     public maxChunkSize: number;
@@ -917,7 +1009,7 @@ export class ExuluEmbedder {
         description: string,
         generateEmbeddings: VectorGenerateOperation,
         chunker: ChunkerOperation,
-        queue?: Queue,
+        queue?: ExuluQueueConfig,
         vectorDimensions: number,
         maxChunkSize: number
     }) {
@@ -1015,168 +1107,6 @@ export interface ExuluWorkflow {
 export interface ExuluRBAC {
     users?: Array<{ id: string; rights: 'read' | 'write' }>
     roles?: Array<{ id: string; rights: 'read' | 'write' }>
-}
-
-type ExuluEvalRunnerInstance = {
-    name: string,
-    description: string,
-    testcases: ExuluEvalInput[],
-    run: ExuluEvalRunner
-}
-
-type ExuluEvalRunner = ({ data, runner }: {
-    data: ExuluEvalInput, runner: {
-        agent?: ExuluAgent & { providerapikey: string },
-        workflow?: ExuluWorkflow
-    }
-}) => Promise<{
-    score: number,
-    comment: string
-}>
-
-export type ExuluEvalInput = {
-    prompt?: string,
-    inputs?: any,
-    result?: string,
-    category?: string,
-    metadata?: Record<string, any>,
-    duration?: number, // provides the duration of the output generation
-    reference?: string,
-}
-
-export class ExuluEval {
-    public name: string;
-    public description: string;
-
-    constructor({ name, description }: {
-        name: string,
-        description: string
-    }) {
-        this.name = name;
-        this.description = description;
-    }
-
-    public create = {
-        LlmAsAJudge: {
-            niah: ({ label, model, needles, testDocument, contextlengths }: { label: string, model: LanguageModel, needles: { question: string, answer: string }[], testDocument: string, contextlengths: (5000 | 30000 | 50000 | 128000)[] }): ExuluEvalRunnerInstance => {
-                return {
-                    name: this.name,
-                    description: this.description,
-                    testcases: ExuluEvalUtils.niahTestSet({
-                        label,
-                        contextlengths: contextlengths || [5000, 30000, 50000, 128000],
-                        needles,
-                        testDocument
-                    }),
-                    run: async ({ data, runner }) => {
-
-                        if (runner.workflow) {
-                            throw new Error("Workflows are not supported for the needle in a haystack eval.")
-                        }
-
-                        if (!runner.agent) {
-                            throw new Error("Agent is required for the needle in a haystack eval.")
-                        }
-
-                        // TWO CASES:
-                        // 1. running via CLI, provided with pre-defined inputs, to run the agent on.
-                        // 2. Running as part of a job that has been triggered by the system based on pre-defined
-                        // eval trigger rules.
-
-                        // Output provided by the previously run agent.
-                        if (!data.result) {
-                            if (!data.prompt) {
-                                throw new Error("Prompt is required for running an agent.")
-                            }
-
-                            const { db } = await postgresClient();
-                            // Get the variable name from user's anthropic_token field
-                            const variableName = runner.agent.providerapikey;
-
-                            // Look up the variable from the variables table
-                            const variable = await db.from("variables").where({ name: variableName }).first();
-                            if (!variable) {
-                                throw new Error(`Provider API key for variable "${runner.agent.providerapikey}" not found.`)
-                            }
-
-                            // Get the API key from the variable (decrypt if encrypted)
-                            let providerapikey = variable.value;
-
-                            if (!variable.encrypted) {
-                                throw new Error(`Provider API key for variable "${runner.agent.providerapikey}" is not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.`)
-                            }
-
-                            if (variable.encrypted) {
-                                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-                            }
-
-                            const result = await runner.agent.generateSync({
-                                prompt: data.prompt,
-                                providerapikey
-                            })
-                            data.result = result;
-                        }
-
-                        const { object } = await generateObject({
-                            model: model,
-                            maxRetries: 3,
-                            schema: z.object({
-                                correctnessScore: z.number(),
-                                comment: z.string(),
-                            }),
-                            prompt: `You are checking if the below "actual_answers" contain the correct information as
-                            presented in the "correct_answers" section to calculate the correctness score.
-    
-                            The correctness score should be a number between 0 and 1. 1 is the highest score.
-
-                            For example if the actual_answers contains 1 answer of the ${needles.length} correct_answers, the 
-                            score should be ${1 / needles.length}. If the actual_answers contain 2 correct answers, the 
-                            score should be ${2 / needles.length} etc.. if the actual_answers contains all the correct answers, the 
-                            score should be 1 and if the actual_answers contains none of the correct answers, the score should be 0.
-    
-                            You can ignore small differences in the actual_answers and the correct_answers such as spelling mistakes, 
-                            punctuation, etc., if the content of the actual answer is still correct.
-
-                            Also provide a comment on how you came to your conclusion.
-                            
-                            <actual_answers>
-                            ${data.result}
-                            </actual_answers>
-                            
-                            <correct_answers>
-                            ${needles.map((needle, index) => `- ${index + 1}: ${needle.answer}`).join("\n")}
-                            </correct_answers>`
-                        });
-
-                        console.log("[EXULU] eval result", object)
-
-                        const { db } = await postgresClient();
-                        await db('eval_results').insert({
-                            input: data.prompt,
-                            output: data.result,
-                            duration: data.duration,
-                            result: object.correctnessScore,
-                            agent_id: runner.agent.id || undefined,
-                            eval_type: EVAL_TYPES_ENUM.llm_as_judge,
-                            eval_name: this.name,
-                            comment: object.comment,
-                            category: data.category,
-                            metadata: data.metadata,
-                            createdAt: db.fn.now(),
-                            updatedAt: db.fn.now()
-                        });
-
-                        return {
-                            score: object.correctnessScore,
-                            comment: object.comment
-                        };
-                    }
-                }
-            }
-        }
-    }
-
 }
 
 export class ExuluTool {
@@ -1542,7 +1472,7 @@ export class ExuluContext {
                     throw new Error("Item id is required for generating embeddings.")
                 }
 
-                if (this.embedder.queue?.name) {
+                if (this.embedder.queue?.queue.name) {
                     console.log("[EXULU] embedder is in queue mode, scheduling job.")
                     const job = await bullmqDecorator({
                         label: `${this.embedder.name}`,
@@ -1550,7 +1480,7 @@ export class ExuluContext {
                         context: this.id,
                         inputs: item,
                         item: item.id,
-                        queue: this.embedder.queue,
+                        queue: this.embedder.queue.queue,
                         user: user,
                         role: role,
                         trigger: trigger || "agent",
@@ -1583,7 +1513,7 @@ export class ExuluContext {
 
                 // Safeguard against too many items
                 if (
-                    !this.embedder?.queue?.name &&
+                    !this.embedder?.queue?.queue.name &&
                     items.length > 2000
                 ) {
                     throw new Error(`Embedder is not in queue mode, cannot generate embeddings for more than 
