@@ -194,6 +194,7 @@ export const createExpressRoutes = async (
                     requestId: 'req-' + Date.now(),
                     ipAddress: req.ip,
                     userAgent: req.get('User-Agent'),
+                    headers: req.headers
                 });
                 logger.info("================")
                 const authenticationResult = await requestValidators.authenticate(req);
