@@ -91,7 +91,7 @@ export const authentication = async ({
             };
 
         } catch (error: any) {
-            console.error(error)
+            console.error("Invalid token error in authentication", error)
             return {
                 error: true,
                 message: "Invalid token.",

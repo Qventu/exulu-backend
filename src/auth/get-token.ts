@@ -15,6 +15,7 @@ export const getToken = async (authHeader: string) => {
         const { payload } = await jwtVerify(token, jwk);
         return payload;
     } catch (error) {
+        console.error("Invalid token error in getToken", error)
         throw new Error("Invalid token")
     }
 }
