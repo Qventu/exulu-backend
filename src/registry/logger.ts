@@ -1,10 +1,12 @@
 import { OpenTelemetryTransportV3 } from '@opentelemetry/winston-transport'
-import winston from 'winston'
+import winston, { type transport } from 'winston'
 
 const createLogger = ({
-    enableOtel
+    enableOtel,
+    transports
 }: {
     enableOtel: boolean,
+    transports: transport[]
 }) => {
     const logger = winston.createLogger({
         level: 'debug',
@@ -21,7 +23,7 @@ const createLogger = ({
             environment: process.env.NODE_ENV || 'development',
         },
         transports: [
-            new winston.transports.Console(),
+            ...transports,
             ...(enableOtel ? [new OpenTelemetryTransportV3()] : []),
         ],
     })

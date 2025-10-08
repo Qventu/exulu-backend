@@ -23,7 +23,6 @@ import fs from "fs";
 import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
-import type { Logger } from "winston";
 import { checkAgentRateLimit, checkRecordAccess, getEnabledTools, loadAgent } from "./utils.ts";
 import { jsonSchema, type Tool } from "ai";
 export const REQUEST_SIZE_LIMIT = '50mb';
@@ -108,7 +107,6 @@ export type ExuluTableDefinition = {
 
 export const createExpressRoutes = async (
     app: Express,
-    logger: Logger,
     agents: ExuluAgent[],
     tools: ExuluTool[],
     contexts: ExuluContext[] | undefined,
@@ -186,8 +184,8 @@ export const createExpressRoutes = async (
         express.json({ limit: REQUEST_SIZE_LIMIT }),
         expressMiddleware(server, {
             context: async ({ req }) => {
-                logger.info("================")
-                logger.info({
+                console.info("================")
+                console.info({
                     message: 'Incoming Request',
                     method: req.method,
                     path: req.path,
@@ -196,7 +194,7 @@ export const createExpressRoutes = async (
                     userAgent: req.get('User-Agent'),
                     headers: req.headers
                 });
-                logger.info("================")
+                console.info("================")
                 const authenticationResult = await requestValidators.authenticate(req);
                 if (!authenticationResult.user?.id) {
                     throw new Error(authenticationResult.message);

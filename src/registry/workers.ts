@@ -3,18 +3,13 @@ import { redisServer } from "../bullmq/server";
 import { Job, Worker } from "bullmq";
 import { bullmq } from "./utils";
 import { ExuluContext } from "./classes";
-import * as fs from 'fs';
-import path from "path";
-import { global_queues } from "./routes";
 import { postgresClient } from "../postgres/client";
 import type { ExuluBullMqDecoratorData, ExuluJobType } from "./decoraters/bullmq";
 import { type Tracer } from "@opentelemetry/api";
-import type { Logger } from "winston";
-export const defaultLogsDir = path.join(process.cwd(), 'logs');
 
 let redisConnection: IORedis;
 
-export const createWorkers = async (queues: string[], logger: Logger, contexts: ExuluContext[], _logsDir?: string, tracer?: Tracer) => {
+export const createWorkers = async (queues: string[], contexts: ExuluContext[], tracer?: Tracer) => {
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
 
@@ -29,8 +24,6 @@ export const createWorkers = async (queues: string[], logger: Logger, contexts: 
             maxRetriesPerRequest: null
         });
     }
-
-    const logsDir = _logsDir || defaultLogsDir;
 
     const workers = queues.map(queue => {
         console.log(`[EXULU] creating worker for queue ${queue}.`)
@@ -101,46 +94,5 @@ export const createWorkers = async (queues: string[], logger: Logger, contexts: 
         return worker;
     })
 
-    const logsCleaner = createLogsCleanerWorker(logsDir);
-    workers.push(logsCleaner);
-
     return workers;
-}
-
-const createLogsCleanerWorker = (logsDir: string) => {
-    const logsCleaner = new Worker(
-        global_queues.logs_cleaner,
-        async job => {
-
-            console.log(`[EXULU] recurring job ${job.id}.`)
-            const folder = fs.readdirSync(logsDir);
-            const files = folder.filter(file => file.endsWith('.log'));
-
-            const now = new Date();
-            const daysToKeep = job.data.ttld;
-            const dateToKeep = new Date(now.getTime() - daysToKeep * 24 * 60 * 60 * 1000);
-
-            files.forEach(file => {
-                const filePath = path.join(logsDir, file);
-                const fileStats = fs.statSync(filePath);
-                if (fileStats.mtime < dateToKeep) {
-                    fs.unlinkSync(filePath);
-                }
-            });
-        },
-        { connection: redisConnection }
-    )
-
-    logsCleaner.on('completed', (job, returnvalue: any) => {
-        console.log(`[EXULU] completed logs cleaner ${job.id}.`, returnvalue)
-    });
-
-    logsCleaner.on('failed', (job, error: Error, prev: string) => {
-        if (job?.id) {
-            console.error(`[EXULU] failed logs cleaner ${job.id}.`)
-        }
-        console.error(`[EXULU] job error logs cleaner.`, error)
-    });
-
-    return logsCleaner;
 }

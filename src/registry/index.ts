@@ -13,6 +13,7 @@ import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
+import winston, { type transport } from "winston";
 
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
@@ -26,9 +27,18 @@ export type ExuluConfig = {
     telemetry?: {
         enabled: boolean,
     }
+    logger?: {
+        winston: {
+            transports: transport[]
+        }
+    },
     workers: {
         enabled: boolean,
-        logsDir?: string,
+        logger?: {
+            winston: {
+                transports: transport[]
+            }
+        },
         telemetry?: {
             enabled: boolean,
         }
@@ -63,7 +73,7 @@ export class ExuluApp {
         config: ExuluConfig,
         agents?: ExuluAgent[],
         tools?: ExuluTool[]
-    }): Promise<Express> => {
+    }): Promise<ExuluApp> => {
 
         this._contexts = {
             ...contexts,
@@ -131,13 +141,19 @@ export class ExuluApp {
         ]
 
         this._queues = [...new Set(queues.filter(o => !!o))] as any;
+        console.log("[EXULU] App initialized.")
+        return this;
+    }
 
-        if (!this._expressApp) {
-            this._expressApp = express();
-            await this.server.express.init();
-            console.log("[EXULU] Express app initialized.")
+    express = {
+        init: async (): Promise<Express> => {
+            if (!this._expressApp) {
+                this._expressApp = express();
+                await this.server.express.init();
+                console.log("[EXULU] Express app initialized.")
+            }
+            return this._expressApp;
         }
-        return this._expressApp;
     }
 
     public get expressApp(): Express {
@@ -182,7 +198,7 @@ export class ExuluApp {
             }) => {
                 const { db } = await postgresClient();
                 const item = await db.from(getTableName(contextId)).where({ id: itemId }).select("*").first()
-                ;
+                    ;
                 const context = this.contexts.find(x => contextId === x.id)
 
                 if (!context) {
@@ -200,7 +216,7 @@ export class ExuluApp {
                 context: string
             }) => {
                 const context = this.contexts.find(x => contextId === x.id)
-                if (!context) { 
+                if (!context) {
                     throw new Error(`Context ${contextId} not found in registry.`)
                 }
                 return await context.embeddings.generate.all(undefined, undefined)
@@ -218,15 +234,25 @@ export class ExuluApp {
                     tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
                 }
 
+                // Either a specific logger transport is defined for workers, or a global one for the entire app, or if
+                // no transports are defined, we use the console transport as a default logger fallback.
+                const transports = this._config?.workers?.logger?.winston?.transports ?? this._config?.logger?.winston?.transports ?? [new winston.transports.Console()];
+
                 const logger = createLogger({
-                    enableOtel: this._config?.workers?.telemetry?.enabled ?? false
+                    enableOtel: this._config?.workers?.telemetry?.enabled ?? false,
+                    transports
                 })
+
+                // Monkey-patch console to use Winston
+                console.log = (...args: any[]) => logger.info(args.map(String).join(' '))
+                console.info = (...args: any[]) => logger.info(args.map(String).join(' '))
+                console.warn = (...args: any[]) => logger.warn(args.map(String).join(' '))
+                console.error = (...args: any[]) => logger.error(args.map(String).join(' '))
+                console.debug = (...args: any[]) => logger.debug(args.map(String).join(' '))
 
                 return await createWorkers(
                     this._queues,
-                    logger,
                     Object.values(this._contexts ?? {}),
-                    this._config?.workers?.logsDir,
                     tracer
                 )
             }
@@ -249,12 +275,19 @@ export class ExuluApp {
                 }
 
                 const logger = createLogger({
-                    enableOtel: this._config?.telemetry?.enabled ?? false
+                    enableOtel: this._config?.telemetry?.enabled ?? false,
+                    transports: this._config?.logger?.winston?.transports ?? [new winston.transports.Console()]
                 })
+
+                // Monkey-patch console to use Winston
+                console.log = (...args: any[]) => logger.info(args.map(String).join(' '))
+                console.info = (...args: any[]) => logger.info(args.map(String).join(' '))
+                console.warn = (...args: any[]) => logger.warn(args.map(String).join(' '))
+                console.error = (...args: any[]) => logger.error(args.map(String).join(' '))
+                console.debug = (...args: any[]) => logger.debug(args.map(String).join(' '))
 
                 await createExpressRoutes(
                     app,
-                    logger,
                     this._agents,
                     this._tools,
                     Object.values(this._contexts ?? {}),
@@ -272,7 +305,6 @@ export class ExuluApp {
                         config: this._config,
                         tools: this._tools,
                         tracer,
-                        logger
                     });
 
                     await mcp.connect();
