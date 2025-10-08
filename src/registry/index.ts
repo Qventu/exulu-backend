@@ -15,6 +15,19 @@ import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
 import winston, { type transport } from "winston";
 
+const isDev = process.env.NODE_ENV !== 'production'
+const consoleTransport = new winston.transports.Console({
+    format: isDev
+        ? winston.format.combine(
+            winston.format.colorize(),
+            winston.format.timestamp({ format: 'HH:mm:ss' }),
+            winston.format.printf(({ timestamp, level, message }) => {
+                return `${timestamp} [${level}] ${message}`
+            })
+        )
+        : winston.format.json(),
+})
+
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
     const regex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -236,7 +249,7 @@ export class ExuluApp {
 
                 // Either a specific logger transport is defined for workers, or a global one for the entire app, or if
                 // no transports are defined, we use the console transport as a default logger fallback.
-                const transports = this._config?.workers?.logger?.winston?.transports ?? this._config?.logger?.winston?.transports ?? [new winston.transports.Console()];
+                const transports = this._config?.workers?.logger?.winston?.transports ?? this._config?.logger?.winston?.transports ?? [consoleTransport];
 
                 const logger = createLogger({
                     enableOtel: this._config?.workers?.telemetry?.enabled ?? false,
@@ -276,7 +289,7 @@ export class ExuluApp {
 
                 const logger = createLogger({
                     enableOtel: this._config?.telemetry?.enabled ?? false,
-                    transports: this._config?.logger?.winston?.transports ?? [new winston.transports.Console()]
+                    transports: this._config?.logger?.winston?.transports ?? [consoleTransport]
                 })
 
                 // Monkey-patch console to use Winston
