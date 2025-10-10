@@ -184,17 +184,20 @@ export const createExpressRoutes = async (
         express.json({ limit: REQUEST_SIZE_LIMIT }),
         expressMiddleware(server, {
             context: async ({ req }) => {
-                console.info("================")
-                console.info({
+                console.info("[EXULU] Incoming graphql request", {
                     message: 'Incoming Request',
                     method: req.method,
                     path: req.path,
                     requestId: 'req-' + Date.now(),
                     ipAddress: req.ip,
                     userAgent: req.get('User-Agent'),
-                    headers: req.headers
+                    headers: {
+                        "authorization": req.headers['authorization'],
+                        'exulu-api-key': req.headers['exulu-api-key'],
+                        "origin": req.headers['origin'],
+                        "...": "..."
+                    }
                 });
-                console.info("================")
                 const authenticationResult = await requestValidators.authenticate(req);
                 if (!authenticationResult.user?.id) {
                     throw new Error(authenticationResult.message);
@@ -598,6 +601,17 @@ Mood: friendly and intelligent.
             })
         }
     }));
+
+    app.get("/config", async (req: Request, res: Response) => {
+        res.status(200).json({
+            message: "Config fetched successfully.",
+            config: {
+                workers: {
+                    enabled: config?.workers?.enabled || false,
+                }
+            }
+        });
+    });
 
 
     // This route basically passes the request 1:1 to the Anthropic API, but we can

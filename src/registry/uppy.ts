@@ -27,6 +27,31 @@ export const createUppyRoutes = async (
     config: ExuluConfig
 ) => {
 
+    // Helper function to extract user prefix from S3 key, accounting for optional s3prefix
+    const extractUserPrefix = (key: string): string | null => {
+        if (!config.fileUploads.s3prefix) {
+            return key.split("/")[0];
+        }
+
+        // Remove the s3prefix from the start if it exists
+        const prefix = config.fileUploads.s3prefix.replace(/\/$/, '');
+        if (key.startsWith(prefix + "/")) {
+            const keyWithoutPrefix = key.slice(prefix.length + 1);
+            return keyWithoutPrefix.split("/")[0];
+        }
+
+        // If key doesn't start with expected prefix, return first segment
+        return key.split("/")[0];
+    };
+
+    // Helper function to add s3prefix to a key path
+    const addPrefixToKey = (keyPath: string): string => {
+        if (!config.fileUploads.s3prefix) {
+            return keyPath;
+        }
+        const prefix = config.fileUploads.s3prefix.replace(/\/$/, '');
+        return `${prefix}/${keyPath}`;
+    };
 
     const policy = {
         Version: '2012-10-17',
@@ -111,7 +136,7 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const userPrefix = key.split("/")[0];
+        const userPrefix = extractUserPrefix(key);
 
         console.log("userPrefix", userPrefix)
         console.log("authenticationResult.user.id", authenticationResult.user.id)
@@ -171,7 +196,7 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const userPrefix = key.split("/")[0];
+        const userPrefix = extractUserPrefix(key);
 
         if (!userPrefix) {
             res.status(405).json({ error: 'Invalid key, does not contain a user prefix like "<user_id>/<key>.' });
@@ -280,12 +305,13 @@ export const createUppyRoutes = async (
         const key = generateS3Key(filename)
 
         let folder = `${authenticationResult.user.id}/`
+        const fullKey = addPrefixToKey(folder + key);
 
         getSignedUrl(
             getS3Client(),
             new PutObjectCommand({
                 Bucket: config.fileUploads.s3Bucket,
-                Key: folder + key,
+                Key: fullKey,
                 ContentType: contentType,
             }),
             { expiresIn },
@@ -349,9 +375,11 @@ export const createUppyRoutes = async (
             folder = `${authenticationResult.user.id}/`
         }
 
+        const fullKey = addPrefixToKey(folder + key);
+
         const params = {
             Bucket: config.fileUploads.s3Bucket,
-            Key: folder + key,
+            Key: fullKey,
             ContentType: type,
             Metadata: metadata,
         }

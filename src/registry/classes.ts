@@ -130,7 +130,10 @@ const convertToolsArrayToObject = (
                                 tags?: string[]
                             }): Promise<Item | undefined> => {
                                 const mime = getMimeType(type)
-                                const key = `${user}/${generateS3Key(name)}${type}`;
+                                const prefix = exuluConfig?.fileUploads?.s3prefix
+                                    ? `${exuluConfig.fileUploads.s3prefix.replace(/\/$/, '')}/`
+                                    : '';
+                                const key = `${prefix}${user}/${generateS3Key(name)}${type}`;
                                 const command = new PutObjectCommand({
                                     Bucket: exuluConfig?.fileUploads?.s3Bucket,
                                     Key: key,
@@ -1194,7 +1197,7 @@ export class ExuluTool {
         name: string,
         description: string
     }[]
-
+    
     constructor({ id, name, description, inputSchema, type, execute, config }: {
         id: string,
         name: string,
@@ -1233,6 +1236,8 @@ type ExuluContextFieldDefinition = {
     name: string,
     type: ExuluFieldTypes
     unique?: boolean
+    // require defining a processor if type above is file
+    processor?: () => Promise<string>
 }
 
 

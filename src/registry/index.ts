@@ -14,6 +14,7 @@ import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { filesContext } from "../templates/contexts/files.ts";
 import winston, { type transport } from "winston";
+import util from "util";
 
 const isDev = process.env.NODE_ENV !== 'production'
 const consoleTransport = new winston.transports.Console({
@@ -65,6 +66,7 @@ export type ExuluConfig = {
         s3secret: string,
         s3Bucket: string,
         s3endpoint?: string,
+        s3prefix?: string,
     }
 }
 
@@ -257,11 +259,12 @@ export class ExuluApp {
                 })
 
                 // Monkey-patch console to use Winston
-                console.log = (...args: any[]) => logger.info(args.map(String).join(' '))
-                console.info = (...args: any[]) => logger.info(args.map(String).join(' '))
-                console.warn = (...args: any[]) => logger.warn(args.map(String).join(' '))
-                console.error = (...args: any[]) => logger.error(args.map(String).join(' '))
-                console.debug = (...args: any[]) => logger.debug(args.map(String).join(' '))
+                const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
+                console.log = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
+                console.info = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
+                console.warn = (...args: any[]) => logger.warn(args.map(formatArg).join(' '))
+                console.error = (...args: any[]) => logger.error(args.map(formatArg).join(' '))
+                console.debug = (...args: any[]) => logger.debug(args.map(formatArg).join(' '))
 
                 return await createWorkers(
                     this._queues,
@@ -293,11 +296,12 @@ export class ExuluApp {
                 })
 
                 // Monkey-patch console to use Winston
-                console.log = (...args: any[]) => logger.info(args.map(String).join(' '))
-                console.info = (...args: any[]) => logger.info(args.map(String).join(' '))
-                console.warn = (...args: any[]) => logger.warn(args.map(String).join(' '))
-                console.error = (...args: any[]) => logger.error(args.map(String).join(' '))
-                console.debug = (...args: any[]) => logger.debug(args.map(String).join(' '))
+                const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
+                console.log = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
+                console.info = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
+                console.warn = (...args: any[]) => logger.warn(args.map(formatArg).join(' '))
+                console.error = (...args: any[]) => logger.error(args.map(formatArg).join(' '))
+                console.debug = (...args: any[]) => logger.debug(args.map(formatArg).join(' '))
 
                 await createExpressRoutes(
                     app,
