@@ -10,6 +10,7 @@ export type User = {
     id: string;
     name: string;
     agents: "read" | "write";
+    evals: "read" | "write";
     workflows: "read" | "write";
     variables: "read" | "write";
     users: "read" | "write";

@@ -7,10 +7,11 @@ import { encryptString, generateApiKey } from "../auth/generate-key";
 import type { ExuluTableDefinition } from "../registry/routes";
 import type { ExuluContext } from "../registry/classes";
 
-const { 
+const {
     agentsSchema,
-    evalResultsSchema,
-    jobsSchema,
+    testCasesSchema,
+    evalSetsSchema,
+    evalRunsSchema,
     agentSessionsSchema,
     agentMessagesSchema,
     rolesSchema,
@@ -53,10 +54,11 @@ const up = async function (knex: Knex) {
         agentSessionsSchema(),
         agentMessagesSchema(),
         rolesSchema(),
-        evalResultsSchema(),
+        testCasesSchema(),
+        evalSetsSchema(),
+        evalRunsSchema(),
         statisticsSchema(),
         projectsSchema(),
-        jobsSchema(),
         rbacSchema(),
         agentsSchema(),
         variablesSchema(),

@@ -1,6 +1,6 @@
 import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
-import { Job, Worker } from "bullmq";
+import { Job, Queue, Worker } from "bullmq";
 import { bullmq } from "./utils";
 import { ExuluContext } from "./classes";
 import { postgresClient } from "../postgres/client";
@@ -9,7 +9,16 @@ import { type Tracer } from "@opentelemetry/api";
 
 let redisConnection: IORedis;
 
-export const createWorkers = async (queues: string[], contexts: ExuluContext[], tracer?: Tracer) => {
+export const createWorkers = async (queues: {
+    queue: Queue,
+    ratelimit: number
+    concurrency: number
+}[],
+   
+    contexts: ExuluContext[],
+   
+    tracer?: Tracer
+) => {
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
 
@@ -32,7 +41,7 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
             async (bullmqJob: Job) => {
                 const { db } = await postgresClient()
                 try {
-                   // Type casting data here, couldn't get it to merge
+                    // Type casting data here, couldn't get it to merge
                     // on the main object while keeping auto completion.
                     const data: ExuluBullMqDecoratorData & { type: ExuluJobType } = bullmqJob.data;
 
@@ -56,13 +65,13 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                             throw new Error(`Embedder ${data.embedder} not found in the registry.`);
                         }
 
-                        const result =await context.createAndUpsertEmbeddings(data.inputs, data.user, {
+                        const result = await context.createAndUpsertEmbeddings(data.inputs, data.user, {
                             label: embedder.name,
                             trigger: data.trigger
                         }, data.role, bullmqJob.id);
 
                         return result;
-                        
+
                     }
 
                 } catch (error: unknown) {
@@ -74,7 +83,15 @@ export const createWorkers = async (queues: string[], contexts: ExuluContext[], 
                     throw new Error(error instanceof Error ? error.message : String(error))
                 }
             },
-            { connection: redisConnection })
+            {
+                connection: redisConnection,
+                ...(queue.ratelimit && {
+                    limiter: {
+                        max: queue.ratelimit,
+                        duration: 1000
+                    }
+                }),
+            })
 
         worker.on('completed', (job, returnvalue: any) => {
             console.log(`[EXULU] completed job ${job.id}.`, returnvalue)

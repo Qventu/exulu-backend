@@ -331,6 +331,10 @@ const rolesSchema: ExuluTableDefinition = {
         {
             name: usersSchema.name.plural,
             type: "text" // write | read access to users
+        },
+        {
+            name: "evals",
+            type: "text" // write | read access to evals
         }
     ]
 }
@@ -370,123 +374,112 @@ const statisticsSchema: ExuluTableDefinition = {
     ]
 }
 
-const evalResultsSchema: ExuluTableDefinition = {
-    type: "eval_results",
+const testCasesSchema: ExuluTableDefinition = {
+    type: "test_cases",
     name: {
-        plural: "eval_results",
-        singular: "eval_result"
+        plural: "test_cases",
+        singular: "test_case"
     },
     fields: [
         {
-            name: "input",
-            type: "longText"
+            name: "name",
+            type: "text",
+            required: true
         },
         {
-            name: "output",
-            type: "longText"
-        },
-        {
-            name: "duration",
-            type: "number"
-        },
-        {
-            name: "category",
+            name: "description",
             type: "text"
         },
         {
-            name: "metadata",
+            name: "inputs",
+            type: "json",
+            required: true
+        },
+        {
+            name: "expected_output",
+            type: "longText",
+            required: true
+        },
+        {
+            name: "expected_tools",
             type: "json"
         },
         {
-            name: "result",
-            type: "number"
+            name: "expected_knowledge_sources",
+            type: "json"
         },
         {
-            name: "agent_id",
+            name: "expected_agent_tools",
+            type: "json"
+        },
+        {
+            name: "eval_set_id",
             type: "uuid"
-        },
-        {
-            name: "workflow_id",
-            type: "uuid"
-        },
-        {
-            name: "eval_type",
-            type: "text"
-        },
-        {
-            name: "eval_name",
-            type: "text"
-        },
-        {
-            name: "comment",
-            type: "longText"
         }
     ]
 }
 
-const jobsSchema: ExuluTableDefinition = {
-    type: "jobs",
+const evalSetsSchema: ExuluTableDefinition = {
+    type: "eval_sets",
     name: {
-        plural: "jobs",
-        singular: "job"
+        plural: "eval_sets",
+        singular: "eval_set"
+    },
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        }
+    ]
+}
+
+const evalRunsSchema: ExuluTableDefinition = {
+    type: "eval_runs",
+    name: {
+        plural: "eval_runs",
+        singular: "eval_run"
     },
     RBAC: true,
     fields: [
         {
-            name: "redis",
-            type: "text"
+            name: "eval_set_id",
+            type: "uuid",
+            required: true
         },
         {
-            name: "session",
-            type: "text"
+            name: "agent_id",
+            type: "uuid",
+            required: true
         },
         {
-            name: "status",
-            type: "text"
+            name: "eval_function_ids",
+            type: "json",
+            required: true
         },
         {
-            name: "type",
-            type: "text"
-        },
-        {
-            name: "result",
-            type: "longText"
-        },
-        {
-            name: "name",
-            type: "text"
-        },
-        {
-            name: "agent",
-            type: "uuid"
-        },
-        {
-            name: "workflow",
-            type: "uuid"
-        },
-        {
-            name: "user", // next auth stores users with id type SERIAL, so we need to use number
-            type: "number"
-        },
-        {
-            name: "item",
-            type: "uuid"
-        },
-        {
-            name: "steps",
-            type: "number"
-        },
-        {
-            name: "inputs",
+            name: "config",
             type: "json"
         },
         {
-            name: "finished_at",
-            type: "date"
+            name: "scoring_method",
+            type: "enum",
+            enumValues: ["mean", "sum", "average"],
+            required: true
         },
         {
-            name: "duration",
-            type: "number"
+            name: "pass_threshold",
+            type: "number",
+            required: true
+        },
+        {
+            name: "test_case_ids",
+            type: "json",
+            required: true
         }
     ]
 }
@@ -566,8 +559,9 @@ export const coreSchemas = {
             usersSchema: (): ExuluTableDefinition => addRBACfields(usersSchema),
             rolesSchema: (): ExuluTableDefinition => addRBACfields(rolesSchema),
             statisticsSchema: (): ExuluTableDefinition => addRBACfields(statisticsSchema),
-            evalResultsSchema: (): ExuluTableDefinition => addRBACfields(evalResultsSchema),
-            jobsSchema: (): ExuluTableDefinition => addRBACfields(jobsSchema),
+            testCasesSchema: (): ExuluTableDefinition => addRBACfields(testCasesSchema),
+            evalSetsSchema: (): ExuluTableDefinition => addRBACfields(evalSetsSchema),
+            evalRunsSchema: (): ExuluTableDefinition => addRBACfields(evalRunsSchema),
             variablesSchema: (): ExuluTableDefinition => addRBACfields(variablesSchema),
             rbacSchema: (): ExuluTableDefinition => addRBACfields(rbacSchema),
             workflowTemplatesSchema: (): ExuluTableDefinition => addRBACfields(workflowTemplatesSchema),
