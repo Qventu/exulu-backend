@@ -1,1 +1,1 @@
-export type ExuluFieldTypes = "text" | "longText" | "shortText" | "number" | "boolean" | "code" | "json" | "enum" | "markdown" | "file"
+export type ExuluFieldTypes = "text" | "longText" | "shortText" | "number" | "boolean" | "code" | "json" | "enum" | "markdown" | "file" | "date" | "uuid"

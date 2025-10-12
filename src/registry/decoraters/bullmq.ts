@@ -2,40 +2,49 @@ import { Queue } from "bullmq";
 import type { STATISTICS_LABELS } from "../classes.ts";
 import { v4 as uuidv4 } from 'uuid';
 
-export type ExuluJobType = "embedder" | "workflow" | "eval"
+export type ExuluJobType = "embedder" | "workflow" | "eval" | "processor"
 
 export type ExuluBullMqDecoratorData = {
     queue: Queue,
     label: string,
     embedder?: string,
+    processor?: string,
     inputs: any,
     user?: number,
     role?: string,
     trigger: STATISTICS_LABELS,
     workflow?: string,
+    evaluation?: string,
     item?: string,
     context?: string
+    retries?: number,
 }
 
 export const bullmqDecorator = async ({
     queue,
     label,    
     embedder,
+    processor,
     inputs,
+    evaluation,
     user,
     role,
     trigger,
     workflow,
     item,
-    context
+    context,
+    retries
 }: ExuluBullMqDecoratorData) => {
 
-    if (embedder && workflow) {
-        throw new Error("Cannot have both embedder and workflow in the same job.")
-    }
+    const types = [
+        embedder,
+        workflow,
+        processor,
+        eval
+    ]
 
-    if (workflow && item) {
-        throw new Error("Cannot have both workflow and item in the same job.")
+    if (types.filter(type => type).length > 1) {
+        throw new Error("Cannot have multiple types in the same job, must be one of the following: embedder, workflow, processor or eval.")
     }
 
     let type: ExuluJobType = "embedder";
@@ -44,24 +53,38 @@ export const bullmqDecorator = async ({
         type = "workflow";
     }
 
+    if (processor) {
+        type = "processor";
+    }
+
+    if (evaluation) {
+        type = "eval";
+    }
+
+    if (embedder) {
+        type = "embedder";
+    }
+
     const redisId = uuidv4();
-    const job = await queue.add(`${embedder || workflow}`, {
+    const job = await queue.add(`${embedder || workflow || processor || evaluation}`, {
         label,
-        ...(embedder && { embedder }),
         type: `${type}`,
         inputs,
         ...(user && { user }),
         ...(role && { role }),
         ...(trigger && { trigger }),
         ...(workflow && { workflow }),
+        ...(embedder && { embedder }),
+        ...(processor && { processor }),
+        ...(evaluation && { evaluation }),
         ...(item && { item }),
         ...(context && { context })
     },
         {
             jobId: redisId,
-            // Setting it to 5 as a sensible default, as
+            // Setting it to 3 as a sensible default, as
             // many AI services are quite unstable.
-            attempts: 5, // todo make this configurable?
+            attempts: retries || 3, // todo make this configurable?
             backoff: {
               type: 'exponential',
               delay: 2000,

@@ -10,6 +10,15 @@ export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", na
         if (unique) t.unique(name);
         return;
     }
+    if (type === "file") {
+        if (defaultValue) {
+            t.text(name).defaultTo(defaultValue);
+        } else {
+            t.text(name);
+        }
+        if (unique) t.unique(name);
+        return;
+    }
     if (type === "longText") {
         if (defaultValue) {
             t.text(name).defaultTo(defaultValue);

@@ -5,8 +5,8 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
-import { ExuluAgent, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type STATISTICS_LABELS } from "../classes";
-import { addRBACfields } from "../../postgres/core-schema";
+import { ExuluAgent, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
+import { addCoreFields } from "../../postgres/core-schema";
 import { sanitizeName } from "./sanitize-name";
 import type { User } from "@EXULU_TYPES/models/user";
 import { postgresClient } from "../../postgres/client";
@@ -15,6 +15,9 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import { Knex as KnexType } from 'knex';
 import { checkRecordAccess, loadAgent, loadAgents } from "../utils";
 import type { Agent } from "@EXULU_TYPES/models/agent";
+import type { Queue } from "bullmq";
+import { db } from "../..";
+import type { ExuluConfig } from "..";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -375,7 +378,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     }
 };
 
-function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], contexts: ExuluContext[], tools: ExuluTool[]) {
+function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], contexts: ExuluContext[], tools: ExuluTool[], config: ExuluConfig) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const validateWriteAccess = async (id: string, context: any) => {
 
@@ -614,7 +617,17 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 await handleRBACUpdate(db, table.name.singular, results[0].id, rbacData, []);
             }
 
-            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result: results[0], user: context.user.id, role: context.user.role?.id })
+            const { job } = await postprocessUpdate({
+                table,
+                requestedFields,
+                agents,
+                contexts,
+                tools,
+                result: results[0],
+                user: context.user.id,
+                role: context.user.role?.id,
+                config: config
+            })
             return {
                 // Filter result to only include requested fields
                 item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result: results[0], user: context.user }),
@@ -822,69 +835,132 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
         }
     };
 
-    if (table.type === "items") {
-        mutations[`${tableNamePlural}GenerateChunks`] = async (_, args, context, info) => {
+    if (table.type === "items" && table.fields.some(field => field.processor?.execute)) {
+        mutations[`${tableNamePlural}ProcessItemField`] = async (_, args, context, info) => {
             if (!context.user?.super_admin) {
-                throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+                throw new Error("You are not authorized to process fields via API, user must be super admin.");
             }
-            // Dont need to validate write access here, as we limit it to super admin only.
 
-            const { db } = await postgresClient();
             const exists = contexts.find(context => context.id === table.id)
             if (!exists) {
                 throw new Error(`Context ${table.id} not found.`);
             }
 
-            const { id, embeddings } = exists;
-
-            const mainTable = getTableName(id);
-
-            // Make sure we get all columns as they are needed for
-            // the embeddings generation.
-            const columns = await db(mainTable).columnInfo();
-            let query = db.from(mainTable).select(Object.keys(columns));
-
-            // Generating all chunks for the context.
-            if (!args.where) {
-                const {
-                    jobs,
-                    items
-                } = await embeddings.generate.all(context.user.id, context.user.role?.id);
-                return {
-                    message: "Chunks generated successfully.",
-                    items: items,
-                    jobs: jobs.slice(0, 100)
-                }
+            if (!args.field) {
+                throw new Error("Field argument missing, the field argument is required.");
             }
 
-            // Generating chunks for the items in the context 
-            // that match the where clause.
-            query = applyFilters(query, args.where);
-
-            const items = await query;
-            if (items.length === 0) {
-                throw new Error("No items found to generate chunks for.");
+            if (!args.item) {
+                throw new Error("Item argument missing, the item argument is required.");
             }
 
-            const jobs: string[] = [];
-            for (const item of items) {
-                const { job } = await embeddings.generate.one({
-                    item,
-                    user: context.user.id,
-                    role: context.user.role?.id,
-                    trigger: "api"
-                });
-                if (job) {
-                    jobs.push(job);
-                }
+            const name = args.field?.replace("_s3key", "");
+            console.log("[EXULU] name", name)
+            console.log("[EXULU] fields", exists.fields.map(field => field.name))
+            const field = exists.fields.find(field => field.name === name)
+            if (!field) {
+                throw new Error(`Field ${name} not found in context ${exists.id}.`);
             }
+
+            if (!field.processor) {
+                throw new Error(`Processor not set for field ${args.field} in context ${exists.id}.`);
+            }
+
+            const { db } = context;
+            let query = db.from(tableNamePlural).select("*").where({ id: args.item });
+            query = applyAccessControl(table, context.user, query);
+            const item = await query.first();
+
+            if (!item) {
+                throw new Error("Item not found, or your user does not have access to it.");
+            }
+
+            const { job, result } = await exists.process(
+                "api",
+                context.user.id,
+                context.user.role?.id,
+                {
+                    ...item,
+                    field: args.field
+                },
+                config
+            )
+
             return {
-                message: "Chunks deleted successfully.",
-                items: items.length,
-                jobs: jobs.slice(0, 100)
+                message: job ? "Processing job scheduled." : "Item processed successfully.",
+                result: result,
+                job
             }
 
         },
+            mutations[`${tableNamePlural}GenerateChunks`] = async (_, args, context, info) => {
+                if (!context.user?.super_admin) {
+                    throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+                }
+                // Dont need to validate write access here, as we limit it to super admin only.
+
+                const { db } = await postgresClient();
+                const exists = contexts.find(context => context.id === table.id)
+                if (!exists) {
+                    throw new Error(`Context ${table.id} not found.`);
+                }
+
+                const { id, embeddings } = exists;
+
+                const mainTable = getTableName(id);
+
+                // Make sure we get all columns as they are needed for
+                // the embeddings generation.
+                const columns = await db(mainTable).columnInfo();
+                let query = db.from(mainTable).select(Object.keys(columns));
+
+                // Generating all chunks for the context.
+                if (!args.where) {
+                    const {
+                        jobs,
+                        items
+                    } = await embeddings.generate.all(
+                        config,
+                        context.user.id,
+                        context.user.role?.id
+                    );
+
+                    return {
+                        message: "Chunks generated successfully.",
+                        items: items,
+                        jobs: jobs.slice(0, 100)
+                    }
+                }
+
+                // Generating chunks for the items in the context 
+                // that match the where clause.
+                query = applyFilters(query, args.where);
+
+                const items = await query;
+                if (items.length === 0) {
+                    throw new Error("No items found to generate chunks for.");
+                }
+
+                const jobs: string[] = [];
+                for (const item of items) {
+                    const { job } = await embeddings.generate.one({
+                        item,
+                        user: context.user.id,
+                        role: context.user.role?.id,
+                        trigger: "api",
+                        config: config
+                    });
+                    if (job) {
+                        jobs.push(job);
+                    }
+                }
+                return {
+                    message: "Chunks deleted successfully.",
+                    items: items.length,
+                    jobs: jobs.slice(0, 100)
+                }
+
+            },
             mutations[`${tableNamePlural}DeleteChunks`] = async (_, args, context, info) => {
                 if (!context.user?.super_admin) {
                     throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
@@ -1154,7 +1230,8 @@ const postprocessUpdate = async ({
     tools,
     result,
     user,
-    role
+    role,
+    config
 }: {
     table: ExuluTableDefinition,
     requestedFields: string[],
@@ -1163,7 +1240,8 @@ const postprocessUpdate = async ({
     tools: ExuluTool[],
     result: any | [],
     user: number,
-    role: string
+    role: string,
+    config: ExuluConfig
 }): Promise<{
     result: any | []
     job?: string
@@ -1210,7 +1288,8 @@ const postprocessUpdate = async ({
                     item: result,
                     user: user,
                     role: role,
-                    trigger: "api"
+                    trigger: "api",
+                    config: config
                 });
                 return {
                     result: result,
@@ -1707,7 +1786,7 @@ export const vectorSearch = async ({
               FROM ${chunksTable} c
               WHERE c.fts @@ websearch_to_tsquery(?, ?)
               ORDER BY rank_ix
-              LIMIT LEAST(?, 30) * 2
+              LIMIT LEAST(?, 15) * 2
             ),
             semantic AS (
               SELECT
@@ -1719,7 +1798,7 @@ export const vectorSearch = async ({
               FROM ${chunksTable} c
               WHERE c.embedding IS NOT NULL
               ORDER BY rank_ix
-              LIMIT LEAST(?, 30) * 2
+              LIMIT LEAST(?, 15) * 2
             )
             SELECT
               m.*,
@@ -1750,7 +1829,7 @@ export const vectorSearch = async ({
             JOIN ${mainTable} m
               ON m.id = c.source
             ORDER BY hybrid_score DESC
-            LIMIT LEAST(?, 30)
+            LIMIT LEAST(?, 10)
             OFFSET 0
           `;
 
@@ -1884,7 +1963,7 @@ export const vectorSearch = async ({
         method,
         context: {
             name: table.name.singular,
-            id: table.id,
+            id: table.id || "",
             embedder: embedder.name
         },
         items
@@ -1950,7 +2029,14 @@ const contextToTableDefinition = (context: ExuluContext): ExuluTableDefinition =
         RBAC: true,
         fields: context.fields.map(field => ({
             name: sanitizeName(field.name) as any,
-            type: field.type
+            type: field.type,
+            processor: field.processor,
+            required: field.required,
+            default: field.default,
+            index: field.index,
+            enumValues: field.enumValues,
+            allowedFileTypes: field.allowedFileTypes,
+            unique: field.unique
         }))
     }
     definition.fields.push({
@@ -2004,10 +2090,10 @@ const contextToTableDefinition = (context: ExuluContext): ExuluTableDefinition =
         name: "archived",
         type: "boolean",
     })
-    return addRBACfields(definition)
+    return addCoreFields(definition)
 }
 
-export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext[], agents: ExuluAgent[], tools: ExuluTool[]) {
+export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext[], agents: ExuluAgent[], tools: ExuluTool[], config: ExuluConfig) {
 
     const contextSchemas: ExuluTableDefinition[] = contexts.map(context => contextToTableDefinition(context))
 
@@ -2100,6 +2186,8 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
         const tableNameSingular = table.name.singular.toLowerCase();
         const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
+        const processorFields = table.fields.filter(field => field.processor?.execute)
+
         typeDefs += `
       ${tableNameSingular}ById(id: ID!): ${tableNameSingular}
       ${tableNameSingular}ByIds(ids: [ID!]!): [${tableNameSingular}]!
@@ -2127,11 +2215,23 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}DeleteChunksReturnPayload
     `
 
+            if (processorFields?.length > 0) {
+                mutationDefs += `
+    ${tableNameSingular}ProcessItemField(item: ID!, field: ${tableNameSingular}ProcessorFieldEnum!): ${tableNameSingular}ProcessItemFieldReturnPayload
+    `
+            }
+
             modelDefs += `
     type ${tableNameSingular}GenerateChunksReturnPayload {
         message: String!
         items: Int!
         jobs: [String!]
+    }
+
+    type ${tableNameSingular}ProcessItemFieldReturnPayload {
+        message: String!
+        result: String!
+        job: String
     }
 
     type ${tableNameSingular}DeleteChunksReturnPayload {
@@ -2145,6 +2245,13 @@ export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext
         hybridSearch
         tsvector
     }
+
+    ${processorFields.length > 0 ? `
+    enum ${tableNameSingular}ProcessorFieldEnum {
+        ${processorFields.map(field => field.name).join("\n")}
+    }
+    ` : ""}
+ 
 
   type ${tableNameSingular}VectorSearchResult {
         items: [${tableNameSingular}]!
@@ -2184,7 +2291,7 @@ type PageInfo {
 }
 `;
         Object.assign(resolvers.Query, createQueries(table, agents, tools, contexts));
-        Object.assign(resolvers.Mutation, createMutations(table, agents, contexts, tools));
+        Object.assign(resolvers.Mutation, createMutations(table, agents, contexts, tools, config));
 
         // Add RBAC resolver if enabled
         if (table.RBAC) {
@@ -2219,11 +2326,6 @@ type PageInfo {
    tools: ToolPaginationResult
     `
 
-    typeDefs += `
-    generateChunks(item: ID): String
-    deleteChunks(item: ID): String
-    `
-
     resolvers.Query["providers"] = async (_, args, context, info) => {
         const requestedFields = getRequestedFields(info)
         return {
@@ -2250,7 +2352,7 @@ type PageInfo {
                 return {
                     ...field,
                     name: sanitizeName(field.name),
-                    label: field.name
+                    label: field.name?.replace("_s3key", "")
                 }
             })
         }))
@@ -2282,13 +2384,38 @@ type PageInfo {
             embedder: data.embedder?.name || undefined,
             slug: "/contexts/" + data.id,
             active: data.active,
-            fields: data.fields.map(field => {
+            fields: await Promise.all(data.fields.map(async field => {
+                const label = field.name?.replace("_s3key", "");
+                if (field.type === "file" && !field.name.endsWith("_s3key")) {
+                    field.name = field.name + "_s3key";
+                }
+                let queue: ExuluQueueConfig | null = null;
+                if (field.processor?.config?.queue) {
+                    queue = await field.processor.config.queue;
+                }
                 return {
                     ...field,
                     name: sanitizeName(field.name),
-                    label: field.name
+                    ...(field.type === "file" ? {
+                        allowedFileTypes: field.allowedFileTypes,
+                    } : {}),
+                    ...(field.processor ? {
+                        processor: {
+                            description: field.processor?.description,
+                            config: {
+                                trigger: field.processor?.config?.trigger,
+                                queue: {
+                                    name: queue?.queue.name || undefined,
+                                    ratelimit: queue?.ratelimit || undefined,
+                                    concurrency: queue?.concurrency || undefined,
+                                },
+                            },
+                            execute: "function",
+                        },
+                    } : {}),
+                    label
                 }
-            }),
+            })),
             configuration: data.configuration
         }
 

@@ -13,7 +13,9 @@ import {
     PutObjectCommand,
     UploadPartCommand,
     ListObjectsV2Command,
+    HeadObjectCommand,
     DeleteObjectCommand,
+    type ListObjectsV2CommandOutput,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
@@ -22,13 +24,94 @@ import {
 } from '@aws-sdk/client-sts';
 import { randomUUID } from 'node:crypto';
 
+const expiresIn = 60 * 60 * 24 * 1 // S3 signature expires within 1 day.
+
+let s3Client: S3Client | undefined;
+function getS3Client(config: ExuluConfig) {
+    s3Client ??= new S3Client({
+        region: config.fileUploads.s3region,
+        ...(config.fileUploads.s3endpoint && {
+            forcePathStyle: true,
+            endpoint: config.fileUploads.s3endpoint
+        }),
+        credentials: {
+            accessKeyId: config.fileUploads.s3key,
+            secretAccessKey: config.fileUploads.s3secret,
+        },
+    })
+    return s3Client
+}
+
+export const getPresignedUrl = async (key: string, config: ExuluConfig) => {
+    const url = await getSignedUrl(
+        getS3Client(config),
+        new GetObjectCommand({
+            Bucket: config.fileUploads.s3Bucket,
+            Key: key,
+        }),
+        { expiresIn }
+    );
+    return url;
+}
+
+export interface UploadOptions {
+    contentType?: string;
+    metadata?: Record<string, string>;
+}
+
+// Helper function to add s3prefix to a key path
+const addPrefixToKey = (keyPath: string, config: ExuluConfig): string => {
+    if (!config.fileUploads.s3prefix) {
+        return keyPath;
+    }
+    const prefix = config.fileUploads.s3prefix.replace(/\/$/, '');
+    // check if prefix is already present in keyPath
+    if (keyPath.startsWith(prefix)) {
+        return keyPath;
+    }
+    return `${prefix}/${keyPath}`;
+};
+
+/**
+ * Upload a file directly to S3 from the server
+ * @param file - File buffer or readable stream
+ * @param key - The S3 key (path) where the file should be stored
+ * @param config - Exulu configuration
+ * @param options - Optional upload parameters (contentType, metadata)
+ * @returns The full S3 key of the uploaded file
+ */
+export const uploadFile = async (
+    user: number,
+    file: Buffer | Uint8Array,
+    key: string,
+    config: ExuluConfig,
+    options: UploadOptions = {}
+): Promise<string> => {
+    const client = getS3Client(config);
+
+    let folder = `${user}/`
+    const fullKey = addPrefixToKey(!key.includes(folder) ? folder + key : key, config);
+
+    const command = new PutObjectCommand({
+        Bucket: config.fileUploads.s3Bucket,
+        Key: fullKey,
+        Body: file,
+        ContentType: options.contentType,
+        Metadata: options.metadata,
+        ContentLength: file.byteLength,
+    });
+
+    await client.send(command);
+    return key;
+}
+
 export const createUppyRoutes = async (
     app: Express,
     config: ExuluConfig
 ) => {
 
     // Helper function to extract user prefix from S3 key, accounting for optional s3prefix
-    const extractUserPrefix = (key: string): string | null => {
+    const extractUserPrefix = (key: string): string | undefined => {
         if (!config.fileUploads.s3prefix) {
             return key.split("/")[0];
         }
@@ -42,15 +125,6 @@ export const createUppyRoutes = async (
 
         // If key doesn't start with expected prefix, return first segment
         return key.split("/")[0];
-    };
-
-    // Helper function to add s3prefix to a key path
-    const addPrefixToKey = (keyPath: string): string => {
-        if (!config.fileUploads.s3prefix) {
-            return keyPath;
-        }
-        const prefix = config.fileUploads.s3prefix.replace(/\/$/, '');
-        return `${prefix}/${keyPath}`;
     };
 
     const policy = {
@@ -70,31 +144,9 @@ export const createUppyRoutes = async (
     }
 
     /**
-     * @type {S3Client}
-     */
-    let s3Client
-
-    /**
      * @type {STSClient}
      */
     let stsClient
-
-    const expiresIn = 60 * 60 * 24 * 1 // S3 signature expires within 1 day.
-
-    function getS3Client() {
-        s3Client ??= new S3Client({
-            region: config.fileUploads.s3region,
-            ...(config.fileUploads.s3endpoint && {
-                forcePathStyle: true,
-                endpoint: config.fileUploads.s3endpoint
-            }),
-            credentials: {
-                accessKeyId: config.fileUploads.s3key,
-                secretAccessKey: config.fileUploads.s3secret,
-            },
-        })
-        return s3Client
-    }
 
     function getSTSClient() {
         stsClient ??= new STSClient({
@@ -158,7 +210,7 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const client = getS3Client()
+        const client = getS3Client(config);
         const command = new DeleteObjectCommand({
             Bucket: config.fileUploads.s3Bucket,
             Key: key,
@@ -216,15 +268,7 @@ export const createUppyRoutes = async (
         }
 
         try {
-            const url = await getSignedUrl(
-                getS3Client(),
-                new GetObjectCommand({
-                    Bucket: config.fileUploads.s3Bucket,
-                    Key: key,
-                }),
-                { expiresIn }
-            );
-
+            const url = await getPresignedUrl(key, config);
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.json({ url, method: 'GET', expiresIn });
         } catch (err) {
@@ -232,8 +276,106 @@ export const createUppyRoutes = async (
         }
     });
 
+    type S3FileListOutput = {
+        "$metadata": {
+            "httpStatusCode"?: number | undefined,
+            "attempts"?: number | undefined,
+            "totalRetryDelay"?: number | undefined
+        },
+        "Contents": {
+            "Key": string,
+            "LastModified": string,
+            "ETag": string,
+            "Size": number
+        }[]
+        "IsTruncated": boolean,
+        "NextContinuationToken": string,
+        "KeyCount": number,
+        "MaxKeys": number,
+        "Name": string,
+        "Prefix": string
+    }
+
     // todo add api to list a user's files, with option to filter by type
     // so we can show them in a galery popup for file inputs.
+
+    app.post('/s3/object', async (req, res, next) => {
+        const apikey: any = req.headers['exulu-api-key'] || null;
+        const internalkey: any = req.headers['internal-key'] || null;
+        const { db } = await postgresClient()
+
+        let authtoken: any = null;
+        if (typeof apikey !== "string" && typeof internalkey !== "string") { // default to next auth tokens to authenticate
+            authtoken = await getToken(req.headers.authorization ?? "")
+        }
+        const authenticationResult = await authentication({
+            authtoken,
+            apikey,
+            internalkey,
+            db: db,
+        })
+
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+
+        const { key } = req.body;
+        console.log("[EXULU] Getting object metadata from s3", key)
+        const client = getS3Client(config);
+        const command = new HeadObjectCommand({
+            Bucket: config.fileUploads.s3Bucket,
+            Key: key,
+        })
+        const response = await client.send(command);
+        console.log("[EXULU] Object metadata from s3", response)
+        res.json(response);
+        res.end();
+    })
+
+    app.get('/s3/list', async (req, res, next) => {
+        const apikey: any = req.headers['exulu-api-key'] || null;
+        const internalkey: any = req.headers['internal-key'] || null;
+        const { db } = await postgresClient()
+
+        let authtoken: any = null;
+        if (typeof apikey !== "string" && typeof internalkey !== "string") { // default to next auth tokens to authenticate
+            authtoken = await getToken(req.headers.authorization ?? "")
+        }
+        const authenticationResult = await authentication({
+            authtoken,
+            apikey,
+            internalkey,
+            db: db,
+        })
+
+        if (!authenticationResult.user?.id) {
+            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
+            return;
+        }
+        const client = getS3Client(config);
+
+        const command = new ListObjectsV2Command({
+            Bucket: config.fileUploads.s3Bucket,
+            Prefix: `test/${authenticationResult.user.id}`,
+            MaxKeys: 9,
+            ...(req.query.continuationToken && { ContinuationToken: req.query.continuationToken as string }),
+        })
+
+        const response: ListObjectsV2CommandOutput = await client.send(command)
+
+        if (req.query.search) {
+            const search = req.query.search as string
+            console.log("[EXULU] Filtering files by search query", req.query.search)
+            response.Contents = response.Contents?.filter((content) => content?.Key?.toLowerCase().includes(
+                search.toLowerCase()
+            ))
+        }
+
+        res.json(response)
+        res.end()
+
+    })
 
 
     app.get('/s3/sts', (req, res, next) => {
@@ -273,7 +415,7 @@ export const createUppyRoutes = async (
         }
     }
 
-    const generateS3Key = (filename) => `${randomUUID()}-${filename}`
+    const generateS3Key = (filename) => `${randomUUID()}-_EXULU_${filename}`
 
     const signOnServer = async (req, res, next) => {
         // Before giving the signature to the user, you should first check is they
@@ -305,10 +447,10 @@ export const createUppyRoutes = async (
         const key = generateS3Key(filename)
 
         let folder = `${authenticationResult.user.id}/`
-        const fullKey = addPrefixToKey(folder + key);
+        const fullKey = addPrefixToKey(folder + key, config);
 
         getSignedUrl(
-            getS3Client(),
+            getS3Client(config),
             new PutObjectCommand({
                 Bucket: config.fileUploads.s3Bucket,
                 Key: fullKey,
@@ -356,7 +498,7 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const client = getS3Client()
+        const client = getS3Client(config);
         const { type, metadata, filename } = req.body
         if (typeof filename !== 'string') {
             return res
@@ -366,7 +508,7 @@ export const createUppyRoutes = async (
         if (typeof type !== 'string') {
             return res.status(400).json({ error: 's3: content type must be a string' })
         }
-        const key = `${randomUUID()}-${filename}`
+        const key = `${randomUUID()}-_EXULU_${filename}`
 
         let folder = "";
         if (authenticationResult.user.type === "api") {
@@ -375,7 +517,7 @@ export const createUppyRoutes = async (
             folder = `${authenticationResult.user.id}/`
         }
 
-        const fullKey = addPrefixToKey(folder + key);
+        const fullKey = addPrefixToKey(folder + key, config);
 
         const params = {
             Bucket: config.fileUploads.s3Bucket,
@@ -394,7 +536,7 @@ export const createUppyRoutes = async (
             res.setHeader('Access-Control-Allow-Origin', "*")
             res.json({
                 key,
-                uploadId: data.UploadId,
+                uploadId: data?.UploadId,
             })
         })
     })
@@ -416,7 +558,7 @@ export const createUppyRoutes = async (
             return res.status(400).json({ error: 's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"' })
         }
 
-        return getSignedUrl(getS3Client(), new UploadPartCommand({
+        return getSignedUrl(getS3Client(config), new UploadPartCommand({
             Bucket: config.fileUploads.s3Bucket,
             Key: key,
             UploadId: uploadId,
@@ -429,7 +571,7 @@ export const createUppyRoutes = async (
     })
 
     app.get('/s3/multipart/:uploadId', (req, res, next) => {
-        const client = getS3Client()
+        const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query
 
@@ -455,7 +597,7 @@ export const createUppyRoutes = async (
                 // @ts-ignore
                 parts.push(...data.Parts)
 
-                if (data.IsTruncated) {
+                if (data?.IsTruncated) {
                     // Get the next page.
                     listPartsPage(data.NextPartNumberMarker)
                 } else {
@@ -470,7 +612,7 @@ export const createUppyRoutes = async (
         return part && typeof part === 'object' && Number(part.PartNumber) && typeof part.ETag === 'string'
     }
     app.post('/s3/multipart/:uploadId/complete', (req, res, next) => {
-        const client = getS3Client()
+        const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query
         const { parts } = req.body
@@ -485,7 +627,7 @@ export const createUppyRoutes = async (
 
         return client.send(new CompleteMultipartUploadCommand({
             Bucket: config.fileUploads.s3Bucket,
-            Key: key,   
+            Key: key,
             UploadId: uploadId,
             MultipartUpload: {
                 Parts: parts,
@@ -498,13 +640,13 @@ export const createUppyRoutes = async (
             res.setHeader('Access-Control-Allow-Origin', '*')
             res.json({
                 key,
-                location: data.Location,
+                location: data?.Location,
             })
         })
     })
 
     app.delete('/s3/multipart/:uploadId', (req, res, next) => {
-        const client = getS3Client()
+        const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query
 

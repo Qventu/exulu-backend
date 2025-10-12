@@ -12,7 +12,6 @@ import { execute as initDb } from "./postgres/init-db"
 import { generateApiKey } from './auth/generate-key'
 import { create } from './registry/otel'
 import type { ExuluContext } from './registry/classes'
-import { filesContext } from './templates/contexts/files'
 import { codeStandardsContext } from './templates/contexts/code-standards'
 import { outputsContext } from './templates/contexts/outputs'
 import { claudeOpus4Agent } from './templates/agents/claude-opus-4'
@@ -30,7 +29,6 @@ export const ExuluJobs = {
 }
 
 export const ExuluDefaultContexts = {
-    files: filesContext,
     codeStandards: codeStandardsContext,
     outputs: outputsContext
 }

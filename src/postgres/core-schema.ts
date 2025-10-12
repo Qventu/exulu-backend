@@ -527,7 +527,12 @@ const rbacSchema: ExuluTableDefinition = {
     ]
 }
 
-export const addRBACfields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
+export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
+    schema.fields.forEach(field => {
+        if (field.type === "file") {
+            field.name = field.name + "_s3key"
+        }
+    })
     if (schema.RBAC) {
         if (!schema.fields.some(field => field.name === "rights_mode")) {
             schema.fields.push({
@@ -552,19 +557,19 @@ export const addRBACfields = (schema: ExuluTableDefinition): ExuluTableDefinitio
 export const coreSchemas = {
     get: () => {
         return {
-            agentsSchema: (): ExuluTableDefinition => addRBACfields(agentsSchema),
-            agentMessagesSchema: (): ExuluTableDefinition => addRBACfields(agentMessagesSchema),
-            agentSessionsSchema: (): ExuluTableDefinition => addRBACfields(agentSessionsSchema),
-            projectsSchema: (): ExuluTableDefinition => addRBACfields(projectsSchema),
-            usersSchema: (): ExuluTableDefinition => addRBACfields(usersSchema),
-            rolesSchema: (): ExuluTableDefinition => addRBACfields(rolesSchema),
-            statisticsSchema: (): ExuluTableDefinition => addRBACfields(statisticsSchema),
-            testCasesSchema: (): ExuluTableDefinition => addRBACfields(testCasesSchema),
-            evalSetsSchema: (): ExuluTableDefinition => addRBACfields(evalSetsSchema),
-            evalRunsSchema: (): ExuluTableDefinition => addRBACfields(evalRunsSchema),
-            variablesSchema: (): ExuluTableDefinition => addRBACfields(variablesSchema),
-            rbacSchema: (): ExuluTableDefinition => addRBACfields(rbacSchema),
-            workflowTemplatesSchema: (): ExuluTableDefinition => addRBACfields(workflowTemplatesSchema),
+            agentsSchema: (): ExuluTableDefinition => addCoreFields(agentsSchema),
+            agentMessagesSchema: (): ExuluTableDefinition => addCoreFields(agentMessagesSchema),
+            agentSessionsSchema: (): ExuluTableDefinition => addCoreFields(agentSessionsSchema),
+            projectsSchema: (): ExuluTableDefinition => addCoreFields(projectsSchema),
+            usersSchema: (): ExuluTableDefinition => addCoreFields(usersSchema),
+            rolesSchema: (): ExuluTableDefinition => addCoreFields(rolesSchema),
+            statisticsSchema: (): ExuluTableDefinition => addCoreFields(statisticsSchema),
+            testCasesSchema: (): ExuluTableDefinition => addCoreFields(testCasesSchema),
+            evalSetsSchema: (): ExuluTableDefinition => addCoreFields(evalSetsSchema),
+            evalRunsSchema: (): ExuluTableDefinition => addCoreFields(evalRunsSchema),
+            variablesSchema: (): ExuluTableDefinition => addCoreFields(variablesSchema),
+            rbacSchema: (): ExuluTableDefinition => addCoreFields(rbacSchema),
+            workflowTemplatesSchema: (): ExuluTableDefinition => addCoreFields(workflowTemplatesSchema),
         }
     }
 }

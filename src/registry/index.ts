@@ -12,7 +12,6 @@ import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
 import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
-import { filesContext } from "../templates/contexts/files.ts";
 import winston, { type transport } from "winston";
 import util from "util";
 
@@ -98,7 +97,6 @@ export class ExuluApp {
         this._contexts = {
             ...contexts,
             codeStandardsContext,
-            filesContext,
             outputsContext
         };
 
@@ -162,11 +160,11 @@ export class ExuluApp {
 
         for (const context of contextsArray) {
             if (context.embedder?.queue) {
-                queueSet.add(context.embedder.queue);
+                queueSet.add(await context.embedder.queue);
             }
         }
 
-        this._queues = [...new Set(queues.filter(o => !!o))] as any;
+        this._queues = [...new Set(queueSet.values())] as any;
         console.log("[EXULU] App initialized.")
         return this;
     }
@@ -233,7 +231,8 @@ export class ExuluApp {
 
                 return await context.embeddings.generate.one({
                     item,
-                    trigger: "api"
+                    trigger: "api",
+                    config: this._config || {} as ExuluConfig
                 })
             },
             all: async ({
@@ -245,7 +244,11 @@ export class ExuluApp {
                 if (!context) {
                     throw new Error(`Context ${contextId} not found in registry.`)
                 }
-                return await context.embeddings.generate.all(undefined, undefined)
+                return await context.embeddings.generate.all(
+                    this._config || {} as ExuluConfig, 
+                    undefined,
+                    undefined
+                )
             }
         }
     }
@@ -253,6 +256,10 @@ export class ExuluApp {
     public bullmq = {
         workers: {
             create: async () => {
+
+                if (!this._config) {
+                    throw new Error("Config not initialized, make sure to call await ExuluApp.create() first when starting your server.")
+                }
 
                 let tracer: Tracer | undefined;
 
@@ -279,6 +286,7 @@ export class ExuluApp {
 
                 return await createWorkers(
                     this._queues,
+                    this._config,
                     Object.values(this._contexts ?? {}),
                     tracer
                 )
@@ -314,14 +322,17 @@ export class ExuluApp {
                 console.error = (...args: any[]) => logger.error(args.map(formatArg).join(' '))
                 console.debug = (...args: any[]) => logger.debug(args.map(formatArg).join(' '))
 
+                if (!this._config) {
+                    throw new Error("Config not initialized, make sure to call await ExuluApp.create() first when starting your server.")
+                }
+
                 await createExpressRoutes(
                     app,
                     this._agents,
                     this._tools,
                     Object.values(this._contexts ?? {}),
                     this._config,
-                    tracer,
-                    filesContext
+                    tracer
                 )
 
                 if (this._config?.MCP.enabled) {

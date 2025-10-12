@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import { redisServer } from "./server"
 import { BullMQOtel } from "bullmq-otel";
+import type { ExuluQueueConfig } from '../registry/classes';
 
 // Used for workflows and embedders
 class ExuluQueues {
@@ -37,11 +38,7 @@ class ExuluQueues {
         name: string,
         concurrency: number = 1,
         ratelimit: number = 1
-    ): Promise<{
-        queue: Queue,
-        ratelimit: number
-        concurrency: number
-    }> => {
+    ): Promise<ExuluQueueConfig> => {
         const existing = this.queues.find(x => x.queue?.name === name);
         if (existing) {
             const globalConcurrency = await existing.queue.getGlobalConcurrency();

@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluTool, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
+import { type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextFieldProcessor, type ExuluTool, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
 import { requestValidators } from "./route-validators";
 import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
@@ -8,7 +8,6 @@ import express from 'express';
 import { ApolloServer } from '@apollo/server';
 import cors from 'cors';
 import 'reflect-metadata'
-import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types.ts";
 import { createSDL, applyAccessControl } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
@@ -93,15 +92,7 @@ export type ExuluTableDefinition = {
         plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items",
         singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item",
     },
-    fields: {
-        name: string,
-        type: ExuluFieldTypes | "date" | "json" | "uuid" | "enum",
-        enumValues?: string[],
-        index?: boolean,
-        required?: boolean,
-        default?: any,
-        unique?: boolean,
-    }[],
+    fields: ExuluContextFieldDefinition[],
     RBAC?: boolean,
     graphql?: boolean,
 }
@@ -112,8 +103,7 @@ export const createExpressRoutes = async (
     tools: ExuluTool[],
     contexts: ExuluContext[] | undefined,
     config?: ExuluConfig,
-    tracer?: Tracer,
-    filesContext?: ExuluContext
+    tracer?: Tracer
 ): Promise<Express> => {
 
     // todo make this more secure / configurable
@@ -162,7 +152,7 @@ export const createExpressRoutes = async (
         workflowTemplatesSchema(),
         statisticsSchema(),
         rbacSchema()
-    ], contexts ?? [], agents, tools);
+    ], contexts ?? [], agents, tools, config);
 
     interface GraphqlContext {
         db: Knex;
@@ -632,7 +622,6 @@ Mood: friendly and intelligent.
                     providerapikey,
                     toolConfigs: agentInstance.tools,
                     exuluConfig: config,
-                    filesContext,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"
@@ -654,7 +643,6 @@ Mood: friendly and intelligent.
                     providerapikey,
                     exuluConfig: config,
                     toolConfigs: agentInstance.tools,
-                    filesContext,
                     statistics: {
                         label: agent.name,
                         trigger: "agent"

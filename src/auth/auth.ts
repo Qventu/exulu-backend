@@ -46,7 +46,8 @@ export const authentication = async ({
                     agents: "read",
                     workflows: "read",
                     variables: "read",
-                    users: "read"
+                    users: "read",
+                    evals: "read"
                 }
             }
         }

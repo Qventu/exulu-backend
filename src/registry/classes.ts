@@ -21,6 +21,7 @@ import type { ExuluConfig } from ".";
 import { randomUUID } from 'node:crypto';
 import { checkRecordAccess, getEnabledTools, loadAgent } from "./utils";
 import type { User } from "@EXULU_TYPES/models/user";
+import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
 
 /**
  * @type {S3Client}
@@ -53,7 +54,6 @@ const convertToolsArrayToObject = (
     contexts: ExuluContext[] | undefined,
     user?: User,
     exuluConfig?: ExuluConfig,
-    filesContext?: ExuluContext
 ): Record<string, Tool> => {
 
     if (!currentTools) return {};
@@ -101,8 +101,7 @@ const convertToolsArrayToObject = (
                             exuluConfig?.fileUploads?.s3endpoint &&
                             exuluConfig?.fileUploads?.s3key &&
                             exuluConfig?.fileUploads?.s3secret &&
-                            exuluConfig?.fileUploads?.s3Bucket &&
-                            filesContext
+                            exuluConfig?.fileUploads?.s3Bucket
                         ) {
                             s3Client ??= new S3Client({
                                 region: exuluConfig?.fileUploads?.s3region,
@@ -141,15 +140,7 @@ const convertToolsArrayToObject = (
                                 try {
                                     const response = await s3Client.send(command);
                                     console.log(response);
-                                    const { item } = await filesContext.createItem({
-                                        name: `${name}${type}`,
-                                        type: mime,
-                                        rights_mode: "private",
-                                        s3key: key,
-                                        tags
-                                    }, user?.id, user?.role?.id, false)
-
-                                    return item;
+                                    return response;
                                 } catch (caught) {
                                     if (
                                         caught instanceof S3ServiceException &&
@@ -193,6 +184,16 @@ const convertToolsArrayToObject = (
                                 return acc;
                             }, {}) : {}
                         }, options);
+
+                        await updateStatistic({
+                            name: "count",
+                            label: cur.name,
+                            type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
+                            trigger: "agent",
+                            count: 1,
+                            user: user?.id,
+                            role: user?.role?.id
+                        })
 
                         yield response;
                         return response;
@@ -519,7 +520,6 @@ export class ExuluAgent {
                 // enabling this in the future by adding a "outputSchema" field to the inputSchema of this 
                 // tool definition so agents can dynamically define a desired output schema.
                 const response = await this.generateSync({
-
                     instructions: agentInstance.instructions,
                     prompt: "The user has asked the following question: " + prompt + " and the following information is available: " + information,
                     providerapikey: providerapikey,
@@ -531,6 +531,17 @@ export class ExuluAgent {
                         trigger: "tool"
                     }
                 })
+
+                await updateStatistic({
+                    name: "count",
+                    label: agentInstance.name,
+                    type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
+                    trigger: "tool",
+                    count: 1,
+                    user: user?.id,
+                    role: user?.role?.id
+                })
+
                 return {
                     result: response,
                 }
@@ -550,7 +561,6 @@ export class ExuluAgent {
         providerapikey,
         contexts,
         exuluConfig,
-        filesContext,
         outputSchema,
         instructions
 
@@ -566,7 +576,6 @@ export class ExuluAgent {
         providerapikey: string,
         contexts?: ExuluContext[] | undefined
         exuluConfig?: ExuluConfig,
-        filesContext?: ExuluContext
         instructions?: string,
         outputSchema?: z.ZodType
     }): Promise<string | any> => {
@@ -656,8 +665,7 @@ export class ExuluAgent {
                         providerapikey,
                         contexts,
                         user,
-                        exuluConfig,
-                        filesContext
+                        exuluConfig
                     ),
                     stopWhen: [stepCountIs(2)],
                 });
@@ -716,8 +724,7 @@ export class ExuluAgent {
                     providerapikey,
                     contexts,
                     user,
-                    exuluConfig,
-                    filesContext
+                    exuluConfig
                 ),
                 stopWhen: [stepCountIs(2)],
             });
@@ -773,7 +780,6 @@ export class ExuluAgent {
         providerapikey,
         contexts,
         exuluConfig,
-        filesContext,
         instructions,
     }: {
         express: {
@@ -790,7 +796,6 @@ export class ExuluAgent {
         providerapikey: string,
         contexts?: ExuluContext[] | undefined
         exuluConfig?: ExuluConfig,
-        filesContext?: ExuluContext
         instructions?: string,
     }) => {
 
@@ -834,7 +839,7 @@ export class ExuluAgent {
         // by default.
         const genericContext =
             "IMPORTANT: \n\n The current date is " + new Date().toLocaleDateString() + " and the current time is " + new Date().toLocaleTimeString() + ". If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume they are talking with the current date in mind as a reference.";
-            
+
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
@@ -861,8 +866,7 @@ export class ExuluAgent {
                 providerapikey,
                 contexts,
                 user,
-                exuluConfig,
-                filesContext
+                exuluConfig
             ),
             onError: error => console.error("[EXULU] chat stream error.", error),
             // stopWhen: [stepCountIs(1)],
@@ -905,6 +909,8 @@ export class ExuluAgent {
                     })
                 }
                 const metadata = messages[messages.length - 1]?.metadata as any;
+                console.log("[EXULU] Finished streaming", metadata)
+                console.log("[EXULU] Statistics", statistics)
                 if (statistics) {
                     await Promise.all([
                         updateStatistic({
@@ -977,7 +983,9 @@ export type VectorOperationResponse = Promise<{
 
 type VectorGenerateOperation = (inputs: ChunkerResponse) => VectorGenerationResponse
 
-type ChunkerOperation = (item: Item & { id: string }, maxChunkSize: number) => Promise<ChunkerResponse>
+type ChunkerOperation = (item: Item & { id: string }, maxChunkSize: number, utils: {
+    storage: ExuluStorage
+}) => Promise<ChunkerResponse>
 
 type ChunkerResponse = {
     item: Item & { id: string },
@@ -1001,29 +1009,39 @@ export class ExuluEmbedder {
     public id: string;
     public name: string;
     public slug: string = "";
-    public queue?: ExuluQueueConfig;
+    public queue?: Promise<ExuluQueueConfig>;
     private generateEmbeddings: VectorGenerateOperation;
+    public description: string;
     public vectorDimensions: number;
     public maxChunkSize: number;
-    public chunker: ChunkerOperation;
+    public _chunker: ChunkerOperation;
     constructor({ id, name, description, generateEmbeddings, queue, vectorDimensions, maxChunkSize, chunker }: {
         id: string,
         name: string,
         description: string,
         generateEmbeddings: VectorGenerateOperation,
         chunker: ChunkerOperation,
-        queue?: ExuluQueueConfig,
+        queue?: Promise<ExuluQueueConfig>,
         vectorDimensions: number,
         maxChunkSize: number
     }) {
         this.id = id;
         this.name = name;
+        this.description = description;
         this.vectorDimensions = vectorDimensions;
         this.maxChunkSize = maxChunkSize;
-        this.chunker = chunker;
+
+        this._chunker = chunker;
         this.slug = `/embedders/${generateSlug(this.name)}/run`
         this.queue = queue;
         this.generateEmbeddings = generateEmbeddings;
+    }
+
+    public chunker = (item: Item & { id: string }, maxChunkSize: number, config: ExuluConfig) => {
+        const utils = {
+            storage: new ExuluStorage({ config })
+        }
+        return this._chunker(item, maxChunkSize, utils);
     }
 
     public async generateFromQuery(query: string, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
@@ -1051,7 +1069,7 @@ export class ExuluEmbedder {
         })
     }
 
-    public async generateFromDocument(input: Item, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
+    public async generateFromDocument(input: Item, config: ExuluConfig, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -1073,7 +1091,7 @@ export class ExuluEmbedder {
             throw new Error("Item id is required for generating embeddings.")
         }
 
-        const output = await this.chunker(input as Item & { id: string }, this.maxChunkSize)
+        const output = await this.chunker(input as Item & { id: string }, this.maxChunkSize, config)
 
         console.log("[EXULU] Generating embeddings.")
 
@@ -1127,7 +1145,7 @@ export class ExuluTool {
         name: string,
         description: string
     }[]
-    
+
     constructor({ id, name, description, inputSchema, type, execute, config }: {
         id: string,
         name: string,
@@ -1157,17 +1175,42 @@ export class ExuluTool {
         this.tool = tool({
             description: description,
             inputSchema: inputSchema || z.object({}),
-            execute: execute
+            execute
         });
     }
 }
 
-type ExuluContextFieldDefinition = {
+export type ExuluContextFieldProcessor = {
+    description: string,
+    execute: ({ item, user, role, utils, config }: {
+        item: Item & { field: string }, user: number, role: string, utils: {
+            storage: ExuluStorage
+            items: {
+                update: ExuluContext['updateItem'],
+                create: ExuluContext['createItem'],
+                delete: ExuluContext['deleteItem']
+            }
+        },
+        config: ExuluConfig
+    }) => Promise<string>,
+    config?: {
+        queue?: Promise<ExuluQueueConfig>,
+        trigger: "manual" | "onUpdate" | "onCreate" | "always"
+    },
+}
+
+export type ExuluContextFieldDefinition = {
     name: string,
     type: ExuluFieldTypes
     unique?: boolean
-    // require defining a processor if type above is file
-    processor?: () => Promise<string>
+    required?: boolean
+    default?: any
+    calculated?: boolean
+    index?: boolean
+    enumValues?: string[]
+    allowedFileTypes?: allFileTypes[]
+    // todo require defining a processor if type above is file
+    processor?: ExuluContextFieldProcessor
 }
 
 
@@ -1181,6 +1224,27 @@ export const getChunksTableName = (id: string) => {
 
 export type ExuluRightsMode = "private" | "users" | "roles" | "public" | "projects"
 
+export class ExuluStorage {
+    private config: ExuluConfig
+    constructor({ config }: { config: ExuluConfig }) {
+        this.config = config;
+    }
+
+    public getPresignedUrl = async (key: string) => {
+        return await getPresignedUrlUppy(key, this.config);
+    }
+
+    public uploadFile = async (user: number, file: Buffer | Uint8Array, key: string, type: string, metadata?: Record<string, string>) => {
+        return await uploadFileUppy(user, file, key, this.config, {
+            contentType: type,
+            metadata: {
+                ...metadata,
+                type: type
+            }
+        });
+    }
+    // todo add upload and delete methods
+}
 
 export class ExuluContext {
 
@@ -1234,6 +1298,68 @@ export class ExuluContext {
         this.resultReranker = resultReranker;
     }
 
+    public process = async (
+        trigger: STATISTICS_LABELS,
+        user: number,
+        role: string,
+        item: Item & { field: string },
+        config: ExuluConfig
+    ): Promise<{
+        result: string,
+        job?: string
+    }> => {
+        // todo add tracking for processor execution
+        console.log("[EXULU] processing field", item.field, " in context", this.id);
+        console.log("[EXULU] fields", this.fields.map(field => field.name));
+        const field = this.fields.find(field => field.name === item.field?.replace("_s3key", ""));
+        if (!field || !field.processor) {
+            console.error("[EXULU] field not found or processor not set for field", item.field, " in context", this.id);
+            throw new Error("Field not found or processor not set for field " + item.field + " in context " + this.id);
+        }
+        const exuluStorage = new ExuluStorage({ config });
+        const queue = await field.processor.config?.queue;
+        if (queue?.queue.name) {
+            console.log("[EXULU] processor is in queue mode, scheduling job.")
+            const job = await bullmqDecorator({
+                label: `${this.name} ${field.name} data processor`,
+                processor: `${this.id}-${field.name}`,
+                context: this.id,
+                inputs: item,
+                item: item.id,
+                queue: queue.queue,
+                user,
+                role,
+                trigger: trigger,
+                retries: 2
+            })
+
+            return {
+                result: "",
+                job: job.id,
+            };
+        }
+
+        const result = await field.processor.execute({
+            item,
+            user,
+            role,
+            utils: {
+                storage: exuluStorage,
+                items: {
+                    update: this.updateItem,
+                    create: this.createItem,
+                    delete: this.deleteItem
+                }
+            },
+            config
+        });
+
+        return {
+            result,
+            job: undefined
+        };
+    }
+
     public deleteAll = async (): Promise<VectorOperationResponse> => {
         const { db } = await postgresClient();
         await db.from(getTableName(this.id)).delete();
@@ -1262,6 +1388,7 @@ export class ExuluContext {
 
     public createAndUpsertEmbeddings = async (
         item: Item,
+        config: ExuluConfig,
         user?: number,
         statistics?: ExuluStatisticParams,
         role?: string,
@@ -1285,10 +1412,12 @@ export class ExuluContext {
         const { id: source, chunks } = await this.embedder.generateFromDocument({
             ...item,
             id: item.id
-        }, {
-            label: statistics?.label || this.name,
-            trigger: statistics?.trigger || "agent"
-        }, user, role)
+        },
+            config,
+            {
+                label: statistics?.label || this.name,
+                trigger: statistics?.trigger || "agent"
+            }, user, role)
 
         // first delete all chunks with source = id
         await db.from(getChunksTableName(this.id)).where({ source }).delete();
@@ -1312,7 +1441,7 @@ export class ExuluContext {
         };
     }
 
-    public createItem = async (item: Item, user?: number, role?: string, upsert?: boolean): Promise<{
+    private createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{
         item: Item
         job?: string
     }> => {
@@ -1347,7 +1476,8 @@ export class ExuluContext {
                 item: results[0],
                 user: user,
                 role: role,
-                trigger: "api"
+                trigger: "api",
+                config: config
             });
             return {
                 item: results[0],
@@ -1361,11 +1491,15 @@ export class ExuluContext {
         };
     }
 
-    public updateItem = async (item: Item, user?: number, role?: string): Promise<{
+    private updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{
         item: Item
         job?: string
     }> => {
         const { db } = await postgresClient();
+
+        if (item.field) {
+            delete item.field;
+        }
 
         const record = await db.from(
             getTableName(this.id)
@@ -1400,7 +1534,8 @@ export class ExuluContext {
                 item: record, // important we need to full record here with all fields
                 user: user,
                 role: role,
-                trigger: "api"
+                trigger: "api",
+                config: config
             });
             return {
                 item: record,
@@ -1414,7 +1549,7 @@ export class ExuluContext {
         };
     }
 
-    public deleteItem = async (item: Item, user?: number, role?: string): Promise<{
+    private deleteItem = async (item: Item, user?: number, role?: string): Promise<{
         id: string
         job?: string
     }> => {
@@ -1455,12 +1590,14 @@ export class ExuluContext {
                 item,
                 user,
                 role,
-                trigger
+                trigger,
+                config
             }: {
                 item: Item,
                 user?: number,
                 role?: string,
-                trigger: STATISTICS_LABELS
+                trigger: STATISTICS_LABELS,
+                config: ExuluConfig
             }): Promise<{
                 id: string,
                 job?: string,
@@ -1477,7 +1614,8 @@ export class ExuluContext {
                     throw new Error("Item id is required for generating embeddings.")
                 }
 
-                if (this.embedder.queue?.queue.name) {
+                const queue = await this.embedder.queue;
+                if (queue?.queue.name) {
                     console.log("[EXULU] embedder is in queue mode, scheduling job.")
                     const job = await bullmqDecorator({
                         label: `${this.embedder.name}`,
@@ -1485,7 +1623,7 @@ export class ExuluContext {
                         context: this.id,
                         inputs: item,
                         item: item.id,
-                        queue: this.embedder.queue.queue,
+                        queue: queue.queue,
                         user: user,
                         role: role,
                         trigger: trigger || "agent",
@@ -1499,12 +1637,12 @@ export class ExuluContext {
                 }
 
                 // If no queue set, calculate embeddings directly.
-                return await this.createAndUpsertEmbeddings(item, user, {
+                return await this.createAndUpsertEmbeddings(item, config, user, {
                     label: this.embedder.name,
                     trigger: trigger || "agent"
                 }, role, undefined);
             },
-            all: async (userId?: number, roleId?: string): Promise<{
+            all: async (config: ExuluConfig, userId?: number, roleId?: string): Promise<{
                 jobs: string[],
                 items: number
             }> => {
@@ -1516,9 +1654,10 @@ export class ExuluContext {
 
                 const jobs: string[] = [];
 
+                const queue = await this.embedder?.queue;
                 // Safeguard against too many items
                 if (
-                    !this.embedder?.queue?.queue.name &&
+                    !queue?.queue.name &&
                     items.length > 2000
                 ) {
                     throw new Error(`Embedder is not in queue mode, cannot generate embeddings for more than 
@@ -1532,7 +1671,8 @@ export class ExuluContext {
                         item,
                         user: userId,
                         role: roleId,
-                        trigger: "api"
+                        trigger: "api",
+                        config: config
                     });
                     if (job) {
                         jobs.push(job);
@@ -1568,9 +1708,12 @@ export class ExuluContext {
             table.timestamp('embeddings_updated_at')
             table.unique(["id", "external_id"])
             for (const field of this.fields) {
-                const { type, name, unique } = field;
+                let { type, name, unique } = field;
                 if (!type || !name) {
                     continue;
+                }
+                if (type === "file") {
+                    name = name + "_s3key"
                 }
                 mapType(table, type, sanitizeName(name), undefined, unique);
             }
@@ -1580,7 +1723,6 @@ export class ExuluContext {
     }
 
     public createChunksTable = async () => {
-
         // We refresh the connection here because when running this as
         // part of the database initialization, the connection might not
         // have all extensions setup yet, which can cause issues with the
@@ -1588,6 +1730,7 @@ export class ExuluContext {
         const { db } = await refreshPostgresClient();
         const tableName = getChunksTableName(this.id);
         console.log("[EXULU] Creating table: " + tableName);
+
         await db.schema.createTable(tableName, (table) => {
             if (!this.embedder) {
                 throw new Error("Embedder must be set for context " + this.name + " to create chunks table.")
@@ -1595,6 +1738,8 @@ export class ExuluContext {
             table.uuid("id").primary().defaultTo(db.fn.uuid());
             table.uuid("source").references("id").inTable(getTableName(this.id));
             table.text("content");
+            // Metadata column
+            table.jsonb("metadata");
             table.integer("chunk_index");
             table.specificType('embedding', `vector(${this.embedder.vectorDimensions})`);
 
@@ -1653,6 +1798,16 @@ export class ExuluContext {
                     trigger: "agent"
                 })
 
+                await updateStatistic({
+                    name: "count",
+                    label: this.name,
+                    type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
+                    trigger: "tool",
+                    count: 1,
+                    user: user?.id,
+                    role: user?.role?.id
+                })
+
                 return {
                     items: result.items
                 }
@@ -1673,6 +1828,7 @@ export type ExuluStatistic = {
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
 export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string }) => {
+    console.log("[EXULU] Updating statistic", statistic)
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
 
@@ -1684,6 +1840,8 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
         type: statistic.type,
         createdAt: currentDate
     }).first();
+
+    console.log("[EXULU] Existing", existing)
 
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.

@@ -2,21 +2,18 @@ import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Queue, Worker } from "bullmq";
 import { bullmq } from "./utils";
-import { ExuluContext } from "./classes";
+import { ExuluContext, ExuluStorage, type ExuluQueueConfig } from "./classes";
 import { postgresClient } from "../postgres/client";
 import type { ExuluBullMqDecoratorData, ExuluJobType } from "./decoraters/bullmq";
 import { type Tracer } from "@opentelemetry/api";
+import type { ExuluConfig } from ".";
 
 let redisConnection: IORedis;
 
-export const createWorkers = async (queues: {
-    queue: Queue,
-    ratelimit: number
-    concurrency: number
-}[],
-   
+export const createWorkers = async (
+    queues: ExuluQueueConfig[],
+    config: ExuluConfig,
     contexts: ExuluContext[],
-   
     tracer?: Tracer
 ) => {
     // Initializes any required workers for processing embedder
@@ -65,13 +62,56 @@ export const createWorkers = async (queues: {
                             throw new Error(`Embedder ${data.embedder} not found in the registry.`);
                         }
 
-                        const result = await context.createAndUpsertEmbeddings(data.inputs, data.user, {
+                        const result = await context.createAndUpsertEmbeddings(data.inputs, config, data.user, {
                             label: embedder.name,
                             trigger: data.trigger
                         }, data.role, bullmqJob.id);
 
                         return result;
 
+                    }
+
+                    if (data.type === "processor") {
+                        const context = contexts.find(context => context.id === data.context)
+
+                        if (!context) {
+                            throw new Error(`Context ${data.context} not found in the registry.`);
+                        }
+
+                        const field = context.fields.find(field => field.name === data.inputs.field);
+
+                        if (!field) {
+                            throw new Error(`Field ${data.inputs.field} not found in the context ${data.context}.`);
+                        }
+
+                        if (!field.processor) {
+                            throw new Error(`Processor not set for field ${data.inputs.field} in the context ${data.context}.`);
+                        }
+
+                        const exuluStorage = new ExuluStorage({ config });
+
+                        if (!data.user) {
+                            throw new Error(`User not set for processor job.`);
+                        }
+
+                        if (!data.role) {
+                            throw new Error(`Role not set for processor job.`);
+                        }
+
+                        const result = await field.processor.execute({
+                            item: data.inputs,
+                            user: data.user,
+                            role: data.role,
+                            utils: {
+                                storage: exuluStorage,
+                                items: {
+                                    update: context.updateItem
+                                }
+                            },
+                            config
+                        });
+
+                        return result;
                     }
 
                 } catch (error: unknown) {
