@@ -287,6 +287,7 @@ interface ExuluAgentParams {
     description: string;
     config?: ExuluAgentConfig | undefined;
     maxContextLength?: number;
+    provider: string;
     capabilities?: {
         text: boolean;
         images: imageTypes[];
@@ -397,6 +398,7 @@ export class ExuluAgent {
     // The ID is used for storing references to agents so it is important it does not change.
     public id: string;
     public name: string;
+    public provider: string;
     public description: string = "";
     public slug: string = "";
     public type: "agent";
@@ -416,11 +418,12 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, evals }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, evals, provider }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.rateLimit = rateLimit;
+        this.provider = provider;
         this.config = config;
         this.type = type;
         this.maxContextLength = maxContextLength;

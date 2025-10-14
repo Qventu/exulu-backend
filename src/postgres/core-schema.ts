@@ -527,6 +527,32 @@ const rbacSchema: ExuluTableDefinition = {
     ]
 }
 
+const platformConfigurationsSchema: ExuluTableDefinition = {
+    type: "platform_configurations",
+    name: {
+        plural: "platform_configurations",
+        singular: "platform_configuration"
+    },
+    fields: [
+        {
+            name: "config_key",
+            type: "text",
+            required: true,
+            unique: true,
+            index: true
+        },
+        {
+            name: "config_value",
+            type: "json",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        }
+    ]
+}
+
 export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
     schema.fields.forEach(field => {
         if (field.type === "file") {
@@ -570,6 +596,7 @@ export const coreSchemas = {
             variablesSchema: (): ExuluTableDefinition => addCoreFields(variablesSchema),
             rbacSchema: (): ExuluTableDefinition => addCoreFields(rbacSchema),
             workflowTemplatesSchema: (): ExuluTableDefinition => addCoreFields(workflowTemplatesSchema),
+            platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
         }
     }
 }

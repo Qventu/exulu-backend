@@ -14,12 +14,11 @@ import { create } from './registry/otel'
 import type { ExuluContext } from './registry/classes'
 import { codeStandardsContext } from './templates/contexts/code-standards'
 import { outputsContext } from './templates/contexts/outputs'
-import { claudeOpus4Agent } from './templates/agents/claude-opus-4'
 import CryptoJS from 'crypto-js';
 import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
-import { gpt5MiniAgent, gpt5agent } from './templates/agents/gpt-5'
-import { claudeSonnet4Agent } from './templates/agents/claude-sonnet-4'
+import { gpt5MiniAgent, gpt5agent, gpt5proAgent, gpt5CodexAgent, gpt5NanoAgent, gpt41Agent, gpt41MiniAgent, gpt4oAgent, gpt4oMiniAgent } from './templates/agents/openai/gpt'
+import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from './templates/agents/anthropic/claude'
 
 export const ExuluJobs = {
     redis: redisClient,
@@ -36,11 +35,19 @@ export const ExuluDefaultContexts = {
 export const ExuluDefaultAgents = {
     anthropic: {
         opus4: claudeOpus4Agent,
-        sonnet4: claudeSonnet4Agent
+        sonnet4: claudeSonnet4Agent,
+        sonnet45: claudeSonnet45Agent
     },
     openai: {
         gpt5Mini: gpt5MiniAgent,
-        gpt5: gpt5agent
+        gpt5: gpt5agent,
+        gpt5pro: gpt5proAgent,
+        gpt5Codex: gpt5CodexAgent,
+        gpt5Nano: gpt5NanoAgent,
+        gpt41: gpt41Agent,
+        gpt41Mini: gpt41MiniAgent,
+        gpt4o: gpt4oAgent,
+        gpt4oMini: gpt4oMiniAgent
     }
 }
 

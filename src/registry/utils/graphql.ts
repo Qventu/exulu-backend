@@ -130,6 +130,7 @@ ${enumValues}
         fields.push("  streaming: Boolean")
         fields.push("  capabilities: AgentCapabilities")
         fields.push("  maxContextLength: Int")
+        fields.push("  provider: String")
         fields.push("  slug: String")
         fields.push("  evals: [AgentEvalFunction]")
     }
@@ -1109,7 +1110,8 @@ const backendAgentFields = [
     "rateLimit",
     "streaming",
     "capabilities",
-    "maxContextLength"
+    "maxContextLength",
+    "provider"
 ]
 
 const removeAgentFields = (requestedFields: string[]) => {
@@ -1188,6 +1190,9 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
     }
     if (requestedFields.includes("maxContextLength")) {
         result.maxContextLength = backend?.maxContextLength || 0
+    }
+    if (requestedFields.includes("provider")) {
+        result.provider = backend?.provider || ""
     }
     if (requestedFields.includes("evals")) {
         result.evals = backend?.evals?.map(evalFunc => ({
@@ -2526,6 +2531,7 @@ type Provider {
   name: String!
   description: String
   providerName: String
+  provider: String
   modelName: String
   type: EnumProviderType!
 }

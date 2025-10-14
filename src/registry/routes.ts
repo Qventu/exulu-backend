@@ -40,6 +40,7 @@ const {
     testCasesSchema,
     evalSetsSchema,
     evalRunsSchema,
+    platformConfigurationsSchema,
     agentSessionsSchema,
     agentMessagesSchema,
     rolesSchema,
@@ -86,11 +87,11 @@ const createRecurringJobs = async () => {
 }
 
 export type ExuluTableDefinition = {
-    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items",
+    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations",
     id?: string,
     name: {
-        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items",
-        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item",
+        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations",
+        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration",
     },
     fields: ExuluContextFieldDefinition[],
     RBAC?: boolean,
@@ -102,7 +103,7 @@ export const createExpressRoutes = async (
     agents: ExuluAgent[],
     tools: ExuluTool[],
     contexts: ExuluContext[] | undefined,
-    config?: ExuluConfig,
+    config: ExuluConfig,
     tracer?: Tracer
 ): Promise<Express> => {
 
@@ -144,6 +145,7 @@ export const createExpressRoutes = async (
         agentsSchema(),
         projectsSchema(),
         evalRunsSchema(),
+        platformConfigurationsSchema(),
         evalSetsSchema(),
         testCasesSchema(),
         agentSessionsSchema(),
@@ -455,6 +457,23 @@ Mood: friendly and intelligent.
         }
         res.status(200).json({
             authenticated: true
+        })
+    })
+
+    app.get("/theme", async (req: Request, res: Response) => {
+        const { db } = await postgresClient();
+        const themeConfig = await db.from("platform_configurations").where({ config_key: "theme_config" }).first();
+        if (!themeConfig) {
+            res.status(200).json({
+                theme: {
+                    light: {},
+                    dark: {}
+                }
+            })
+            return;
+        }
+        res.status(200).json({
+            theme: themeConfig.config_value
         })
     })
 

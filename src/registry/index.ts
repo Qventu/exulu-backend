@@ -4,9 +4,18 @@ import { createExpressRoutes } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
-import { claudeSonnet4Agent } from "../templates/agents/claude-sonnet-4.ts";
-import { claudeOpus4Agent } from "../templates/agents/claude-opus-4.ts";
-import { gpt5MiniAgent, gpt5agent } from "../templates/agents/gpt-5.ts";
+import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from "../templates/agents/anthropic/claude";
+import {
+    gpt5MiniAgent,
+    gpt5agent,
+    gpt5proAgent,
+    gpt5CodexAgent,
+    gpt5NanoAgent,
+    gpt41Agent,
+    gpt41MiniAgent,
+    gpt4oAgent,
+    gpt4oMiniAgent
+} from "../templates/agents/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
 import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
@@ -103,8 +112,16 @@ export class ExuluApp {
         this._agents = [
             claudeSonnet4Agent,
             claudeOpus4Agent,
+            claudeSonnet45Agent,
             gpt5MiniAgent,
             gpt5agent,
+            gpt5proAgent,
+            gpt5CodexAgent,
+            gpt5NanoAgent,
+            gpt41Agent,
+            gpt41MiniAgent,
+            gpt4oAgent,
+            gpt4oMiniAgent,
             ...(agents ?? [])
         ];
         this._config = config;
@@ -245,7 +262,7 @@ export class ExuluApp {
                     throw new Error(`Context ${contextId} not found in registry.`)
                 }
                 return await context.embeddings.generate.all(
-                    this._config || {} as ExuluConfig, 
+                    this._config || {} as ExuluConfig,
                     undefined,
                     undefined
                 )
