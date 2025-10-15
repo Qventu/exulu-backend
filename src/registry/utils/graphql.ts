@@ -15,9 +15,8 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import { Knex as KnexType } from 'knex';
 import { checkRecordAccess, loadAgent, loadAgents } from "../utils";
 import type { Agent } from "@EXULU_TYPES/models/agent";
-import type { Queue } from "bullmq";
-import { db } from "../..";
 import type { ExuluConfig } from "..";
+import { SALT_ROUNDS } from "../../auth/generate-key";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -559,7 +558,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
-            const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
             let { input } = args;
 
             // Handle RBAC input
@@ -580,7 +578,9 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             }
 
             if (table.name.singular === "user" && input.password) {
-                input.password = await bcrypt.hash(input.password, 10);
+                console.log("[EXULU] Hashing password", input.password)
+                input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
+                console.log("[EXULU] Hashed password", input.password)
             }
 
             // Check for each field if it is a json field, and if 
@@ -595,7 +595,10 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             });
 
             if (!input.id) {
-                input.id = db.fn.uuid();
+                const idField = table.fields.find(field => field.name === "id");
+                if (!idField || idField?.type !== "number") {
+                    input.id = db.fn.uuid();
+                }
             }
 
             // We need to retrieve all the columns for potential post processing

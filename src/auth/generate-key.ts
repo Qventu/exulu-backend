@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { postgresClient } from "../postgres/client";
-const SALT_ROUNDS = 12;
+export const SALT_ROUNDS = 12;
 
 export async function encryptString(string: string) {
     const hash = await bcrypt.hash(string, SALT_ROUNDS);

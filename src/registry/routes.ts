@@ -483,6 +483,7 @@ Mood: friendly and intelligent.
     // on the evals page that they need to be configured before running evals.
     app.get("/config", async (req: Request, res: Response) => {
         res.status(200).json({
+            authMode: process.env.AUTH_MODE as "password" | "otp",
             MCP: {
                 enabled: config?.MCP.enabled
             },
