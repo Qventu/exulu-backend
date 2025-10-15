@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main # or main
+      - 'hotfix/*'  # trigger on any hotfix branch
 
 permissions:
   contents: read # for checkout
