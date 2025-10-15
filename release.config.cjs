@@ -1,5 +1,9 @@
 module.exports = {
-    branches: ['main', { name: 'next', prerelease: true }],
+    branches: [
+        'main', 
+        { name: 'next', prerelease: true },
+        { name: 'hotfix/*' } // any branch like hotfix/1.19.1 will trigger a release
+    ],
     plugins: [
         '@semantic-release/commit-analyzer',
         '@semantic-release/release-notes-generator',
