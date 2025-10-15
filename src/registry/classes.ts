@@ -1724,8 +1724,8 @@ export class ExuluContext {
             CREATE INDEX IF NOT EXISTS ${tableName}_embedding_hnsw_cosine
             ON ${tableName}
             USING hnsw (embedding vector_cosine_ops)
-            WHERE embedding IS NOT NULL
             WITH (m = 16, ef_construction = 64)
+            WHERE embedding IS NOT NULL
         `);
 
         return;
