@@ -655,6 +655,12 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
             input = encryptSensitiveFields(input);
 
+            if (table.name.singular === "user" && input.password) {
+                console.log("[EXULU] Hashing password", input.password)
+                input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
+                console.log("[EXULU] Hashed password", input.password)
+            }
+
             // Check for each field if it is a json field, and if 
             // so, check if it is an object or array and convert 
             // it to a string.
@@ -703,7 +709,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 await handleRBACUpdate(db, table.name.singular, result.id, rbacData, existingRbacRecords);
             }
 
-            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
+            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id, config })
             return {
                 item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id }),
                 job
@@ -726,6 +732,12 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             delete input.created_by;
 
             input = encryptSensitiveFields(input);
+
+            if (table.name.singular === "user" && input.password) {
+                console.log("[EXULU] Hashing password", input.password)
+                input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
+                console.log("[EXULU] Hashed password", input.password)
+            }
 
             // Check for each field if it is a json field, and if 
             // so, check if it is an object or array and convert 
@@ -760,7 +772,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             // operations that might need to be performed on the fields.
             const columns = await db(tableNamePlural).columnInfo();
             const result = await db.from(tableNamePlural).select(Object.keys(columns)).where({ id }).first();
-            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id })
+            const { job } = await postprocessUpdate({ table, requestedFields, agents, contexts, tools, result, user: context.user.id, role: context.user.role?.id, config })
             return {
                 item: finalizeRequestedFields({ table, requestedFields, agents, contexts, tools, result, user: context.user.id }),
                 job
@@ -1016,11 +1028,6 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
         return query;
     }
 
-    const hasRBAC = table.RBAC === true;
-    if (!hasRBAC) {
-        return query;
-    }
-
     // If a user is super admin, they can see everything, except if
     // the table is agent_sessions, in which case we always enforce
     // the regular rbac rules set for the session (defaults to private).
@@ -1028,6 +1035,8 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
         return query; // todo roadmap - scoping api users to specific resources
     }
 
+    console.log("[EXULU] user.role", user.role)
+    console.log("[EXULU] table.name.plural", table.name.plural)
     if (!user.super_admin && (!user.role || (
         !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
         !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
@@ -1037,7 +1046,13 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
     ))) {
         console.error('==== Access control error: no role found or no access to entity type. ====');
         // Return empty result on error
-        return query.where('1', '=', '0');
+        return query.where('id', '=', '0');
+    }
+
+    const hasRBAC = table.RBAC === true;
+    console.log("[EXULU] hasRBAC", hasRBAC)
+    if (!hasRBAC) {
+        return query;
     }
 
     try {
