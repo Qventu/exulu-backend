@@ -1,4 +1,5 @@
-import { ExuluQueues, ExuluVariables } from "../..";
+import { queues as ExuluQueues } from "../../bullmq/queues";
+import { ExuluVariables } from "../..";
 import { ExuluEval } from "../../registry/classes";
 import { z } from "zod";
 
