@@ -28,6 +28,9 @@ const expiresIn = 60 * 60 * 24 * 1 // S3 signature expires within 1 day.
 
 let s3Client: S3Client | undefined;
 function getS3Client(config: ExuluConfig) {
+    if (!config.fileUploads) {
+        throw new Error("File uploads are not configured")
+    }
     s3Client ??= new S3Client({
         region: config.fileUploads.s3region,
         ...(config.fileUploads.s3endpoint && {
@@ -43,6 +46,9 @@ function getS3Client(config: ExuluConfig) {
 }
 
 export const getPresignedUrl = async (key: string, config: ExuluConfig) => {
+    if (!config.fileUploads) {
+        throw new Error("File uploads are not configured")
+    }
     const url = await getSignedUrl(
         getS3Client(config),
         new GetObjectCommand({
@@ -61,6 +67,9 @@ export interface UploadOptions {
 
 // Helper function to add s3prefix to a key path
 const addPrefixToKey = (keyPath: string, config: ExuluConfig): string => {
+    if (!config.fileUploads) {
+        throw new Error("File uploads are not configured")
+    }
     if (!config.fileUploads.s3prefix) {
         return keyPath;
     }
@@ -88,6 +97,9 @@ export const uploadFile = async (
     options: UploadOptions = {}
 ): Promise<string> => {
     console.log("[EXULU] Uploading file to S3", key)
+    if (!config.fileUploads) {
+        throw new Error("File uploads are not configured")
+    }
     const client = getS3Client(config);
 
     let folder = `${user}/`
@@ -111,8 +123,14 @@ export const createUppyRoutes = async (
     config: ExuluConfig
 ) => {
 
+    if (!config.fileUploads) {
+        throw new Error("File uploads are not configured")
+    }
     // Helper function to extract user prefix from S3 key, accounting for optional s3prefix
     const extractUserPrefix = (key: string): string | undefined => {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         if (!config.fileUploads.s3prefix) {
             return key.split("/")[0];
         }
@@ -150,6 +168,9 @@ export const createUppyRoutes = async (
     let stsClient
 
     function getSTSClient() {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         stsClient ??= new STSClient({
             region: config.fileUploads.s3region,
             ...(config.fileUploads.s3endpoint && { endpoint: config.fileUploads.s3endpoint }),
@@ -162,6 +183,10 @@ export const createUppyRoutes = async (
     }
 
     app.delete('/s3/delete', async (req, res, next) => {
+
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         const apikey: any = req.headers['exulu-api-key'] || null;
         const internalkey: any = req.headers['internal-key'] || null;
         const { db } = await postgresClient()
@@ -301,6 +326,11 @@ export const createUppyRoutes = async (
     // so we can show them in a galery popup for file inputs.
 
     app.post('/s3/object', async (req, res, next) => {
+
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
+
         const apikey: any = req.headers['exulu-api-key'] || null;
         const internalkey: any = req.headers['internal-key'] || null;
         const { db } = await postgresClient()
@@ -335,6 +365,11 @@ export const createUppyRoutes = async (
     })
 
     app.get('/s3/list', async (req, res, next) => {
+
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
+
         const apikey: any = req.headers['exulu-api-key'] || null;
         const internalkey: any = req.headers['internal-key'] || null;
         const { db } = await postgresClient()
@@ -380,6 +415,9 @@ export const createUppyRoutes = async (
 
 
     app.get('/s3/sts', (req, res, next) => {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         getSTSClient().send(new GetFederationTokenCommand({
             Name: 'Exulu',
             // The duration, in seconds, of the role session. The value specified
@@ -394,8 +432,8 @@ export const createUppyRoutes = async (
             res.setHeader('Cache-Control', `public,max-age=${expiresIn}`)
             res.json({
                 credentials: response.Credentials,
-                bucket: config.fileUploads.s3Bucket,
-                region: config.fileUploads.s3region,
+                bucket: config.fileUploads?.s3Bucket,
+                region: config.fileUploads?.s3region,
             })
         }, next)
     })
@@ -419,6 +457,9 @@ export const createUppyRoutes = async (
     const generateS3Key = (filename) => `${randomUUID()}-_EXULU_${filename}`
 
     const signOnServer = async (req, res, next) => {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         // Before giving the signature to the user, you should first check is they
         // are authorized to perform that operation, and if the request is legit.
         // For the sake of simplification, we skip that check in this example.
@@ -480,6 +521,10 @@ export const createUppyRoutes = async (
     // You can remove those endpoints if you only want to support the non-multipart uploads.
 
     app.post('/s3/multipart', async (req, res, next) => {
+
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
 
         const apikey: any = req.headers['exulu-api-key'] || null;
         const { db } = await postgresClient();
@@ -549,6 +594,9 @@ export const createUppyRoutes = async (
     }
 
     app.get('/s3/multipart/:uploadId/:partNumber', (req, res, next) => {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         const { uploadId, partNumber } = req.params
         const { key } = req.query
 
@@ -584,6 +632,9 @@ export const createUppyRoutes = async (
         const parts = []
 
         function listPartsPage(startAt) {
+            if (!config.fileUploads) {
+                throw new Error("File uploads are not configured")
+            }
             client.send(new ListPartsCommand({
                 Bucket: config.fileUploads.s3Bucket,
                 Key: key as string,
@@ -613,6 +664,9 @@ export const createUppyRoutes = async (
         return part && typeof part === 'object' && Number(part.PartNumber) && typeof part.ETag === 'string'
     }
     app.post('/s3/multipart/:uploadId/complete', (req, res, next) => {
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
         const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query
@@ -647,6 +701,11 @@ export const createUppyRoutes = async (
     })
 
     app.delete('/s3/multipart/:uploadId', (req, res, next) => {
+
+        if (!config.fileUploads) {
+            throw new Error("File uploads are not configured")
+        }
+        
         const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query

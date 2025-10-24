@@ -1,7 +1,6 @@
 import { type Express, type Request, type Response } from "express";
 import { errorHandler, type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextFieldProcessor, ExuluEval, type ExuluTool, saveChat, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
 import { requestValidators } from "./route-validators";
-import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
 import express from 'express';
@@ -589,6 +588,7 @@ Mood: friendly and intelligent.
     })
 
     if (
+        config?.fileUploads &&
         config?.fileUploads?.s3region &&
         config?.fileUploads?.s3key &&
         config?.fileUploads?.s3secret &&

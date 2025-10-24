@@ -91,7 +91,7 @@ export type ExuluConfig = {
     MCP: {
         enabled: boolean,
     },
-    fileUploads: {
+    fileUploads?: {
         s3region: string,
         s3key: string,
         s3secret: string,
