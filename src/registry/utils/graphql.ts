@@ -5,7 +5,7 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
-import { ExuluAgent, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
+import { ExuluAgent, ExuluEval, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
 import { addCoreFields } from "../../postgres/core-schema";
 import { sanitizeName } from "./sanitize-name";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -15,8 +15,15 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import { Knex as KnexType } from 'knex';
 import { checkRecordAccess, loadAgent, loadAgents } from "../utils";
 import type { Agent } from "@EXULU_TYPES/models/agent";
+import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "..";
 import { SALT_ROUNDS } from "../../auth/generate-key";
+import type { Job, JobState, Queue } from "bullmq";
+import { ExuluQueues } from "../..";
+import { redisClient as getRedisClient } from "../../redis/client";
+import type { BullMqJobData } from "../decoraters/bullmq";
+import { v4 as uuidv4 } from 'uuid';
+import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -131,7 +138,6 @@ ${enumValues}
         fields.push("  maxContextLength: Int")
         fields.push("  provider: String")
         fields.push("  slug: String")
-        fields.push("  evals: [AgentEvalFunction]")
     }
 
     // Add RBAC field if enabled
@@ -414,16 +420,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
             if (!record) {
                 throw new Error('Record not found');
-            }
-
-            // Special rules for jobs.
-            if (tableNamePlural === "jobs") {
-                // If a user is not super admin, they 
-                // can only see their own jobs.
-                // todo we could potentially check the if the request is for jobs with type embeddder, and then filter on jobs where the user has access to the context source of the embedder.
-                if (!user.super_admin && record.created_by !== user.id) {
-                    throw new Error('You are not authorized to edit this record');
-                }
             }
 
             // Check if record is public (any user can edit)
@@ -1020,14 +1016,6 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
 
     const tableNamePlural = table.name.plural.toLowerCase();
 
-    if (!user.super_admin && table.name.plural === "jobs") {
-        // If a user is not super admin, they 
-        // can only see their own jobs.
-        // todo we could potentially check the if the request is for jobs with type embeddder, and then filter on jobs where the user has access to the context source of the embedder.
-        query = query.where('created_by', user.id);
-        return query;
-    }
-
     // If a user is super admin, they can see everything, except if
     // the table is agent_sessions, in which case we always enforce
     // the regular rbac rules set for the session (defaults to private).
@@ -1211,14 +1199,6 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
     }
     if (requestedFields.includes("provider")) {
         result.provider = backend?.provider || ""
-    }
-    if (requestedFields.includes("evals")) {
-        result.evals = backend?.evals?.map(evalFunc => ({
-            id: evalFunc.id,
-            name: evalFunc.name,
-            description: evalFunc.description,
-            config: evalFunc.config || []
-        })) || []
     }
     if (!requestedFields.includes("backend")) {
         delete result.backend
@@ -2116,7 +2096,19 @@ const contextToTableDefinition = (context: ExuluContext): ExuluTableDefinition =
     return addCoreFields(definition)
 }
 
-export function createSDL(tables: ExuluTableDefinition[], contexts: ExuluContext[], agents: ExuluAgent[], tools: ExuluTool[], config: ExuluConfig) {
+export function createSDL(
+    tables: ExuluTableDefinition[],
+    contexts: ExuluContext[],
+    agents: ExuluAgent[],
+    tools: ExuluTool[],
+    config: ExuluConfig,
+    evals: ExuluEval[],
+    queues: {
+        queue: Queue,
+        ratelimit: number
+        concurrency: number
+    }[]
+) {
 
     const contextSchemas: ExuluTableDefinition[] = contexts.map(context => contextToTableDefinition(context))
 
@@ -2338,6 +2330,14 @@ type PageInfo {
     `
 
     typeDefs += `
+    queue(queue: QueueEnum!): QueueResult
+    `
+
+    typeDefs += `
+    evals: EvalPaginationResult
+    `
+
+    typeDefs += `
     contexts: ContextPaginationResult
     `
 
@@ -2345,8 +2345,31 @@ type PageInfo {
     contextById(id: ID!): Context
     `
 
+    mutationDefs += `
+    runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
+    `
+
+    mutationDefs += `
+    drainQueue(queue: QueueEnum!): JobActionReturnPayload
+    `
+
+    mutationDefs += `
+    pauseQueue(queue: QueueEnum!): JobActionReturnPayload
+    `
+    mutationDefs += `
+    resumeQueue(queue: QueueEnum!): JobActionReturnPayload
+    `
+
+    mutationDefs += `
+    deleteJob(queue: QueueEnum!, id: String!): JobActionReturnPayload
+    `
+
     typeDefs += `
    tools: ToolPaginationResult
+    `
+
+    typeDefs += `
+   jobs(queue: QueueEnum!, statusses: [JobStateEnum!]): JobPaginationResult
     `
 
     resolvers.Query["providers"] = async (_, args, context, info) => {
@@ -2360,6 +2383,275 @@ type PageInfo {
                 return object
             })
         }
+    }
+
+    resolvers.Query["queue"] = async (_, args, context, info) => {
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+        const queue = ExuluQueues.list.get(args.queue);
+        if (!queue) {
+            throw new Error("Queue not found");
+        }
+        const config = await queue.use();
+        return {
+            name: config.queue.name,
+            concurrency: config.concurrency,
+            ratelimit: config.ratelimit,
+            isMaxed: await config.queue.isMaxed(),
+            isPaused: await config.queue.isPaused(),
+            jobs: {
+                paused: await config.queue.isPaused(),
+                completed: await config.queue.getJobCountByTypes("completed"),
+                failed: await config.queue.getJobCountByTypes("failed"),
+                waiting: await config.queue.getJobCountByTypes("waiting"),
+                active: await config.queue.getJobCountByTypes("active"),
+                delayed: await config.queue.getJobCountByTypes("delayed"),
+            },
+
+        }
+    }
+
+    resolvers.Mutation["runEval"] = async (_, args, context, info) => {
+        console.log("[EXULU] /evals/run/:id", args.id);
+
+        const user = context.user;
+        const eval_run_id = args.id;
+
+        // Check user has evals write access or is super admin
+        if (!user.super_admin && (!user.role || user.role.evals !== "write")) {
+            throw new Error("You don't have permission to run evals. Required: super_admin or evals write access.");
+        }
+
+        const { db } = await postgresClient();
+
+        // Fetch the eval run
+        const evalRun: EvalRun = await db.from("eval_runs").where({ id: eval_run_id }).first();
+        if (!evalRun) {
+            throw new Error("Eval run not found in database.");
+        }
+
+        // Check RBAC access to eval run
+        const hasAccessToEvalRun = await checkRecordAccess(evalRun, "write", user);
+        if (!hasAccessToEvalRun) {
+            throw new Error("You don't have access to this eval run.");
+        }
+
+        // Get test case IDs and eval function IDs from eval run
+        let testCaseIds: string[] = evalRun.test_case_ids ? (typeof evalRun.test_case_ids === 'string' ? JSON.parse(evalRun.test_case_ids) : evalRun.test_case_ids) : [];
+        const eval_functions = evalRun.eval_functions ? (typeof evalRun.eval_functions === 'string' ? JSON.parse(evalRun.eval_functions) : evalRun.eval_functions) : [];
+
+        if (!testCaseIds || testCaseIds.length === 0) {
+            throw new Error("No test cases selected for this eval run.");
+        }
+
+        if (!eval_functions || eval_functions.length === 0) {
+            throw new Error("No eval functions selected for this eval run.");
+        }
+        
+        if (args.test_case_ids) {
+            testCaseIds = testCaseIds.filter(testCase => args.test_case_ids.includes(testCase));
+        }
+
+        console.log("[EXULU] test cases ids filtered", testCaseIds);
+
+        // Fetch test cases
+        const testCases = await db.from("test_cases").whereIn("id", testCaseIds);
+        if (testCases.length === 0) {
+            throw new Error("No test cases found for eval run.");
+        }
+
+        // Load the agent instance to validate it exists
+        const agentInstance = await loadAgent(evalRun.agent_id);
+        if (!agentInstance) {
+            throw new Error("Agent instance not found for eval run.");
+        }
+
+        // Use a general eval queue for the main eval jobs
+        const evalQueue = await ExuluQueues.register("eval_runs", 1, 1).use();
+
+        // Create one job per test case
+        const jobIds: string[] = [];
+
+        for (const testCase of testCases) {
+            const jobData: BullMqJobData = {
+                label: `Eval Run ${eval_run_id} - Test Case ${testCase.id}`,
+                trigger: "api",
+                timeoutInSeconds: evalRun.timeout_in_seconds || 180, // default to 3 minutes
+                type: "eval_run",
+                eval_run_id,
+                eval_run_name: evalRun.name,
+                test_case_id: testCase.id,
+                test_case_name: testCase.name,
+                eval_functions, // Array of eval function IDs - worker will create child jobs for these
+                agent_id: evalRun.agent_id,
+                inputs: testCase.inputs,
+                expected_output: testCase.expected_output,
+                expected_tools: testCase.expected_tools,
+                expected_knowledge_sources: testCase.expected_knowledge_sources,
+                expected_agent_tools: testCase.expected_agent_tools,
+                config: evalRun.config,
+                scoring_method: evalRun.scoring_method,
+                pass_threshold: evalRun.pass_threshold,
+                user: user.id,
+                role: user.role?.id
+            }
+
+            const redisId = uuidv4();
+
+            // Create job with type "eval" - worker will handle running agent + creating eval function jobs
+            const job = await evalQueue.queue.add("eval_run", jobData, {
+                jobId: redisId,
+                // Setting it to 3 as a sensible default, as
+                // many AI services are quite unstable.
+                attempts: evalQueue.retries || 1,
+                removeOnComplete: 5000,
+                removeOnFail: 10000,
+                backoff: evalQueue.backoff || {
+                    type: 'exponential',
+                    delay: 2000,
+                },
+            });
+
+            jobIds.push(job.id as string);
+        }
+
+        const response = {
+            jobs: jobIds,
+            count: jobIds.length
+        }
+
+        const requestedFields = getRequestedFields(info)
+        const mapped = {}
+        requestedFields.forEach(field => {
+            mapped[field] = response[field]
+        })
+        return mapped
+    }
+
+    /**
+     * Drains the queue, i.e., removes all jobs that are waiting
+     * or delayed, but not active, completed or failed.
+     */
+    resolvers.Mutation["drainQueue"] = async (_, args, context, info) => {
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+        const queue = ExuluQueues.list.get(args.queue);
+        if (!queue) {
+            throw new Error("Queue not found");
+        }
+        const config = await queue.use();
+        await config.queue.drain()
+        return { success: true }
+    }
+
+    resolvers.Mutation["pauseQueue"] = async (_, args, context, info) => {
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+        const queue = ExuluQueues.list.get(args.queue);
+        if (!queue) {
+            throw new Error("Queue not found");
+        }
+        const config = await queue.use();
+        await config.queue.pause()
+        return { success: true }
+    }
+
+
+    resolvers.Mutation["resumeQueue"] = async (_, args, context, info) => {
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+        const queue = ExuluQueues.list.get(args.queue);
+        if (!queue) {
+            throw new Error("Queue not found");
+        }
+        const config = await queue.use();
+        await config.queue.resume()
+        return { success: true }
+    }
+
+    resolvers.Mutation["deleteJob"] = async (_, args, context, info) => {
+        if (!args.id) {
+            throw new Error("Job ID is required");
+        }
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+        const queue = ExuluQueues.list.get(args.queue);
+        if (!queue) {
+            throw new Error("Queue not found");
+        }
+        const config = await queue.use();
+        await config.queue.remove(args.id)
+        return { success: true }
+    }
+
+    resolvers.Query["evals"] = async (_, args, context, info) => {
+        const requestedFields = getRequestedFields(info)
+        return {
+            items: evals.map((_eval: ExuluEval) => {
+                const object = {}
+                requestedFields.forEach(field => {
+                    object[field] = _eval[field]
+                })
+                return object
+            })
+        }
+    }
+
+
+    resolvers.Query["jobs"] = async (_, args, context, info) => {
+
+        if (!args.queue) {
+            throw new Error("Queue name is required");
+        }
+
+        const { client } = await getRedisClient();
+        if (!client) {
+            throw new Error("Redis client not created properly");
+        }
+
+        const {
+            jobs,
+            count
+        } = await getJobsByQueueAndName(
+            args.queue,
+            args.statusses,
+            args.page || 1,
+            args.limit || 100
+        );
+
+        console.log("[EXULU] jobs", jobs.map(job => job.name));
+
+        const requestedFields = getRequestedFields(info)
+        return {
+            items: await Promise.all(jobs.map(async job => {
+                const object = {}
+                for (const field of requestedFields) {
+                    if (field === "data") {
+                        object[field] = job[field]
+                    } else if (field === "timestamp") {
+                        object[field] = new Date(job[field]).toISOString()
+                    } else if (field === "state") {
+                        object[field] = await job.getState()
+                    } else {
+                        object[field] = job[field]
+                    }
+                }
+                return object
+            })),
+            pageInfo: {
+                pageCount: Math.ceil(count / (args.limit || 100)),
+                itemCount: count,
+                currentPage: args.page || 1,
+                hasPreviousPage: (args.page && args.page > 1) ? true : false,
+                hasNextPage: (args.page && args.page < Math.ceil(jobs.length / (args.limit || 100))) ? true : false
+            }
+        }
+
     }
 
     resolvers.Query["contexts"] = async (_, args, context, info) => {
@@ -2479,7 +2771,34 @@ type PageInfo {
 
     modelDefs += `
     type ProviderPaginationResult {
-    items: [Provider]!
+        items: [Provider]!
+    }
+    `
+
+    modelDefs += `
+    type QueueResult {
+        name: String!
+        concurrency: Int!
+        ratelimit: Int!
+        isMaxed: Boolean!
+        isPaused: Boolean!
+        jobs: QueueJobsCounts
+    }
+    `
+    modelDefs += `
+    type QueueJobsCounts {
+        paused: Int!
+        completed: Int!
+        failed: Int!
+        waiting: Int!
+        active: Int!
+        delayed: Int!
+    }
+    `
+
+    modelDefs += `
+    type EvalPaginationResult {
+    items: [Eval]!
     }
     `
 
@@ -2492,6 +2811,13 @@ type PageInfo {
     modelDefs += `
     type ToolPaginationResult {
     items: [Tool]!
+    }
+    `
+
+    modelDefs += `
+    type JobPaginationResult {
+        items: [Job]!
+        pageInfo: PageInfo!
     }
     `
 
@@ -2554,6 +2880,19 @@ type Provider {
   type: EnumProviderType!
 }
 
+type Eval {
+    id: ID!
+    name: String!
+    description: String!
+    llm: Boolean!
+    config: [EvalConfig!]
+}
+
+type EvalConfig {
+    name: String!
+    description: String!
+}
+
 type Context {
     id: ID!
     name: String!
@@ -2563,6 +2902,15 @@ type Context {
     active: Boolean
     fields: JSON
     configuration: JSON
+}
+
+type RunEvalReturnPayload {
+    jobs: [String!]!
+    count: Int!
+}
+
+type JobActionReturnPayload {
+    success: Boolean!
 }
 
 type ContextField {
@@ -2580,8 +2928,33 @@ type Tool {
   config: JSON
 }
 
+type Job {
+  id: String!
+  name: String!
+  returnvalue: JSON
+  stacktrace: [String]
+  failedReason: String
+  state: String!
+  data: JSON
+  timestamp: Date
+}
+
 enum EnumProviderType {
   agent
+}
+
+enum QueueEnum {
+  ${ExuluQueues.list.keys().toArray().join("\n")}
+}
+
+enum JobStateEnum {
+  ${JOB_STATUS_ENUM.active}
+  ${JOB_STATUS_ENUM.waiting}
+  ${JOB_STATUS_ENUM.delayed}
+  ${JOB_STATUS_ENUM.failed}
+  ${JOB_STATUS_ENUM.completed}
+  ${JOB_STATUS_ENUM.paused}
+  ${JOB_STATUS_ENUM.stuck}
 }
 
 type StatisticsResult {
@@ -2626,4 +2999,27 @@ const validateCreateOrRemoveSuperAdminPermission = async (tableNamePlural: strin
             throw new Error('Only super administrators can modify super_admin status');
         }
     }
+}
+
+async function getJobsByQueueAndName(queueName: string, statusses?: JobState[], page?: number, limit?: number): Promise<{
+    jobs: Job[],
+    count: number
+}> {
+    const queue = ExuluQueues.list.get(queueName);
+    if (!queue) {
+        throw new Error(`Queue ${queueName} not found`);
+    }
+    const config = await queue.use()
+    const startIndex = (page || 1) - 1;
+    const endIndex = startIndex + (limit || 100);
+    const jobs = await config.queue.getJobs(statusses || [], startIndex, endIndex, false);
+    const counts = await config.queue.getJobCounts(...(statusses || []));
+    let total = 0;
+    if (counts) {
+        total = Object.keys(counts).reduce((acc, key) => acc + (counts[key] || 0), 0);
+    }
+    return {
+        jobs,
+        count: total
+    };
 }

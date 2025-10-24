@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextFieldProcessor, type ExuluTool, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
+import { errorHandler, type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextFieldProcessor, ExuluEval, type ExuluTool, saveChat, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
 import { requestValidators } from "./route-validators";
 import { queues } from "../bullmq/queues.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
@@ -13,7 +13,6 @@ import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { coreSchemas } from "../postgres/core-schema.ts";
 import { createUppyRoutes } from "./uppy.ts";
-import { redisServer } from "../bullmq/server.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
 import bodyParser from 'body-parser';
 import CryptoJS from 'crypto-js';
@@ -23,20 +22,21 @@ import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./index.ts";
 import { checkAgentRateLimit, checkRecordAccess, getEnabledTools, loadAgent } from "./utils.ts";
-import { jsonSchema, type Tool } from "ai";
 export const REQUEST_SIZE_LIMIT = '50mb';
-import proxy from 'express-http-proxy';
 import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
+import type { Queue } from "bullmq";
+import { createIdGenerator } from "ai";
 
 
 export const global_queues = {
-    logs_cleaner: "logs-cleaner"
+    eval_runs: "eval_runs"
 }
 
 const {
     agentsSchema,
     projectsSchema,
+    jobResultsSchema,
     testCasesSchema,
     evalSetsSchema,
     evalRunsSchema,
@@ -51,47 +51,12 @@ const {
     statisticsSchema
 } = coreSchemas.get();
 
-const createRecurringJobs = async () => {
-
-    console.log("[EXULU] creating recurring jobs.")
-    const recurringJobSchedulersLogs: Array<{ name: string; pattern: string; ttld?: string; opts?: any }> = [];
-
-    const queue = await queues.use(global_queues.logs_cleaner);
-
-    recurringJobSchedulersLogs.push({
-        name: global_queues.logs_cleaner,
-        pattern: '0 10 * * * *',
-        ttld: '30 days',
-        opts: {
-            backoff: 3,
-            attempts: 5,
-            removeOnFail: 1000,
-        },
-    })
-
-    await queue.queue.upsertJobScheduler(
-        'logs-cleaner-scheduler',
-        { pattern: '0 10 * * * *' }, // every 10 minutes
-        {
-            name: global_queues.logs_cleaner,
-            data: { ttld: 30 }, // time to live in days
-            opts: {
-                backoff: 3,
-                attempts: 5,
-                removeOnFail: 1000,
-            },
-        },
-    );
-
-    return queue;
-}
-
 export type ExuluTableDefinition = {
-    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations",
+    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations" | "job_results",
     id?: string,
     name: {
-        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations",
-        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration",
+        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations" | "job_results",
+        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration" | "job_result",
     },
     fields: ExuluContextFieldDefinition[],
     RBAC?: boolean,
@@ -104,7 +69,13 @@ export const createExpressRoutes = async (
     tools: ExuluTool[],
     contexts: ExuluContext[] | undefined,
     config: ExuluConfig,
-    tracer?: Tracer
+    evals: ExuluEval[],
+    tracer?: Tracer,
+    queues?: {
+        queue: Queue,
+        ratelimit: number
+        concurrency: number
+    }[]
 ): Promise<Express> => {
 
     // todo make this more secure / configurable
@@ -129,21 +100,16 @@ export const createExpressRoutes = async (
     ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
     ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
     ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝ 
-    Intelligence Management Platform
+    Intelligence Management Platform - Server
 
     `);
-
-    if (redisServer.host?.length && redisServer.port?.length) {
-        await createRecurringJobs();
-    } else {
-        console.log("[EXULU] no redis server configured, not setting up recurring jobs.")
-    }
 
     const schema = createSDL([
         usersSchema(),
         rolesSchema(),
         agentsSchema(),
         projectsSchema(),
+        jobResultsSchema(),
         evalRunsSchema(),
         platformConfigurationsSchema(),
         evalSetsSchema(),
@@ -154,7 +120,7 @@ export const createExpressRoutes = async (
         workflowTemplatesSchema(),
         statisticsSchema(),
         rbacSchema()
-    ], contexts ?? [], agents, tools, config);
+    ], contexts ?? [], agents, tools, config, evals, queues || []);
 
     interface GraphqlContext {
         db: Knex;
@@ -313,135 +279,6 @@ Mood: friendly and intelligent.
         res.status(200).json({
             message: "Image generated successfully.",
             image: `${process.env.BACKEND}/${uuid}.png`
-        });
-    })
-
-    // Eval run endpoint - creates one job per test case for running the agent
-    // Worker will then create child jobs for each eval function
-    app.post("/evals/run/:id", async (req: Request, res: Response) => {
-        console.log("[EXULU] /evals/run/:id", req.params.id);
-
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-            res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
-            return;
-        }
-
-        const user = authenticationResult.user;
-        const evalRunId = req.params.id;
-
-        // Check user has evals write access or is super admin
-        if (!user.super_admin && (!user.role || user.role.evals !== "write")) {
-            res.status(403).json({
-                message: "You don't have permission to run evals. Required: super_admin or evals write access."
-            });
-            return;
-        }
-
-        const { db } = await postgresClient();
-
-        // Fetch the eval run
-        const evalRun = await db.from("eval_runs").where({ id: evalRunId }).first();
-        if (!evalRun) {
-            res.status(404).json({
-                message: "Eval run not found."
-            });
-            return;
-        }
-
-        // Check RBAC access to eval run
-        const hasAccessToEvalRun = await checkRecordAccess(evalRun, "write", user);
-        if (!hasAccessToEvalRun) {
-            res.status(403).json({
-                message: "You don't have access to this eval run."
-            });
-            return;
-        }
-
-        // Get test case IDs and eval function IDs from eval run
-        const testCaseIds = evalRun.test_case_ids ? (typeof evalRun.test_case_ids === 'string' ? JSON.parse(evalRun.test_case_ids) : evalRun.test_case_ids) : [];
-        const evalFunctionIds = evalRun.eval_function_ids ? (typeof evalRun.eval_function_ids === 'string' ? JSON.parse(evalRun.eval_function_ids) : evalRun.eval_function_ids) : [];
-
-        if (!testCaseIds || testCaseIds.length === 0) {
-            res.status(400).json({
-                message: "No test cases selected for this eval run."
-            });
-            return;
-        }
-
-        if (!evalFunctionIds || evalFunctionIds.length === 0) {
-            res.status(400).json({
-                message: "No eval functions selected for this eval run."
-            });
-            return;
-        }
-
-        // Fetch test cases
-        const testCases = await db.from("test_cases").whereIn("id", testCaseIds);
-        if (testCases.length === 0) {
-            res.status(404).json({
-                message: "No test cases found."
-            });
-            return;
-        }
-
-        // Load the agent instance to validate it exists
-        const agentInstance = await loadAgent(evalRun.agentId);
-        if (!agentInstance) {
-            res.status(404).json({
-                message: "Agent instance not found."
-            });
-            return;
-        }
-
-        // Use a general eval queue for the main eval jobs
-        const evalQueue = await queues.use("evals");
-
-        // Create one job per test case
-        const jobIds: string[] = [];
-
-        for (const testCase of testCases) {
-            // Check for duplicate job (same eval run ID + test case ID combo)
-            const existingJobs = await evalQueue.queue.getJobs(["waiting", "active", "delayed", "paused"]);
-            const duplicateJob = existingJobs.find(job =>
-                job.data.evalRunId === evalRunId &&
-                job.data.testCaseId === testCase.id &&
-                job.data.type === "eval"
-            );
-
-            if (duplicateJob) {
-                console.log(`[EXULU] Skipping duplicate job for eval run ${evalRunId} and test case ${testCase.id}`);
-                continue;
-            }
-
-            // Create job with type "eval" - worker will handle running agent + creating eval function jobs
-            const job = await evalQueue.queue.add(`eval-${testCase.id}`, {
-                type: "eval",
-                evalRunId,
-                testCaseId: testCase.id,
-                evalFunctionIds, // Array of eval function IDs - worker will create child jobs for these
-                agentId: evalRun.agentId,
-                inputs: testCase.inputs,
-                expected_output: testCase.expected_output,
-                expected_tools: testCase.expected_tools,
-                expected_knowledge_sources: testCase.expected_knowledge_sources,
-                expected_agent_tools: testCase.expected_agent_tools,
-                config: evalRun.config,
-                scoring_method: evalRun.scoring_method,
-                pass_threshold: evalRun.pass_threshold,
-                user: user.id,
-                role: user.role?.id
-            });
-
-            jobIds.push(job.id as string);
-        }
-
-        res.status(200).json({
-            message: `Created ${jobIds.length} eval jobs.`,
-            jobIds,
-            evalRunId,
-            testCaseCount: testCases.length,
-            evalFunctionCount: evalFunctionIds.length
         });
     })
 
@@ -627,11 +464,13 @@ Mood: friendly and intelligent.
             // todo add authentication based on thread id to guarantee privacy
             // todo validate req.body data structure
             if (!!headers.stream) {
-                await agent.generateStream({
-                    express: {
-                        res,
-                        req,
-                    },
+
+                const statistics = {
+                    label: agent.name,
+                    trigger: "agent" as STATISTICS_LABELS
+                }
+
+                const result = await agent.generateStream({
                     contexts: contexts,
                     user,
                     instructions: agentInstance.instructions,
@@ -641,12 +480,86 @@ Mood: friendly and intelligent.
                     allExuluTools: tools,
                     providerapikey,
                     toolConfigs: agentInstance.tools,
-                    exuluConfig: config,
-                    statistics: {
-                        label: agent.name,
-                        trigger: "agent"
-                    }
+                    exuluConfig: config
                 })
+
+                // consume the stream to ensure it runs to completion & triggers onFinish
+                // even when the client response is aborted:
+                result.stream.consumeStream(); // no await
+
+                result.stream.pipeUIMessageStreamToResponse(res, {
+                    messageMetadata: ({ part }) => {
+                        if (part.type === 'finish') {
+                            return {
+                                totalTokens: part.totalUsage.totalTokens,
+                                reasoningTokens: part.totalUsage.reasoningTokens,
+                                inputTokens: part.totalUsage.inputTokens,
+                                outputTokens: part.totalUsage.outputTokens,
+                                cachedInputTokens: part.totalUsage.cachedInputTokens,
+                            };
+                        }
+                    },
+                    originalMessages: result.originalMessages,
+                    sendReasoning: true,
+                    sendSources: true,
+                    onError: error => {
+                        console.error("[EXULU] chat response error.", error)
+                        return errorHandler(error)
+                    },
+                    generateMessageId: createIdGenerator({
+                        prefix: 'msg_',
+                        size: 16,
+                    }),
+                    onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
+                        if (headers.session) {
+                            // But only save the new messages, not the previous ones, otherwise we get duplicates.
+                            await saveChat({
+                                session: headers.session as string,
+                                user: user.id,
+                                messages: messages.filter(x => !result.previousMessages.find(y => y.id === x.id))
+                            })
+                        }
+                        const metadata = messages[messages.length - 1]?.metadata as any;
+                        console.log("[EXULU] Finished streaming", metadata)
+                        console.log("[EXULU] Statistics", {
+                            label: agent.name,
+                            trigger: "agent"
+                        })
+                        if (statistics) {
+                            await Promise.all([
+                                updateStatistic({
+                                    name: "count",
+                                    label: statistics.label,
+                                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                                    trigger: statistics.trigger,
+                                    count: 1,
+                                    user: user.id,
+                                    role: user?.role?.id
+                                }),
+                                ...(metadata?.inputTokens ? [
+                                    updateStatistic({
+                                        name: "inputTokens",
+                                        label: statistics.label,
+                                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                                        trigger: statistics.trigger,
+                                        count: metadata?.inputTokens,
+                                        user: user.id,
+                                        role: user?.role?.id
+                                    })] : []
+                                ),
+                                ...(metadata?.outputTokens ? [
+                                    updateStatistic({
+                                        name: "outputTokens",
+                                        label: statistics.label,
+                                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                                        trigger: statistics.trigger,
+                                        count: metadata?.outputTokens,
+                                    })] : []
+                                )
+                            ])
+                        }
+                    },
+                });
                 // Returns a response that can be used by the "useChat" hook
                 // on the client side from the vercel "ai" SDK.
 
@@ -656,7 +569,7 @@ Mood: friendly and intelligent.
                     user,
                     instructions: agentInstance.instructions,
                     session: headers.session as string,
-                    message: req.body.message,
+                    inputMessages: [req.body.message],
                     contexts: contexts,
                     currentTools: enabledTools,
                     allExuluTools: tools,
@@ -685,86 +598,6 @@ Mood: friendly and intelligent.
     } else {
         console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in ExuluApp instance.")
     }
-
-    app.use('/xxx/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), proxy(
-        (req, res, next) => {
-            return "https://api.anthropic.com"
-        }, {
-        limit: '50mb',
-        memoizeHost: false,
-        preserveHostHdr: true,
-        secure: false,
-        reqAsBuffer: true,
-        proxyReqBodyDecorator: function (bodyContent, srcReq) {
-            return bodyContent;
-        }, userResDecorator: function (proxyRes, proxyResData, userReq, userRes) {
-            console.log("[EXULU] Proxy response!", proxyResData)
-            proxyResData = proxyResData.toString(); console.log("[EXULU] Proxy response string!", proxyResData)
-            return proxyResData;
-        }, proxyReqPathResolver: (req) => {
-            const prefix = `/gateway/anthropic/${req.params.id}`;
-            let path = req.url.startsWith(prefix) ? req.url.slice(prefix.length) : req.url;
-            if (!path.startsWith('/')) path = '/' + path;
-            console.log("[EXULU] Provider path:", path);
-            return path;
-        },
-        proxyReqOptDecorator: function (proxyReqOpts, srcReq) {
-            return new Promise(async (resolve, reject) => {
-                try {
-                    const authenticationResult = await requestValidators.authenticate(srcReq);
-                    if (!authenticationResult.user?.id) {
-                        console.log("[EXULU] failed authentication result", authenticationResult)
-                        reject(authenticationResult.message)
-                        return;
-                    }
-                    console.log("[EXULU] Authenticated call", authenticationResult.user?.email)
-                    const { db } = await postgresClient();
-                    let query = db('agents'); query.select("*");
-                    query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
-                    query.where({ id: srcReq.params.id });
-                    const agent = await query.first();
-                    if (!agent) {
-                        reject(new Error("Agent with id " + srcReq.params.id + " not found."))
-                        return;
-                    }
-                    console.log("[EXULU] Agent loaded", agent.name)
-                    const backend = agents.find(x => x.id === agent.backend)
-                    if (!process.env.NEXTAUTH_SECRET) {
-                        reject(new Error("Missing NEXTAUTH_SECRET"))
-                        return;
-                    }
-                    if (!agent.providerapikey) {
-                        reject(new Error("API Key not set for agent"))
-                        return;
-                    }
-                    const variableName = agent.providerapikey;
-                    const variable = await db.from("variables").where({ name: variableName }).first();
-                    console.log("[EXULU] Variable loaded", variable)
-                    let providerapikey = variable.value;
-                    if (!variable.encrypted) {
-                        reject(new Error("API Key not encrypted for agent"))
-                        return;
-                    }
-                    if (variable.encrypted) {
-                        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-                    }
-                    console.log("[EXULU] Provider API key", providerapikey)
-                    proxyReqOpts.headers['x-api-key'] = providerapikey;
-                    proxyReqOpts.rejectUnauthorized = false
-                    delete proxyReqOpts.headers['provider'];
-                    const url = new URL("https://api.anthropic.com");
-                    proxyReqOpts.headers['host'] = url.host;
-                    proxyReqOpts.headers['anthropic-version'] = '2023-06-01';
-                    console.log("[EXULU] Proxy request headers", proxyReqOpts.headers)
-                    resolve(proxyReqOpts);
-                } catch (error: any) {
-                    console.error("[EXULU] Proxy error", error)
-                    reject(error)
-                }
-            })
-        }
-    }));
 
     app.get("/config", async (req: Request, res: Response) => {
         res.status(200).json({
@@ -993,159 +826,6 @@ Mood: friendly and intelligent.
 
     return app;
 }
-
-const convertClaudeCodeToolsToVercelAISdkTools = (tools: any[]) => {
-    const result: Record<string, Tool> = {};
-    for (const tool of tools) {
-        const mySchema = jsonSchema(tool.input_schema);
-        tools[tool.name] = {
-            id: tool.name,
-            name: tool.name,
-            description: tool.description,
-            inputSchema: mySchema,
-        }
-    }
-    return result;
-}
-
-const convertClaudeCodeMessagesToVercelAISdkMessages = (messages: any[]) => {
-    // Things we fix here:
-    // - Vercel AI sdk does not allow id's on the message
-    // - It always requires a role, so we set it to assistant if not provided
-    // - It expects a role of 'tool' if the parts have a type of tool_result
-    // - We filter out step-start parts
-    // - We make sure reasoning is not an empty string
-    // - tool_use is called 'tool-call' in the vercel ai sdk
-    // - tool_result is called 'tool-result' in the vercel ai sdk
-    // - tool_use_id is called 'toolCallId' in the vercel ai sdk
-    // - tool_result in the claude code parts does not include the
-    // tool name, so we retrieve it from the tool_use part, which 
-    // does include the name (matching it via the toolCallId)
-    let raw = messages.map(msg => {
-        if (!msg.role) {
-            msg.role = "assistant"
-        }
-        delete msg.id
-        if (!Array.isArray(msg.content)) {
-            return {
-                role: msg.role,
-                content: msg.content
-            }
-        }
-        if (msg.content.some(part => part.type === "tool_result")) {
-            msg.role = "tool"
-        }
-        let parts = msg.content.map(part => {
-            if (part.type === "step-start") {
-                return undefined;
-            }
-            if (part.type === "reasoning") {
-                const content = part.text?.length > 1 ? part.text : part.content
-                return {
-                    type: "reasoning",
-                    text: content || "No reasoning content provided"
-                }
-            }
-            if (part.type === "tool_use") {
-                part.type = "tool-call"
-            }
-            if (part.type === "tool_result") {
-                part.type = "tool-result"
-                part.output = {
-                    type: "text",
-                    value: part.text || part.content
-                }
-                // if an output is provided, vercel does
-                // not allow setting text and content as well
-                part.text = null;
-                part.content = null;
-                if (!part.name && part.tool_use_id) {
-                    // Try to find in the othe msg parts for a part
-                    // with the same tool_use_id and a name set
-                    const allParts = raw.map(x => x.content).flat();
-                    const result = allParts.find(x => {
-                        return x.toolCallId === part.tool_use_id && x.name
-                    })
-                    console.log("FIND RESULT!!!!", result)
-                    if (result) {
-                        part.name = result.name;
-                    } else {
-                        part.name = "..."
-                    }
-                }
-            }
-            if (part.tool_use_id) {
-                part.toolCallId = part.tool_use_id
-                delete part.tool_use_id
-            }
-            return {
-                type: part.type,
-                ...(part.text || part.content ? { text: part.text || part.content } : {}),
-                ...(part.toolCallId ? { toolCallId: part.toolCallId } : {}),
-                ...(part.name ? { toolName: part.name } : {}),
-                ...(part.input ? { input: part.input } : {}),
-                ...(part.output ? { output: part.output } : {}),
-                ...(part.cache_control?.type ? {
-                    providerOptions: {
-                        anthropic: { cacheControl: { type: part.cache_control?.type } },
-                    }
-                } : {})
-            }
-        })
-        parts = parts.filter(part => part !== undefined);
-        return {
-            role: msg.role,
-            id: msg.id,
-            content: parts
-        }
-    })
-    raw = raw.filter(msg => msg !== undefined);
-    return raw;
-}
-
-const preprocessInputs = async (data: any) => {
-    for (const key in data) {
-        if (key.includes("exulu_file_")) {
-            const url = await getPresignedFileUrl(data[key]);
-            const newKey = key.replace("exulu_file_", "");
-            data[newKey] = url;
-            delete data[key];
-        } else if (Array.isArray(data[key])) {
-            for (let i = 0; i < data[key].length; i++) {
-                if (typeof data[key][i] === "object") {
-                    await preprocessInputs(data[key][i]);
-                }
-            }
-        } else if (typeof data[key] === "object") {
-            await preprocessInputs(data[key]);
-        }
-    }
-    return data;
-};
-
-const getPresignedFileUrl = async (key: string) => {
-    if (!process.env.NEXT_BACKEND) {
-        throw new Error("Missing process.env.NEXT_BACKEND")
-    }
-    if (!process.env.INTERNAL_SECRET) {
-        throw new Error("Missing process.env.NEXT_BACKEND")
-    }
-    console.log(`[EXULU] fetching presigned url for file with key: ${key}`)
-    let url = `${process.env.NEXT_BACKEND}/s3/download?key=${key}`;
-    const response = await fetch(url, {
-        method: "GET",
-        headers: {
-            "Content-Type": "application/json",
-            "Internal-Key": process.env.INTERNAL_SECRET,
-        },
-    });
-    const json: any = await response.json()
-    if (!json.url) {
-        throw new Error(`Could not generate presigned url for file with key: ${key}`)
-    }
-    console.log(`[EXULU] presigned url for file with key: ${key}, generated: ${json.url}`)
-    return json.url;
-};
 
 const createCustomAnthropicStreamingMessage = (message: string) => {
     const responseData = {

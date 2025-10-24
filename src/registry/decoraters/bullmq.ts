@@ -1,6 +1,7 @@
 import { Queue } from "bullmq";
 import type { STATISTICS_LABELS } from "../classes.ts";
 import { v4 as uuidv4 } from 'uuid';
+import type { UIMessage } from "ai";
 
 export type ExuluJobType = "embedder" | "workflow" | "eval" | "processor"
 
@@ -18,11 +19,49 @@ export type ExuluBullMqDecoratorData = {
     item?: string,
     context?: string
     retries?: number,
+    backoff?: {
+        type: 'exponential' | 'linear'
+        delay: number // in milliseconds
+    },
+    timeoutInSeconds: number,
+}
+
+export type BullMqJobData = {
+    label: string,
+    type: string,
+    inputs: any,
+    timeoutInSeconds: number,
+    user?: number,
+    role?: string,
+    trigger: STATISTICS_LABELS,
+    messages?: UIMessage[],
+    eval_run_id?: string,
+    eval_run_name?: string,
+    test_case_id?: string,
+    test_case_name?: string,
+    eval_functions?: {
+        id: string
+        config: Record<string, any>
+    }[],
+    agent_id?: string,
+    expected_output?: string,
+    expected_tools?: string[],
+    expected_knowledge_sources?: string[],
+    expected_agent_tools?: string[],
+    config?: Record<string, any>,
+    scoring_method?: string,
+    pass_threshold?: number,
+    workflow?: string,
+    embedder?: string,
+    processor?: string,
+    evaluation?: string,
+    item?: string,
+    context?: string,
 }
 
 export const bullmqDecorator = async ({
     queue,
-    label,    
+    label,
     embedder,
     processor,
     inputs,
@@ -33,7 +72,9 @@ export const bullmqDecorator = async ({
     workflow,
     item,
     context,
-    retries
+    retries,
+    backoff,
+    timeoutInSeconds
 }: ExuluBullMqDecoratorData) => {
 
     const types = [
@@ -65,10 +106,10 @@ export const bullmqDecorator = async ({
         type = "embedder";
     }
 
-    const redisId = uuidv4();
-    const job = await queue.add(`${embedder || workflow || processor || evaluation}`, {
+    const jobData: BullMqJobData = {
         label,
         type: `${type}`,
+        timeoutInSeconds: timeoutInSeconds || 180, // 3 minutes default
         inputs,
         ...(user && { user }),
         ...(role && { role }),
@@ -79,17 +120,22 @@ export const bullmqDecorator = async ({
         ...(evaluation && { evaluation }),
         ...(item && { item }),
         ...(context && { context })
-    },
+    }
+
+    const redisId = uuidv4();
+    const job = await queue.add(`${embedder || workflow || processor || evaluation}`, jobData,
         {
             jobId: redisId,
             // Setting it to 3 as a sensible default, as
             // many AI services are quite unstable.
             attempts: retries || 3, // todo make this configurable?
-            backoff: {
-              type: 'exponential',
-              delay: 2000,
+            removeOnComplete: 5000,
+            removeOnFail: 10000,
+            backoff: backoff || {
+                type: 'exponential',
+                delay: 2000,
             },
-        },
+        }
     )
 
     return {

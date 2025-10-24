@@ -18,6 +18,16 @@ async function ensureDatabaseExists(): Promise<void> {
             database: 'postgres', // Connect to default database
             password: process.env.POSTGRES_DB_PASSWORD,
             ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+            connectionTimeoutMillis: 10000,
+        },
+        pool: {
+            min: 2,
+            max: 4,
+            acquireTimeoutMillis: 30000,
+            createTimeoutMillis: 30000,
+            idleTimeoutMillis: 30000,
+            reapIntervalMillis: 1000,
+            createRetryIntervalMillis: 200,
         }
     });
 
@@ -71,6 +81,16 @@ export async function postgresClient(): Promise<{
                     database: dbName,
                     password: process.env.POSTGRES_DB_PASSWORD,
                     ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+                    connectionTimeoutMillis: 10000,
+                },
+                pool: {
+                    min: 2,
+                    max: 20,
+                    acquireTimeoutMillis: 30000,
+                    createTimeoutMillis: 30000,
+                    idleTimeoutMillis: 30000,
+                    reapIntervalMillis: 1000,
+                    createRetryIntervalMillis: 200,
                 }
             });
             try {

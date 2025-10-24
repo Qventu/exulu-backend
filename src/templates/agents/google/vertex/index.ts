@@ -15,7 +15,6 @@ export const claudeOpus4Agent = new ExuluAgent({
         audio: [".mpeg", ".mp3", ".m4a", ".wav", ".mp4"],
         video: [".mp4", ".mpeg"],
     },
-    evals: [],
     maxContextLength: 1048576,
     config: {
         name: `GEMINI-2.5-FLASH`,
@@ -54,7 +53,6 @@ export const claudeSonnet45Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 200000,
     config: {
         name: `CLAUDE-SONNET-4.5`,
@@ -93,7 +91,6 @@ export const claudeOpus41Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 200000,
     config: {
         name: `CLAUDE-OPUS-4.1`,

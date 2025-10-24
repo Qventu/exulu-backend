@@ -1,6 +1,6 @@
-import { ExuluAgent, ExuluContext, getTableName, type ExuluTool } from "./classes.ts";
+import { ExuluAgent, ExuluContext, ExuluEval, getTableName, type ExuluQueueConfig, type ExuluTool } from "./classes.ts";
 import { type Express } from "express"
-import { createExpressRoutes } from "./routes.ts";
+import { createExpressRoutes, global_queues } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
@@ -23,6 +23,7 @@ import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import winston, { type transport } from "winston";
 import util from "util";
+import { redisServer } from "../bullmq/server.ts";
 
 const isDev = process.env.NODE_ENV !== 'production'
 const consoleTransport = new winston.transports.Console({
@@ -36,7 +37,28 @@ const consoleTransport = new winston.transports.Console({
         )
         : winston.format.json(),
 })
-import type { Queue } from "bullmq";
+import { llmAsJudgeEval } from "../templates/evals/index.ts";
+import { ExuluQueues } from "../index.ts";
+
+// Monkey-patch console to use Winston with metadata support
+const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
+
+const createLogMethod = (logger: winston.Logger, logLevel: 'info' | 'warn' | 'error' | 'debug') => {
+    return (...args: any[]) => {
+        // Check if last argument is metadata object with id
+        const lastArg = args[args.length - 1];
+        let metadata: any = undefined;
+        let messageArgs = args;
+
+        if (lastArg && typeof lastArg === 'object' && lastArg.__logMetadata === true) {
+            metadata = lastArg;
+            messageArgs = args.slice(0, -1);
+        }
+
+        const message = messageArgs.map(formatArg).join(' ');
+        logger[logLevel](message, metadata);
+    };
+};
 
 // Add a helper function to validate PostgreSQL table names
 const isValidPostgresName = (id: string): boolean => {
@@ -83,11 +105,8 @@ export class ExuluApp {
 
     private _agents: ExuluAgent[] = []
     private _config?: ExuluConfig;
-    private _queues: {
-        queue: Queue,
-        ratelimit: number
-        concurrency: number
-    }[] = []
+    private _evals: ExuluEval[] = []
+    private _queues: ExuluQueueConfig[] = []
     private _contexts?: Record<string, ExuluContext> = {}
     private _tools: ExuluTool[] = []
     private _expressApp: Express | null = null;
@@ -96,12 +115,18 @@ export class ExuluApp {
 
     // Factory function so we can async 
     // initialize the MCP server if needed.
-    create = async ({ contexts, agents, config, tools }: {
+    create = async ({ contexts, agents, config, tools, evals }: {
         contexts?: Record<string, ExuluContext>,
         config: ExuluConfig,
         agents?: ExuluAgent[],
+        evals?: ExuluEval[],
         tools?: ExuluTool[]
     }): Promise<ExuluApp> => {
+
+        this._evals = [
+            llmAsJudgeEval,
+            ...(evals ?? [])
+        ];
 
         this._contexts = {
             ...contexts,
@@ -164,20 +189,13 @@ export class ExuluApp {
             throw new Error(`Invalid ID found for a context, tool or agent: ${invalid.map(x => x.id).join(', ')}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`);
         }
 
-        // todo check for duplicate IDs across tools, agents and contexts
+        const queueSet = new Set<ExuluQueueConfig>();
 
-        const contextsArray = Object.values(contexts || {});
-
-
-        const queueSet = new Set<{
-            queue: Queue,
-            ratelimit: number
-            concurrency: number
-        }>();
-
-        for (const context of contextsArray) {
-            if (context.embedder?.queue) {
-                queueSet.add(await context.embedder.queue);
+        if (redisServer.host?.length && redisServer.port?.length) {
+            ExuluQueues.register(global_queues.eval_runs, 1, 1);
+            for (const queue of ExuluQueues.list.values()) {
+                const config = await queue.use();
+                queueSet.add(config);
             }
         }
 
@@ -272,7 +290,7 @@ export class ExuluApp {
 
     public bullmq = {
         workers: {
-            create: async () => {
+            create: async (queues?: string[] | undefined) => {
 
                 if (!this._config) {
                     throw new Error("Config not initialized, make sure to call await ExuluApp.create() first when starting your server.")
@@ -293,18 +311,27 @@ export class ExuluApp {
                     transports
                 })
 
-                // Monkey-patch console to use Winston
-                const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
-                console.log = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
-                console.info = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
-                console.warn = (...args: any[]) => logger.warn(args.map(formatArg).join(' '))
-                console.error = (...args: any[]) => logger.error(args.map(formatArg).join(' '))
-                console.debug = (...args: any[]) => logger.debug(args.map(formatArg).join(' '))
+                console.log = createLogMethod(logger, 'info');
+                console.info = createLogMethod(logger, 'info');
+                console.warn = createLogMethod(logger, 'warn');
+                console.error = createLogMethod(logger, 'error');
+                console.debug = createLogMethod(logger, 'debug');
+
+                // Allow a dev that creates a worker to optionally define
+                // a list of queue names the worker should listen to. If not
+                // defined, the worker will listen to all queues.
+                let filteredQueues = this._queues;
+                if (queues) {
+                    filteredQueues = filteredQueues.filter(q => queues.includes(q.queue.name));
+                }
 
                 return await createWorkers(
-                    this._queues,
+                    this._agents,
+                    filteredQueues,
                     this._config,
                     Object.values(this._contexts ?? {}),
+                    this._evals,
+                    this._tools,
                     tracer
                 )
             }
@@ -326,18 +353,18 @@ export class ExuluApp {
                     tracer = trace.getTracer("exulu", "1.0.0") // todo link to Exulu version
                 }
 
+                const transports = this._config?.logger?.winston?.transports ?? [consoleTransport];
+
                 const logger = createLogger({
                     enableOtel: this._config?.telemetry?.enabled ?? false,
-                    transports: this._config?.logger?.winston?.transports ?? [consoleTransport]
+                    transports
                 })
 
-                // Monkey-patch console to use Winston
-                const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
-                console.log = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
-                console.info = (...args: any[]) => logger.info(args.map(formatArg).join(' '))
-                console.warn = (...args: any[]) => logger.warn(args.map(formatArg).join(' '))
-                console.error = (...args: any[]) => logger.error(args.map(formatArg).join(' '))
-                console.debug = (...args: any[]) => logger.debug(args.map(formatArg).join(' '))
+                console.log = createLogMethod(logger, 'info');
+                console.info = createLogMethod(logger, 'info');
+                console.warn = createLogMethod(logger, 'warn');
+                console.error = createLogMethod(logger, 'error');
+                console.debug = createLogMethod(logger, 'debug');
 
                 if (!this._config) {
                     throw new Error("Config not initialized, make sure to call await ExuluApp.create() first when starting your server.")
@@ -349,7 +376,9 @@ export class ExuluApp {
                     this._tools,
                     Object.values(this._contexts ?? {}),
                     this._config,
-                    tracer
+                    this._evals,
+                    tracer,
+                    this._queues
                 )
 
                 if (this._config?.MCP.enabled) {

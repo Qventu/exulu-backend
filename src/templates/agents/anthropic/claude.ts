@@ -14,7 +14,6 @@ export const claudeOpus4Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 200000,
     config: {
         name: `CLAUDE-OPUS-4`,
@@ -51,7 +50,6 @@ export const claudeSonnet4Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 200000,
     config: {
         name: `CLAUDE-SONNET-4`,
@@ -81,7 +79,6 @@ export const claudeSonnet45Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 200000,
     config: {
         name: `CLAUDE-SONNET-4.5`,

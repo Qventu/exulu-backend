@@ -1,5 +1,5 @@
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
-import type { ExuluBullMqDecoratorData, ExuluJobType } from "./decoraters/bullmq.ts";
+import type { BullMqJobData } from "./decoraters/bullmq.ts";
 import type { ExuluAgent, ExuluTool } from "./classes.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { RBACResolver } from "./utils/graphql.ts";
@@ -7,7 +7,7 @@ import { rateLimiter } from "./rate-limiter.ts";
 import type { User } from "@EXULU_TYPES/models/user.ts";
 
 export const bullmq = {
-    validate: (id: string | undefined, data: ExuluBullMqDecoratorData & { type: ExuluJobType }): void => {
+    validate: (id: string | undefined, data: BullMqJobData): void => {
         if (!data) {
             throw new Error(`Missing job data for job ${id}.`)
         }
@@ -20,12 +20,12 @@ export const bullmq = {
             throw new Error(`Missing property "inputs" in data for job ${id}.`)
         }
 
-        if (data.type !== "embedder" && data.type !== "workflow") {
-            throw new Error(`Property "type" in data for job ${id} must be of value "embedder" or "workflow".`)
+        if (data.type !== "embedder" && data.type !== "workflow" && data.type !== "processor" && data.type !== "eval_run" && data.type !== "eval_function") {
+            throw new Error(`Property "type" in data for job ${id} must be of value "embedder", "workflow", "processor", "eval_run" or "eval_function".`)
         }
 
-        if (!data.workflow && !data.embedder) {
-            throw new Error(`Either a workflow or embedder must be set for job ${id}.`)
+        if (!data.workflow && !data.embedder && !data.processor && !data.eval_run_id && !data.eval_functions?.length) {
+            throw new Error(`Either a workflow, embedder, processor, eval_run or eval_functions must be set for job ${id}.`)
         }
     }
 }

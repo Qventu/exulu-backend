@@ -5,6 +5,7 @@ export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type Exu
 export { ExuluApp } from "./registry/index"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
+export { logMetadata } from "./registry/log-metadata"
 import { RecursiveChunker } from "./chunking/recursive";
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";

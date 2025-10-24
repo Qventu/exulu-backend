@@ -1,5 +1,6 @@
 import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics"
 import type { ExuluTableDefinition } from "../registry/routes"
+import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs"
 
 const agentMessagesSchema: ExuluTableDefinition = {
     type: "agent_messages",
@@ -438,6 +439,46 @@ const evalSetsSchema: ExuluTableDefinition = {
     ]
 }
 
+const jobResultsSchema: ExuluTableDefinition = {
+    type: "job_results",
+    name: {
+        plural: "job_results",
+        singular: "job_result"
+    },
+    fields: [
+        {
+            name: "job_id",
+            type: "text"
+        },
+        {
+            name: "state",
+            type: "text"
+        },
+        {
+            name: "error",
+            type: "json"
+        },
+        {
+            name: "label",
+            type: "text",
+            index: true
+        },
+        {
+            name: "tries",
+            type: "number",
+            default: 0
+        },
+        {
+            name: "result",
+            type: "json"
+        },
+        {
+            name: "metadata",
+            type: "json"
+        }
+    ]
+}
+
 const evalRunsSchema: ExuluTableDefinition = {
     type: "eval_runs",
     name: {
@@ -446,6 +487,15 @@ const evalRunsSchema: ExuluTableDefinition = {
     },
     RBAC: true,
     fields: [
+        {
+            name: "name",
+            type: "text"
+        },
+        {
+            name: "timeout_in_seconds",
+            type: "number",
+            default: 180
+        },
         {
             name: "eval_set_id",
             type: "uuid",
@@ -457,7 +507,7 @@ const evalRunsSchema: ExuluTableDefinition = {
             required: true
         },
         {
-            name: "eval_function_ids",
+            name: "eval_functions",
             type: "json",
             required: true
         },
@@ -468,7 +518,7 @@ const evalRunsSchema: ExuluTableDefinition = {
         {
             name: "scoring_method",
             type: "enum",
-            enumValues: ["mean", "sum", "average"],
+            enumValues: ["median", "sum", "average"],
             required: true
         },
         {
@@ -597,6 +647,7 @@ export const coreSchemas = {
             rbacSchema: (): ExuluTableDefinition => addCoreFields(rbacSchema),
             workflowTemplatesSchema: (): ExuluTableDefinition => addCoreFields(workflowTemplatesSchema),
             platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
+            jobResultsSchema: (): ExuluTableDefinition => addCoreFields(jobResultsSchema),
         }
     }
 }

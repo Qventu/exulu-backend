@@ -22,6 +22,8 @@ import { randomUUID } from 'node:crypto';
 import { checkRecordAccess, getEnabledTools, loadAgent } from "./utils";
 import type { User } from "@EXULU_TYPES/models/user";
 import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
+import type { Agent } from "@EXULU_TYPES/models/agent";
+import type { TestCase } from "@EXULU_TYPES/models/test-case";
 
 /**
  * @type {S3Client}
@@ -286,6 +288,7 @@ interface ExuluAgentParams {
     type: "agent";
     description: string;
     config?: ExuluAgentConfig | undefined;
+    queue?: ExuluQueueConfig;
     maxContextLength?: number;
     provider: string;
     capabilities?: {
@@ -297,7 +300,6 @@ interface ExuluAgentParams {
     };
     outputSchema?: z.ZodType;
     rateLimit?: RateLimiterRule;
-    evals?: ExuluEval[];
 }
 
 interface ExuluAgentToolConfig {
@@ -326,7 +328,13 @@ export function errorHandler(error: unknown) {
 export type ExuluQueueConfig = {
     queue: Queue,
     ratelimit: number
+    timeoutInSeconds?: number, // 3 minutes default
     concurrency: number
+    retries?: number
+    backoff?: {
+        type: 'exponential' | 'linear'
+        delay: number // in milliseconds
+    }
 };
 
 export type ExuluEvalTokenMetadata = {
@@ -346,48 +354,61 @@ interface ExuluEvalParams {
     id: string;
     name: string;
     description: string;
+    llm: boolean;
     execute: (params: {
+        agent: Agent,
+        backend: ExuluAgent,
         messages: UIMessage[],
-        metadata: ExuluEvalMetadata,
+        testCase: TestCase,
         config?: Record<string, any>
     }) => Promise<number>;
     config?: {
         name: string,
         description: string
     }[];
-    queue: ExuluQueueConfig;
+    queue: Promise<ExuluQueueConfig>;
 }
 
 export class ExuluEval {
     public id: string;
     public name: string;
     public description: string;
+    public llm: boolean;
     private execute: (params: {
+        agent: Agent,
+        testCase: TestCase,
+        backend: ExuluAgent,
         messages: UIMessage[],
-        metadata: ExuluEvalMetadata,
         config?: Record<string, any>
     }) => Promise<number>;
     public config?: {
         name: string,
         description: string
     }[];
-    public queue: ExuluQueueConfig;
 
-    constructor({ id, name, description, execute, config, queue }: ExuluEvalParams) {
+    public queue?: Promise<ExuluQueueConfig>;
+
+    constructor({ id, name, description, execute, config, queue, llm }: ExuluEvalParams) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.execute = execute;
         this.config = config;
+        this.llm = llm;
         this.queue = queue;
     }
 
-    public async run(messages: UIMessage[], metadata: ExuluEvalMetadata, config?: Record<string, any>): Promise<number> {
-        const score = await this.execute({ messages, metadata, config });
-        if (score < 0 || score > 100) {
-            throw new Error(`Eval function ${this.name} must return a score between 0 and 100, got ${score}`);
+    public async run(agent: Agent, backend: ExuluAgent, testCase: TestCase, messages: UIMessage[], config?: Record<string, any>): Promise<number> {
+        try {
+            const score = await this.execute({ agent, backend, testCase, messages, config });
+            if (score < 0 || score > 100) {
+                throw new Error(`Eval function ${this.name} must return a score between 0 and 100, got ${score}`);
+            }
+            return score;
+        } catch (error: unknown) {
+            console.error(`[EXULU] error running eval function ${this.name}.`, error);
+            throw new Error(`Error running eval function ${this.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
-        return score;
     }
 }
 
@@ -404,9 +425,9 @@ export class ExuluAgent {
     public type: "agent";
     public streaming: boolean = false;
     public maxContextLength?: number;
+    public queue?: ExuluQueueConfig;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
-    public evals?: ExuluEval[];
     // private memory: Memory | undefined; // TODO do own implementation
     public model?: {
         create: ({ apiKey }: { apiKey: string }) => LanguageModel
@@ -418,7 +439,7 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, evals, provider }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, provider, queue }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
         this.description = description;
@@ -427,7 +448,7 @@ export class ExuluAgent {
         this.config = config;
         this.type = type;
         this.maxContextLength = maxContextLength;
-        this.evals = evals;
+        this.queue = queue;
         this.capabilities = capabilities || {
             text: false,
             images: [],
@@ -556,7 +577,7 @@ export class ExuluAgent {
         prompt,
         user,
         session,
-        message,
+        inputMessages,
         currentTools,
         allExuluTools,
         statistics,
@@ -571,7 +592,7 @@ export class ExuluAgent {
         prompt?: string,
         user?: User,
         session?: string,
-        message?: UIMessage,
+        inputMessages?: UIMessage[],
         currentTools?: ExuluTool[],
         allExuluTools?: ExuluTool[],
         statistics?: ExuluStatisticParams,
@@ -593,11 +614,11 @@ export class ExuluAgent {
             throw new Error("Config is required for generating.")
         }
 
-        if (prompt && message) {
+        if (prompt && inputMessages?.length) {
             throw new Error("Message and prompt cannot be provided at the same time.")
         }
 
-        if (!prompt && !message) {
+        if (!prompt && !inputMessages?.length) {
             throw new Error("Prompt or message is required for generating.")
         }
 
@@ -611,8 +632,8 @@ export class ExuluAgent {
 
         console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.")
 
-        let messages: UIMessage[] = [];
-        if (message && session && user) {
+        let messages: UIMessage[] = inputMessages || [];
+        if (messages && session && user) {
             // load the previous messages from the server:
             const previousMessages = await getAgentMessages({
                 session,
@@ -625,7 +646,7 @@ export class ExuluAgent {
             // validate messages
             messages = await validateUIMessages({
                 // append the new message to the previous messages:
-                messages: [...previousMessagesContent, message],
+                messages: [...previousMessagesContent, ...messages],
             });
         }
 
@@ -772,29 +793,24 @@ export class ExuluAgent {
     }
 
     generateStream = async ({
-        express,
         user,
         session,
         message,
+        previousMessages,
         currentTools,
         allExuluTools,
-        statistics,
         toolConfigs,
         providerapikey,
         contexts,
         exuluConfig,
         instructions,
     }: {
-        express: {
-            res: Response,
-            req: Request,
-        },
         user: User,
-        session: string,
+        session?: string,
         message?: UIMessage,
+        previousMessages?: UIMessage[],
         currentTools?: ExuluTool[],
         allExuluTools?: ExuluTool[],
-        statistics?: ExuluStatisticParams,
         toolConfigs?: ExuluAgentToolConfig[],
         providerapikey: string,
         contexts?: ExuluContext[] | undefined
@@ -803,14 +819,17 @@ export class ExuluAgent {
     }) => {
 
         if (!this.model) {
+            console.error("[EXULU] Model is required for streaming.")
             throw new Error("Model is required for streaming.")
         }
 
         if (!this.config) {
+            console.error("[EXULU] Config is required for streaming.")
             throw new Error("Config is required for generating.")
         }
 
         if (!message) {
+            console.error("[EXULU] Message is required for streaming.")
             throw new Error("Message is required for streaming.")
         }
 
@@ -819,17 +838,20 @@ export class ExuluAgent {
         })
 
         let messages: UIMessage[] = [];
+        let previousMessagesContent: UIMessage[] = previousMessages || [];
         // load the previous messages from the server:
-        const previousMessages = await getAgentMessages({
-            session,
-            user: user.id,
-            limit: 50,
-            page: 1
-        })
-
-        const previousMessagesContent = previousMessages.map(
-            (message) => JSON.parse(message.content)
-        );
+        if (session) {
+            console.log("[EXULU] loading previous messages from session: " + session)
+            const previousMessages = await getAgentMessages({
+                session,
+                user: user.id,
+                limit: 50,
+                page: 1
+            })
+            previousMessagesContent = previousMessages.map(
+                (message) => JSON.parse(message.content)
+            );
+        }
 
         // validate messages
         messages = await validateUIMessages({
@@ -871,85 +893,18 @@ export class ExuluAgent {
                 user,
                 exuluConfig
             ),
-            onError: error => console.error("[EXULU] chat stream error.", error),
+            onError: error => {
+                console.error("[EXULU] chat stream error.", error);
+                throw new Error(`Chat stream error: ${error instanceof Error ? error.message : String(error)}`);
+            },
             // stopWhen: [stepCountIs(1)],
         });
 
-        // consume the stream to ensure it runs to completion & triggers onFinish
-        // even when the client response is aborted:
-        result.consumeStream(); // no await
-
-        result.pipeUIMessageStreamToResponse(express.res, {
-            messageMetadata: ({ part }) => {
-                if (part.type === 'finish') {
-                    return {
-                        totalTokens: part.totalUsage.totalTokens,
-                        reasoningTokens: part.totalUsage.reasoningTokens,
-                        inputTokens: part.totalUsage.inputTokens,
-                        outputTokens: part.totalUsage.outputTokens,
-                        cachedInputTokens: part.totalUsage.cachedInputTokens,
-                    };
-                }
-            },
+        return {
+            stream: result,
             originalMessages: messages,
-            sendReasoning: true,
-            sendSources: true,
-            onError: error => {
-                console.error("[EXULU] chat response error.", error)
-                return errorHandler(error)
-            },
-            generateMessageId: createIdGenerator({
-                prefix: 'msg_',
-                size: 16,
-            }),
-            onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
-                if (session) {
-                    // But only save the new messages, not the previous ones, otherwise we get duplicates.
-                    await saveChat({
-                        session,
-                        user: user.id,
-                        messages: messages.filter(x => !previousMessagesContent.find(y => y.id === x.id))
-                    })
-                }
-                const metadata = messages[messages.length - 1]?.metadata as any;
-                console.log("[EXULU] Finished streaming", metadata)
-                console.log("[EXULU] Statistics", statistics)
-                if (statistics) {
-                    await Promise.all([
-                        updateStatistic({
-                            name: "count",
-                            label: statistics.label,
-                            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                            trigger: statistics.trigger,
-                            count: 1,
-                            user: user.id,
-                            role: user?.role?.id
-                        }),
-                        ...(metadata?.inputTokens ? [
-                            updateStatistic({
-                                name: "inputTokens",
-                                label: statistics.label,
-                                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                                trigger: statistics.trigger,
-                                count: metadata?.inputTokens,
-                                user: user.id,
-                                role: user?.role?.id
-                            })] : []
-                        ),
-                        ...(metadata?.outputTokens ? [
-                            updateStatistic({
-                                name: "outputTokens",
-                                label: statistics.label,
-                                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                                trigger: statistics.trigger,
-                                count: metadata?.outputTokens,
-                            })] : []
-                        )
-                    ])
-                }
-            },
-        });
-        return;
+            previousMessages: previousMessagesContent,
+        };
     }
 }
 
@@ -965,7 +920,7 @@ const getAgentMessages = async ({ session, user, limit, page }: { session: strin
     return messages;
 }
 
-const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
+export const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
     const { db } = await postgresClient();
     const promises = messages.map((message) => {
         return db.from("agent_messages").insert({
@@ -1198,6 +1153,7 @@ export type ExuluContextFieldProcessor = {
     }) => Promise<string>,
     config?: {
         queue?: Promise<ExuluQueueConfig>,
+        timeoutInSeconds?: number, // 3 minutes default
         trigger: "manual" | "onUpdate" | "onCreate" | "always"
     },
 }
@@ -1306,7 +1262,7 @@ export class ExuluContext {
         user: number,
         role: string,
         item: Item & { field: string },
-        config: ExuluConfig
+        config: ExuluConfig,
     ): Promise<{
         result: string,
         job?: string
@@ -1324,16 +1280,21 @@ export class ExuluContext {
         if (queue?.queue.name) {
             console.log("[EXULU] processor is in queue mode, scheduling job.")
             const job = await bullmqDecorator({
+                timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 180,
                 label: `${this.name} ${field.name} data processor`,
                 processor: `${this.id}-${field.name}`,
                 context: this.id,
                 inputs: item,
                 item: item.id,
                 queue: queue.queue,
+                backoff: queue.backoff || {
+                    type: 'exponential',
+                    delay: 2000,
+                },
+                retries: queue.retries || 2,
                 user,
                 role,
-                trigger: trigger,
-                retries: 2
+                trigger: trigger
             })
 
             return {
@@ -1426,12 +1387,14 @@ export class ExuluContext {
         await db.from(getChunksTableName(this.id)).where({ source }).delete();
 
         // then insert the new / updated chunks
-        await db.from(getChunksTableName(this.id)).insert(chunks.map(chunk => ({
-            source,
-            content: chunk.content,
-            chunk_index: chunk.index,
-            embedding: pgvector.toSql(chunk.vector)
-        })))
+        if (chunks?.length) {
+            await db.from(getChunksTableName(this.id)).insert(chunks.map(chunk => ({
+                source,
+                content: chunk.content,
+                chunk_index: chunk.index,
+                embedding: pgvector.toSql(chunk.vector)
+            })))
+        }
 
         await db.from(getTableName(this.id)).where({ id: item.id }).update({
             embeddings_updated_at: new Date().toISOString()
@@ -1444,7 +1407,7 @@ export class ExuluContext {
         };
     }
 
-    private createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{
+    public createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{
         item: Item
         job?: string
     }> => {
@@ -1494,7 +1457,7 @@ export class ExuluContext {
         };
     }
 
-    private updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{
+    public updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{
         item: Item
         job?: string
     }> => {
@@ -1552,7 +1515,7 @@ export class ExuluContext {
         };
     }
 
-    private deleteItem = async (item: Item, user?: number, role?: string): Promise<{
+    public deleteItem = async (item: Item, user?: number, role?: string): Promise<{
         id: string
         job?: string
     }> => {
@@ -1621,9 +1584,15 @@ export class ExuluContext {
                 if (queue?.queue.name) {
                     console.log("[EXULU] embedder is in queue mode, scheduling job.")
                     const job = await bullmqDecorator({
+                        timeoutInSeconds: queue.timeoutInSeconds || 180,
                         label: `${this.embedder.name}`,
                         embedder: this.embedder.id,
                         context: this.id,
+                        backoff: queue.backoff || {
+                            type: 'exponential',
+                            delay: 2000,
+                        },
+                        retries: queue.retries || 2,
                         inputs: item,
                         item: item.id,
                         queue: queue.queue,

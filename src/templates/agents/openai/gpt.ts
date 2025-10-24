@@ -15,7 +15,6 @@ export const gpt5proAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 400000,
     config: {
         name: `GPT-5-PRO`,
@@ -44,7 +43,6 @@ export const gpt5CodexAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 400000,
     config: {
         name: `GPT-5-CODEX`,
@@ -73,7 +71,6 @@ export const gpt5MiniAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 400000,
     config: {
         name: `GPT-5-MINI`,
@@ -109,7 +106,6 @@ export const gpt5agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 400000,
     config: {
         name: `GPT-5`,
@@ -145,7 +141,6 @@ export const gpt5NanoAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 400000,
     config: {
         name: `GPT-5-NANO`,
@@ -174,7 +169,6 @@ export const gpt41Agent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 1047576,
     config: {
         name: `GPT-4.1`,
@@ -203,7 +197,6 @@ export const gpt41MiniAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 1047576,
     config: {
         name: `GPT-4.1-MINI`,
@@ -232,7 +225,6 @@ export const gpt4oAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 128000,
     config: {
         name: `Default agent`,
@@ -261,7 +253,6 @@ export const gpt4oMiniAgent = new ExuluAgent({
         audio: [],
         video: [],
     },
-    evals: [],
     maxContextLength: 128000,
     config: {
         name: `GPT-4O-MINI`,

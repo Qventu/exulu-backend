@@ -14,6 +14,13 @@ class ExuluQueues {
         this.queues = []
     }
 
+    public list: Map<string, {
+        name: string,
+        concurrency: number,
+        ratelimit: number,
+        use: () => Promise<ExuluQueueConfig>
+    }> = new Map(); // list of queue names
+
     queue(name: string): {
         queue: Queue,
         ratelimit: number
@@ -34,45 +41,63 @@ class ExuluQueues {
     // method of ExuluQueues we need to store the desired rate limit on the queue
     // here so we can use the value when creating workers for the queue instance
     // as there is no way to store a rate limit value natively on a bullm queue.
-    use = async (
+    register = (
         name: string,
         concurrency: number = 1,
         ratelimit: number = 1
-    ): Promise<ExuluQueueConfig> => {
-        const existing = this.queues.find(x => x.queue?.name === name);
-        if (existing) {
-            const globalConcurrency = await existing.queue.getGlobalConcurrency();
-            if (globalConcurrency !== concurrency) {
-                await existing.queue.setGlobalConcurrency(concurrency);
+    ): {
+        use: () => Promise<ExuluQueueConfig>
+    } => {
+        const use = async (): Promise<ExuluQueueConfig> => {
+            const existing = this.queues.find(x => x.queue?.name === name);
+            if (existing) {
+                const globalConcurrency = await existing.queue.getGlobalConcurrency();
+                if (globalConcurrency !== concurrency) {
+                    await existing.queue.setGlobalConcurrency(concurrency);
+                }
+                return {
+                    queue: existing.queue,
+                    ratelimit,
+                    concurrency
+                };
             }
-            return {
-                queue: existing.queue,
+
+            if (!redisServer.host?.length || !redisServer.port?.length) {
+                console.error(`[EXULU] no redis server configured, but you are trying to use a queue ( ${name}), likely in an agent or embedder (look for ExuluQueues.register().use() ).`)
+                throw new Error(`[EXULU] no redis server configured.`)
+            }
+            const newQueue = new Queue(
+                `${name}`,
+                {
+                    connection: {
+                        ...redisServer,
+                        enableOfflineQueue: false
+                    },
+                    telemetry: new BullMQOtel("simple-guide"),
+                }
+            );
+            await newQueue.setGlobalConcurrency(concurrency);
+            this.queues.push({
+                queue: newQueue,
                 ratelimit,
                 concurrency
-            };
+            })
+            return {
+                queue: newQueue,
+                ratelimit,
+                concurrency
+            }
         }
 
-        if (!redisServer.host?.length || !redisServer.port?.length) {
-            console.error(`[EXULU] no redis server configured, but you are trying to use a queue ( ${name}), likely in an agent or embedder (look for ExuluQueues.use() ).`)
-            throw new Error(`[EXULU] no redis server configured.`)
-        }
-        const newQueue = new Queue(
-            `${name}`,
-            {
-                connection: redisServer,
-                telemetry: new BullMQOtel("simple-guide"),
-            }
-        );
-        await newQueue.setGlobalConcurrency(concurrency);
-        this.queues.push({
-            queue: newQueue,
+        this.list.set(name, {
+            name,
+            concurrency,
             ratelimit,
-            concurrency
-        })
+            use
+        });
+        
         return {
-            queue: newQueue,
-            ratelimit,
-            concurrency
+            use
         }
     }
 }

@@ -11,14 +11,14 @@
   "types": "./dist/index.d.ts",
   "homepage": "https://exulu.com",
   "engines": {
-    "node": "22.17.1"
+    "node": "22.18.0"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/Qventu/exulu-backend"
   },
   "scripts": {
-    "preinstall": "node -e \"if (process.version !== 'v22.17.1') { console.error('❌ Wrong Node.js version. Expected v22.17.1, got ' + process.version); process.exit(1); }\"",
+    "preinstall": "node -e \"if (process.version !== 'v22.18.0') { console.error('❌ Wrong Node.js version. Expected v22.18.0, got ' + process.version); process.exit(1); }\"",
     "build": "tsup",
     "dev": "npm link && tsup --watch",
     "prepare": "husky",

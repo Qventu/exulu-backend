@@ -87,6 +87,7 @@ export const uploadFile = async (
     config: ExuluConfig,
     options: UploadOptions = {}
 ): Promise<string> => {
+    console.log("[EXULU] Uploading file to S3", key)
     const client = getS3Client(config);
 
     let folder = `${user}/`

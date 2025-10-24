@@ -21,7 +21,8 @@ const {
     variablesSchema,
     workflowTemplatesSchema,
     rbacSchema,
-    projectsSchema
+    projectsSchema,
+    jobResultsSchema
 } = coreSchemas.get();
 
 const addMissingFields = async (knex: Knex, tableName: string, fields: any[], skipFields: string[] = []) => {
@@ -61,6 +62,7 @@ const up = async function (knex: Knex) {
         platformConfigurationsSchema(),
         statisticsSchema(),
         projectsSchema(),
+        jobResultsSchema(),
         rbacSchema(),
         agentsSchema(),
         variablesSchema(),
