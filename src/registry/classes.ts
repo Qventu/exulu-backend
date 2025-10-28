@@ -494,6 +494,7 @@ export class ExuluAgent {
             id: agentInstance.id,
             name: `${agentInstance.name}`,
             type: "agent",
+            category: "agents",
             inputSchema: z.object({
                 prompt: z.string().describe("The prompt (usually a question for the agent) to send to the agent."),
                 information: z.string().describe("A summary of relevant context / information from the current session")
@@ -1096,6 +1097,7 @@ export class ExuluTool {
     public id: string;
     public name: string;
     public description: string;
+    public category: string;
     public inputSchema?: z.ZodType;
     public type: "context" | "function" | "agent";
     public tool: Tool
@@ -1104,10 +1106,11 @@ export class ExuluTool {
         description: string
     }[]
 
-    constructor({ id, name, description, inputSchema, type, execute, config }: {
+    constructor({ id, name, description, category, inputSchema, type, execute, config }: {
         id: string,
         name: string,
         description: string,
+        category?: string,
         inputSchema?: z.ZodType,
         type: "context" | "function" | "agent",
         config: {
@@ -1126,6 +1129,7 @@ export class ExuluTool {
     }) {
         this.id = id;
         this.config = config;
+        this.category = category || "default";
         this.name = name;
         this.description = description;
         this.inputSchema = inputSchema;
@@ -1231,6 +1235,7 @@ export class ExuluContext {
         fields: ExuluContextFieldDefinition[],
         description: string,
         embedder?: ExuluEmbedder,
+        category?: string,
         active: boolean,
         rateLimit?: RateLimiterRule,
         queryRewriter?: (query: string) => Promise<string>,
@@ -1746,6 +1751,7 @@ export class ExuluContext {
             id: this.id,
             name: `${this.name}`,
             type: "context",
+            category: "contexts",
             inputSchema: z.object({
                 query: z.string(),
             }),

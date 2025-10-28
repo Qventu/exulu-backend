@@ -1147,7 +1147,8 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
             result.tools = await Promise.all(result.tools.map(async (tool: {
                 config: any,
                 id: string
-                type: "function" | "agent" | "context"
+                type: "function" | "agent" | "context",
+                category: string
             }): Promise<Omit<ExuluTool, "tool"> | null | undefined> => {
 
                 let hydrated: ExuluTool | null | undefined;
@@ -1177,11 +1178,14 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
                 } else {
                     hydrated = tools.find(t => t.id === tool.id)
                 }
-                return {
+                const hydratedTool = {
                     ...tool,
                     name: hydrated?.name || "",
                     description: hydrated?.description || "",
+                    category: tool?.category || "default"
                 }
+                console.log("[EXULU] hydratedTool", hydratedTool)
+                return hydratedTool;
             }))
             result.tools = result.tools.filter(tool => tool !== null)
         } else {
@@ -2365,7 +2369,8 @@ type PageInfo {
     `
 
     typeDefs += `
-   tools: ToolPaginationResult
+   tools(search: String, category: String, limit: Int, page: Int): ToolPaginationResult
+   toolCategories: [String!]!
     `
 
     typeDefs += `
@@ -2744,6 +2749,8 @@ type PageInfo {
 
     resolvers.Query["tools"] = async (_, args, context, info) => {
         const requestedFields = getRequestedFields(info)
+        const { search, category, limit = 100, page = 0 } = args;
+        
         // Get all active agents and add them as tools
         // so agents can call other agents as tools.
         const instances = await loadAgents();
@@ -2757,16 +2764,50 @@ type PageInfo {
             }))
 
         const filtered: ExuluTool[] = agentTools.filter(tool => tool !== null) as ExuluTool[];
+        let allTools = [...filtered, ...tools];
+
+        // Apply search filter
+        if (search && search.trim()) {
+            const searchTerm = search.toLowerCase().trim();
+            allTools = allTools.filter(tool => 
+                tool.name?.toLowerCase().includes(searchTerm) ||
+                tool.description?.toLowerCase().includes(searchTerm)
+            );
+        }
+
+        // Apply category filter
+        if (category && category.trim()) {
+            allTools = allTools.filter(tool => tool.category === category);
+        }
+
+        // Apply pagination
+        const total = allTools.length;
+        const start = page * limit;
+        const end = start + limit;
+        const paginatedTools = allTools.slice(start, end);
 
         return {
-            items: [...filtered, ...tools].map(tool => {
+            items: paginatedTools.map(tool => {
                 const object = {}
                 requestedFields.forEach(field => {
                     object[field] = tool[field]
                 })
                 return object
-            })
+            }),
+            total,
+            page,
+            limit
         }
+    }
+
+    resolvers.Query["toolCategories"] = async () => {
+        // Extract unique categories from all tools
+        const array = tools
+        .map(tool => tool.category)
+        .filter(category => category && typeof category === 'string')
+        array.push("contexts");
+        array.push("agents");
+        return [...new Set(array)].sort();
     }
 
     modelDefs += `
@@ -2811,6 +2852,9 @@ type PageInfo {
     modelDefs += `
     type ToolPaginationResult {
     items: [Tool]!
+    total: Int!
+    page: Int!
+    limit: Int!
     }
     `
 
@@ -2924,6 +2968,7 @@ type Tool {
   id: ID!
   name: String!
   description: String
+  category: String
   type: String
   config: JSON
 }

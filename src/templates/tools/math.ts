@@ -9,6 +9,7 @@ const additionTool = new ExuluTool({
     name: "Addition",
     description: "Adds two numbers together",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         firstNumber: z.number().describe("The first addend"),
@@ -25,6 +26,7 @@ const subtractionTool = new ExuluTool({
     name: "Subtraction",
     description: "Subtracts the second number from the first number",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         minuend: z.number().describe("The number to subtract from (minuend)"),
@@ -41,6 +43,7 @@ const multiplicationTool = new ExuluTool({
     name: "Multiplication",
     description: "Multiplies two numbers together",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         firstNumber: z.number().describe("The first number"),
@@ -57,6 +60,7 @@ const divisionTool = new ExuluTool({
     name: "Division",
     description: "Divides the first number by the second number",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numerator: z.number().describe("The number being divided (numerator)"),
@@ -73,6 +77,7 @@ const sumTool = new ExuluTool({
     name: "Sum",
     description: "Adds any number of numbers together",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).min(1).describe("Array of numbers to sum"),
@@ -88,6 +93,7 @@ const moduloTool = new ExuluTool({
     name: "Modulo",
     description: "Divides two numbers and returns the remainder",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numerator: z.number().describe("The number being divided (numerator)"),
@@ -104,6 +110,7 @@ const meanTool = new ExuluTool({
     name: "Mean",
     description: "Calculates the arithmetic mean of a list of numbers",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).min(1).describe("Array of numbers to find the mean of"),
@@ -119,6 +126,7 @@ const medianTool = new ExuluTool({
     name: "Median",
     description: "Calculates the median of a list of numbers",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).min(1).describe("Array of numbers to find the median of"),
@@ -134,6 +142,7 @@ const modeTool = new ExuluTool({
     name: "Mode",
     description: "Finds the most common number in a list of numbers",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).describe("Array of numbers to find the mode of"),
@@ -149,6 +158,7 @@ const minTool = new ExuluTool({
     name: "Minimum",
     description: "Finds the minimum value from a list of numbers",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).describe("Array of numbers to find the minimum of"),
@@ -164,6 +174,7 @@ const maxTool = new ExuluTool({
     name: "Maximum",
     description: "Finds the maximum value from a list of numbers",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         numbers: z.array(z.number()).describe("Array of numbers to find the maximum of"),
@@ -179,6 +190,7 @@ const floorTool = new ExuluTool({
     name: "Floor",
     description: "Rounds a number down to the nearest integer",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to round down"),
@@ -194,6 +206,7 @@ const ceilingTool = new ExuluTool({
     name: "Ceiling",
     description: "Rounds a number up to the nearest integer",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to round up"),
@@ -209,6 +222,7 @@ const roundTool = new ExuluTool({
     name: "Round",
     description: "Rounds a number to the nearest integer",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to round"),
@@ -224,6 +238,7 @@ const sinTool = new ExuluTool({
     name: "Sine",
     description: "Calculates the sine of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number in radians to find the sine of"),
@@ -239,6 +254,7 @@ const arcsinTool = new ExuluTool({
     name: "Arcsine",
     description: "Calculates the arcsine of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to find the arcsine of"),
@@ -254,6 +270,7 @@ const cosTool = new ExuluTool({
     name: "Cosine",
     description: "Calculates the cosine of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number in radians to find the cosine of"),
@@ -269,6 +286,7 @@ const arccosTool = new ExuluTool({
     name: "Arccosine",
     description: "Calculates the arccosine of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to find the arccosine of"),
@@ -284,6 +302,7 @@ const tanTool = new ExuluTool({
     name: "Tangent",
     description: "Calculates the tangent of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number in radians to find the tangent of"),
@@ -299,6 +318,7 @@ const arctanTool = new ExuluTool({
     name: "Arctangent",
     description: "Calculates the arctangent of a number in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number to find the arctangent of"),
@@ -314,6 +334,7 @@ const radiansToDegreesTool = new ExuluTool({
     name: "Radians to Degrees",
     description: "Converts a radian value to its equivalent in degrees",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number in radians to convert to degrees"),
@@ -329,6 +350,7 @@ const degreesToRadiansTool = new ExuluTool({
     name: "Degrees to Radians",
     description: "Converts a degree value to its equivalent in radians",
     type: "function",
+    category: "math",
     config: [],
     inputSchema: z.object({
         number: z.number().describe("The number in degrees to convert to radians"),

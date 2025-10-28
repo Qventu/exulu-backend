@@ -5,4 +5,5 @@ export interface Tool {
     type: string;
     inputSchema: any;
     outputSchema: any;
+    category: string;
 }
