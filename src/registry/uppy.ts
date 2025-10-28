@@ -393,7 +393,7 @@ export const createUppyRoutes = async (
 
         const command = new ListObjectsV2Command({
             Bucket: config.fileUploads.s3Bucket,
-            Prefix: `test/${authenticationResult.user.id}`,
+            Prefix: `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, '') + "/" : ''}` + `${authenticationResult.user.id}`,
             MaxKeys: 9,
             ...(req.query.continuationToken && { ContinuationToken: req.query.continuationToken as string }),
         })

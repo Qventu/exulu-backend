@@ -39,6 +39,7 @@ const consoleTransport = new winston.transports.Console({
 })
 import { llmAsJudgeEval } from "../templates/evals/index.ts";
 import { ExuluQueues } from "../index.ts";
+import { mathTools } from "../templates/tools/math.ts";
 
 // Monkey-patch console to use Winston with metadata support
 const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
@@ -65,7 +66,7 @@ const isValidPostgresName = (id: string): boolean => {
     const regex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
     const isValid = regex.test(id);
     const length = id.length;
-    return isValid && length <= 80 && length > 5;
+    return isValid && length <= 80 && length > 2;
 };
 
 export type ExuluConfig = {
@@ -153,6 +154,7 @@ export class ExuluApp {
 
         this._tools = [
             ...(tools ?? []),
+            ...mathTools,
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),
             // Because agents are stored in the database,  we add those as tools

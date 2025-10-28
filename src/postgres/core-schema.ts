@@ -1,6 +1,5 @@
 import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics"
 import type { ExuluTableDefinition } from "../registry/routes"
-import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs"
 
 const agentMessagesSchema: ExuluTableDefinition = {
     type: "agent_messages",
@@ -212,6 +211,14 @@ const agentsSchema: ExuluTableDefinition = {
         {
             name: "tools",
             type: "json"
+        },
+        {
+            name: "animation_idle",
+            type: "text"
+        },
+        {
+            name: "animation_responding", 
+            type: "text"
         }
     ]
 }
