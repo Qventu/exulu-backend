@@ -37,7 +37,7 @@ const consoleTransport = new winston.transports.Console({
         )
         : winston.format.json(),
 })
-import { llmAsJudgeEval } from "../templates/evals/index.ts";
+import { getDefaultEvals } from "../templates/evals/index.ts";
 import { ExuluQueues } from "../index.ts";
 import { mathTools } from "../templates/tools/math.ts";
 
@@ -129,7 +129,7 @@ export class ExuluApp {
             redisServer.host?.length &&
             redisServer.port?.length
         ) ? [
-            llmAsJudgeEval,
+            ...getDefaultEvals(),
             ...(evals ?? [])
         ] : [];
 
