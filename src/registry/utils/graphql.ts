@@ -2989,7 +2989,7 @@ enum EnumProviderType {
 }
 
 enum QueueEnum {
-  ${ExuluQueues.list.keys().toArray().join("\n")}
+  ${ExuluQueues.list.keys().toArray().length > 0 ? ExuluQueues.list.keys().toArray().join("\n") : "NO_QUEUES"}
 }
 
 enum JobStateEnum {
