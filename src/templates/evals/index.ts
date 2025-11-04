@@ -3,7 +3,7 @@ import { ExuluVariables } from "../..";
 import { ExuluEval } from "../../registry/classes";
 import { z } from "zod";
 
-export const llmAsJudgeEval = () => {
+const llmAsJudgeEval = () => {
     if (
         process.env.REDIS_HOST?.length &&
         process.env.REDIS_PORT?.length
@@ -73,7 +73,7 @@ export const llmAsJudgeEval = () => {
     return undefined;
 }
 
-const getDefaultEvals = () => {
+export const getDefaultEvals = () => {
     if (
         process.env.REDIS_HOST?.length &&
         process.env.REDIS_PORT?.length
