@@ -1,4 +1,4 @@
-import { ExuluAgent, ExuluContext, ExuluEval, getTableName, type ExuluQueueConfig, type ExuluTool } from "./classes.ts";
+import { ExuluAgent, ExuluContext, ExuluEval, getTableName, type ExuluQueueConfig, type ExuluTool } from "./classes.ts"; /* ExuluMcpToolsClient */
 import { type Express } from "express"
 import { createExpressRoutes, global_queues } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
@@ -116,18 +116,22 @@ export class ExuluApp {
 
     // Factory function so we can async 
     // initialize the MCP server if needed.
-    create = async ({ contexts, agents, config, tools, evals }: {
+    create = async ({ contexts, agents, config, tools, evals }: { // mcps
         contexts?: Record<string, ExuluContext>,
         config: ExuluConfig,
         agents?: ExuluAgent[],
         evals?: ExuluEval[],
-        tools?: ExuluTool[]
+        tools?: ExuluTool[],
+        // mcps?: ExuluMcpToolsClient[]
     }): Promise<ExuluApp> => {
 
-        this._evals = [
+        this._evals = (
+            redisServer.host?.length &&
+            redisServer.port?.length
+        ) ? [
             llmAsJudgeEval,
             ...(evals ?? [])
-        ];
+        ] : [];
 
         this._contexts = {
             ...contexts,
@@ -152,6 +156,18 @@ export class ExuluApp {
         ];
         this._config = config;
 
+        /* let mcpTools: ExuluTool[] = [];
+        if (mcps) {
+            const promises = mcps.map(async (mcp) => {
+                console.log('[EXULU] Loading MCP tools from: ' + mcp.name);
+                const response = await mcp.tools();
+                console.log('[EXULU] Adding MCP tools from: ' + mcp.name + ' tools: ' + response.map(x => x.name + " (" + x.id + ")").join(', '));
+                return response;
+            });
+            const responses = await Promise.all(promises);
+            mcpTools.push(...responses.flat());
+        } */
+
         this._tools = [
             ...(tools ?? []),
             ...mathTools,
@@ -160,6 +176,7 @@ export class ExuluApp {
             // Because agents are stored in the database,  we add those as tools
             // at request time, not during ExuluApp initialization. We add them
             // in the grahql tools resolver.
+            // ...mcpTools
         ]
 
         const checks: {

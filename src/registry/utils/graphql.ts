@@ -1034,7 +1034,7 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
     ))) {
         console.error('==== Access control error: no role found or no access to entity type. ====');
         // Return empty result on error
-        return query.where('id', '=', '0');
+        throw new Error('Access control error: no role found or no access to entity type.');
     }
 
     const hasRBAC = table.RBAC === true;

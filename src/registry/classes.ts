@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import { z } from "zod"
-import { convertToModelMessages, createIdGenerator, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
+import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall, experimental_createMCPClient as createMCPClient } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { postgresClient, refreshPostgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
@@ -10,7 +10,8 @@ import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';
-import { type Request, type Response } from "express";
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Experimental_StdioMCPTransport } from "ai/mcp-stdio"
 import { vectorSearch } from "./utils/graphql";
 import {
     PutObjectCommand,
@@ -24,6 +25,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 /**
  * @type {S3Client}
@@ -67,12 +69,12 @@ const convertToolsArrayToObject = (
 
     console.log("[EXULU] Sanitized tools", sanitizedTools.map(x => x.name + " (" + x.id + ")"))
 
-    const askForConfirmation: Tool = {
+    /* const askForConfirmation: Tool = {
         description: 'Ask the user for confirmation.',
         inputSchema: z.object({
             message: z.string().describe('The message to ask for confirmation.'),
         })
-    }
+    } */
 
     return {
         ...sanitizedTools?.reduce(
@@ -203,7 +205,7 @@ const convertToolsArrayToObject = (
                 }
             }), {}
         ),
-        askForConfirmation
+        // askForConfirmation
     }
 }
 
@@ -1089,6 +1091,151 @@ export interface ExuluRBAC {
     roles?: Array<{ id: string; rights: 'read' | 'write' }>
 }
 
+/* export class ExuluMcpToolsClient {
+    public id: string;
+    public name: string;
+    public url: string;
+    private connection: {
+        client: Awaited<ReturnType<typeof createMCPClient>>,
+        ttl: number
+    } | undefined = undefined;
+    private headers: Record<string, string> = {};
+    private toolsCache: {
+        tools: ExuluTool[],
+        ttl: number
+    } | undefined = {
+            tools: [],
+            ttl: 0
+        };
+
+    constructor({ id, name, url, headers }: {
+        id: string,
+        name: string,
+        url: string,
+        headers?: Record<string, string>,
+    }) {
+        this.id = id;
+        this.name = name;
+        this.url = url;
+        this.headers = headers || {};
+    }
+
+    public client = async (): Promise<{
+        client: Awaited<ReturnType<typeof createMCPClient>>,
+        ttl: number
+    }> => {
+        const baseUrl = new URL(this.url);
+
+        if (this.connection && this.connection.ttl > Date.now()) {
+            return this.connection;
+        }
+
+        const maxRetries = 3;
+
+        let lastError: Error | null = null;
+
+        console.log('[EXULU] MCP ' + this.name + ' connecting to ' + baseUrl.toString() + ' with headers: ' + JSON.stringify(this.headers));
+
+        let connection: {
+            client: Awaited<ReturnType<typeof createMCPClient>>,
+            ttl: number
+        } | undefined = undefined;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const isLastAttempt = attempt === maxRetries - 1;
+            const ttl = Date.now() + 1000 * 60 * 60 * 1 // 5 minutes
+            try {
+                const transport = new StreamableHTTPClientTransport(new URL(baseUrl), {
+                    requestInit: {
+                        headers: this.headers
+                    }
+                });
+
+                const client: Awaited<ReturnType<typeof createMCPClient>> = await createMCPClient({
+                    transport,
+                });
+
+                console.log('[EXULU] MCP ' + this.name + ' connected using Streamable HTTP transport' + (attempt > 0 ? ` on attempt ${attempt + 1}` : ''));
+                connection = {
+                    client,
+                    ttl
+                };
+                
+            } catch (error) {
+                console.error('[EXULU] MCP ' + this.name + ' connection failed', error);
+                lastError = error as Error;
+            }
+
+            if (!isLastAttempt) {
+                const backoffDelay = Math.min(1000 * Math.pow(2, attempt), 10000); // Exponential backoff with max 10s
+                console.log('[EXULU] MCP ' + this.name + ' retrying connection in ' + backoffDelay + 'ms');
+                await new Promise(resolve => setTimeout(resolve, backoffDelay));
+            } else {
+                throw lastError;
+            }
+        }
+
+        if (lastError) {
+            console.error('[EXULU] MCP ' + this.name + ' connection failed', lastError);
+            throw new Error(lastError.message);
+        }
+
+        if (!connection) {
+            throw new Error('[EXULU] MCP ' + this.name + ' connection failed');
+        }
+
+        this.connection = connection;
+        return connection;
+    }
+
+    private sanitizeToolName = (name: string) => {
+        return name.toLowerCase().replace(/ /g, "_").replace(/[^a-z0-9_]/g, "");
+    }
+
+    public tools = async (): Promise<ExuluTool[]> => {
+        if (this.toolsCache && this.toolsCache.ttl > Date.now()) {
+            return this.toolsCache.tools;
+        }
+        const connection = await this.client();
+
+        if (!connection) {
+            return [];
+        }
+
+        const mcpTools = await connection.client.tools() ?? [];
+
+        if (!mcpTools) {
+            return [];
+        }
+
+        const array: string[] = Object.keys(mcpTools);
+
+        const exuluTools: (ExuluTool | null)[] = await Promise.all(array.map(async (toolName) => {
+            const tool = mcpTools[toolName];
+            if (!tool) {
+                return null;
+            }
+            return new ExuluTool({
+                id: this.name + "_" + this.sanitizeToolName(toolName) as string,
+                name: toolName,
+                category: this.name,
+                config: [],
+                execute: tool.execute,
+                description: tool.description || "",
+                inputSchema: tool.inputSchema,
+                type: "function",
+            });
+        }));
+
+        this.toolsCache = {
+            tools: exuluTools.filter(tool => tool !== null) as ExuluTool[],
+            ttl: Date.now() + 1000 * 60 * 60 * 1 // 1 hour
+        };
+
+        return tools;
+    }
+} */
+
 export class ExuluTool {
 
     // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
@@ -1806,7 +1953,7 @@ export type ExuluStatistic = {
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
 export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string }) => {
-    console.log("[EXULU] Updating statistic", statistic)
+
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
 
@@ -1818,8 +1965,6 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
         type: statistic.type,
         createdAt: currentDate
     }).first();
-
-    console.log("[EXULU] Existing", existing)
 
     // Update a specific statistic by name, label and type for a particular day.
     // If the statistic does not exist, it will be created.
