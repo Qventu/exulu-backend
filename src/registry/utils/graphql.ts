@@ -3010,6 +3010,8 @@ type StatisticsResult {
 
     const fullSDL = typeDefs + mutationDefs + modelDefs + genericTypes;
 
+    console.log("[EXULU] Full SDL:", fullSDL);
+
     // -------------- Create Schema ------------------
 
     const schema = makeExecutableSchema({
