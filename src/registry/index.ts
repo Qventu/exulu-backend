@@ -404,14 +404,11 @@ export class ExuluApp {
                     const mcp = new ExuluMCP();
                     await mcp.create({
                         express: app,
-                        contexts: this._contexts,
-                        agents: this._agents,
+                        allTools: this._tools,
+                        allAgents: this._agents,
+                        allContexts: Object.values(this._contexts ?? {}),
                         config: this._config,
-                        tools: this._tools,
-                        tracer,
-                    });
-
-                    await mcp.connect();
+                    })
                 }
 
                 return app;

@@ -10,8 +10,6 @@ import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { Experimental_StdioMCPTransport } from "ai/mcp-stdio"
 import { vectorSearch } from "./utils/graphql";
 import {
     PutObjectCommand,
@@ -25,7 +23,6 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 /**
  * @type {S3Client}
@@ -50,7 +47,7 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-const convertToolsArrayToObject = (
+export const convertToolsArrayToObject = (
     currentTools: ExuluTool[] | undefined,
     allExuluTools: ExuluTool[] | undefined,
     configs: ExuluAgentToolConfig[] | undefined,
@@ -483,7 +480,6 @@ export class ExuluAgent {
     }
 
     // Exports the agent as a tool that can be used by another agent
-    // todo test this
     public tool = async (instance: string, agents: ExuluAgent[]): Promise<ExuluTool | null> => {
 
         const agentInstance = await loadAgent(instance);
@@ -1952,7 +1948,7 @@ export type ExuluStatistic = {
 
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
-export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string }) => {
+export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string, project?: string }) => {
 
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
@@ -1960,6 +1956,7 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
     const existing = await db.from("tracking").where({
         ...(statistic.user ? { user: statistic.user } : {}),
         ...(statistic.role ? { role: statistic.role } : {}),
+        ...(statistic.project ? { project: statistic.project } : {}),
         name: statistic.name,
         label: statistic.label,
         type: statistic.type,
@@ -1977,16 +1974,14 @@ export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> &
             total: statistic.count ?? 1,
             createdAt: currentDate,
             ...(statistic.user ? { user: statistic.user } : {}),
-            ...(statistic.role ? { role: statistic.role } : {})
+            ...(statistic.role ? { role: statistic.role } : {}),
+            ...(statistic.project ? { project: statistic.project } : {}),
         })
     } else {
         await db.from("tracking").update({
             total: db.raw("total + ?", [statistic.count ?? 1]),
         }).where({
-            name: statistic.name,
-            label: statistic.label,
-            type: statistic.type,
-            createdAt: currentDate
+            id: existing.id,
         })
     }
 

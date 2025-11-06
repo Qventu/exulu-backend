@@ -26,7 +26,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
 import type { Queue } from "bullmq";
 import { createIdGenerator } from "ai";
-
+import type { Project } from "@EXULU_TYPES/models/project";
+import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 
 export const global_queues = {
     eval_runs: "eval_runs"
@@ -431,8 +432,6 @@ Mood: friendly and intelligent.
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
             let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
 
-            console.log("[EXULU] enabled tools", enabledTools?.map(x => x.name + " (" + x.id + ")"))
-
             // Get the variable name from user's anthropic_token field
             const variableName = agentInstance.providerapikey;
 
@@ -614,13 +613,15 @@ Mood: friendly and intelligent.
     // This route basically passes the request 1:1 to the Anthropic API, but we can
     // inject tools into the request body, publish data to audit logs and implement
     // custom authentication logic from the IMP UI.
-    app.use('/gateway/anthropic/:id', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
+    app.use('/gateway/anthropic/:agent/:project', express.raw({ type: '*/*', limit: REQUEST_SIZE_LIMIT }), async (req, res) => {
 
         try {
 
             if (!req.body.tools) {
                 req.body.tools = [];
             }
+
+            const { db } = await postgresClient();
 
             // Authenticate the user, and exchange the user token for an anthropic token.
             const authenticationResult = await requestValidators.authenticate(req);
@@ -632,21 +633,38 @@ Mood: friendly and intelligent.
 
             const user = authenticationResult.user;
 
-            const { db } = await postgresClient();
-
-            let query = db('agents');
-            query.select("*");
-            query = applyAccessControl(agentsSchema(), authenticationResult.user, query);
-            query.where({ id: req.params.id });
-            const agent = await query.first();
+            let agentQuery = db('agents');
+            agentQuery.select("*");
+            agentQuery = applyAccessControl(agentsSchema(), authenticationResult.user, agentQuery);
+            agentQuery.where({ id: req.params.agent });
+            const agent: Agent | undefined = await agentQuery.first();
 
             if (!agent) {
                 const arrayBuffer = createCustomAnthropicStreamingMessage(`
-\x1b[41m -- Agent ${req.params.id} not found or you do not have access to it. --
+\x1b[41m -- Agent ${req.params.agent} not found or you do not have access to it. --
 \x1b[0m`);
                 res.setHeader('Content-Type', 'application/json');
                 res.end(Buffer.from(arrayBuffer));
                 return;
+            }
+
+            let project: Project | null = null;
+
+            if (!req.body.project || req.body.project === "DEFAULT") {
+                project = null;
+            } else {
+                let projectQuery = db('projects');
+                projectQuery.select("*");
+                projectQuery = applyAccessControl(projectsSchema(), authenticationResult.user, projectQuery);
+                projectQuery.where({ id: req.params.project });
+                project = await projectQuery.first();
+
+                if (!project) {
+                    const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.missing_project);
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(Buffer.from(arrayBuffer));
+                    return;
+                }
             }
 
             console.log("[EXULU] anthropic proxy called for agent:", agent?.name)
@@ -721,12 +739,58 @@ Mood: friendly and intelligent.
                 output_tokens: number
             }> = {};
 
-            for await (const event of client.messages.stream(req.body) as AsyncIterable<{
+            const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
+            let enabledTools: ExuluTool[] = await getEnabledTools(agent, tools, disabledTools, agents, user)
+
+            let system: string | {
+                type: "text",
+                text: string
+            }[] = req.body.system;
+
+            if (Array.isArray(req.body.system)) {
+                system = [
+                    ...req.body.system,
+                    ...(agent ? [
+                        {
+                            type: "text",
+                            text: `
+                            You are an agent named: ${agent?.name}
+                            Here are some additional instructions for you: ${agent?.instructions}`
+                        }
+                    ] : []),
+                    ...(project ? [
+                        {
+                            type: "text",
+                            text: `Additional information:
+
+                            The project you are working on is: ${project?.name}
+                            Here is some additional information about the project: ${project?.description}`
+                        }
+                    ] : [])
+                ]
+            } else {
+                system = `${req.body.system}\n\n
+                ${ agent ? `You are an agent named: ${agent?.name}
+                Here are some additional instructions for you: ${agent?.instructions}` : ""}
+
+                ${ project?.id ? `Additional information:
+
+                The project you are working on is: ${project?.name}
+                The project description is: ${project?.description}` : ""}
+                `;
+            }
+
+            for await (const event of client.messages.stream({
+                ...req.body,
+                system
+            }) as AsyncIterable<{
                 type: string,
                 index: number,
                 message?: {
                     id: string,
                     type: string,
+                    name: string,
+                    input: any,
                     role: string,
                     model: string,
                     content: any[],
@@ -745,11 +809,6 @@ Mood: friendly and intelligent.
                     text: string
                 }
             }>) {
-                console.log("[EXULU] Event", event)
-                if (event.message?.usage) {
-                    // todo register token usage in database (summarize them for this stream and then send to statistics once)
-                    // todo check against rate limit
-                }
                 if (event.message?.id) {
                     tokens[event.message.id] = {
                         input_tokens: event.message.usage.input_tokens,
@@ -757,11 +816,55 @@ Mood: friendly and intelligent.
                         cache_read_input_tokens: event.message.usage.cache_read_input_tokens,
                         output_tokens: event.message.usage.output_tokens,
                     };
+                    // todo check against rate limit for this agent and project
                 }
-                const msg = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-                res.write(msg);
-            }
 
+                // We only deal with tools that are prefixed with "exulu_"
+                // on the server, other tools are handled by Claude Code
+                // client side.
+                if (
+                    event.message?.type === "tool_use" &&
+                    event.message?.name?.includes("exulu_")
+                ) {
+                    const toolName = event.message?.name;
+                    console.log("[EXULU] Using tool", toolName)
+                    const inputs = event.message?.input;
+                    const id = event.message?.id;
+
+                    const tool: ExuluTool | undefined = enabledTools.find(tool => tool.id === toolName.replace("exulu_", ""));
+                    if (!tool || !tool.tool.execute) {
+                        console.error("[EXULU] Tool not found or not enabled.", toolName)
+                        continue;
+                    }
+
+                    const toolResult = await tool.tool.execute(inputs, {
+                        toolCallId: id,
+                        messages: [{
+                            ...event.message,
+                            role: "tool"
+                        }]
+                    });
+
+                    console.log("[EXULU] Tool result", toolResult)
+
+                    const toolResultMessage = {
+                        role: "user",
+                        content: [
+                            {
+                                type: "tool_result",
+                                tool_use_id: id,
+                                content: toolResult
+                            }
+                        ]
+                    }
+
+                    res.write(`event: tool_result\ndata: ${JSON.stringify(toolResultMessage)}\n\n`);
+
+                } else {
+                    const msg = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+                    res.write(msg);
+                }
+            }
 
             let totalInputTokens = 0;
             let totalOutputTokens = 0;
@@ -783,7 +886,8 @@ Mood: friendly and intelligent.
                     trigger: statistics.trigger,
                     count: 1,
                     user: user.id,
-                    role: user?.role?.id
+                    role: user?.role?.id,
+                    ...(project ? { project: project.id } : {})
                 }),
                 ...(totalInputTokens ? [
                     updateStatistic({
@@ -793,7 +897,8 @@ Mood: friendly and intelligent.
                         trigger: statistics.trigger,
                         count: totalInputTokens,
                         user: user.id,
-                        role: user?.role?.id
+                        role: user?.role?.id,
+                        ...(project ? { project: project.id } : {})
                     })] : []
                 ),
                 ...(totalOutputTokens ? [
@@ -802,7 +907,10 @@ Mood: friendly and intelligent.
                         label: statistics.label,
                         type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                         trigger: statistics.trigger,
-                        count: totalOutputTokens,
+                        count: totalInputTokens,
+                        user: user.id,
+                        role: user?.role?.id,
+                        ...(project ? { project: project.id } : {})
                     })] : []
                 )
             ])

@@ -378,6 +378,10 @@ const statisticsSchema: ExuluTableDefinition = {
         {
             name: "role",
             type: "uuid"
+        },
+        {
+            name: "project",
+            type: "uuid"
         }
     ]
 }

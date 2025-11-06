@@ -16,5 +16,8 @@ export const CLAUDE_MESSAGES = {
 \x1b[0m`,
     not_enabled: `
 \x1b[41m -- The agent you selected does not have a valid API key set for it. --
-\x1b[0m`
+\x1b[0m`,
+    missing_project: `
+\x1b[41m -- Project not found or you do not have access to it. --
+\x1b[0m`,
 }
