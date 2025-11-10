@@ -50,8 +50,15 @@ export const createWorkers = async (
     }
 
     if (!redisConnection) {
-        redisConnection = new IORedis({
-            ...redisServer,
+
+        let url = ""
+        if (redisServer.username) {
+            url = `redis://${redisServer.username}:${redisServer.password}@${redisServer.host}:${redisServer.port}`
+        } else {
+            url = `redis://${redisServer.host}:${redisServer.port}`
+        }
+
+        redisConnection = new IORedis(url, {
             enableOfflineQueue: true,
             retryStrategy: function (times: number) {
                 return Math.max(Math.min(Math.exp(times), 20000), 1000);

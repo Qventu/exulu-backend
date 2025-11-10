@@ -5,6 +5,9 @@ let client: Record<string, RedisClientType> = {};
 export async function redisClient(): Promise<{
     client: RedisClientType | null
 }> {
+
+    console.log("[EXULU] redisServer:", redisServer)
+    
     // Early return if Redis is not configured
     if (!redisServer.host || !redisServer.port) {
         return { client: null };
