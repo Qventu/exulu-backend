@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata, /* ExuluMcpToolsClient */ } from "./registry/classes"
+export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
@@ -20,6 +20,9 @@ import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
 import { gpt5MiniAgent, gpt5agent, gpt5proAgent, gpt5CodexAgent, gpt5NanoAgent, gpt41Agent, gpt41MiniAgent, gpt4oAgent, gpt4oMiniAgent } from './templates/agents/openai/gpt'
 import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from './templates/agents/anthropic/claude'
+
+import type { Item } from '@EXULU_TYPES/models/item'
+export type { Item as ExuluItem }
 
 export const ExuluJobs = {
     redis: redisClient,
