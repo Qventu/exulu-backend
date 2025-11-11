@@ -887,7 +887,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 throw new Error("Item not found, or your user does not have access to it.");
             }
 
-            const { job, result } = await exists.process(
+            const { job, result } = await exists.processField(
                 "api",
                 context.user.id,
                 context.user.role?.id,

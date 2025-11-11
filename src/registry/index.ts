@@ -1,4 +1,4 @@
-import { ExuluAgent, ExuluContext, ExuluEval, getTableName, type ExuluQueueConfig, type ExuluTool } from "./classes.ts"; /* ExuluMcpToolsClient */
+import { ExuluAgent, ExuluContext, ExuluEval, getTableName, type ExuluContextSource, type ExuluQueueConfig, type ExuluTool } from "./classes.ts"; /* ExuluMcpToolsClient */
 import { type Express } from "express"
 import { createExpressRoutes, global_queues } from "./routes.ts";
 import { createWorkers } from "./workers.ts";
@@ -342,6 +342,44 @@ export class ExuluApp {
                 let filteredQueues = this._queues;
                 if (queues) {
                     filteredQueues = filteredQueues.filter(q => queues.includes(q.queue.name));
+                }
+
+                // Create ContextSource schedulers
+                const sources = Object.values(this._contexts ?? {}).flatMap(context => ({
+                    ...context.sources,
+                    context: context.id
+                })) as (ExuluContextSource & { context: string })[];
+
+                if (sources.length > 0) {
+                    console.log("[EXULU] Creating ContextSource schedulers for", sources.length, "sources.");
+                    for (const source of sources) {
+                        const queue = await source.config?.queue;
+                        if (queue) {
+                            if (!source.config.schedule) {
+                                throw new Error("Schedule is required for source when configuring a queue: " + source.name);
+                            }
+                            console.log("[EXULU] Creating ContextSource scheduler for", source.name, "in queue", queue.queue?.name);
+                            await queue.queue?.upsertJobScheduler(source.id, {
+                                pattern: source.config?.schedule,
+                            }, { // default job data
+                                name: `${source.id}-job`,
+                                data: {
+                                    source: source.id,
+                                    context: source.context,
+                                    type: 'source',
+                                },
+                                opts: {
+                                    backoff: {
+                                        type: source.config.backoff?.type || 'exponential',
+                                        delay: source.config.backoff?.delay || 2000
+                                    },
+                                    attempts: source.config.retries || 3,
+                                    removeOnFail: 200,
+                                }
+
+                            });
+                        }
+                    }
                 }
 
                 return await createWorkers(

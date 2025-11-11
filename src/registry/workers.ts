@@ -494,6 +494,61 @@ export const createWorkers = async (
                             };
                         }
 
+                        if (data.type === "source") {
+                            
+                            console.log("[EXULU] running a source job.", logMetadata(bullmqJob.name));
+
+                            if (!data.source) {
+                                throw new Error(`No source id set for source job.`);
+                            }
+
+                            if (!data.context) {
+                                throw new Error(`No context id set for source job.`);
+                            }
+
+                            const context = contexts.find(c => c.id === data.context);
+
+                            if (!context) {
+                                throw new Error(`Context ${data.context} not found in the registry.`);
+                            }
+
+                            const source = context.sources.find(s => s.id === data.source);
+
+                            if (!source) {
+                                throw new Error(`Source ${data.source} not found in the context ${context.id}.`);
+                            }
+
+                            const result = await source.execute(data.inputs);
+
+                            let jobs: string[] = [];
+                            let items: string[] = [];
+
+                            for (const item of result) {
+                                const { item: createdItem, job } = await context.createItem(item, config, data.user, data.role);
+                                if (job) {
+                                    jobs.push(job);
+                                    console.log(`[EXULU] Scheduled job through source update job for item ${createdItem.id} (Job ID: ${job})`, logMetadata(bullmqJob.name, {
+                                        item: createdItem,
+                                        job: job,
+                                    }));
+                                }
+                                if (createdItem.id) {
+                                    items.push(createdItem.id);
+                                    console.log(`[EXULU] created item through source update job ${createdItem.id}`, logMetadata(bullmqJob.name, {
+                                        item: createdItem,
+                                    }));
+                                }
+                            }
+
+                            return {
+                                result,
+                                metadata: {
+                                    jobs,
+                                    items,
+                                }
+                            };
+                        }
+
                         throw new Error(`Invalid job type: ${data.type} for job ${bullmqJob.name}.`);
 
                     } catch (error: unknown) {
@@ -926,7 +981,7 @@ const processUiMessagesFlow = async ({
                 for await (const message of stream) {
                     console.log("[EXULU] message", message);
                 }
-                
+
             } catch (error: unknown) {
                 console.error(`[EXULU] error generating stream for agent ${agentInstance.name} (${agentInstance.id}).`, error)
                 reject(error)

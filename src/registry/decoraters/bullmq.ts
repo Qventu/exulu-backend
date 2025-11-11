@@ -29,6 +29,7 @@ export type ExuluBullMqDecoratorData = {
 export type BullMqJobData = {
     label: string,
     type: string,
+    source?: string,
     inputs: any,
     timeoutInSeconds: number,
     user?: number,

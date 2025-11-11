@@ -1351,7 +1351,21 @@ export class ExuluStorage {
     }
     // todo add upload and delete methods
 }
-
+export type ExuluContextSource = {
+    id: string,
+    name: string,
+    description: string,
+    config: {
+        schedule: string, // cron expression
+        queue: Promise<ExuluQueueConfig>
+        retries?: number
+        backoff?: {
+            type: 'exponential' | 'linear'
+            delay: number // in milliseconds
+        }
+    }
+    execute: (inputs: any) => Promise<Item[]>,
+}
 export class ExuluContext {
 
     // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or 
@@ -1371,13 +1385,15 @@ export class ExuluContext {
         defaultRightsMode?: ExuluRightsMode
         language?: "german" | "english"
     };
+    public sources: ExuluContextSource[] = [];
 
-    constructor({ id, name, description, embedder, active, rateLimit, fields, queryRewriter, resultReranker, configuration }: {
+    constructor({ id, name, description, embedder, active, rateLimit, fields, queryRewriter, resultReranker, configuration, sources }: {
         id: string,
         name: string,
         fields: ExuluContextFieldDefinition[],
         description: string,
         embedder?: ExuluEmbedder,
+        sources: ExuluContextSource[],
         category?: string,
         active: boolean,
         rateLimit?: RateLimiterRule,
@@ -1392,7 +1408,8 @@ export class ExuluContext {
         this.id = id;
         this.name = name;
         this.fields = fields || [];
-        this.configuration = configuration || {
+        this.sources = sources || [];
+        this.configuration = configuration || { 
             calculateVectors: "manual",
             language: "english",
             defaultRightsMode: "private"
@@ -1405,7 +1422,7 @@ export class ExuluContext {
         this.resultReranker = resultReranker;
     }
 
-    public process = async (
+    public processField = async (
         trigger: STATISTICS_LABELS,
         user: number,
         role: string,
@@ -1482,6 +1499,10 @@ export class ExuluContext {
         }
     }
 
+    public executeSource = async (source: ExuluContextSource, inputs: any): Promise<Item[]> => {
+        return await source.execute(inputs);
+    }
+
     public tableExists = async () => {
         const { db } = await postgresClient();
         const tableName = getTableName(this.id);
@@ -1496,7 +1517,6 @@ export class ExuluContext {
         const chunksTableExists = await db.schema.hasTable(chunksTableName);
         return chunksTableExists;
     }
-
 
     public createAndUpsertEmbeddings = async (
         item: Item,
@@ -1555,10 +1575,7 @@ export class ExuluContext {
         };
     }
 
-    public createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{
-        item: Item
-        job?: string
-    }> => {
+    public createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{ item: Item, job?: string }> => {
 
         const { db } = await postgresClient();
         const mutation = db.from(getTableName(
@@ -1605,10 +1622,7 @@ export class ExuluContext {
         };
     }
 
-    public updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{
-        item: Item
-        job?: string
-    }> => {
+    public updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{ item: Item, job?: string }> => {
         const { db } = await postgresClient();
 
         if (item.field) {
@@ -1663,10 +1677,7 @@ export class ExuluContext {
         };
     }
 
-    public deleteItem = async (item: Item, user?: number, role?: string): Promise<{
-        id: string
-        job?: string
-    }> => {
+    public deleteItem = async (item: Item, user?: number, role?: string): Promise<{ id: string, job?: string }> => {
 
         if (!item.id) {
             throw new Error("Item id is required for deleting item.")
