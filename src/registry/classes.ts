@@ -55,6 +55,7 @@ export const convertToolsArrayToObject = (
     contexts: ExuluContext[] | undefined,
     user?: User,
     exuluConfig?: ExuluConfig,
+    sessionID?: string,
 ): Record<string, Tool> => {
 
     if (!currentTools) return {};
@@ -75,132 +76,143 @@ export const convertToolsArrayToObject = (
 
     return {
         ...sanitizedTools?.reduce(
-            (prev, cur) =>
-            ({
-                ...prev, [cur.name]: {
-                    ...cur.tool,
-                    async *execute(inputs: any, options: any) { // generator function allows to use yield to stream tool call results
-                        if (!cur.tool?.execute) {
-                            console.error("[EXULU] Tool execute function is undefined.", cur.tool)
-                            throw new Error("Tool execute function is undefined.")
-                        }
-                        let config = configs?.find(config => config.id === cur.id);
+            (prev, cur) => {
 
-                        if (config) {
-                            config = await hydrateVariables(config || []);
-                        }
+                let config = configs?.find(config => config.id === cur.id);
 
-                        let upload: undefined | (
-                            (file: {
-                                name: string,
-                                data: string | Uint8Array | Buffer,
-                                type: allFileTypes,
-                                tags?: string[]
-                            }) => Promise<Item | undefined>) = undefined;
+                // Allows a dev to set a config option for an ExuluTool that overwrites the default tool description.
+                const userDefinedConfigDescription = config?.config.find(config => config.name === "description")?.value
+                const defaultConfigDescription = config?.config.find(config => config.name === "description")?.default
+                const toolDescription = cur.description;
+                const description = userDefinedConfigDescription || defaultConfigDescription || toolDescription;
 
-                        if (
-                            exuluConfig?.fileUploads?.s3endpoint &&
-                            exuluConfig?.fileUploads?.s3key &&
-                            exuluConfig?.fileUploads?.s3secret &&
-                            exuluConfig?.fileUploads?.s3Bucket
-                        ) {
-                            s3Client ??= new S3Client({
-                                region: exuluConfig?.fileUploads?.s3region,
-                                ...(exuluConfig?.fileUploads?.s3endpoint && {
-                                    forcePathStyle: true,
-                                    endpoint: exuluConfig?.fileUploads?.s3endpoint
-                                }),
-                                credentials: {
-                                    accessKeyId: exuluConfig?.fileUploads?.s3key ?? "",
-                                    secretAccessKey: exuluConfig?.fileUploads?.s3secret ?? "",
-                                },
-                            })
+                return {
+                    ...prev, [cur.name]: {
+                        ...cur.tool,
+                        description,
+                        async *execute(inputs: any, options: any) { // generator function allows to use yield to stream tool call results
+                            if (!cur.tool?.execute) {
+                                console.error("[EXULU] Tool execute function is undefined.", cur.tool)
+                                throw new Error("Tool execute function is undefined.")
+                            }
 
-                            upload = async ({
-                                name,
-                                data,
-                                type,
-                                tags
-                            }: {
-                                name: string,
-                                type: allFileTypes,
-                                data: string | Uint8Array | Buffer,
-                                tags?: string[]
-                            }): Promise<Item | undefined> => {
-                                const mime = getMimeType(type)
-                                const prefix = exuluConfig?.fileUploads?.s3prefix
-                                    ? `${exuluConfig.fileUploads.s3prefix.replace(/\/$/, '')}/`
-                                    : '';
-                                const key = `${prefix}${user}/${generateS3Key(name)}${type}`;
-                                const command = new PutObjectCommand({
-                                    Bucket: exuluConfig?.fileUploads?.s3Bucket,
-                                    Key: key,
-                                    Body: data,
-                                    ContentType: mime
-                                });
-                                try {
-                                    const response = await s3Client.send(command);
-                                    console.log(response);
-                                    return response;
-                                } catch (caught) {
-                                    if (
-                                        caught instanceof S3ServiceException &&
-                                        caught.name === "EntityTooLarge"
-                                    ) {
-                                        console.error(
-                                            `Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
-                                The object was too large. To upload objects larger than 5GB, use the S3 console (160GB max) \
-                                or the multipart upload API (5TB max).`,
-                                        );
-                                    } else if (caught instanceof S3ServiceException) {
-                                        console.error(
-                                            `Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}.  ${caught.name}: ${caught.message}`,
-                                        );
-                                    } else {
-                                        throw caught;
+                            if (config) {
+                                config = await hydrateVariables(config || []);
+                            }
+
+                            let upload: undefined | (
+                                (file: {
+                                    name: string,
+                                    data: string | Uint8Array | Buffer,
+                                    type: allFileTypes,
+                                    tags?: string[]
+                                }) => Promise<Item | undefined>) = undefined;
+
+                            if (
+                                exuluConfig?.fileUploads?.s3endpoint &&
+                                exuluConfig?.fileUploads?.s3key &&
+                                exuluConfig?.fileUploads?.s3secret &&
+                                exuluConfig?.fileUploads?.s3Bucket
+                            ) {
+                                s3Client ??= new S3Client({
+                                    region: exuluConfig?.fileUploads?.s3region,
+                                    ...(exuluConfig?.fileUploads?.s3endpoint && {
+                                        forcePathStyle: true,
+                                        endpoint: exuluConfig?.fileUploads?.s3endpoint
+                                    }),
+                                    credentials: {
+                                        accessKeyId: exuluConfig?.fileUploads?.s3key ?? "",
+                                        secretAccessKey: exuluConfig?.fileUploads?.s3secret ?? "",
+                                    },
+                                })
+
+                                upload = async ({
+                                    name,
+                                    data,
+                                    type,
+                                    tags
+                                }: {
+                                    name: string,
+                                    type: allFileTypes,
+                                    data: string | Uint8Array | Buffer,
+                                    tags?: string[]
+                                }): Promise<Item | undefined> => {
+                                    const mime = getMimeType(type)
+                                    const prefix = exuluConfig?.fileUploads?.s3prefix
+                                        ? `${exuluConfig.fileUploads.s3prefix.replace(/\/$/, '')}/`
+                                        : '';
+                                    const key = `${prefix}${user}/${generateS3Key(name)}${type}`;
+                                    const command = new PutObjectCommand({
+                                        Bucket: exuluConfig?.fileUploads?.s3Bucket,
+                                        Key: key,
+                                        Body: data,
+                                        ContentType: mime
+                                    });
+                                    try {
+                                        const response = await s3Client.send(command);
+                                        console.log(response);
+                                        return response;
+                                    } catch (caught) {
+                                        if (
+                                            caught instanceof S3ServiceException &&
+                                            caught.name === "EntityTooLarge"
+                                        ) {
+                                            console.error(
+                                                `[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
+                                    The object was too large. To upload objects larger than 5GB, use the S3 console (160GB max) \
+                                    or the multipart upload API (5TB max).`,
+                                            );
+                                        } else if (caught instanceof S3ServiceException) {
+                                            console.error(
+                                                `[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}.  ${caught.name}: ${caught.message}`,
+                                            );
+                                        } else {
+                                            throw caught;
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        const contextsMap = contexts?.reduce((acc, curr) => {
-                            acc[curr.id] = curr;
-                            return acc;
-                        }, {});
-
-                        console.log("[EXULU] Config", config)
-                        const response = await cur.tool.execute({
-                            ...inputs,
-                            // Convert config to object format if a config object 
-                            // is available, after we added the .value property
-                            // by hydrating it from the variables table.
-                            providerapikey: providerapikey,
-                            allExuluTools,
-                            currentTools,
-                            user,
-                            contexts: contextsMap,
-                            upload,
-                            config: config ? config.config.reduce((acc, curr) => {
-                                acc[curr.name] = curr.value;
+                            const contextsMap = contexts?.reduce((acc, curr) => {
+                                acc[curr.id] = curr;
                                 return acc;
-                            }, {}) : {}
-                        }, options);
+                            }, {});
 
-                        await updateStatistic({
-                            name: "count",
-                            label: cur.name,
-                            type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
-                            trigger: "agent",
-                            count: 1,
-                            user: user?.id,
-                            role: user?.role?.id
-                        })
+                            console.log("[EXULU] Config", config)
+                            const response = await cur.tool.execute({
+                                ...inputs,
+                                sessionID: sessionID,
+                                // Convert config to object format if a config object 
+                                // is available, after we added the .value property
+                                // by hydrating it from the variables table.
+                                providerapikey: providerapikey,
+                                allExuluTools,
+                                currentTools,
+                                user,
+                                contexts: contextsMap,
+                                upload,
+                                config: config ? config.config.reduce((acc, curr) => {
+                                    acc[curr.name] = curr.value;
+                                    return acc;
+                                }, {}) : {}
+                            }, options);
 
-                        yield response;
-                        return response;
+                            await updateStatistic({
+                                name: "count",
+                                label: cur.name,
+                                type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
+                                trigger: "agent",
+                                count: 1,
+                                user: user?.id,
+                                role: user?.role?.id
+                            })
+
+                            yield response;
+                            return response;
+                        }
                     }
                 }
-            }), {}
+            }, {}
         ),
         // askForConfirmation
     }
@@ -210,11 +222,16 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
     const { db } = await postgresClient();
     const promises = tool.config.map(async (toolConfig) => {
 
+        if (!toolConfig.variable) {
+            return toolConfig;
+        }
+
         // Get the variable name from user's anthropic_token field
         const variableName = toolConfig.variable;
 
         // Look up the variable from the variables table
         const variable = await db.from("variables").where({ name: variableName }).first();
+
         if (!variable) {
             console.error("[EXULU] Variable " + variableName + " not found.")
             throw new Error("Variable " + variableName + " not found.")
@@ -230,6 +247,7 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
 
         toolConfig.value = value;
 
+        return toolConfig;
     })
     await Promise.all(promises);
     console.log("[EXULU] Variable values retrieved and added to tool config.")
@@ -308,6 +326,7 @@ interface ExuluAgentToolConfig {
         name: string,
         variable: string // is a variable name
         value?: any // fetched on demand from the database based on the variable name
+        default?: string
     }[]
 }
 
@@ -688,7 +707,8 @@ export class ExuluAgent {
                         providerapikey,
                         contexts,
                         user,
-                        exuluConfig
+                        exuluConfig,
+                        session,
                     ),
                     stopWhen: [stepCountIs(2)],
                 });
@@ -747,7 +767,8 @@ export class ExuluAgent {
                     providerapikey,
                     contexts,
                     user,
-                    exuluConfig
+                    exuluConfig,
+                    session,
                 ),
                 stopWhen: [stepCountIs(2)],
             });
@@ -890,7 +911,8 @@ export class ExuluAgent {
                 providerapikey,
                 contexts,
                 user,
-                exuluConfig
+                exuluConfig,
+                session,
             ),
             onError: error => {
                 console.error("[EXULU] chat stream error.", error);
@@ -917,6 +939,16 @@ const getAgentMessages = async ({ session, user, limit, page }: { session: strin
     }
     const messages = await query;
     return messages;
+}
+
+export const getSession = async ({ sessionID }: { sessionID: string }) => {
+    const { db } = await postgresClient();
+    console.log("[EXULU] getting session for session ID: " + sessionID)
+    const session = await db.from("agent_sessions").where({ id: sessionID }).first();
+    if (!session) {
+        throw new Error("Session not found for session ID: " + sessionID);
+    }
+    return session;
 }
 
 export const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
@@ -1247,6 +1279,7 @@ export class ExuluTool {
     public config: {
         name: string,
         description: string
+        default?: string
     }[]
 
     constructor({ id, name, description, category, inputSchema, type, execute, config }: {
@@ -1259,6 +1292,7 @@ export class ExuluTool {
         config: {
             name: string,
             description: string
+            default?: string
         }[],
         execute: (inputs: any) => Promise<{
             result?: string
@@ -1355,9 +1389,9 @@ export type ExuluContextSource = {
     id: string,
     name: string,
     description: string,
-    config: {
-        schedule: string, // cron expression
-        queue: Promise<ExuluQueueConfig>
+    config?: {
+        schedule?: string, // cron expression
+        queue?: Promise<ExuluQueueConfig>
         retries?: number
         backoff?: {
             type: 'exponential' | 'linear'
@@ -1409,7 +1443,7 @@ export class ExuluContext {
         this.name = name;
         this.fields = fields || [];
         this.sources = sources || [];
-        this.configuration = configuration || { 
+        this.configuration = configuration || {
             calculateVectors: "manual",
             language: "english",
             defaultRightsMode: "private"

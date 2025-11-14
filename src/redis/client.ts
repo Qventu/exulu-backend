@@ -16,10 +16,10 @@ export async function redisClient(): Promise<{
     if (!client["exulu"]) {
         try {
             let url = ""
-            if (redisServer.username) {
+            if (redisServer.password) {
                 url = `redis://${redisServer.username}:${redisServer.password}@${redisServer.host}:${redisServer.port}`
             } else {
-                url = `redis://${redisServer.host}:${redisServer.port}`
+                url = `redis://${redisServer.host}:${redisServer.port}`;
             }
             client["exulu"] = createClient({
                 url

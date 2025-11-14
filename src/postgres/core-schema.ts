@@ -55,6 +55,10 @@ const agentSessionsSchema: ExuluTableDefinition = {
             name: "project",
             type: "uuid",
             required: false
+        },
+        {
+            name: "metadata",
+            type: "json"
         }
     ]
 }

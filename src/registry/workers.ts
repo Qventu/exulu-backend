@@ -8,7 +8,7 @@ import type { BullMqJobData } from "./decoraters/bullmq";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from ".";
 import { v4 as uuidv4 } from 'uuid';
-import { readUIMessageStream, type UIMessage } from "ai";
+import { type UIMessage } from "ai";
 import CryptoJS from 'crypto-js';
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
@@ -29,16 +29,6 @@ export const createWorkers = async (
     tools: ExuluTool[],
     tracer?: Tracer
 ) => {
-    console.log(`
-        ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
-        ██╔════╝╚██╗██╔╝██║   ██║██║      ██║   ██║
-        █████╗   ╚███╔╝ ██║   ██║██║      ██║   ██║
-        ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
-        ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
-        ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝   
-        Intelligence Management Platform - Workers
-    
-        `);
     console.log("[EXULU] creating workers for " + queues?.length + " queues.");
     console.log("[EXULU] queues", queues.map(q => q.queue.name));
     // Initializes any required workers for processing embedder

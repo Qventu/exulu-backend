@@ -19,7 +19,7 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "..";
 import { SALT_ROUNDS } from "../../auth/generate-key";
 import type { Job, JobState, Queue } from "bullmq";
-import { ExuluQueues } from "../..";
+import { ExuluQueues, logMetadata } from "../..";
 import { redisClient as getRedisClient } from "../../redis/client";
 import type { BullMqJobData } from "../decoraters/bullmq";
 import { v4 as uuidv4 } from 'uuid';
@@ -386,6 +386,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
 
 function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], contexts: ExuluContext[], tools: ExuluTool[], config: ExuluConfig) {
     const tableNamePlural = table.name.plural.toLowerCase();
+    const tableNameSingular = table.name.singular.toLowerCase();
     const validateWriteAccess = async (id: string, context: any) => {
 
         try {
@@ -847,166 +848,248 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
         }
     };
 
-    if (table.type === "items" && table.fields.some(field => field.processor?.execute)) {
-        mutations[`${tableNamePlural}ProcessItemField`] = async (_, args, context, info) => {
-            if (!context.user?.super_admin) {
-                throw new Error("You are not authorized to process fields via API, user must be super admin.");
-            }
-
-            const exists = contexts.find(context => context.id === table.id)
-            if (!exists) {
-                throw new Error(`Context ${table.id} not found.`);
-            }
-
-            if (!args.field) {
-                throw new Error("Field argument missing, the field argument is required.");
-            }
-
-            if (!args.item) {
-                throw new Error("Item argument missing, the item argument is required.");
-            }
-
-            const name = args.field?.replace("_s3key", "");
-            console.log("[EXULU] name", name)
-            console.log("[EXULU] fields", exists.fields.map(field => field.name))
-            const field = exists.fields.find(field => field.name === name)
-            if (!field) {
-                throw new Error(`Field ${name} not found in context ${exists.id}.`);
-            }
-
-            if (!field.processor) {
-                throw new Error(`Processor not set for field ${args.field} in context ${exists.id}.`);
-            }
-
-            const { db } = context;
-            let query = db.from(tableNamePlural).select("*").where({ id: args.item });
-            query = applyAccessControl(table, context.user, query);
-            const item = await query.first();
-
-            if (!item) {
-                throw new Error("Item not found, or your user does not have access to it.");
-            }
-
-            const { job, result } = await exists.processField(
-                "api",
-                context.user.id,
-                context.user.role?.id,
-                {
-                    ...item,
-                    field: args.field
-                },
-                config
-            )
-
-            return {
-                message: job ? "Processing job scheduled." : "Item processed successfully.",
-                result: result,
-                job
-            }
-
-        },
-            mutations[`${tableNamePlural}GenerateChunks`] = async (_, args, context, info) => {
+    if (table.type === "items") {
+        if (table.fields.some(field => field.processor?.execute)) {
+            mutations[`${tableNameSingular}ProcessItemField`] = async (_, args, context, info) => {
                 if (!context.user?.super_admin) {
-                    throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+                    throw new Error("You are not authorized to process fields via API, user must be super admin.");
                 }
-                // Dont need to validate write access here, as we limit it to super admin only.
 
-                const { db } = await postgresClient();
                 const exists = contexts.find(context => context.id === table.id)
                 if (!exists) {
                     throw new Error(`Context ${table.id} not found.`);
                 }
 
-                const { id, embeddings } = exists;
-
-                const mainTable = getTableName(id);
-
-                // Make sure we get all columns as they are needed for
-                // the embeddings generation.
-                const columns = await db(mainTable).columnInfo();
-                let query = db.from(mainTable).select(Object.keys(columns));
-
-                // Generating all chunks for the context.
-                if (!args.where) {
-                    const {
-                        jobs,
-                        items
-                    } = await embeddings.generate.all(
-                        config,
-                        context.user.id,
-                        context.user.role?.id
-                    );
-
-                    return {
-                        message: "Chunks generated successfully.",
-                        items: items,
-                        jobs: jobs.slice(0, 100)
-                    }
+                if (!args.field) {
+                    throw new Error("Field argument missing, the field argument is required.");
                 }
 
-                // Generating chunks for the items in the context 
-                // that match the where clause.
-                query = applyFilters(query, args.where);
-
-                const items = await query;
-                if (items.length === 0) {
-                    throw new Error("No items found to generate chunks for.");
+                if (!args.item) {
+                    throw new Error("Item argument missing, the item argument is required.");
                 }
 
-                const jobs: string[] = [];
-                for (const item of items) {
-                    const { job } = await embeddings.generate.one({
-                        item,
-                        user: context.user.id,
-                        role: context.user.role?.id,
-                        trigger: "api",
-                        config: config
-                    });
-                    if (job) {
-                        jobs.push(job);
-                    }
+                const name = args.field?.replace("_s3key", "");
+                console.log("[EXULU] name", name)
+                console.log("[EXULU] fields", exists.fields.map(field => field.name))
+                const field = exists.fields.find(field => field.name === name)
+                if (!field) {
+                    throw new Error(`Field ${name} not found in context ${exists.id}.`);
                 }
+
+                if (!field.processor) {
+                    throw new Error(`Processor not set for field ${args.field} in context ${exists.id}.`);
+                }
+
+                const { db } = context;
+                let query = db.from(tableNamePlural).select("*").where({ id: args.item });
+                query = applyAccessControl(table, context.user, query);
+                const item = await query.first();
+
+                if (!item) {
+                    throw new Error("Item not found, or your user does not have access to it.");
+                }
+
+                const { job, result } = await exists.processField(
+                    "api",
+                    context.user.id,
+                    context.user.role?.id,
+                    {
+                        ...item,
+                        field: args.field
+                    },
+                    config
+                )
+
                 return {
-                    message: "Chunks deleted successfully.",
-                    items: items.length,
-                    jobs: jobs.slice(0, 100)
-                }
-
-            },
-            mutations[`${tableNamePlural}DeleteChunks`] = async (_, args, context, info) => {
-                if (!context.user?.super_admin) {
-                    throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
-                }
-
-                // Dont need to validate write access here, as we limit it to super admin only.
-
-                const { db } = await postgresClient();
-                const id = contexts.find(context => context.id === table.id)?.id
-                if (!id) {
-                    throw new Error(`Context ${table.id} not found.`);
-                }
-
-                let query = db.from(getTableName(id)).select("id");
-
-                if (args.where) {
-                    query = applyFilters(query, args.where);
-                }
-
-                const items = await query;
-                if (items.length === 0) {
-                    throw new Error("No items found to delete chunks for.");
-                }
-
-                for (const item of items) {
-                    await db.from(getChunksTableName(id)).where({ source: item.id }).delete();
-                }
-                return {
-                    message: "Chunks deleted successfully.",
-                    items: items.length,
-                    jobs: []
+                    message: job ? "Processing job scheduled." : "Item processed successfully.",
+                    result: result,
+                    job
                 }
 
             }
+        }
+        mutations[`${tableNameSingular}ExecuteSource`] = async (_, args, context, info) => {
+
+            console.log("[EXULU] Executing source", args)
+
+            if (!context.user?.super_admin) {
+                throw new Error("You are not authorized to execute sources via API, user must be super admin.");
+            }
+
+            if (!args.source) {
+                throw new Error("Source argument missing, the source argument is required.");
+            }
+
+            const exists = contexts.find(context => context.id === table.id)
+
+            if (!exists) {
+                throw new Error(`Context ${table.id} not found.`);
+            }
+
+            const source = exists.sources.find(source => source.id === args.source)
+
+            if (!source) {
+                throw new Error(`Source ${args.source} not found in context ${exists.id}.`);
+            }
+
+            if (source?.config?.queue) {
+                console.log("[EXULU] Executing source function in queue mode")
+                const queue = await source.config.queue;
+
+                if (!queue) {
+                    throw new Error(`Queue not found for source ${source.id}.`);
+                }
+
+                const job = await queue.queue?.add(source.id, {
+                    source: source.id,
+                    context: exists.id,
+                    type: "source",
+                    inputs: args.inputs
+                })
+
+                console.log("[EXULU] Source function job scheduled", job.id)
+
+                return {
+                    message: "Job scheduled for source execution.",
+                    jobs: [job?.id],
+                    items: []
+                }
+            }
+
+            console.log("[EXULU] Executing source function directly")
+            const result = await source.execute(args.inputs)
+
+            let jobs: string[] = [];
+            let items: string[] = [];
+
+            for (const item of result) {
+
+                const { item: createdItem, job } = await exists.createItem(
+                    item,
+                    config,
+                    context.user.id,
+                    context.user.role?.id
+                );
+
+                if (job) {
+                    jobs.push(job);
+                    console.log(`[EXULU] Scheduled job through source update job for item ${createdItem.id} (Job ID: ${job})`);
+                }
+
+                if (createdItem.id) {
+                    items.push(createdItem.id);
+                    console.log(`[EXULU] created item through source update job ${createdItem.id}`);
+                }
+
+            }
+
+            return {
+                message: "Items created successfully.",
+                jobs,
+                items
+            };
+        }
+        mutations[`${tableNameSingular}GenerateChunks`] = async (_, args, context, info) => {
+            if (!context.user?.super_admin) {
+                throw new Error("You are not authorized to generate chunks via API, user must be super admin.");
+            }
+            // Dont need to validate write access here, as we limit it to super admin only.
+
+            const { db } = await postgresClient();
+            const exists = contexts.find(context => context.id === table.id)
+            if (!exists) {
+                throw new Error(`Context ${table.id} not found.`);
+            }
+
+            const { id, embeddings } = exists;
+
+            const mainTable = getTableName(id);
+
+            // Make sure we get all columns as they are needed for
+            // the embeddings generation.
+            const columns = await db(mainTable).columnInfo();
+            let query = db.from(mainTable).select(Object.keys(columns));
+
+            // Generating all chunks for the context.
+            if (!args.where) {
+                const {
+                    jobs,
+                    items
+                } = await embeddings.generate.all(
+                    config,
+                    context.user.id,
+                    context.user.role?.id
+                );
+                return {
+                    message: "Chunks generated successfully.",
+                    items: items,
+                    jobs: jobs.slice(0, 100)
+                }
+            }
+
+            // Generating chunks for the items in the context 
+            // that match the where clause.
+            query = applyFilters(query, args.where);
+
+            const items = await query;
+            if (items.length === 0) {
+                throw new Error("No items found to generate chunks for.");
+            }
+
+            const jobs: string[] = [];
+            for (const item of items) {
+                const { job } = await embeddings.generate.one({
+                    item,
+                    user: context.user.id,
+                    role: context.user.role?.id,
+                    trigger: "api",
+                    config: config
+                });
+                if (job) {
+                    jobs.push(job);
+                }
+            }
+            return {
+                message: "Chunks generated successfully.",
+                items: items.length,
+                jobs: jobs.slice(0, 100)
+            }
+
+        }
+        mutations[`${tableNameSingular}DeleteChunks`] = async (_, args, context, info) => {
+            if (!context.user?.super_admin) {
+                throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
+            }
+
+            // Dont need to validate write access here, as we limit it to super admin only.
+
+            const { db } = await postgresClient();
+            const id = contexts.find(context => context.id === table.id)?.id
+            if (!id) {
+                throw new Error(`Context ${table.id} not found.`);
+            }
+
+            let query = db.from(getTableName(id)).select("id");
+
+            if (args.where) {
+                query = applyFilters(query, args.where);
+            }
+
+            const items = await query;
+            if (items.length === 0) {
+                throw new Error("No items found to delete chunks for.");
+            }
+
+            for (const item of items) {
+                await db.from(getChunksTableName(id)).where({ source: item.id }).delete();
+            }
+            return {
+                message: "Chunks deleted successfully.",
+                items: items.length,
+                jobs: []
+            }
+
+        }
     }
 
     return mutations;
@@ -2231,6 +2314,7 @@ export function createSDL(
         if (table.type === "items") {
             mutationDefs += `
     ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}GenerateChunksReturnPayload
+    ${tableNameSingular}ExecuteSource(source: ID!, inputs: JSON!): ${tableNameSingular}ExecuteSourceReturnPayload
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}DeleteChunksReturnPayload
     `
 
@@ -2245,6 +2329,12 @@ export function createSDL(
         message: String!
         items: Int!
         jobs: [String!]
+    }
+
+    type ${tableNameSingular}ExecuteSourceReturnPayload {
+        message: String!
+        jobs: [String!]
+        items: [String!]
     }
 
     type ${tableNameSingular}ProcessItemFieldReturnPayload {
@@ -2374,7 +2464,7 @@ type PageInfo {
     `
 
     typeDefs += `
-   jobs(queue: QueueEnum!, statusses: [JobStateEnum!]): JobPaginationResult
+   jobs(queue: QueueEnum!, statusses: [JobStateEnum!], page: Int, limit: Int): JobPaginationResult
     `
 
     resolvers.Query["providers"] = async (_, args, context, info) => {
@@ -2443,8 +2533,13 @@ type PageInfo {
         }
 
         // Get test case IDs and eval function IDs from eval run
-        let testCaseIds: string[] = evalRun.test_case_ids ? (typeof evalRun.test_case_ids === 'string' ? JSON.parse(evalRun.test_case_ids) : evalRun.test_case_ids) : [];
-        const eval_functions = evalRun.eval_functions ? (typeof evalRun.eval_functions === 'string' ? JSON.parse(evalRun.eval_functions) : evalRun.eval_functions) : [];
+        let testCaseIds: string[] = evalRun.test_case_ids ? (
+            typeof evalRun.test_case_ids === 'string' ? JSON.parse(evalRun.test_case_ids) : evalRun.test_case_ids
+        ) : [];
+
+        const eval_functions = evalRun.eval_functions ? (
+            typeof evalRun.eval_functions === 'string' ? JSON.parse(evalRun.eval_functions) : evalRun.eval_functions
+        ) : [];
 
         if (!testCaseIds || testCaseIds.length === 0) {
             throw new Error("No test cases selected for this eval run.");
@@ -2453,7 +2548,7 @@ type PageInfo {
         if (!eval_functions || eval_functions.length === 0) {
             throw new Error("No eval functions selected for this eval run.");
         }
-        
+
         if (args.test_case_ids) {
             testCaseIds = testCaseIds.filter(testCase => args.test_case_ids.includes(testCase));
         }
@@ -2618,7 +2713,7 @@ type PageInfo {
         if (!client) {
             throw new Error("Redis client not created properly");
         }
-
+        console.log("[EXULU] Jobs pagination args", args);
         const {
             jobs,
             count
@@ -2653,7 +2748,7 @@ type PageInfo {
                 itemCount: count,
                 currentPage: args.page || 1,
                 hasPreviousPage: (args.page && args.page > 1) ? true : false,
-                hasNextPage: (args.page && args.page < Math.ceil(jobs.length / (args.limit || 100))) ? true : false
+                hasNextPage: (args.page && args.page < Math.ceil(count / (args.limit || 100))) ? true : false
             }
         }
 
@@ -2661,20 +2756,42 @@ type PageInfo {
 
     resolvers.Query["contexts"] = async (_, args, context, info) => {
 
-        const data = contexts.map(context => ({
-            id: context.id,
-            name: context.name,
-            description: context.description,
-            embedder: context.embedder?.name || undefined,
-            slug: "/contexts/" + context.id,
-            active: context.active,
-            fields: context.fields.map(field => {
-                return {
-                    ...field,
-                    name: sanitizeName(field.name),
-                    label: field.name?.replace("_s3key", "")
+        const data = await Promise.all(contexts.map(async context => {
+
+            const sources = await Promise.all(context.sources.map(async source => {
+                let queueName: string | undefined = undefined;
+                if (source.config) {
+                    const config = await source.config.queue;
+                    queueName = config?.queue?.name || undefined;
                 }
-            })
+                return {
+                    id: source.id,
+                    name: source.name,
+                    description: source.description,
+                    config: {
+                        schedule: source.config?.schedule,
+                        queue: queueName,
+                        retries: source.config?.retries,
+                        backoff: source.config?.backoff,
+                    },
+                }
+            }))
+            return {
+                id: context.id,
+                name: context.name,
+                description: context.description,
+                embedder: context.embedder?.name || undefined,
+                slug: "/contexts/" + context.id,
+                active: context.active,
+                sources,
+                fields: context.fields.map(field => {
+                    return {
+                        ...field,
+                        name: sanitizeName(field.name),
+                        label: field.name?.replace("_s3key", "")
+                    }
+                })
+            }
         }))
 
         const requestedFields = getRequestedFields(info)
@@ -2697,6 +2814,25 @@ type PageInfo {
             return null;
         }
 
+        const sources = await Promise.all(data.sources.map(async source => {
+            let queueName: string | undefined = undefined;
+            if (source.config) {
+                const config = await source.config.queue;
+                queueName = config?.queue?.name || undefined;
+            }
+            return {
+                id: source.id,
+                name: source.name,
+                description: source.description,
+                config: {
+                    schedule: source.config?.schedule,
+                    queue: queueName,
+                    retries: source.config?.retries,
+                    backoff: source.config?.backoff,
+                },
+            }
+        }))
+
         const clean = {
             id: data.id,
             name: data.name,
@@ -2704,6 +2840,7 @@ type PageInfo {
             embedder: data.embedder?.name || undefined,
             slug: "/contexts/" + data.id,
             active: data.active,
+            sources,
             fields: await Promise.all(data.fields.map(async field => {
                 const label = field.name?.replace("_s3key", "");
                 if (field.type === "file" && !field.name.endsWith("_s3key")) {
@@ -2750,7 +2887,7 @@ type PageInfo {
     resolvers.Query["tools"] = async (_, args, context, info) => {
         const requestedFields = getRequestedFields(info)
         const { search, category, limit = 100, page = 0 } = args;
-        
+
         // Get all active agents and add them as tools
         // so agents can call other agents as tools.
         const instances = await loadAgents();
@@ -2769,7 +2906,7 @@ type PageInfo {
         // Apply search filter
         if (search && search.trim()) {
             const searchTerm = search.toLowerCase().trim();
-            allTools = allTools.filter(tool => 
+            allTools = allTools.filter(tool =>
                 tool.name?.toLowerCase().includes(searchTerm) ||
                 tool.description?.toLowerCase().includes(searchTerm)
             );
@@ -2803,8 +2940,8 @@ type PageInfo {
     resolvers.Query["toolCategories"] = async () => {
         // Extract unique categories from all tools
         const array = tools
-        .map(tool => tool.category)
-        .filter(category => category && typeof category === 'string')
+            .map(tool => tool.category)
+            .filter(category => category && typeof category === 'string')
         array.push("contexts");
         array.push("agents");
         return [...new Set(array)].sort();
@@ -2946,6 +3083,26 @@ type Context {
     active: Boolean
     fields: JSON
     configuration: JSON
+    sources: [ContextSource!]
+}
+
+type ContextSource {
+    id: String!
+    name: String!
+    description: String!
+    config: ContextSourceConfig!
+}
+
+type ContextSourceConfig {
+    schedule: String
+    queue: String
+    retries: Int
+    backoff: ContextSourceBackoff
+}
+
+type ContextSourceBackoff {
+    type: String
+    delay: Int
 }
 
 type RunEvalReturnPayload {
@@ -3056,8 +3213,11 @@ async function getJobsByQueueAndName(queueName: string, statusses?: JobState[], 
     }
     const config = await queue.use()
     const startIndex = (page || 1) - 1;
-    const endIndex = startIndex + (limit || 100);
+    const endIndex = (startIndex - 1) + (limit || 100);
+    console.log("[EXULU] Jobs pagination startIndex", startIndex);
+    console.log("[EXULU] Jobs pagination endIndex", endIndex);
     const jobs = await config.queue.getJobs(statusses || [], startIndex, endIndex, false);
+    console.log("[EXULU] Jobs pagination jobs", jobs?.length);
     const counts = await config.queue.getJobCounts(...(statusses || []));
     let total = 0;
     if (counts) {

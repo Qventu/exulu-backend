@@ -193,22 +193,44 @@ export const execute = async ({ contexts }: {
     await up(db)
     await contextDatabases(contexts)
     console.log("[EXULU] Inserting default user and admin role.")
-    const existingRole = await db.from("roles").where({ name: "admin" }).first();
-    let roleId;
+    const existingAdminRole = await db.from("roles").where({ name: "admin" }).first();
+    const existingDefaultRole = await db.from("roles").where({ name: "default" }).first();
+    let adminRoleId;
+    let defaultRoleId;
 
-    if (!existingRole) {
-        console.log("[EXULU] Creating default admin role.");
+    if (!existingAdminRole) {
+        console.log("[EXULU] Creating admin role.");
         const role = await db.from("roles").insert({
             name: "admin",
             agents: "write",
+            api: "write",
             workflows: "write",
             variables: "write",
-            users: "write"
+            users: "write",
+            evals: "write"
         }).returning("id");
-        roleId = role[0].id;
+        adminRoleId = role[0].id;
     } else {
-        roleId = existingRole.id;
+        adminRoleId = existingAdminRole.id;
     }
+
+
+    if (!existingDefaultRole) {
+        console.log("[EXULU] Creating default role.");
+        const role = await db.from("roles").insert({
+            name: "default",
+            agents: "write",
+            api: "read",
+            workflows: "read",
+            variables: "read",
+            users: "read",
+            evals: "read"
+        }).returning("id");
+        defaultRoleId = role[0].id;
+    } else {
+        defaultRoleId = existingDefaultRole.id;
+    }
+
 
     const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
     if (!existingUser) {
@@ -223,7 +245,7 @@ export const execute = async ({ contexts }: {
             updatedAt: new Date(),
             password: password,
             type: "user",
-            role: roleId
+            role: adminRoleId
         });
     }
 

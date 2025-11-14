@@ -40,6 +40,7 @@ const consoleTransport = new winston.transports.Console({
 import { getDefaultEvals } from "../templates/evals/index.ts";
 import { ExuluQueues } from "../index.ts";
 import { mathTools } from "../templates/tools/math.ts";
+import { todoTools } from "../templates/tools/todo/todo.ts";
 
 // Monkey-patch console to use Winston with metadata support
 const formatArg = (arg: any) => typeof arg === 'object' ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
@@ -171,6 +172,7 @@ export class ExuluApp {
         this._tools = [
             ...(tools ?? []),
             ...mathTools,
+            ...todoTools,
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),
             // Because agents are stored in the database,  we add those as tools
@@ -311,6 +313,17 @@ export class ExuluApp {
         workers: {
             create: async (queues?: string[] | undefined) => {
 
+                console.log(`
+                    ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
+                    ██╔════╝╚██╗██╔╝██║   ██║██║      ██║   ██║
+                    █████╗   ╚███╔╝ ██║   ██║██║      ██║   ██║
+                    ██╔══╝   ██╔██╗ ██║   ██║██║      ██║   ██║
+                    ███████╗██╔╝ ██╗╚██████╔╝███████╗╚██████╔╝
+                    ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝ ╚═════╝   
+                    Intelligence Management Platform - Workers
+                
+                    `);
+
                 if (!this._config) {
                     throw new Error("Config not initialized, make sure to call await ExuluApp.create() first when starting your server.")
                 }
@@ -345,17 +358,27 @@ export class ExuluApp {
                 }
 
                 // Create ContextSource schedulers
-                const sources = Object.values(this._contexts ?? {}).flatMap(context => ({
-                    ...context.sources,
-                    context: context.id
-                })) as (ExuluContextSource & { context: string })[];
+                const contexts = Object.values(this._contexts ?? {});
+                let sources: (ExuluContextSource & { context: string })[] = [];
+                for (const context of contexts) {
+                    for (const source of context.sources) {
+                        sources.push({
+                            ...source,
+                            context: context.id
+                        });
+                    }
+                }
 
                 if (sources.length > 0) {
                     console.log("[EXULU] Creating ContextSource schedulers for", sources.length, "sources.");
                     for (const source of sources) {
                         const queue = await source.config?.queue;
+                        if (!queue) {
+                            console.warn("[EXULU] No queue configured for source", source.name);
+                            continue;
+                        }
                         if (queue) {
-                            if (!source.config.schedule) {
+                            if (!source.config?.schedule) {
                                 throw new Error("Schedule is required for source when configuring a queue: " + source.name);
                             }
                             console.log("[EXULU] Creating ContextSource scheduler for", source.name, "in queue", queue.queue?.name);
@@ -367,6 +390,7 @@ export class ExuluApp {
                                     source: source.id,
                                     context: source.context,
                                     type: 'source',
+                                    inputs: {},
                                 },
                                 opts: {
                                     backoff: {

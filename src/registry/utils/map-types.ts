@@ -96,5 +96,5 @@ export const mapType = (t, type: ExuluFieldTypes | "date" | "uuid" | "array", na
         if (unique) t.unique(name);
         return;
     }
-    throw new Error("Invalid type: " + type);
+    throw new Error("Invalid field type for database: " + type);
 }

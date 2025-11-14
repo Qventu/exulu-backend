@@ -144,7 +144,7 @@ export const createExpressRoutes = async (
         express.json({ limit: REQUEST_SIZE_LIMIT }),
         expressMiddleware(server, {
             context: async ({ req }) => {
-                console.info("[EXULU] Incoming graphql request", {
+                /* console.info("[EXULU] Incoming graphql request", {
                     message: 'Incoming Request',
                     method: req.method,
                     path: req.path,
@@ -157,12 +157,14 @@ export const createExpressRoutes = async (
                         "origin": req.headers['origin'],
                         "...": "..."
                     }
-                });
+                }); */
                 const authenticationResult = await requestValidators.authenticate(req);
                 if (!authenticationResult.user?.id) {
+                    console.error("[EXULU] Authentication failed", authenticationResult)
                     throw new Error(authenticationResult.message);
                 }
                 const { db } = await postgresClient();
+                console.log("[EXULU] Graphql call")
                 return {
                     req,
                     db,
