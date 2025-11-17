@@ -48,15 +48,17 @@ const {
     variablesSchema,
     workflowTemplatesSchema,
     rbacSchema,
+    promptLibrarySchema,
+    promptFavoritesSchema,
     statisticsSchema
 } = coreSchemas.get();
 
 export type ExuluTableDefinition = {
-    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations" | "job_results",
+    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites",
     id?: string,
     name: {
-        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations" | "job_results",
-        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration" | "job_result",
+        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites",
+        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration" | "job_result" | "prompt_library_item" | "prompt_favorite",
     },
     fields: ExuluContextFieldDefinition[],
     RBAC?: boolean,
@@ -110,6 +112,8 @@ export const createExpressRoutes = async (
         agentsSchema(),
         projectsSchema(),
         jobResultsSchema(),
+        promptLibrarySchema(),
+        promptFavoritesSchema(),
         evalRunsSchema(),
         platformConfigurationsSchema(),
         evalSetsSchema(),
@@ -772,10 +776,10 @@ Mood: friendly and intelligent.
                 ]
             } else {
                 system = `${req.body.system}\n\n
-                ${ agent ? `You are an agent named: ${agent?.name}
+                ${agent ? `You are an agent named: ${agent?.name}
                 Here are some additional instructions for you: ${agent?.instructions}` : ""}
 
-                ${ project?.id ? `Additional information:
+                ${project?.id ? `Additional information:
 
                 The project you are working on is: ${project?.name}
                 The project description is: ${project?.description}` : ""}

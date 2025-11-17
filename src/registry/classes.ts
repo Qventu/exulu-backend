@@ -1611,6 +1611,13 @@ export class ExuluContext {
 
     public createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{ item: Item, job?: string }> => {
 
+        if (upsert && (
+            !item.id &&
+            !item.external_id
+        )) {
+            throw new Error("Item id or external id is required for upsert.")
+        }
+
         const { db } = await postgresClient();
         const mutation = db.from(getTableName(
             this.id

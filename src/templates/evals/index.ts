@@ -18,8 +18,8 @@ const llmAsJudgeEval = () => {
                 let prompt = config?.prompt;
 
                 if (!prompt) {
-                    console.error("[EXULU] prompt is required.");
-                    throw new Error("Prompt is required.");
+                    console.error("[EXULU] prompt is required for llm as judge eval but none is provided.");
+                    throw new Error("Prompt is required for llm as judge eval but none is provided.");
                 }
 
                 const lastMessage = messages[messages.length - 1]?.parts?.filter((part) => part.type === "text").map((part) => part.text).join("\n");

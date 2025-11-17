@@ -153,6 +153,119 @@ export class ExuluMCP {
             server.tools[tool.id] = tool.name;
         }
 
+        // Register prompt template tools
+        const getListOfPromptTemplatesName = "getListOfPromptTemplates";
+        if (!server.tools[getListOfPromptTemplatesName]) {
+            server.mcp.registerTool(getListOfPromptTemplatesName, {
+                title: "Get List of Prompt Templates",
+                description: "Retrieves a list of prompt templates available for this agent. Returns the name, description, and ID of each template.",
+                inputSchema: {
+                    inputs: z.object({})
+                }
+            }, async ({ inputs }, args): Promise<any> => {
+                console.log("[EXULU] Getting list of prompt templates for agent", agentInstance.id);
+
+                const { db } = await postgresClient();
+
+                // Query prompts assigned to this agent
+                const prompts = await db.from("prompt_library")
+                    .select("id", "name", "description")
+                    .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agentInstance.id)])
+                    .orderBy("updatedAt", "desc");
+
+                console.log("[EXULU] Found", prompts.length, "prompt templates");
+
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            prompts: prompts.map(p => ({
+                                id: p.id,
+                                name: p.name,
+                                description: p.description || "No description provided"
+                            })),
+                            count: prompts.length
+                        }, null, 2)
+                    }],
+                    structuredContent: {
+                        prompts: prompts.map(p => ({
+                            id: p.id,
+                            name: p.name,
+                            description: p.description || "No description provided"
+                        })),
+                        count: prompts.length
+                    }
+                };
+            });
+        }
+
+        const getPromptTemplateDetailsName = "getPromptTemplateDetails";
+        if (!server.tools[getPromptTemplateDetailsName]) {
+            server.mcp.registerTool(getPromptTemplateDetailsName, {
+                title: "Get Prompt Template Details",
+                description: "Retrieves the full details of a specific prompt template by ID, including the actual template content with variables.",
+                inputSchema: {
+                    inputs: z.object({
+                        id: z.string().describe("The ID of the prompt template to retrieve")
+                    })
+                }
+            }, async ({ inputs }, args): Promise<any> => {
+                console.log("[EXULU] Getting prompt template details for ID", inputs.id);
+
+                const { db } = await postgresClient();
+
+                // Query the specific prompt
+                const prompt = await db.from("prompt_library")
+                    .select("id", "name", "description", "content", "createdAt", "updatedAt", "usage_count", "favorite_count")
+                    .where({ id: inputs.id })
+                    .first();
+
+                if (!prompt) {
+                    throw new Error(`Prompt template with ID ${inputs.id} not found`);
+                }
+
+                // Check if this prompt is assigned to the current agent
+                const isAssignedToAgent = await db.from("prompt_library")
+                    .select("id")
+                    .where({ id: inputs.id })
+                    .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agentInstance.id)])
+                    .first();
+
+                console.log("[EXULU] Prompt template found:", prompt.name);
+
+                return {
+                    content: [{
+                        type: 'text',
+                        text: JSON.stringify({
+                            id: prompt.id,
+                            name: prompt.name,
+                            description: prompt.description || "No description provided",
+                            content: prompt.content,
+                            createdAt: prompt.createdAt,
+                            updatedAt: prompt.updatedAt,
+                            usageCount: prompt.usage_count || 0,
+                            favoriteCount: prompt.favorite_count || 0,
+                            isAssignedToThisAgent: !!isAssignedToAgent
+                        }, null, 2)
+                    }],
+                    structuredContent: {
+                        id: prompt.id,
+                        name: prompt.name,
+                        description: prompt.description || "No description provided",
+                        content: prompt.content,
+                        createdAt: prompt.createdAt,
+                        updatedAt: prompt.updatedAt,
+                        usageCount: prompt.usage_count || 0,
+                        favoriteCount: prompt.favorite_count || 0,
+                        isAssignedToThisAgent: !!isAssignedToAgent
+                    }
+                };
+            });
+        }
+
+        server.tools[getListOfPromptTemplatesName] = getListOfPromptTemplatesName;
+        server.tools[getPromptTemplateDetailsName] = getPromptTemplateDetailsName;
+
         return server.mcp;
     }
 

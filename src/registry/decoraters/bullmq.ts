@@ -82,7 +82,7 @@ export const bullmqDecorator = async ({
         embedder,
         workflow,
         processor,
-        eval
+        evaluation
     ]
 
     if (types.filter(type => type).length > 1) {

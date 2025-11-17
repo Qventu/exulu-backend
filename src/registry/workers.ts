@@ -17,6 +17,7 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import { logMetadata } from "./log-metadata";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
 
 let redisConnection: IORedis;
 
@@ -212,6 +213,7 @@ export const createWorkers = async (
 
                             if (existingResult) {
                                 // update existing
+                                console.log("[EXULU] found existing job result, so ")
                                 await db.from("job_results").where({ label: label }).update({
                                     job_id: bullmqJob.id,
                                     label: label,
@@ -288,10 +290,7 @@ export const createWorkers = async (
                             const messages = result.messages;
                             const metadata = result.metadata;
 
-                            const evalFunctions: {
-                                id: string
-                                config: Record<string, any>
-                            }[] = evalRun.eval_functions;
+                            const evalFunctions: EvalRunEvalFunction[] = evalRun.eval_functions;
 
                             let evalFunctionResults: {
                                 test_case_id: string,
@@ -350,7 +349,9 @@ export const createWorkers = async (
                                         test_case_id: testCase.id,
                                         eval_run_id: evalRun.id,
                                         eval_function_id: evalFunction.id,
-                                        result: result || 0,
+                                        eval_function_name: evalFunction.name,
+                                        eval_function_config: evalFunction.config || {},
+                                        result: result || 0
                                     }
 
                                     console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, logMetadata(bullmqJob.name, {
@@ -358,7 +359,6 @@ export const createWorkers = async (
                                     }));
 
                                     evalFunctionResults.push(evalFunctionResult);
-
 
                                     // If queue is not defined, execute the eval function directly.
                                     // and use the result immediately below.
@@ -389,23 +389,34 @@ export const createWorkers = async (
 
                             const scores = evalFunctionResults.map(result => result.result);
 
+                            console.log("[EXULU] Exulu eval run scores for test case: " + testCase.id, scores)
+
                             let score = 0;
-                            switch (data.scoring_method) {
+                            switch (data.scoring_method?.toLowerCase()) {
                                 case "median":
+                                    console.log("[EXULU] Calculating median score")
                                     score = getMedian(scores);
                                     break;
                                 case "average":
+                                    console.log("[EXULU] Calculating average score")
                                     score = getAverage(scores);
                                     break;
                                 case "sum":
+                                    console.log("[EXULU] Calculating sum score")
                                     score = getSum(scores);
                                     break;
+                                default:
+                                    console.log("[EXULU] Calculating average score")
+                                    score = getAverage(scores);
                             }
 
                             return {
                                 result: score,
                                 metadata: {
-                                    ...evalFunctionResults,
+                                    messages,
+                                    function_results: [
+                                        ...evalFunctionResults
+                                    ],
                                     ...metadata
                                 }
                             };
@@ -423,6 +434,7 @@ export const createWorkers = async (
                             const existingResult = await db.from("job_results").where({ label: label }).first();
 
                             if (existingResult) {
+
                                 // update existing
                                 await db.from("job_results").where({ label: label }).update({
                                     job_id: bullmqJob.id,
@@ -432,7 +444,9 @@ export const createWorkers = async (
                                     metadata: {},
                                     tries: existingResult.tries + 1
                                 });
+
                             } else {
+
                                 await db.from("job_results").insert({
                                     job_id: bullmqJob.id,
                                     label: label,
@@ -441,6 +455,7 @@ export const createWorkers = async (
                                     metadata: {},
                                     tries: 1
                                 });
+
                             }
 
                             const {
@@ -485,7 +500,7 @@ export const createWorkers = async (
                         }
 
                         if (data.type === "source") {
-                            
+
                             console.log("[EXULU] running a source job.", logMetadata(bullmqJob.name));
 
                             if (!data.source) {
@@ -529,6 +544,16 @@ export const createWorkers = async (
                                     }));
                                 }
                             }
+
+                            await updateStatistic({
+                                name: "count",
+                                label: source.id,
+                                type: STATISTICS_TYPE_ENUM.SOURCE_UPDATE as STATISTICS_TYPE,
+                                trigger: "api",
+                                count: 1,
+                                user: data?.user,
+                                role: data?.role
+                            })
 
                             return {
                                 result,

@@ -234,6 +234,7 @@ input FilterOperatorJSON {
   eq: JSON
   ne: JSON
   in: [JSON]
+  contains: JSON
 }
 
 input SortBy {
@@ -944,7 +945,9 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                     source: source.id,
                     context: exists.id,
                     type: "source",
-                    inputs: args.inputs
+                    inputs: args.inputs,
+                    user: context.user.id,
+                    role: context.user.role?.id
                 })
 
                 console.log("[EXULU] Source function job scheduled", job.id)
@@ -982,6 +985,16 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }
 
             }
+
+            await updateStatistic({
+                name: "count",
+                label: source.id,
+                type: STATISTICS_TYPE_ENUM.SOURCE_UPDATE as STATISTICS_TYPE,
+                trigger: "api",
+                count: 1,
+                user: context?.user?.id,
+                role: context?.user?.role?.id
+            })
 
             return {
                 message: "Items created successfully.",
@@ -1027,9 +1040,9 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }
             }
 
-            // Generating chunks for the items in the context 
+            // Generating chunks for the items in the context
             // that match the where clause.
-            query = applyFilters(query, args.where);
+            query = applyFilters(query, args.where, table);
 
             const items = await query;
             if (items.length === 0) {
@@ -1072,7 +1085,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             let query = db.from(getTableName(id)).select("id");
 
             if (args.where) {
-                query = applyFilters(query, args.where);
+                query = applyFilters(query, args.where, table);
             }
 
             const items = await query;
@@ -1170,18 +1183,45 @@ export const applyAccessControl = (table: ExuluTableDefinition, user: User, quer
     return query;
 };
 
-const converOperatorToQuery = (query: any, fieldName: string, operators: any) => {
+const converOperatorToQuery = (query: any, fieldName: string, operators: any, table?: ExuluTableDefinition) => {
+    // Check if field is JSON type
+    const field = table?.fields.find(f => f.name === fieldName);
+    const isJsonField = field?.type === 'json';
+
     if (operators.eq !== undefined) {
-        query = query.where(fieldName, operators.eq);
+        if (isJsonField) {
+            // For JSON fields, use JSON equality operator
+            query = query.whereRaw(`?? = ?::jsonb`, [fieldName, JSON.stringify(operators.eq)]);
+        } else {
+            query = query.where(fieldName, operators.eq);
+        }
     }
     if (operators.ne !== undefined) {
-        query = query.whereRaw(`?? IS DISTINCT FROM ?`, [fieldName, operators.ne])
+        if (isJsonField) {
+            query = query.whereRaw(`?? IS DISTINCT FROM ?::jsonb`, [fieldName, JSON.stringify(operators.ne)]);
+        } else {
+            query = query.whereRaw(`?? IS DISTINCT FROM ?`, [fieldName, operators.ne]);
+        }
     }
     if (operators.in !== undefined) {
-        query = query.whereIn(fieldName, operators.in);
+        if (isJsonField) {
+            // For JSON fields with IN operator, check if the JSON value matches any in the array
+            const conditions = operators.in.map((val: any) => `?? = ?::jsonb`).join(' OR ');
+            const bindings = operators.in.flatMap((val: any) => [fieldName, JSON.stringify(val)]);
+            query = query.whereRaw(`(${conditions})`, bindings);
+        } else {
+            query = query.whereIn(fieldName, operators.in);
+        }
     }
     if (operators.contains !== undefined) {
-        query = query.where(fieldName, 'like', `%${operators.contains}%`);
+        if (isJsonField) {
+            // For JSON fields, use PostgreSQL's @> containment operator
+            // This checks if the JSON field contains the provided value
+            query = query.whereRaw(`?? @> ?::jsonb`, [fieldName, JSON.stringify(operators.contains)]);
+        } else {
+            // For text fields, use LIKE
+            query = query.where(fieldName, 'like', `%${operators.contains}%`);
+        }
     }
     if (operators.lte !== undefined) {
         query = query.where(fieldName, '<=', operators.lte);
@@ -1520,21 +1560,21 @@ const finalizeRequestedFields = async ({
     return result;
 }
 
-const applyFilters = (query: any, filters: any[]) => {
+const applyFilters = (query: any, filters: any[], table?: ExuluTableDefinition) => {
     filters.forEach(filter => {
         Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
             if (operators) {
                 if (operators.and !== undefined) {
                     operators.and.forEach(operator => {
-                        query = converOperatorToQuery(query, fieldName, operator);
+                        query = converOperatorToQuery(query, fieldName, operator, table);
                     });
                 }
                 if (operators.or !== undefined) {
                     operators.or.forEach(operator => {
-                        query = converOperatorToQuery(query, fieldName, operator);
+                        query = converOperatorToQuery(query, fieldName, operator, table);
                     });
                 }
-                query = converOperatorToQuery(query, fieldName, operators)
+                query = converOperatorToQuery(query, fieldName, operators, table)
             }
         });
     });
@@ -1576,7 +1616,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             const requestedFields = getRequestedFields(info)
             const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
             let query = db.from(tableNamePlural).select(sanitizedFields);
-            query = applyFilters(query, filters);
+            query = applyFilters(query, filters, table);
             query = applyAccessControl(table, context.user, query);
             query = applySorting(query, sort);
             let result = await query.first();
@@ -1590,9 +1630,9 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                 throw new Error("Limit cannot be greater than 500.")
             }
 
-            // Create count query  
+            // Create count query
             let countQuery = db(tableNamePlural);
-            countQuery = applyFilters(countQuery, filters);
+            countQuery = applyFilters(countQuery, filters, table);
             countQuery = applyAccessControl(table, context.user, countQuery);
 
             // Get total count
@@ -1605,7 +1645,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
 
             // Create separate data query
             let dataQuery = db(tableNamePlural);
-            dataQuery = applyFilters(dataQuery, filters);
+            dataQuery = applyFilters(dataQuery, filters, table);
             dataQuery = applyAccessControl(table, context.user, dataQuery);
 
             const requestedFields = getRequestedFields(info)
@@ -1633,7 +1673,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             const { db } = context;
 
             let query = db(tableNamePlural);
-            query = applyFilters(query, filters);
+            query = applyFilters(query, filters, table);
             query = applyAccessControl(table, context.user, query);
 
             // Group by the specified field and count
@@ -1773,16 +1813,16 @@ export const vectorSearch = async ({
 
     const mainTable = getTableName(id)
     const chunksTable = getChunksTableName(id);
-    // Create count query  
+    // Create count query
     let countQuery = db(mainTable);
-    countQuery = applyFilters(countQuery, filters);
+    countQuery = applyFilters(countQuery, filters, table);
     countQuery = applyAccessControl(table, user, countQuery);
 
     // Create separate data query
     const columns = await db(mainTable).columnInfo();
 
     let itemsQuery = db(mainTable).select((Object.keys(columns).map(column => mainTable + "." + column)));
-    itemsQuery = applyFilters(itemsQuery, filters);
+    itemsQuery = applyFilters(itemsQuery, filters, table);
     itemsQuery = applyAccessControl(table, user, itemsQuery);
     itemsQuery = applySorting(itemsQuery, sort);
     if (queryRewriter) {
@@ -2702,7 +2742,6 @@ type PageInfo {
         }
     }
 
-
     resolvers.Query["jobs"] = async (_, args, context, info) => {
 
         if (!args.queue) {
@@ -2717,7 +2756,7 @@ type PageInfo {
         const {
             jobs,
             count
-        } = await getJobsByQueueAndName(
+        } = await getJobsByQueueName(
             args.queue,
             args.statusses,
             args.page || 1,
@@ -3203,7 +3242,7 @@ const validateCreateOrRemoveSuperAdminPermission = async (tableNamePlural: strin
     }
 }
 
-async function getJobsByQueueAndName(queueName: string, statusses?: JobState[], page?: number, limit?: number): Promise<{
+async function getJobsByQueueName(queueName: string, statusses?: JobState[], page?: number, limit?: number): Promise<{
     jobs: Job[],
     count: number
 }> {

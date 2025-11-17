@@ -618,6 +618,71 @@ const platformConfigurationsSchema: ExuluTableDefinition = {
     ]
 }
 
+const promptLibrarySchema: ExuluTableDefinition = {
+    type: "prompt_library",
+    name: {
+        plural: "prompt_library",
+        singular: "prompt_library_item"
+    },
+    RBAC: true,
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            required: true
+        },
+        {
+            name: "description",
+            type: "text"
+        },
+        {
+            name: "content",
+            type: "longText",
+            required: true
+        },
+        {
+            name: "tags",
+            type: "json"
+        },
+        {
+            name: "usage_count",
+            type: "number",
+            default: 0
+        },
+        {
+            name: "favorite_count",
+            type: "number",
+            default: 0
+        },
+        {
+            name: "assigned_agents",
+            type: "json"
+        }
+    ]
+}
+
+const promptFavoritesSchema: ExuluTableDefinition = {
+    type: "prompt_favorites",
+    name: {
+        plural: "prompt_favorites",
+        singular: "prompt_favorite"
+    },
+    fields: [
+        {
+            name: "user_id",
+            type: "number",
+            required: true,
+            index: true
+        },
+        {
+            name: "prompt_id",
+            type: "uuid",
+            required: true,
+            index: true
+        }
+    ]
+}
+
 export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
     schema.fields.forEach(field => {
         if (field.type === "file") {
@@ -663,6 +728,8 @@ export const coreSchemas = {
             workflowTemplatesSchema: (): ExuluTableDefinition => addCoreFields(workflowTemplatesSchema),
             platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
             jobResultsSchema: (): ExuluTableDefinition => addCoreFields(jobResultsSchema),
+            promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
+            promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
         }
     }
 }
