@@ -82,7 +82,7 @@ export const createWorkers = async (
                 const data: BullMqJobData = bullmqJob.data;
 
                 // Create timeout promise
-                const timeoutMs = data.timeoutInSeconds * 1000;
+                const timeoutMs = (data.timeoutInSeconds || 300) * 1000;
                 const timeoutPromise: Promise<{
                     result: any,
                     metadata: any

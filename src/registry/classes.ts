@@ -2002,6 +2002,8 @@ export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type
 
 export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string, project?: string }) => {
 
+    console.log("[EXULU] updating statistic", statistic);
+
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();
 

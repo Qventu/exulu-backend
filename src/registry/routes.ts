@@ -656,7 +656,7 @@ Mood: friendly and intelligent.
 
             let project: Project | null = null;
 
-            if (!req.body.project || req.body.project === "DEFAULT") {
+            if (!req.params.project || req.params.project === "DEFAULT") {
                 project = null;
             } else {
                 let projectQuery = db('projects');
