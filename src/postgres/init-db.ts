@@ -24,6 +24,7 @@ const {
     projectsSchema,
     jobResultsSchema,
     promptLibrarySchema,
+    embedderSettingsSchema,
     promptFavoritesSchema
 } = coreSchemas.get();
 
@@ -66,6 +67,7 @@ const up = async function (knex: Knex) {
         projectsSchema(),
         jobResultsSchema(),
         promptLibrarySchema(),
+        embedderSettingsSchema(),
         promptFavoritesSchema(),
         rbacSchema(),
         agentsSchema(),

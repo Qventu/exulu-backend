@@ -51,8 +51,8 @@ export const convertToolsArrayToObject = (
     currentTools: ExuluTool[] | undefined,
     allExuluTools: ExuluTool[] | undefined,
     configs: ExuluAgentToolConfig[] | undefined,
-    providerapikey: string,
-    contexts: ExuluContext[] | undefined,
+    providerapikey?: string,
+    contexts?: ExuluContext[] | undefined,
     user?: User,
     exuluConfig?: ExuluConfig,
     sessionID?: string,
@@ -60,6 +60,9 @@ export const convertToolsArrayToObject = (
 
     if (!currentTools) return {};
     if (!allExuluTools) return {};
+    if (!contexts) {
+        contexts = [];
+    }
     const sanitizedTools = currentTools ? currentTools.map(tool => ({
         ...tool,
         name: sanitizeToolName(tool.name)
@@ -276,7 +279,7 @@ export type ExuluAgentConfig = {
     name: string,
     instructions: string,
     model: {
-        create: ({ apiKey }: { apiKey: string }) => LanguageModel
+        create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel
     },
     outputSchema?: z.ZodType;
     custom?: {
@@ -307,6 +310,7 @@ interface ExuluAgentParams {
     config?: ExuluAgentConfig | undefined;
     queue?: ExuluQueueConfig;
     maxContextLength?: number;
+    authenticationInformation?: string;
     provider: string;
     capabilities?: {
         text: boolean;
@@ -442,13 +446,14 @@ export class ExuluAgent {
     public slug: string = "";
     public type: "agent";
     public streaming: boolean = false;
+    public authenticationInformation?: string;
     public maxContextLength?: number;
     public queue?: ExuluQueueConfig;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
     // private memory: Memory | undefined; // TODO do own implementation
     public model?: {
-        create: ({ apiKey }: { apiKey: string }) => LanguageModel
+        create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel
     };
     public capabilities: {
         text: boolean,
@@ -457,12 +462,13 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
-    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, provider, queue }: ExuluAgentParams) {
+    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, provider, queue, authenticationInformation }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
         this.description = description;
         this.rateLimit = rateLimit;
         this.provider = provider;
+        this.authenticationInformation = authenticationInformation;
         this.config = config;
         this.type = type;
         this.maxContextLength = maxContextLength;
@@ -486,16 +492,14 @@ export class ExuluAgent {
         if (!this.config?.model?.create) {
             return ""
         }
-        const model = this.config?.model?.create({ apiKey: "" });
-        return typeof model === 'string' ? model : model?.provider || "";
+        return this.provider;
     }
 
     get modelName(): string {
         if (!this.config?.model?.create) {
             return ""
         }
-        const model = this.config?.model?.create({ apiKey: "" });
-        return typeof model === 'string' ? model : model?.modelId || "";
+        return this.config?.name || "";
     }
 
     // Exports the agent as a tool that can be used by another agent
@@ -531,29 +535,31 @@ export class ExuluAgent {
                 // Get the variable name from user's anthropic_token field
                 const variableName = agentInstance.providerapikey;
 
-                if (!variableName) {
-                    throw new Error("Provider API key variable not set for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool.")
+
+                let providerapikey: string | undefined;
+
+                if (variableName) {
+
+                    const { db } = await postgresClient();
+                    // Look up the variable from the variables table
+                    const variable = await db.from("variables").where({ name: variableName }).first();
+                    if (!variable) {
+                        throw new Error("Provider API key variable not found for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool.")
+                    }
+
+                    // Get the API key from the variable (decrypt if encrypted)
+                    providerapikey = variable.value;
+
+                    if (!variable.encrypted) {
+                        throw new Error("Provider API key variable not encrypted for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.")
+                    }
+
+                    if (variable.encrypted) {
+                        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+                    }
+
                 }
-
-                const { db } = await postgresClient();
-                // Look up the variable from the variables table
-                const variable = await db.from("variables").where({ name: variableName }).first();
-                if (!variable) {
-                    throw new Error("Provider API key variable not found for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool.")
-                }
-
-                // Get the API key from the variable (decrypt if encrypted)
-                let providerapikey = variable.value;
-
-                if (!variable.encrypted) {
-                    throw new Error("Provider API key variable not encrypted for agent: " + agentInstance.name + " (" + agentInstance.id + ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.")
-                }
-
-                if (variable.encrypted) {
-                    const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                    providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-                }
-
                 console.log("[EXULU] Enabled tools for agent '" + agentInstance.name + " (" + agentInstance.id + ")" + " that is being called as a tool", enabledTools.map(x => x.name + " (" + x.id + ")"))
                 console.log("[EXULU] Prompt for agent '" + agentInstance.name + "' that is being called as a tool", prompt.slice(0, 100) + "...")
                 console.log("[EXULU] Instructions for agent '" + agentInstance.name + "' that is being called as a tool", agentInstance.instructions?.slice(0, 100) + "...")
@@ -615,7 +621,7 @@ export class ExuluAgent {
         allExuluTools?: ExuluTool[],
         statistics?: ExuluStatisticParams,
         toolConfigs?: ExuluAgentToolConfig[],
-        providerapikey: string,
+        providerapikey?: string | undefined,
         contexts?: ExuluContext[] | undefined
         exuluConfig?: ExuluConfig,
         instructions?: string,
@@ -645,7 +651,7 @@ export class ExuluAgent {
         }
 
         const model = this.model.create({
-            apiKey: providerapikey
+            ...(providerapikey ? { apiKey: providerapikey } : {})
         })
 
         console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.")
@@ -832,7 +838,7 @@ export class ExuluAgent {
         currentTools?: ExuluTool[],
         allExuluTools?: ExuluTool[],
         toolConfigs?: ExuluAgentToolConfig[],
-        providerapikey: string,
+        providerapikey?: string | undefined,
         contexts?: ExuluContext[] | undefined
         exuluConfig?: ExuluConfig,
         instructions?: string,
@@ -854,7 +860,7 @@ export class ExuluAgent {
         }
 
         const model = this.model.create({
-            apiKey: providerapikey
+            ...(providerapikey ? { apiKey: providerapikey } : {})
         })
 
         let messages: UIMessage[] = [];
@@ -970,11 +976,11 @@ export type VectorOperationResponse = Promise<{
     errors?: string[]
 }>
 
-type VectorGenerateOperation = (inputs: ChunkerResponse) => VectorGenerationResponse
+type VectorGenerateOperation = (inputs: ChunkerResponse, settings: Record<string, string>) => VectorGenerationResponse
 
 type ChunkerOperation = (item: Item & { id: string }, maxChunkSize: number, utils: {
     storage: ExuluStorage
-}) => Promise<ChunkerResponse>
+}, config: Record<string, string>) => Promise<ChunkerResponse>
 
 type ChunkerResponse = {
     item: Item & { id: string },
@@ -993,6 +999,12 @@ type VectorGenerationResponse = Promise<{
     }[]
 }>
 
+type ExuluEmbedderConfig = {
+    name: string,
+    description: string
+    default?: string
+}
+
 export class ExuluEmbedder {
 
     public id: string;
@@ -1002,12 +1014,14 @@ export class ExuluEmbedder {
     private generateEmbeddings: VectorGenerateOperation;
     public description: string;
     public vectorDimensions: number;
+    public config?: ExuluEmbedderConfig[]
     public maxChunkSize: number;
     public _chunker: ChunkerOperation;
-    constructor({ id, name, description, generateEmbeddings, queue, vectorDimensions, maxChunkSize, chunker }: {
+    constructor({ id, name, description, generateEmbeddings, queue, vectorDimensions, maxChunkSize, chunker, config }: {
         id: string,
         name: string,
         description: string,
+        config?: ExuluEmbedderConfig[],
         generateEmbeddings: VectorGenerateOperation,
         chunker: ChunkerOperation,
         queue?: Promise<ExuluQueueConfig>,
@@ -1016,6 +1030,7 @@ export class ExuluEmbedder {
     }) {
         this.id = id;
         this.name = name;
+        this.config = config;
         this.description = description;
         this.vectorDimensions = vectorDimensions;
         this.maxChunkSize = maxChunkSize;
@@ -1026,14 +1041,73 @@ export class ExuluEmbedder {
         this.generateEmbeddings = generateEmbeddings;
     }
 
-    public chunker = (item: Item & { id: string }, maxChunkSize: number, config: ExuluConfig) => {
+    public chunker = async (
+        context: string,
+        item: Item & { id: string },
+        maxChunkSize: number,
+        config: ExuluConfig
+    ) => {
         const utils = {
             storage: new ExuluStorage({ config })
         }
-        return this._chunker(item, maxChunkSize, utils);
+        const settings = await this.hydrateEmbedderConfig(context);
+        return this._chunker(item, maxChunkSize, utils, settings);
     }
 
-    public async generateFromQuery(query: string, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
+    private hydrateEmbedderConfig = async (context: string): Promise<Record<string, string>> => {
+
+        const hydrated: {
+            id: string,
+            name: string,
+            value: string
+        }[] = []
+
+        const { db } = await postgresClient();
+
+        const variables = await db.from("embedder_settings").where({
+            context: context,
+            embedder: this.id
+        })
+
+        for (const config of this.config || []) {
+            const name = config.name;
+            const {
+                value: variableName,
+                id
+            } = variables.find(v => v.name === name);
+
+            let value = "";
+
+            console.log("[EXULU] variable name", variableName);
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+
+            if (!variable) {
+                throw new Error("Variable not found for embedder setting: " + name + " in context: " + context + " and embedder: " + this.id);
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                value = bytes.toString(CryptoJS.enc.Utf8);
+            } else {
+                value = variable.value;
+            }
+
+            console.log("[EXULU] variable value", value);
+
+            hydrated.push({
+                id: id || "",
+                name: name,
+                value: value || ""
+            })
+        }
+        return hydrated.reduce((acc, curr) => {
+            acc[curr.name] = curr.value;
+            return acc;
+        }, {});
+    }
+
+    public async generateFromQuery(context: string, query: string, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -1047,6 +1121,8 @@ export class ExuluEmbedder {
             })
         }
 
+        const settings = await this.hydrateEmbedderConfig(context);
+
         return await this.generateEmbeddings({
             item: {
                 id: "placeholder",
@@ -1055,10 +1131,17 @@ export class ExuluEmbedder {
                 content: query,
                 index: 1,
             }]
-        })
+        }, settings)
     }
 
-    public async generateFromDocument(input: Item, config: ExuluConfig, statistics?: ExuluStatisticParams, user?: number, role?: string): VectorGenerationResponse {
+    public async generateFromDocument(
+        context: string,
+        input: Item,
+        config: ExuluConfig,
+        statistics?: ExuluStatisticParams,
+        user?: number,
+        role?: string
+    ): VectorGenerationResponse {
 
         if (statistics) {
             await updateStatistic({
@@ -1080,11 +1163,21 @@ export class ExuluEmbedder {
             throw new Error("Item id is required for generating embeddings.")
         }
 
-        const output = await this.chunker(input as Item & { id: string }, this.maxChunkSize, config)
+        const settings = await this.hydrateEmbedderConfig(context);
+
+        const output = await this.chunker(
+            context,
+            input as Item & { id: string },
+            this.maxChunkSize,
+            config
+        )
 
         console.log("[EXULU] Generating embeddings.")
 
-        return await this.generateEmbeddings(output)
+        return await this.generateEmbeddings(
+            output,
+            settings
+        )
     };
 }
 
@@ -1575,10 +1668,12 @@ export class ExuluContext {
 
         const { db } = await postgresClient();
 
-        const { id: source, chunks } = await this.embedder.generateFromDocument({
-            ...item,
-            id: item.id
-        },
+        const { id: source, chunks } = await this.embedder.generateFromDocument(
+            this.id,
+            {
+                ...item,
+                id: item.id
+            },
             config,
             {
                 label: statistics?.label || this.name,

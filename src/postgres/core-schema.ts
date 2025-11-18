@@ -618,6 +618,33 @@ const platformConfigurationsSchema: ExuluTableDefinition = {
     ]
 }
 
+const embedderSettingsSchema: ExuluTableDefinition = {
+    type: "embedder_settings",
+    name: {
+        plural: "embedder_settings",
+        singular: "embedder_setting"
+    },
+    RBAC: false,
+    fields: [
+        {
+            name: "context",
+            type: "text" // id of the ExuluContext class
+        },
+        {
+            name: "embedder",
+            type: "text" // id of the ExuluEmbedder class
+        },
+        {
+            name: "name",
+            type: "text"
+        },
+        {
+            name: "value",
+            type: "text" // reference to an exulu variable
+        }
+    ]
+}
+
 const promptLibrarySchema: ExuluTableDefinition = {
     type: "prompt_library",
     name: {
@@ -729,9 +756,8 @@ export const coreSchemas = {
             platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
             jobResultsSchema: (): ExuluTableDefinition => addCoreFields(jobResultsSchema),
             promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
+            embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
             promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
         }
     }
 }
-
-

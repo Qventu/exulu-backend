@@ -75,23 +75,27 @@ export class ExuluMCP {
 
         const { db } = await postgresClient();
 
+        let providerapikey: string | undefined;
+
         // Look up the variable from the variables table
-        const variable = await db.from("variables").where({ name: variableName }).first();
+        if (variableName) {
+            const variable = await db.from("variables").where({ name: variableName }).first();
 
-        if (!variable) {
-            throw new Error("Provider API key variable not found.");
-        }
+            if (!variable) {
+                throw new Error("Provider API key variable not found for " + agentInstance.name + " (" + agentInstance.id + ").");
+            }
 
-        // Get the API key from the variable (decrypt if encrypted)
-        let providerapikey = variable.value;
+            // Get the API key from the variable (decrypt if encrypted)
+            providerapikey = variable.value;
 
-        if (!variable.encrypted) {
-            throw new Error("Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.");
-        }
+            if (!variable.encrypted) {
+                throw new Error("Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.");
+            }
 
-        if (variable.encrypted) {
-            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-            providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+            }
         }
 
         console.log("[EXULU] Enabled tools", enabledTools?.map(x => x.name + " (" + x.id + ")"))

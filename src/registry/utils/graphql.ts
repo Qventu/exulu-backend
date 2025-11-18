@@ -137,6 +137,7 @@ ${enumValues}
         fields.push("  capabilities: AgentCapabilities")
         fields.push("  maxContextLength: Int")
         fields.push("  provider: String")
+        fields.push("  authenticationInformation: String")
         fields.push("  slug: String")
     }
 
@@ -1240,7 +1241,8 @@ const backendAgentFields = [
     "streaming",
     "capabilities",
     "maxContextLength",
-    "provider"
+    "provider",
+    "authenticationInformation"
 ]
 
 const removeAgentFields = (requestedFields: string[]) => {
@@ -1323,6 +1325,9 @@ const addAgentFields = async (requestedFields: string[], agents: ExuluAgent[], r
     }
     if (requestedFields.includes("maxContextLength")) {
         result.maxContextLength = backend?.maxContextLength || 0
+    }
+    if (requestedFields.includes("authenticationInformation")) {
+        result.authenticationInformation = backend?.authenticationInformation || ""
     }
     if (requestedFields.includes("provider")) {
         result.provider = backend?.provider || ""
@@ -1846,7 +1851,7 @@ export const vectorSearch = async ({
     itemsQuery.select(chunksTable + ".updatedAt as chunk_updated_at")
     itemsQuery.select(db.raw('vector_dims(??) as embedding_size', [`${chunksTable}.embedding`]))
 
-    const { chunks } = await embedder.generateFromQuery(query, {
+    const { chunks } = await embedder.generateFromQuery(context.id, query, {
         label: table.name.singular,
         trigger
     }, user.id, role)
@@ -2819,7 +2824,11 @@ type PageInfo {
                 id: context.id,
                 name: context.name,
                 description: context.description,
-                embedder: context.embedder?.name || undefined,
+                embedder: context.embedder ? {
+                    name: context.embedder.name,
+                    id: context.embedder.id,
+                    config: context.embedder?.config || undefined
+                } : undefined,
                 slug: "/contexts/" + context.id,
                 active: context.active,
                 sources,
@@ -2876,7 +2885,11 @@ type PageInfo {
             id: data.id,
             name: data.name,
             description: data.description,
-            embedder: data.embedder?.name || undefined,
+            embedder: data.embedder ? {
+                name: data.embedder.name,
+                id: data.embedder.id,
+                config: data.embedder?.config || undefined
+            } : undefined,
             slug: "/contexts/" + data.id,
             active: data.active,
             sources,
@@ -3117,12 +3130,22 @@ type Context {
     id: ID!
     name: String!
     description: String
-    embedder: String
+    embedder: Embedder
     slug: String
     active: Boolean
     fields: JSON
     configuration: JSON
     sources: [ContextSource!]
+}
+type Embedder {
+    name: String!
+    id: ID!
+    config: [EmbedderConfig!]
+}
+type EmbedderConfig {
+    name: String!
+    description: String
+    default: String
 }
 
 type ContextSource {

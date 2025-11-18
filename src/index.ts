@@ -20,6 +20,7 @@ import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
 import { gpt5MiniAgent, gpt5agent, gpt5proAgent, gpt5CodexAgent, gpt5NanoAgent, gpt41Agent, gpt41MiniAgent, gpt4oAgent, gpt4oMiniAgent } from './templates/agents/openai/gpt'
 import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from './templates/agents/anthropic/claude'
+import { vertexGemini25FlashAgent } from './templates/agents/google/vertex'
 
 import type { Item } from '@EXULU_TYPES/models/item'
 export type { Item as ExuluItem }
@@ -41,6 +42,9 @@ export const ExuluDefaultAgents = {
         opus4: claudeOpus4Agent,
         sonnet4: claudeSonnet4Agent,
         sonnet45: claudeSonnet45Agent
+    },
+    google: {
+        vertexGemini25Flash: vertexGemini25FlashAgent
     },
     openai: {
         gpt5Mini: gpt5MiniAgent,

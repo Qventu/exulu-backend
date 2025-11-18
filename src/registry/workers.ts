@@ -81,14 +81,15 @@ export const createWorkers = async (
                 // on the main object while keeping auto completion.
                 const data: BullMqJobData = bullmqJob.data;
 
+                const timeoutInSeconds = data.timeoutInSeconds || 300;
                 // Create timeout promise
-                const timeoutMs = (data.timeoutInSeconds || 300) * 1000;
+                const timeoutMs = timeoutInSeconds * 1000;
                 const timeoutPromise: Promise<{
                     result: any,
                     metadata: any
                 }> = new Promise((_, reject) => {
                     setTimeout(() => {
-                        reject(new Error(`Timeout for job ${bullmqJob.id} reached after ${data.timeoutInSeconds}s`));
+                        reject(new Error(`Timeout for job ${bullmqJob.id} reached after ${timeoutInSeconds}s`));
                     }, timeoutMs);
                 });
 
@@ -822,23 +823,27 @@ const processUiMessagesFlow = async ({
     // Look up the variable from the variables table
     const { db } = await postgresClient();
 
-    const variable = await db.from("variables").where({ name: variableName }).first();
-    if (!variable) {
-        throw new Error(`Provider API key variable not found for agent ${agentInstance.name} (${agentInstance.id}).`);
+    let providerapikey: string | undefined;
+
+    if (variableName) {
+        const variable = await db.from("variables").where({ name: variableName }).first();
+        if (!variable) {
+            throw new Error(`Provider API key variable not found for agent ${agentInstance.name} (${agentInstance.id}).`);
+        }
+
+        // Get the API key from the variable (decrypt if encrypted)
+        providerapikey = variable.value;
+
+        if (!variable.encrypted) {
+            throw new Error(`Provider API key variable not encrypted for agent ${agentInstance.name} (${agentInstance.id}), for security reasons you are only allowed to use encrypted variables for provider API keys.`);
+        }
+
+        if (variable.encrypted) {
+            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+            providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+        }
+
     }
-
-    // Get the API key from the variable (decrypt if encrypted)
-    let providerapikey = variable.value;
-
-    if (!variable.encrypted) {
-        throw new Error(`Provider API key variable not encrypted for agent ${agentInstance.name} (${agentInstance.id}), for security reasons you are only allowed to use encrypted variables for provider API keys.`);
-    }
-
-    if (variable.encrypted) {
-        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-    }
-
 
     // Remove placeholder agent response before sending
     const messagesWithoutPlaceholder = inputMessages.filter(

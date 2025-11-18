@@ -49,16 +49,17 @@ const {
     workflowTemplatesSchema,
     rbacSchema,
     promptLibrarySchema,
+    embedderSettingsSchema,
     promptFavoritesSchema,
     statisticsSchema
 } = coreSchemas.get();
 
 export type ExuluTableDefinition = {
-    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites",
+    type?: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "items" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites" | "embedder_settings",
     id?: string,
     name: {
-        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites",
-        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration" | "job_result" | "prompt_library_item" | "prompt_favorite",
+        plural: "test_cases" | "eval_sets" | "eval_runs" | "agent_sessions" | "agent_messages" | "eval_results" | "workflow_templates" | "tracking" | "rbac" | "users" | "variables" | "roles" | "agents" | "projects" | "project_items" | "platform_configurations" | "job_results" | "prompt_library" | "prompt_favorites" | "embedder_settings",
+        singular: "test_case" | "eval_set" | "eval_run" | "agent_session" | "agent_message" | "eval_result" | "workflow_template" | "tracking" | "rbac" | "user" | "variable" | "role" | "agent" | "project" | "project_item" | "platform_configuration" | "job_result" | "prompt_library_item" | "prompt_favorite" | "embedder_setting",
     },
     fields: ExuluContextFieldDefinition[],
     RBAC?: boolean,
@@ -113,6 +114,7 @@ export const createExpressRoutes = async (
         projectsSchema(),
         jobResultsSchema(),
         promptLibrarySchema(),
+        embedderSettingsSchema(),
         promptFavoritesSchema(),
         evalRunsSchema(),
         platformConfigurationsSchema(),
@@ -200,7 +202,7 @@ export const createExpressRoutes = async (
         const variable = await db.from("variables").where({ name: "OPENAI_IMAGE_GENERATION_API_KEY" }).first();
         if (!variable) {
             res.status(400).json({
-                message: "Provider API key variable not found."
+                message: "Provider API key variable not found for OpenAI image generation."
             })
             return;
         }
@@ -438,33 +440,42 @@ Mood: friendly and intelligent.
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
             let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
 
+            let providerapikey: string | undefined;
             // Get the variable name from user's anthropic_token field
             const variableName = agentInstance.providerapikey;
 
-            // Look up the variable from the variables table
-            const variable = await db.from("variables").where({ name: variableName }).first();
-            if (!variable) {
-                res.status(400).json({
-                    message: "Provider API key variable not found."
-                })
-                return;
+            if (variableName) {
+
+                console.log("[EXULU] provider api key variable name", variableName)
+                // Look up the variable from the variables table
+                const variable = await db.from("variables").where({ name: variableName }).first();
+                if (!variable) {
+                    res.status(400).json({
+                        message: "Provider API key variable not found for " + agentInstance.name + " (" + agentInstance.id + ")."
+                    })
+                    return;
+                }
+
+                // Get the API key from the variable (decrypt if encrypted)
+                providerapikey = variable.value;
+
+                console.log("[EXULU] encrypted value", providerapikey)
+
+                if (!variable.encrypted) {
+                    res.status(400).json({
+                        message: "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys."
+                    })
+                    return;
+                }
+
+                if (variable.encrypted) {
+                    const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                    providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+
+                    console.log("[EXULU] decrypted value", providerapikey)
+                }
+
             }
-
-            // Get the API key from the variable (decrypt if encrypted)
-            let providerapikey = variable.value;
-
-            if (!variable.encrypted) {
-                res.status(400).json({
-                    message: "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys."
-                })
-                return;
-            }
-
-            if (variable.encrypted) {
-                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-            }
-
             // todo add authentication based on thread id to guarantee privacy
             // todo validate req.body data structure
             if (!!headers.stream) {

@@ -5,6 +5,7 @@ import { createWorkers } from "./workers.ts";
 import { ExuluMCP } from "../mcp";
 import express from "express";
 import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from "../templates/agents/anthropic/claude";
+import { vertexGemini25FlashAgent } from "../templates/agents/google/vertex";
 import {
     gpt5MiniAgent,
     gpt5agent,
@@ -143,6 +144,7 @@ export class ExuluApp {
         this._agents = [
             claudeSonnet4Agent,
             claudeOpus4Agent,
+            vertexGemini25FlashAgent,
             claudeSonnet45Agent,
             gpt5MiniAgent,
             gpt5agent,
