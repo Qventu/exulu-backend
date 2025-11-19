@@ -1729,7 +1729,13 @@ export class ExuluContext {
         ).returning("id")
 
         if (upsert) {
-            mutation.onConflict().merge();
+            if (item.external_id) {
+                mutation.onConflict('external_id').merge();
+            } else if (item.id) {
+                mutation.onConflict('id').merge();
+            } else {
+                throw new Error("Either id or external_id must be provided for upsert");
+            }
         }
 
         const results = await mutation;
@@ -1971,14 +1977,13 @@ export class ExuluContext {
             table.text('description');
             table.text('tags');
             table.boolean('archived').defaultTo(false);
-            table.text('external_id');
+            table.text('external_id').unique();
             table.text('created_by');
             table.text('ttl')
             table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
             table.integer('textlength');
             table.text('source');
             table.timestamp('embeddings_updated_at')
-            table.unique(["id", "external_id"])
             for (const field of this.fields) {
                 let { type, name, unique } = field;
                 if (!type || !name) {
