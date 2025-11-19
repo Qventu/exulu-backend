@@ -67,7 +67,7 @@
     "@opentelemetry/sdk-node": "^0.203.0",
     "@opentelemetry/semantic-conventions": "^1.36.0",
     "@opentelemetry/winston-transport": "^0.14.1",
-    "ai": "^5.0.56",
+    "ai": "^5.0.95",
     "apollo-server": "^3.13.0",
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",

@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import { z } from "zod"
-import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall, experimental_createMCPClient as createMCPClient } from "ai";
+import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { postgresClient, refreshPostgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
@@ -1490,6 +1490,11 @@ export type ExuluContextSource = {
             type: 'exponential' | 'linear'
             delay: number // in milliseconds
         }
+        params?: {
+            name: string,
+            description: string,
+            default?: string
+        }[]
     }
     execute: (inputs: any) => Promise<Item[]>,
 }

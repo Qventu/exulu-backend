@@ -1408,7 +1408,6 @@ const postprocessUpdate = async ({
                 .delete();
 
             console.log("[EXULU] Deleted chunks for item", result.id)
-
             console.log("[EXULU] Embedder", context.embedder)
             console.log("[EXULU] Configuration", context.configuration)
 
@@ -2817,6 +2816,7 @@ type PageInfo {
                         queue: queueName,
                         retries: source.config?.retries,
                         backoff: source.config?.backoff,
+                        params: source.config?.params,
                     },
                 }
             }))
@@ -2877,6 +2877,7 @@ type PageInfo {
                     queue: queueName,
                     retries: source.config?.retries,
                     backoff: source.config?.backoff,
+                    params: source.config?.params,
                 },
             }
         }))
@@ -3160,6 +3161,13 @@ type ContextSourceConfig {
     queue: String
     retries: Int
     backoff: ContextSourceBackoff
+    params: [ContextSourceParam!]
+}
+
+type ContextSourceParam {
+    name: String!
+    description: String!
+    default: String
 }
 
 type ContextSourceBackoff {
