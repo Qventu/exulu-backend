@@ -49,10 +49,22 @@ export const getPresignedUrl = async (key: string, config: ExuluConfig) => {
     if (!config.fileUploads) {
         throw new Error("File uploads are not configured")
     }
+    let bucket = config.fileUploads.s3Bucket;
+    if (key.includes("[bucket:")) {
+        console.log("[EXULU] key includes [bucket:name]", key)
+        // extract bucket name from key
+        bucket = key.split("[bucket:")[1]?.split("]")[0] || "";
+        if (!bucket?.length) {
+            throw new Error("Invalid key, does not contain a bucket name like '[bucket:name]'.");
+        }
+        key = key.split("]")[1] || "";
+        console.log("[EXULU] bucket", bucket)
+        console.log("[EXULU] key", key)
+    }
     const url = await getSignedUrl(
         getS3Client(config),
         new GetObjectCommand({
-            Bucket: config.fileUploads.s3Bucket,
+            Bucket: bucket,
             Key: key,
         }),
         { expiresIn }
@@ -115,7 +127,7 @@ export const uploadFile = async (
     });
 
     await client.send(command);
-    return key;
+    return fullKey;
 }
 
 export const createUppyRoutes = async (
@@ -128,6 +140,8 @@ export const createUppyRoutes = async (
     }
     // Helper function to extract user prefix from S3 key, accounting for optional s3prefix
     const extractUserPrefix = (key: string): string | undefined => {
+
+
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")
         }
@@ -207,13 +221,27 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const { key } = req.query;
+        let { key } = req.query;
 
         if (typeof key !== 'string' || key.trim() === '') {
             res.status(400).json({ error: 'Missing or invalid `key` query parameter.' });
             return;
         }
 
+        let bucket = config.fileUploads.s3Bucket;
+
+        if (key.includes("[bucket:")) {
+            console.log("[EXULU] key includes [bucket:name]", key)
+            bucket = key.split("[bucket:")[1]?.split("]")[0] || "";
+            if (!bucket?.length) {
+                throw new Error("Invalid key, does not contain a bucket name like '[bucket:name]'.");
+            }
+            key = key.split("]")[1] || "";
+            console.log("[EXULU] bucket", bucket)
+        }
+
+        /* 
+        // todo: add back but figure out a way to deal with keys where a prefix of [bucket:name] is present.
         const userPrefix = extractUserPrefix(key);
 
         console.log("userPrefix", userPrefix)
@@ -234,11 +262,11 @@ export const createUppyRoutes = async (
         if (authenticationResult.user.type !== "api" && !key.includes(authenticationResult.user.id.toString())) {
             res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
             return;
-        }
+        } */
 
         const client = getS3Client(config);
         const command = new DeleteObjectCommand({
-            Bucket: config.fileUploads.s3Bucket,
+            Bucket: bucket,
             Key: key,
         })
         await client.send(command)
@@ -274,7 +302,11 @@ export const createUppyRoutes = async (
             return;
         }
 
+        /* 
+        // todo: add back but figure out a way to deal with keys where a prefix of [bucket:name] is present.
         const userPrefix = extractUserPrefix(key);
+
+        console.log("[EXULU] userPrefix", userPrefix)
 
         if (!userPrefix) {
             res.status(405).json({ error: 'Invalid key, does not contain a user prefix like "<user_id>/<key>.' });
@@ -291,7 +323,7 @@ export const createUppyRoutes = async (
         if (authenticationResult.user.type !== "api" && !key.includes(authenticationResult.user.id.toString())) {
             res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
             return;
-        }
+        } */
 
         try {
             const url = await getPresignedUrl(key, config);
@@ -351,11 +383,27 @@ export const createUppyRoutes = async (
             return;
         }
 
-        const { key } = req.body;
+        let { key } = req.body;
+
+        let bucket = config.fileUploads.s3Bucket;
+
+        if (key.includes("[bucket:")) {
+            console.log("[EXULU] key includes [bucket:name]", key)
+            bucket = key.split("[bucket:")[1]?.split("]")[0] || "";
+            console.log("[EXULU] bucket", bucket)
+            if (!bucket?.length) {
+                throw new Error("Invalid key, does not contain a bucket name like '[bucket:name]'.");
+            }
+            key = key.split("]")[1] || "";
+            console.log("[EXULU] key", key)
+        }
+
         console.log("[EXULU] Getting object metadata from s3", key)
+        console.log("[EXULU] bucket", bucket)
+        console.log("[EXULU] key", key)
         const client = getS3Client(config);
         const command = new HeadObjectCommand({
-            Bucket: config.fileUploads.s3Bucket,
+            Bucket: bucket,
             Key: key,
         })
         const response = await client.send(command);

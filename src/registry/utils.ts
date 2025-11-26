@@ -36,7 +36,7 @@ export const getEnabledTools = async (
     allExuluTools: ExuluTool[],
     disabledTools: string[] = [],
     agents: ExuluAgent[],
-    user: User
+    user?: User
 ) => {
     let enabledTools: ExuluTool[] = [];
     if (agentInstance.tools) {

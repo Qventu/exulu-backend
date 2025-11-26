@@ -873,9 +873,11 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 const name = args.field?.replace("_s3key", "");
                 console.log("[EXULU] name", name)
                 console.log("[EXULU] fields", exists.fields.map(field => field.name))
-                const field = exists.fields.find(field => field.name === name)
+                const field = exists.fields.find(field => {
+                    return field.name.replace("_s3key", "") === name
+                })
                 if (!field) {
-                    throw new Error(`Field ${name} not found in context ${exists.id}.`);
+                    throw new Error(`Field ${name} not found in context ${exists.id}].`);
                 }
 
                 if (!field.processor) {
@@ -972,7 +974,8 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                     item,
                     config,
                     context.user.id,
-                    context.user.role?.id
+                    context.user.role?.id,
+                    (item.external_id || item.id) ? true : false
                 );
 
                 if (job) {
@@ -1083,24 +1086,36 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 throw new Error(`Context ${table.id} not found.`);
             }
 
-            let query = db.from(getTableName(id)).select("id");
+
 
             if (args.where) {
+                // Allow filtering by the parent item of the chunks
+                let query = db.from(getTableName(id)).select("id");
                 query = applyFilters(query, args.where, table);
-            }
+                const items = await query;
+                if (items.length === 0) {
+                    throw new Error("No items found to delete chunks for.");
+                }
 
-            const items = await query;
-            if (items.length === 0) {
-                throw new Error("No items found to delete chunks for.");
-            }
+                for (const item of items) {
+                    await db.from(getChunksTableName(id)).where({ source: item.id }).delete();
+                }
+                return {
+                    message: "Chunks deleted successfully.",
+                    items: items.length,
+                    jobs: []
+                }
 
-            for (const item of items) {
-                await db.from(getChunksTableName(id)).where({ source: item.id }).delete();
-            }
-            return {
-                message: "Chunks deleted successfully.",
-                items: items.length,
-                jobs: []
+            } else {
+                // Delete all chunks for the context if no filter criteria are provided
+                const count = await db.from(getChunksTableName(id)).count();
+                await db.from(getChunksTableName(id)).truncate();
+
+                return {
+                    message: "Chunks deleted successfully.",
+                    items: parseInt(count[0].count),
+                    jobs: []
+                }
             }
 
         }
@@ -1484,6 +1499,16 @@ const postprocessDeletion = async ({
                     .delete();
             }
             return result;
+        }
+        if (table.type === "agent_sessions") {
+            if (!result.id) {
+                return result;
+            }
+            const { db } = await postgresClient();
+            // delete all messages for the session
+            await db.from("agent_messages").where({ session: result.id })
+                .where({ session: result.id })
+                .delete();
         }
     }
     return result;
@@ -1904,7 +1929,7 @@ export const vectorSearch = async ({
         case "hybridSearch":
 
             // Tunables
-            const matchCount = Math.min(limit * 5, 30);
+            const matchCount = Math.min(limit * 5, 100);
             const fullTextWeight = 1.0;
             const semanticWeight = 1.0;
             const rrfK = 50;
@@ -1932,7 +1957,7 @@ export const vectorSearch = async ({
               FROM ${chunksTable} c
               WHERE c.embedding IS NOT NULL
               ORDER BY rank_ix
-              LIMIT LEAST(?, 15) * 2
+              LIMIT LEAST(?, 50) * 2
             )
             SELECT
               m.*,
@@ -1940,6 +1965,7 @@ export const vectorSearch = async ({
               c.source,
               c.content,
               c.chunk_index,
+              c.metadata,
               c."createdAt" AS chunk_created_at,
               c."updatedAt" AS chunk_updated_at,
               vector_dims(c.embedding) as embedding_size,
@@ -1963,7 +1989,7 @@ export const vectorSearch = async ({
             JOIN ${mainTable} m
               ON m.id = c.source
             ORDER BY hybrid_score DESC
-            LIMIT LEAST(?, 10)
+            LIMIT LEAST(?, 50)
             OFFSET 0
           `;
 
@@ -1990,6 +2016,7 @@ export const vectorSearch = async ({
     // Filter out duplicate sources, keeping only the first occurrence
     // because the vector search returns multiple chunks for the same
     // source.
+    console.log("[EXULU] Vector search results:", items?.length)
     const seenSources = new Map();
     items = items.reduce((acc, item) => {
         if (!seenSources.has(item.source)) {
@@ -2015,6 +2042,7 @@ export const vectorSearch = async ({
                     chunk_index: item.chunk_index,
                     chunk_id: item.chunk_id,
                     source: item.source,
+                    metadata: item.metadata,
                     chunk_created_at: item.chunk_created_at,
                     chunk_updated_at: item.chunk_updated_at,
                     embedding_size: item.embedding_size,
@@ -2031,6 +2059,7 @@ export const vectorSearch = async ({
                 chunk_id: item.chunk_id,
                 chunk_created_at: item.chunk_created_at,
                 embedding_size: item.embedding_size,
+                metadata: item.metadata,
                 source: item.source,
                 chunk_updated_at: item.chunk_updated_at,
                 ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
@@ -2040,6 +2069,8 @@ export const vectorSearch = async ({
         }
         return acc;
     }, []);
+
+    console.log("[EXULU] Vector search results after deduplication:", items?.length)
 
     items.forEach(item => {
         if (!item.chunks?.length) { return; }
@@ -2080,7 +2111,9 @@ export const vectorSearch = async ({
         items = await resultReranker(items);
     }
 
-    items = items.slice(0, limit);
+    // items = items.slice(0, limit);
+
+    console.log("[EXULU] Vector search results after slicing:", items?.length)
 
     await updateStatistic({
         name: "count",
@@ -2882,6 +2915,11 @@ type PageInfo {
             }
         }))
 
+        let embedderQueue: ExuluQueueConfig | undefined = undefined;
+        if (data.embedder?.queue) {
+            embedderQueue = await data.embedder.queue;
+        }
+
         const clean = {
             id: data.id,
             name: data.name,
@@ -2889,7 +2927,8 @@ type PageInfo {
             embedder: data.embedder ? {
                 name: data.embedder.name,
                 id: data.embedder.id,
-                config: data.embedder?.config || undefined
+                config: data.embedder?.config || undefined,
+                queue: embedderQueue?.queue.name || undefined
             } : undefined,
             slug: "/contexts/" + data.id,
             active: data.active,
@@ -3102,6 +3141,7 @@ type ItemChunks {
     chunk_created_at: Date
     chunk_updated_at: Date
     embedding_size: Float
+    metadata: JSON
 }
 
 type Provider {
@@ -3142,6 +3182,7 @@ type Embedder {
     name: String!
     id: ID!
     config: [EmbedderConfig!]
+    queue: String
 }
 type EmbedderConfig {
     name: String!

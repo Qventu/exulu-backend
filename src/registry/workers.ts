@@ -81,7 +81,7 @@ export const createWorkers = async (
                 // on the main object while keeping auto completion.
                 const data: BullMqJobData = bullmqJob.data;
 
-                const timeoutInSeconds = data.timeoutInSeconds || 300;
+                const timeoutInSeconds = data.timeoutInSeconds || 600;
                 // Create timeout promise
                 const timeoutMs = timeoutInSeconds * 1000;
                 const timeoutPromise: Promise<{
@@ -163,7 +163,9 @@ export const createWorkers = async (
                                 throw new Error(`Context ${data.context} not found in the registry.`);
                             }
 
-                            const field = context.fields.find(field => field.name === data.inputs.field);
+                            const field = context.fields.find(field => {
+                                return field.name.replace("_s3key", "") === data.inputs.field.replace("_s3key", "");
+                            });
 
                             if (!field) {
                                 throw new Error(`Field ${data.inputs.field} not found in the context ${data.context}.`);
@@ -530,7 +532,13 @@ export const createWorkers = async (
                             let items: string[] = [];
 
                             for (const item of result) {
-                                const { item: createdItem, job } = await context.createItem(item, config, data.user, data.role);
+                                const { item: createdItem, job } = await context.createItem(
+                                    item,
+                                    config,
+                                    data.user,
+                                    data.role,
+                                    (item.external_id || item.id) ? true : false
+                                );
                                 if (job) {
                                     jobs.push(job);
                                     console.log(`[EXULU] Scheduled job through source update job for item ${createdItem.id} (Job ID: ${job})`, logMetadata(bullmqJob.name, {
@@ -593,16 +601,14 @@ export const createWorkers = async (
             result: any,
             metadata: any
         }) => {
-            console.log(`[EXULU] completed job ${job.id}.`, logMetadata(job.name, {
-                result: returnvalue,
-            }));
+            console.log(`[EXULU] completed job ${job.id}.`, returnvalue);
 
             const { db } = await postgresClient();
 
             await db.from("job_results").where({ job_id: job.id }).update({
                 state: JOB_STATUS_ENUM.completed,
-                result: returnvalue.result,
-                metadata: returnvalue.metadata,
+                result: returnvalue.result ? JSON.stringify(returnvalue.result) : null,
+                metadata: returnvalue.metadata ? JSON.stringify(returnvalue.metadata) : null,
             });
         });
 

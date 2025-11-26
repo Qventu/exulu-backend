@@ -147,28 +147,28 @@ export const requestValidators = {
             };
         }
 
-        if (!req.headers['user']) {
+       /* Not explicitly required if the agent is public:  if (!req.headers['user']) {
             return {
                 error: true,
                 code: 400,
                 message: 'Missing "user" property in headers.'
             };
-        }
+        } */
 
-        if (!req.headers['session']) {
+        /* Not explicitly required if the agent is public: if (!req.headers['session']) {
             return {
                 error: true,
                 code: 400,
                 message: 'Missing "session" property in headers.'
             };
-        }
+        } */
 
         // chat inputs
-        if (!req.body.message) {
+        if (!req.body.message && !req.body.messages) {
             return {
                 error: true,
                 code: 400,
-                message: 'Missing "message" property in body.'
+                message: 'Missing "message" or "messages" property in body.'
             };
         }
 

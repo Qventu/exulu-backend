@@ -21,6 +21,12 @@ const agentMessagesSchema: ExuluTableDefinition = {
             type: "number",
         },
         {
+            name: "message_id",
+            type: "text",
+            index: true,
+            unique: true
+        },
+        {
             name: "session",
             type: "text",
         }

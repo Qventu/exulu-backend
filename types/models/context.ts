@@ -7,6 +7,7 @@ export interface Context {
   description: string
   embedder?: {
     name: string,
+    queue: string,
     id: string,
     config?: {
       name: string,

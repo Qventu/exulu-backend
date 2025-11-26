@@ -23,6 +23,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
+import type { Request } from "express";
 
 /**
  * @type {S3Client}
@@ -56,6 +57,7 @@ export const convertToolsArrayToObject = (
     user?: User,
     exuluConfig?: ExuluConfig,
     sessionID?: string,
+    req?: Request,
 ): Record<string, Tool> => {
 
     if (!currentTools) return {};
@@ -185,6 +187,7 @@ export const convertToolsArrayToObject = (
                             const response = await cur.tool.execute({
                                 ...inputs,
                                 sessionID: sessionID,
+                                req: req,
                                 // Convert config to object format if a config object 
                                 // is available, after we added the .value property
                                 // by hydrating it from the variables table.
@@ -194,6 +197,7 @@ export const convertToolsArrayToObject = (
                                 user,
                                 contexts: contextsMap,
                                 upload,
+                                exuluConfig,
                                 config: config ? config.config.reduce((acc, curr) => {
                                     acc[curr.name] = curr.value;
                                     return acc;
@@ -599,6 +603,7 @@ export class ExuluAgent {
 
     generateSync = async ({
         prompt,
+        req,
         user,
         session,
         inputMessages,
@@ -615,6 +620,7 @@ export class ExuluAgent {
     }: {
         prompt?: string,
         user?: User,
+        req?: Request,
         session?: string,
         inputMessages?: UIMessage[],
         currentTools?: ExuluTool[],
@@ -715,6 +721,7 @@ export class ExuluAgent {
                         user,
                         exuluConfig,
                         session,
+                        req
                     ),
                     stopWhen: [stepCountIs(2)],
                 });
@@ -775,6 +782,7 @@ export class ExuluAgent {
                     user,
                     exuluConfig,
                     session,
+                    req,
                 ),
                 stopWhen: [stepCountIs(2)],
             });
@@ -830,8 +838,9 @@ export class ExuluAgent {
         contexts,
         exuluConfig,
         instructions,
+        req,
     }: {
-        user: User,
+        user?: User,
         session?: string,
         message?: UIMessage,
         previousMessages?: UIMessage[],
@@ -842,6 +851,7 @@ export class ExuluAgent {
         contexts?: ExuluContext[] | undefined
         exuluConfig?: ExuluConfig,
         instructions?: string,
+        req?: Request,
     }) => {
 
         if (!this.model) {
@@ -870,7 +880,7 @@ export class ExuluAgent {
             console.log("[EXULU] loading previous messages from session: " + session)
             const previousMessages = await getAgentMessages({
                 session,
-                user: user.id,
+                user: user?.id,
                 limit: 50,
                 page: 1
             })
@@ -919,6 +929,7 @@ export class ExuluAgent {
                 user,
                 exuluConfig,
                 session,
+                req
             ),
             onError: error => {
                 console.error("[EXULU] chat stream error.", error);
@@ -936,10 +947,10 @@ export class ExuluAgent {
 }
 
 // todo check how to deal with pagination
-const getAgentMessages = async ({ session, user, limit, page }: { session: string, user: number, limit: number, page: number }) => {
+const getAgentMessages = async ({ session, user, limit, page }: { session: string, user?: number, limit: number, page: number }) => {
     const { db } = await postgresClient();
     console.log("[EXULU] getting agent messages for session: " + session + " and user: " + user + " and page: " + page)
-    const query = db.from("agent_messages").where({ session, user }).limit(limit)
+    const query = db.from("agent_messages").where({ session, user: user || null }).limit(limit)
     if (page > 0) {
         query.offset((page - 1) * limit)
     }
@@ -960,12 +971,16 @@ export const getSession = async ({ sessionID }: { sessionID: string }) => {
 export const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
     const { db } = await postgresClient();
     const promises = messages.map((message) => {
-        return db.from("agent_messages").insert({
+
+        const mutation = db.from("agent_messages").insert({
             session,
             user,
             content: JSON.stringify(message),
+            message_id: message.id,
             title: message.role === "user" ? "User" : "Assistant"
-        })
+        }).returning('id');
+        mutation.onConflict('message_id').merge();
+        return mutation;
     })
     await Promise.all(promises)
 }
@@ -995,6 +1010,7 @@ type VectorGenerationResponse = Promise<{
     chunks: {
         content: string,
         index: number,
+        metadata: Record<string, string>,
         vector: number[]
     }[]
 }>
@@ -1071,10 +1087,16 @@ export class ExuluEmbedder {
 
         for (const config of this.config || []) {
             const name = config.name;
+            const setting = variables.find(v => v.name === name);
+
+            if (!setting) {
+                throw new Error("Setting value not found for embedder setting: " + name + ", for context: " + context + " and embedder: " + this.id + ". Make sure to set the value for this setting in the embedder settings.");
+            }
+
             const {
                 value: variableName,
                 id
-            } = variables.find(v => v.name === name);
+            } = setting;
 
             let value = "";
 
@@ -1086,9 +1108,26 @@ export class ExuluEmbedder {
                 throw new Error("Variable not found for embedder setting: " + name + " in context: " + context + " and embedder: " + this.id);
             }
 
+            console.log("[EXULU] variable", variable);
+
             if (variable.encrypted) {
-                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-                value = bytes.toString(CryptoJS.enc.Utf8);
+                if (!process.env.NEXTAUTH_SECRET) {
+                    throw new Error("NEXTAUTH_SECRET environment variable is not set, cannot decrypt variable: " + name);
+                }
+
+                try {
+                    const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+
+                    if (!decrypted) {
+                        throw new Error("Decryption returned empty string - invalid key or corrupted data");
+                    }
+
+                    value = decrypted;
+                    console.log("[EXULU] successfully decrypted value for", name);
+                } catch (error) {
+                    throw new Error(`Failed to decrypt variable "${name}" for embedder setting in context "${context}": ${error instanceof Error ? error.message : "Unknown error"}. Verify that NEXTAUTH_SECRET matches the key used during encryption.`);
+                }
             } else {
                 value = variable.value;
             }
@@ -1567,7 +1606,9 @@ export class ExuluContext {
         // todo add tracking for processor execution
         console.log("[EXULU] processing field", item.field, " in context", this.id);
         console.log("[EXULU] fields", this.fields.map(field => field.name));
-        const field = this.fields.find(field => field.name === item.field?.replace("_s3key", ""));
+        const field = this.fields.find(field => {
+            return field.name.replace("_s3key", "") === item.field.replace("_s3key", "");
+        });
         if (!field || !field.processor) {
             console.error("[EXULU] field not found or processor not set for field", item.field, " in context", this.id);
             throw new Error("Field not found or processor not set for field " + item.field + " in context " + this.id);
@@ -1577,7 +1618,7 @@ export class ExuluContext {
         if (queue?.queue.name) {
             console.log("[EXULU] processor is in queue mode, scheduling job.")
             const job = await bullmqDecorator({
-                timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 180,
+                timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
                 label: `${this.name} ${field.name} data processor`,
                 processor: `${this.id}-${field.name}`,
                 context: this.id,
@@ -1692,6 +1733,7 @@ export class ExuluContext {
         if (chunks?.length) {
             await db.from(getChunksTableName(this.id)).insert(chunks.map(chunk => ({
                 source,
+                metadata: chunk.metadata,
                 content: chunk.content,
                 chunk_index: chunk.index,
                 embedding: pgvector.toSql(chunk.vector)
@@ -1709,7 +1751,13 @@ export class ExuluContext {
         };
     }
 
-    public createItem = async (item: Item, config: ExuluConfig, user?: number, role?: string, upsert?: boolean): Promise<{ item: Item, job?: string }> => {
+    public createItem = async (
+        item: Item,
+        config: ExuluConfig,
+        user?: number,
+        role?: string,
+        upsert?: boolean
+    ): Promise<{ item: Item, job?: string }> => {
 
         if (upsert && (
             !item.id &&
@@ -1744,14 +1792,20 @@ export class ExuluContext {
             throw new Error("Failed to create item.")
         }
 
+        console.log("[EXULU] context configuration", this.configuration)
+
         if (
             this.embedder && (
                 this.configuration.calculateVectors === "onUpdate" ||
                 this.configuration.calculateVectors === "always"
             )
         ) {
+            console.log("[EXULU] generating embeddings for item", results[0].id)
             const { job } = await this.embeddings.generate.one({
-                item: results[0],
+                item: {
+                    ...item, // important we need to full record here with all fields for the embedder
+                    id: results[0].id
+                },
                 user: user,
                 role: role,
                 trigger: "api",
@@ -1806,7 +1860,7 @@ export class ExuluContext {
             )
         ) {
             const { job } = await this.embeddings.generate.one({
-                item: record, // important we need to full record here with all fields
+                item: record, // important we need to full record here with all fields for the embedder
                 user: user,
                 role: role,
                 trigger: "api",
@@ -1826,16 +1880,20 @@ export class ExuluContext {
 
     public deleteItem = async (item: Item, user?: number, role?: string): Promise<{ id: string, job?: string }> => {
 
-        if (!item.id) {
-            throw new Error("Item id is required for deleting item.")
+        const { db } = await postgresClient();
+
+        if (!item.id?.length && item?.external_id) {
+            item = await db.from(getTableName(this.id)).where({ external_id: item.external_id }).first();
+            if (!item || !item.id) {
+                throw new Error(`Item not found for external id ${item?.external_id || "undefined"}.`)
+            }
         }
 
-        const { db } = await postgresClient();
         await db.from(getTableName(this.id)).where({ id: item.id }).delete();
 
         if (!this.embedder) {
             return {
-                id: item.id,
+                id: item.id!,
                 job: undefined
             };
         }
@@ -1851,7 +1909,7 @@ export class ExuluContext {
                 .delete();
         }
         return {
-            id: item.id,
+            id: item.id!,
             job: undefined
         };
     }
@@ -2064,7 +2122,7 @@ export class ExuluContext {
                 //   next to semantic search also add regular filters.
                 const result = await vectorSearch({
                     page: 1,
-                    limit: 10,
+                    limit: 50,
                     query,
                     filters: [],
                     user,
@@ -2106,8 +2164,6 @@ export type ExuluStatistic = {
 export type ExuluStatisticParams = Omit<ExuluStatistic, "total" | "name" | "type">
 
 export const updateStatistic = async (statistic: Omit<ExuluStatistic, "total"> & { count?: number, user?: number, role?: string, project?: string }) => {
-
-    console.log("[EXULU] updating statistic", statistic);
 
     const currentDate = new Date().toISOString().split('T')[0];
     const { db } = await postgresClient();

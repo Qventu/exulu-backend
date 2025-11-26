@@ -41,6 +41,7 @@ const consoleTransport = new winston.transports.Console({
 import { getDefaultEvals } from "../templates/evals/index.ts";
 import { ExuluQueues } from "../index.ts";
 import { mathTools } from "../templates/tools/math.ts";
+import { previewPdfTool } from "../templates/tools/preview-pdf.ts";
 import { todoTools } from "../templates/tools/todo/todo.ts";
 
 // Monkey-patch console to use Winston with metadata support
@@ -175,6 +176,7 @@ export class ExuluApp {
         this._tools = [
             ...(tools ?? []),
             ...mathTools,
+            ...[previewPdfTool],
             ...todoTools,
             // Add contexts as tools
             ...Object.values(contexts || {}).map(context => context.tool()),

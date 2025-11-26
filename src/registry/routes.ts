@@ -25,9 +25,10 @@ export const REQUEST_SIZE_LIMIT = '50mb';
 import Anthropic from '@anthropic-ai/sdk';
 import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
 import type { Queue } from "bullmq";
-import { createIdGenerator } from "ai";
+import { createIdGenerator, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
+import cookieParser from 'cookie-parser';
 
 export const global_queues = {
     eval_runs: "eval_runs"
@@ -95,6 +96,7 @@ export const createExpressRoutes = async (
     app.use(cors(corsOptions));
     app.use(bodyParser.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }))
     app.use(bodyParser.json({ limit: REQUEST_SIZE_LIMIT }))
+    app.use(cookieParser())
 
     console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -393,8 +395,9 @@ Mood: friendly and intelligent.
                 return;
             }
 
+            console.log("[EXULU] agentInstance.rights_mode", agentInstance.rights_mode)
             const authenticationResult = await requestValidators.authenticate(req);
-            if (!authenticationResult.user?.id) {
+            if (!authenticationResult.user?.id && agentInstance.rights_mode !== "public") {
                 res.status(authenticationResult.code || 500).json({ detail: `${authenticationResult.message}` });
                 return;
             }
@@ -425,9 +428,9 @@ Mood: friendly and intelligent.
             }
 
             if (
-                user.type !== "api" &&
-                !user.super_admin &&
-                req.body.resourceId !== user.id
+                user?.type !== "api" &&
+                !user?.super_admin &&
+                req.body.resourceId !== user?.id
             ) {
                 res.status(400).json({
                     message: "The provided user id in the resourceId field is not the same as the authenticated user. Only super admins and API users can impersonate other users."
@@ -459,8 +462,6 @@ Mood: friendly and intelligent.
                 // Get the API key from the variable (decrypt if encrypted)
                 providerapikey = variable.value;
 
-                console.log("[EXULU] encrypted value", providerapikey)
-
                 if (!variable.encrypted) {
                     res.status(400).json({
                         message: "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys."
@@ -471,8 +472,6 @@ Mood: friendly and intelligent.
                 if (variable.encrypted) {
                     const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
                     providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-
-                    console.log("[EXULU] decrypted value", providerapikey)
                 }
 
             }
@@ -485,17 +484,28 @@ Mood: friendly and intelligent.
                     trigger: "agent" as STATISTICS_LABELS
                 }
 
+                let previousMessages: UIMessage[] = [];
+                let message: UIMessage | undefined;
+                if (!req.body.message && !headers.session && req.body.messages) {
+                    message = req.body.messages[req.body.messages.length - 1];
+                    previousMessages = req.body.messages.slice(0, -1);
+                } else {
+                    message = req.body.message;
+                }
+
                 const result = await agent.generateStream({
                     contexts: contexts,
                     user,
                     instructions: agentInstance.instructions,
                     session: headers.session as string,
-                    message: req.body.message,
+                    message,
+                    previousMessages,
                     currentTools: enabledTools,
                     allExuluTools: tools,
                     providerapikey,
                     toolConfigs: agentInstance.tools,
-                    exuluConfig: config
+                    exuluConfig: config,
+                    req: req,
                 })
 
                 // consume the stream to ensure it runs to completion & triggers onFinish
@@ -526,12 +536,13 @@ Mood: friendly and intelligent.
                         size: 16,
                     }),
                     onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
-                        if (headers.session) {
-                            // But only save the new messages, not the previous ones, otherwise we get duplicates.
+
+                        console.log("[EXULU] onFinish", messages?.map(msg => msg.parts?.map(part => part.type === "text" ? part.text : null)).join("\n"))
+                        if (headers.session && user?.id) {
                             await saveChat({
                                 session: headers.session as string,
                                 user: user.id,
-                                messages: messages.filter(x => !result.previousMessages.find(y => y.id === x.id))
+                                messages: messages
                             })
                         }
                         const metadata = messages[messages.length - 1]?.metadata as any;
@@ -548,7 +559,7 @@ Mood: friendly and intelligent.
                                     type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                                     trigger: statistics.trigger,
                                     count: 1,
-                                    user: user.id,
+                                    user: user?.id,
                                     role: user?.role?.id
                                 }),
                                 ...(metadata?.inputTokens ? [
@@ -558,7 +569,7 @@ Mood: friendly and intelligent.
                                         type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
                                         trigger: statistics.trigger,
                                         count: metadata?.inputTokens,
-                                        user: user.id,
+                                        user: user?.id,
                                         role: user?.role?.id
                                     })] : []
                                 ),
@@ -582,6 +593,7 @@ Mood: friendly and intelligent.
             } else {
                 const response = await agent.generateSync({
                     user,
+                    req: req,
                     instructions: agentInstance.instructions,
                     session: headers.session as string,
                     inputMessages: [req.body.message],
