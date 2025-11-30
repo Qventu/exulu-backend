@@ -24,6 +24,7 @@ import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } 
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import type { Request } from "express";
+import { parseOfficeAsync } from 'officeparser';
 
 /**
  * @type {S3Client}
@@ -826,6 +827,89 @@ export class ExuluAgent {
         return "";
     }
 
+    /**
+     * Convert file parts in messages to OpenAI Responses API compatible format.
+     * The OpenAI Responses API doesn't support inline file parts with type 'file'.
+     * This function converts:
+     * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
+     * - Image files -> image parts (which ARE supported by Responses API)
+     */
+    private async processFilePartsInMessages(messages: UIMessage[]): Promise<UIMessage[]> {
+        const processedMessages = await Promise.all(messages.map(async (message) => {
+
+            console.log("[EXULU] Processing file parts in messages: " + JSON.stringify(message, null, 2));
+
+            // Only process user messages with content array
+            if (message.role !== 'user' || !Array.isArray(message.parts)) {
+                return message;
+            }
+
+            const processedParts = await Promise.all(message.parts.map(async (part: any) => {
+                // If not a file part, return as-is
+                if (part.type !== 'file') {
+                    return part;
+                }
+
+                const { mediaType, url, filename } = part;
+
+                // Check if it's an image file - these are supported as image parts
+                const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+                if (imageTypes.includes(mediaType)) {
+                    console.log(`[EXULU] Converting file part to image part: ${filename}`);
+                    return {
+                        type: 'image',
+                        image: url,
+                        mimeType: mediaType
+                    };
+                }
+
+                // For document files, fetch content and extract text using officeparser
+                console.log(`[EXULU] Converting file part to text using officeparser: ${filename}`);
+                try {
+                    // Fetch the file content from the URL
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        console.error(`[EXULU] Failed to fetch file: ${filename}, status: ${response.status}`);
+                        return {
+                            type: 'text',
+                            text: `[Error: Could not load file ${filename}]`
+                        };
+                    }
+
+                    // Get the file as a buffer
+                    const arrayBuffer = await response.arrayBuffer();
+
+                    // Parse the document using officeparser
+                    const extractedText = await parseOfficeAsync(arrayBuffer, {
+                        outputErrorToConsole: false,
+                        newlineDelimiter: '\n'
+                    });
+
+                    // Return as text part with extracted content wrapped in XML-like tags
+                    return {
+                        type: 'text',
+                        text: `<file name="${filename}">\n${extractedText}\n</file>`
+                    };
+                } catch (error) {
+                    console.error(`[EXULU] Error processing file ${filename}:`, error);
+                    return {
+                        type: 'text',
+                        text: `[Error extracting text from file ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}]`
+                    };
+                }
+            }));
+
+            const result = {
+                ...message,
+                parts: processedParts
+            };
+            console.log("[EXULU] Result: " + JSON.stringify(result, null, 2));
+            return result;
+        }));
+
+        return processedMessages;
+    }
+
     generateStream = async ({
         user,
         session,
@@ -894,6 +978,16 @@ export class ExuluAgent {
             // append the new message to the previous messages:
             messages: [...previousMessagesContent, message],
         });
+
+        // filter out messages with duplicate ids
+        messages = messages.filter((message, index, self) =>
+            index === self.findIndex((t) => t.id === message.id)
+        );
+
+        // Process file parts to convert them to OpenAI Responses API compatible format
+        // which mostly means converting file parts to text parts unless they are images.
+        console.log("[EXULU] Processing file parts in messages for OpenAI Responses API compatibility");
+        messages = await this.processFilePartsInMessages(messages);
 
         // Simple things like the current date, time, etc.
         // we add these to the context to help the agent
@@ -970,8 +1064,8 @@ export const getSession = async ({ sessionID }: { sessionID: string }) => {
 
 export const saveChat = async ({ session, user, messages }: { session: string, user: number, messages: UIMessage[] }) => {
     const { db } = await postgresClient();
-    const promises = messages.map((message) => {
-
+    // Save messages sequentially to maintain correct createdAt timestamps
+    for (const message of messages) {
         const mutation = db.from("agent_messages").insert({
             session,
             user,
@@ -980,9 +1074,8 @@ export const saveChat = async ({ session, user, messages }: { session: string, u
             title: message.role === "user" ? "User" : "Assistant"
         }).returning('id');
         mutation.onConflict('message_id').merge();
-        return mutation;
-    })
-    await Promise.all(promises)
+        await mutation;
+    }
 }
 
 export type VectorOperationResponse = Promise<{

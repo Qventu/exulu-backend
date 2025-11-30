@@ -90,6 +90,7 @@
     "jsonwebtoken": "^9.0.2",
     "knex": "^3.1.0",
     "link": "^2.1.1",
+    "officeparser": "^5.2.2",
     "openai": "^5.21.0",
     "papaparse": "^5.5.2",
     "pg": "^8.16.3",

@@ -10,8 +10,11 @@ export const getToken = async (authHeader: string) => {
     }
     try {
         // Note: This secret is same as NextAuth Secret.
+        // Convert the secret to base64url format as required by jose
         const secret = process.env.NEXTAUTH_SECRET
-        const jwk = await importJWK({ k: secret, alg: 'HS256', kty: 'oct' });
+        const secretBuffer = Buffer.from(secret, 'utf-8');
+        const base64Secret = secretBuffer.toString('base64url');
+        const jwk = await importJWK({ k: base64Secret, alg: 'HS256', kty: 'oct' });
         const { payload } = await jwtVerify(token, jwk);
         return payload;
     } catch (error) {
