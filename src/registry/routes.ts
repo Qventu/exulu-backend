@@ -664,7 +664,7 @@ Mood: friendly and intelligent.
 
             let agentQuery = db('agents');
             agentQuery.select("*");
-            agentQuery = applyAccessControl(agentsSchema(), authenticationResult.user, agentQuery);
+            agentQuery = applyAccessControl(agentsSchema(), agentQuery, authenticationResult.user);
             agentQuery.where({ id: req.params.agent });
             const agent: Agent | undefined = await agentQuery.first();
 
@@ -684,7 +684,7 @@ Mood: friendly and intelligent.
             } else {
                 let projectQuery = db('projects');
                 projectQuery.select("*");
-                projectQuery = applyAccessControl(projectsSchema(), authenticationResult.user, projectQuery);
+                projectQuery = applyAccessControl(projectsSchema(), projectQuery,authenticationResult.user);
                 projectQuery.where({ id: req.params.project });
                 project = await projectQuery.first();
 

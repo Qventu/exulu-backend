@@ -119,7 +119,7 @@ export class ExuluMCP {
 
                 const configValues = agentInstance.tools;
 
-                const tools = convertToolsArrayToObject(
+                const tools = await convertToolsArrayToObject(
                     [tool],
                     allTools,
                     configValues,

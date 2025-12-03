@@ -586,10 +586,10 @@ const rbacSchema: ExuluTableDefinition = {
             name: "user_id",
             type: "number"
         },
-        {
+        /* {
             name: "project_id",
             type: "uuid"
-        },
+        }, */
         {
             name: "rights",
             type: "text",

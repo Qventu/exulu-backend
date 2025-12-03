@@ -103,6 +103,9 @@ export type ExuluConfig = {
         s3endpoint?: string,
         s3prefix?: string,
     }
+    privacy?: {
+        systemPromptPersonalization?: boolean;
+    }
 }
 
 export class ExuluApp {

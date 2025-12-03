@@ -185,6 +185,7 @@ export const createWorkers = async (
                                 throw new Error(`Role not set for processor job.`);
                             }
 
+                            console.log("[EXULU] POS 2 -- EXULU CONTEXT PROCESS FIELD")
                             const result = await field.processor.execute({
                                 item: data.inputs,
                                 user: data.user,
@@ -200,9 +201,27 @@ export const createWorkers = async (
                                 config
                             });
 
+                            let jobs: string[] = [];
+                            if (field.processor.config?.generateEmbeddings) {
+                                // If the processor was configured to automatically trigger
+                                // the generation of embeddings, we trigger it here.
+                                const { job: embeddingsJob } = await context.embeddings.generate.one({
+                                    item: data.inputs,
+                                    user: data.user,
+                                    role: data.role,
+                                    trigger: "api",
+                                    config
+                                });
+                                if (embeddingsJob) {
+                                    jobs.push(embeddingsJob);
+                                }
+                            }
+
                             return {
                                 result,
-                                metadata: {}
+                                metadata: {
+                                    jobs: jobs.length > 0 ? jobs.join(",") : undefined
+                                }
                             };
                         }
 

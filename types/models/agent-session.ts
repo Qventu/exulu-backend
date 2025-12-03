@@ -5,6 +5,7 @@ export interface AgentSession {
     metadata: any;
     agentId: string;
     resourceId: string;
+    project: string;
     title: string;
     created_by: string;
     rights_mode: 'private' | 'users' | 'roles' | 'public' | 'projects'

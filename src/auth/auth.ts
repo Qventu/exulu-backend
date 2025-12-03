@@ -40,6 +40,8 @@ export const authentication = async ({
                 type: "api",
                 id: 192837465,
                 email: "internal@exulu.com",
+                firstname: "API",
+                lastname: "User",
                 role: {
                     id: "internal",
                     name: "Internal",

@@ -102,23 +102,38 @@ const addPrefixToKey = (keyPath: string, config: ExuluConfig): string => {
  * @returns The full S3 key of the uploaded file
  */
 export const uploadFile = async (
-    user: number,
     file: Buffer | Uint8Array,
     key: string,
     config: ExuluConfig,
-    options: UploadOptions = {}
+    options: UploadOptions = {},
+    user?: number,
 ): Promise<string> => {
-    console.log("[EXULU] Uploading file to S3", key)
+    
     if (!config.fileUploads) {
-        throw new Error("File uploads are not configured")
+        throw new Error("File uploads are not configured (in the exported uploadFile function)")
     }
     const client = getS3Client(config);
 
-    let folder = `${user}/`
+    let defaultBucket = config.fileUploads.s3Bucket;
+    let customBucket: boolean | string = false;
+
+    if (key.includes("[bucket:")) {
+        console.log("[EXULU] key includes [bucket:name]", key)
+        customBucket = key.split("[bucket:")[1]?.split("]")[0] || "";
+        if (!customBucket?.length) {
+            throw new Error("Invalid key, does not contain a bucket name like '[bucket:name]'.");
+        }
+        key = key.split("]")[1] || "";
+        console.log("[EXULU] custom bucket", customBucket)
+    }
+
+    let folder = user ? `${user}/` : "";
     const fullKey = addPrefixToKey(!key.includes(folder) ? folder + key : key, config);
 
+    console.log("[EXULU] uploading file to s3 into bucket", customBucket || defaultBucket, "with key", fullKey)
+
     const command = new PutObjectCommand({
-        Bucket: config.fileUploads.s3Bucket,
+        Bucket: customBucket || defaultBucket,
         Key: fullKey,
         Body: file,
         ContentType: options.contentType,
@@ -127,6 +142,12 @@ export const uploadFile = async (
     });
 
     await client.send(command);
+    console.log("[EXULU] file uploaded to s3 into bucket", customBucket || defaultBucket, "with key", fullKey)
+
+    if (customBucket) {
+        return "[bucket:" + customBucket + "]" + fullKey;
+    }
+
     return fullKey;
 }
 
@@ -398,16 +419,14 @@ export const createUppyRoutes = async (
             console.log("[EXULU] key", key)
         }
 
-        console.log("[EXULU] Getting object metadata from s3", key)
-        console.log("[EXULU] bucket", bucket)
-        console.log("[EXULU] key", key)
         const client = getS3Client(config);
         const command = new HeadObjectCommand({
             Bucket: bucket,
             Key: key,
         })
+
         const response = await client.send(command);
-        console.log("[EXULU] Object metadata from s3", response)
+        
         res.json(response);
         res.end();
     })
@@ -753,7 +772,7 @@ export const createUppyRoutes = async (
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")
         }
-        
+
         const client = getS3Client(config);
         const { uploadId } = req.params
         const { key } = req.query

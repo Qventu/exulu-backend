@@ -10,7 +10,7 @@ import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';
-import { vectorSearch } from "./utils/graphql";
+import { applyFilters, contextToTableDefinition, vectorSearch } from "./utils/graphql";
 import {
     PutObjectCommand,
     S3Client,
@@ -25,6 +25,8 @@ import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import type { Request } from "express";
 import { parseOfficeAsync } from 'officeparser';
+import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
+import type { Project } from "@EXULU_TYPES/models/project";
 
 /**
  * @type {S3Client}
@@ -49,7 +51,136 @@ export function sanitizeToolName(name) {
     return sanitized;
 }
 
-export const convertToolsArrayToObject = (
+const projectsCache = new Map<string, {
+    age: Date,
+    project: Project
+}>();
+
+export const createProjectRetrievalTool = async ({
+    user,
+    role,
+    contexts,
+    projectId
+}: {
+    user?: User,
+    role?: string,
+    contexts: ExuluContext[]
+    projectId: string
+}): Promise<ExuluTool | undefined> => {
+
+    let project: Project | undefined;
+    
+    const cachedProject = projectsCache.get(projectId);
+    // Check if cached project more than 1 minute old
+    // this to avoid fetching the project for each tool
+    // array generation.
+    const OneMinuteAgo = new Date(Date.now() - 1000 * 60);
+    if (cachedProject && cachedProject.age > OneMinuteAgo) {
+        project = cachedProject.project;
+    } else {
+        const { db } = await postgresClient();
+        project = await db.from("projects").where("id", projectId).first();
+        if (project) {
+            projectsCache.set(projectId, {
+                age: new Date(),
+                project: project
+            });
+        }
+        else {
+            return;
+        }
+    }
+    console.log("[EXULU] Project search tool created for project", project);
+
+    if (!project.project_items?.length) {
+        return;
+    }
+
+    const projectRetrievalTool = new ExuluTool({
+        id: "project_information_retrieval_tool_" + projectId,
+        name: "Project information retrieval tool for project " + project.name,
+        description: "This tool retrieves information about a project from conversations and items that were added to the project " + project.name + ".",
+        inputSchema: z.object({
+            query: z.string().describe("The query to retrieve information about the project " + project.name + "."),
+            keywords: z.array(z.string()).describe("The most relevant keywords in the query, such as names of people, companies, products, etc. in the project " + project.name + "."),
+        }),
+        type: "function",
+        category: "project",
+        config: [],
+        execute: async ({ query, keywords }: any) => {
+
+            console.log("[EXULU] Project search tool searching for project", project);
+
+            const items = project.project_items!;
+
+            const set = {}
+            for (const item of items) {
+                // Items array in project are structured as 
+                // global ids ('<context_id>/<item_id>').
+                const context: string | undefined = item.split("/")[0];
+
+                if (!context) {
+                    throw new Error("The item added to the project does not have a valid gid with the context id as the prefix before the first slash.");
+                }
+
+                const id = item.split("/")[1];
+                if (set[context]) {
+                    set[context].push(id);
+                } else {
+                    set[context] = [id];
+                }
+            }
+            
+            console.log("[EXULU] Project search tool searching through contexts", Object.keys(set));
+            // Run retrieval for each context in paralal.
+            // todo add typing
+            const results  = await Promise.all(Object.keys(set).map(async (contextName, index) => {
+                const context = contexts.find(context => context.id === contextName);
+                if (!context) {
+                    console.error("[EXULU] Context not found for project information retrieval tool.", contextName);
+                    return [];
+                }
+                const itemIds = set[contextName];
+
+                console.log("[EXULU] Project search tool searching through items", itemIds);
+
+                // Run retrieval over the items that are added to
+                // the project.
+                return await context.search({
+                    // todo check if it is more performant to use a concatenation of
+                    // the query and keywords, or just the keywords, instead of the 
+                    // query itself.
+                    query: query,
+                    filters: [{
+                        id: {
+                            in: itemIds
+                        }
+                    }],
+                    user: user,
+                    role: role,
+                    method: "hybridSearch",
+                    sort: {
+                        field: "updatedAt",
+                        direction: "desc",
+                    },
+                    trigger: "tool",
+                    limit: 10,
+                    page: 1,
+                });
+            }));
+
+            // Todo for contexts that dont have an embedder fall back to keyword search.
+            console.log("[EXULU] Project search tool results", results);
+            return {
+                result: JSON.stringify(results.flat()),
+            }
+        }
+    })
+
+    return projectRetrievalTool;
+}
+
+export const convertToolsArrayToObject = async (
     currentTools: ExuluTool[] | undefined,
     allExuluTools: ExuluTool[] | undefined,
     configs: ExuluAgentToolConfig[] | undefined,
@@ -59,13 +190,27 @@ export const convertToolsArrayToObject = (
     exuluConfig?: ExuluConfig,
     sessionID?: string,
     req?: Request,
-): Record<string, Tool> => {
+    project?: string
+): Promise<Record<string, Tool>> => {
 
     if (!currentTools) return {};
     if (!allExuluTools) return {};
     if (!contexts) {
         contexts = [];
     }
+
+    if (project) {
+        const projectRetrievalTool = await createProjectRetrievalTool({
+            user: user,
+            role: user?.role?.id,
+            contexts: contexts,
+            projectId: project
+        });
+        if (projectRetrievalTool) {
+            currentTools.push(projectRetrievalTool);
+        }
+    }
+
     const sanitizedTools = currentTools ? currentTools.map(tool => ({
         ...tool,
         name: sanitizeToolName(tool.name)
@@ -73,22 +218,15 @@ export const convertToolsArrayToObject = (
 
     console.log("[EXULU] Sanitized tools", sanitizedTools.map(x => x.name + " (" + x.id + ")"))
 
-    /* const askForConfirmation: Tool = {
-        description: 'Ask the user for confirmation.',
-        inputSchema: z.object({
-            message: z.string().describe('The message to ask for confirmation.'),
-        })
-    } */
-
     return {
         ...sanitizedTools?.reduce(
             (prev, cur) => {
 
-                let config = configs?.find(config => config.id === cur.id);
+                let toolVariableConfig = configs?.find(config => config.id === cur.id);
 
                 // Allows a dev to set a config option for an ExuluTool that overwrites the default tool description.
-                const userDefinedConfigDescription = config?.config.find(config => config.name === "description")?.value
-                const defaultConfigDescription = config?.config.find(config => config.name === "description")?.default
+                const userDefinedConfigDescription = toolVariableConfig?.config.find(config => config.name === "description")?.value
+                const defaultConfigDescription = toolVariableConfig?.config.find(config => config.name === "description")?.default
                 const toolDescription = cur.description;
                 const description = userDefinedConfigDescription || defaultConfigDescription || toolDescription;
 
@@ -102,8 +240,8 @@ export const convertToolsArrayToObject = (
                                 throw new Error("Tool execute function is undefined.")
                             }
 
-                            if (config) {
-                                config = await hydrateVariables(config || []);
+                            if (toolVariableConfig) {
+                                toolVariableConfig = await hydrateVariables(toolVariableConfig || []);
                             }
 
                             let upload: undefined | (
@@ -184,7 +322,6 @@ export const convertToolsArrayToObject = (
                                 return acc;
                             }, {});
 
-                            console.log("[EXULU] Config", config)
                             const response = await cur.tool.execute({
                                 ...inputs,
                                 sessionID: sessionID,
@@ -199,7 +336,7 @@ export const convertToolsArrayToObject = (
                                 contexts: contextsMap,
                                 upload,
                                 exuluConfig,
-                                config: config ? config.config.reduce((acc, curr) => {
+                                toolVariablesConfig: toolVariableConfig ? toolVariableConfig.config.reduce((acc, curr) => {
                                     acc[curr.name] = curr.value;
                                     return acc;
                                 }, {}) : {}
@@ -241,7 +378,6 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
         const variable = await db.from("variables").where({ name: variableName }).first();
 
         if (!variable) {
-            console.error("[EXULU] Variable " + variableName + " not found.")
             throw new Error("Variable " + variableName + " not found.")
         }
 
@@ -258,7 +394,6 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
         return toolConfig;
     })
     await Promise.all(promises);
-    console.log("[EXULU] Variable values retrieved and added to tool config.")
     return tool;
 }
 
@@ -683,8 +818,24 @@ export class ExuluAgent {
 
         console.log("[EXULU] Message count for agent: " + this.name, "loaded for generating sync.", messages.length)
 
+        let project: string | undefined;
+        if (session) {
+            const sessionData = await getSession({ sessionID: session })
+            project = sessionData.project;
+        }
+
+        const personalizationInformation = exuluConfig?.privacy?.systemPromptPersonalization !== false ? `
+                ${user?.firstname ? `The users first name is "${user.firstname}"` : ""}
+                ${user?.lastname ? `The users last name is "${user.lastname}"` : ""}
+                ${user?.email ? `The users email is "${user.email}"` : ""}
+        ` : "";
+
         const genericContext =
-            "IMPORTANT: \n\n The current date is " + new Date().toLocaleDateString() + " and the current time is " + new Date().toLocaleTimeString() + ". If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume they are talking with the current date in mind as a reference.";
+            `IMPORTANT general information:
+                ${personalizationInformation}
+                The current date is "${new Date().toLocaleDateString()}" and the current time is "${new Date().toLocaleTimeString()}". 
+                If the user does not explicitly provide the current date, for examle when saying ' this weekend', you should assume 
+                they are talking with the current date in mind as a reference.`;
 
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
@@ -713,7 +864,7 @@ export class ExuluAgent {
                     system,
                     prompt: prompt,
                     maxRetries: 2,
-                    tools: convertToolsArrayToObject(
+                    tools: await convertToolsArrayToObject(
                         currentTools,
                         allExuluTools,
                         toolConfigs,
@@ -722,7 +873,8 @@ export class ExuluAgent {
                         user,
                         exuluConfig,
                         session,
-                        req
+                        req,
+                        project
                     ),
                     stopWhen: [stepCountIs(2)],
                 });
@@ -774,7 +926,7 @@ export class ExuluAgent {
                     ignoreIncompleteToolCalls: true
                 }),
                 maxRetries: 2,
-                tools: convertToolsArrayToObject(
+                tools: await convertToolsArrayToObject(
                     currentTools,
                     allExuluTools,
                     toolConfigs,
@@ -784,6 +936,7 @@ export class ExuluAgent {
                     exuluConfig,
                     session,
                     req,
+                    project
                 ),
                 stopWhen: [stepCountIs(2)],
             });
@@ -837,8 +990,6 @@ export class ExuluAgent {
     private async processFilePartsInMessages(messages: UIMessage[]): Promise<UIMessage[]> {
         const processedMessages = await Promise.all(messages.map(async (message) => {
 
-            console.log("[EXULU] Processing file parts in messages: " + JSON.stringify(message, null, 2));
-
             // Only process user messages with content array
             if (message.role !== 'user' || !Array.isArray(message.parts)) {
                 return message;
@@ -855,7 +1006,7 @@ export class ExuluAgent {
                 // Check if it's an image file - these are supported as image parts
                 const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
                 if (imageTypes.includes(mediaType)) {
-                    console.log(`[EXULU] Converting file part to image part: ${filename}`);
+                    console.log(`[EXULU] Converting file part to image part: ${filename} `);
                     return {
                         type: 'image',
                         image: url,
@@ -869,7 +1020,7 @@ export class ExuluAgent {
                     // Fetch the file content from the URL
                     const response = await fetch(url);
                     if (!response.ok) {
-                        console.error(`[EXULU] Failed to fetch file: ${filename}, status: ${response.status}`);
+                        console.error(`[EXULU] Failed to fetch file: ${filename}, status: ${response.status} `);
                         return {
                             type: 'text',
                             text: `[Error: Could not load file ${filename}]`
@@ -888,7 +1039,7 @@ export class ExuluAgent {
                     // Return as text part with extracted content wrapped in XML-like tags
                     return {
                         type: 'text',
-                        text: `<file name="${filename}">\n${extractedText}\n</file>`
+                        text: `<file file name = "${filename}" >\n${extractedText} \n </file>`
                     };
                 } catch (error) {
                     console.error(`[EXULU] Error processing file ${filename}:`, error);
@@ -960,7 +1111,11 @@ export class ExuluAgent {
         let messages: UIMessage[] = [];
         let previousMessagesContent: UIMessage[] = previousMessages || [];
         // load the previous messages from the server:
+        let project: string | undefined;
         if (session) {
+            const sessionData = await getSession({ sessionID: session })
+            project = sessionData.project;
+
             console.log("[EXULU] loading previous messages from session: " + session)
             const previousMessages = await getAgentMessages({
                 session,
@@ -986,7 +1141,7 @@ export class ExuluAgent {
 
         // Process file parts to convert them to OpenAI Responses API compatible format
         // which mostly means converting file parts to text parts unless they are images.
-        console.log("[EXULU] Processing file parts in messages for OpenAI Responses API compatibility");
+
         messages = await this.processFilePartsInMessages(messages);
 
         // Simple things like the current date, time, etc.
@@ -998,15 +1153,13 @@ export class ExuluAgent {
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
-        console.log("[EXULU] tools for agent: " + this.name, currentTools?.map(x => x.name + " (" + x.id + ")"))
-        console.log("[EXULU] system", system.slice(0, 100) + "...")
-
         const result = streamText({
             model: model, // Should be a LanguageModelV1
             messages: convertToModelMessages(messages, {
                 ignoreIncompleteToolCalls: true
             }),
-            // prepareStep could be used here to set the model for the first step or change other params
+            // PrepareStep could be used here to set the model 
+            // for the first step or change other parameters.
             system,
             maxRetries: 2,
             providerOptions: {
@@ -1014,7 +1167,7 @@ export class ExuluAgent {
                     reasoningSummary: 'auto',
                 },
             },
-            tools: convertToolsArrayToObject(
+            tools: await convertToolsArrayToObject(
                 currentTools,
                 allExuluTools,
                 toolConfigs,
@@ -1023,7 +1176,8 @@ export class ExuluAgent {
                 user,
                 exuluConfig,
                 session,
-                req
+                req,
+                project
             ),
             onError: error => {
                 console.error("[EXULU] chat stream error.", error);
@@ -1193,15 +1347,12 @@ export class ExuluEmbedder {
 
             let value = "";
 
-            console.log("[EXULU] variable name", variableName);
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
 
             if (!variable) {
                 throw new Error("Variable not found for embedder setting: " + name + " in context: " + context + " and embedder: " + this.id);
             }
-
-            console.log("[EXULU] variable", variable);
 
             if (variable.encrypted) {
                 if (!process.env.NEXTAUTH_SECRET) {
@@ -1217,15 +1368,12 @@ export class ExuluEmbedder {
                     }
 
                     value = decrypted;
-                    console.log("[EXULU] successfully decrypted value for", name);
                 } catch (error) {
                     throw new Error(`Failed to decrypt variable "${name}" for embedder setting in context "${context}": ${error instanceof Error ? error.message : "Unknown error"}. Verify that NEXTAUTH_SECRET matches the key used during encryption.`);
                 }
             } else {
                 value = variable.value;
             }
-
-            console.log("[EXULU] variable value", value);
 
             hydrated.push({
                 id: id || "",
@@ -1546,8 +1694,8 @@ export class ExuluTool {
 
 export type ExuluContextFieldProcessor = {
     description: string,
-    execute: ({ item, user, role, utils, config }: {
-        item: Item & { field: string }, user: number, role: string, utils: {
+    execute: ({ item, user, role, utils, exuluConfig }: {
+        item: Item & { field: string }, user?: number, role?: string, utils: {
             storage: ExuluStorage
             items: {
                 update: ExuluContext['updateItem'],
@@ -1555,12 +1703,13 @@ export type ExuluContextFieldProcessor = {
                 delete: ExuluContext['deleteItem']
             }
         },
-        config: ExuluConfig
+        exuluConfig: ExuluConfig
     }) => Promise<string>,
     config?: {
         queue?: Promise<ExuluQueueConfig>,
         timeoutInSeconds?: number, // 3 minutes default
-        trigger: "manual" | "onUpdate" | "onCreate" | "always"
+        trigger: "manual" | "onUpdate" | "onInsert" | "always"
+        generateEmbeddings?: boolean, // defines if embeddings are generated after the processor finishes executing
     },
 }
 
@@ -1599,14 +1748,20 @@ export class ExuluStorage {
         return await getPresignedUrlUppy(key, this.config);
     }
 
-    public uploadFile = async (user: number, file: Buffer | Uint8Array, key: string, type: string, metadata?: Record<string, string>) => {
-        return await uploadFileUppy(user, file, key, this.config, {
-            contentType: type,
-            metadata: {
-                ...metadata,
-                type: type
-            }
-        });
+    public uploadFile = async (file: Buffer | Uint8Array, key: string, type: string, user?: number, metadata?: Record<string, string>) => {
+        return await uploadFileUppy(
+            file,
+            key,
+            this.config,
+            {
+                contentType: type,
+                metadata: {
+                    ...metadata,
+                    type: type
+                },
+            },
+            user
+        );
     }
     // todo add upload and delete methods
 }
@@ -1628,7 +1783,10 @@ export type ExuluContextSource = {
             default?: string
         }[]
     }
-    execute: (inputs: any) => Promise<Item[]>,
+    execute: (inputs: {
+        exuluConfig: ExuluConfig
+        [key: string]: any;
+    }) => Promise<Item[]>,
 }
 export class ExuluContext {
 
@@ -1651,7 +1809,19 @@ export class ExuluContext {
     };
     public sources: ExuluContextSource[] = [];
 
-    constructor({ id, name, description, embedder, active, rateLimit, fields, queryRewriter, resultReranker, configuration, sources }: {
+    constructor({
+        id,
+        name,
+        description,
+        embedder,
+        active,
+        rateLimit,
+        fields,
+        queryRewriter,
+        resultReranker,
+        configuration,
+        sources
+    }: {
         id: string,
         name: string,
         fields: ExuluContextFieldDefinition[],
@@ -1688,10 +1858,10 @@ export class ExuluContext {
 
     public processField = async (
         trigger: STATISTICS_LABELS,
-        user: number,
-        role: string,
         item: Item & { field: string },
-        config: ExuluConfig,
+        exuluConfig: ExuluConfig,
+        user?: number,
+        role?: string,
     ): Promise<{
         result: string,
         job?: string
@@ -1706,7 +1876,8 @@ export class ExuluContext {
             console.error("[EXULU] field not found or processor not set for field", item.field, " in context", this.id);
             throw new Error("Field not found or processor not set for field " + item.field + " in context " + this.id);
         }
-        const exuluStorage = new ExuluStorage({ config });
+        const exuluStorage = new ExuluStorage({ config: exuluConfig });
+
         const queue = await field.processor.config?.queue;
         if (queue?.queue.name) {
             console.log("[EXULU] processor is in queue mode, scheduling job.")
@@ -1734,6 +1905,7 @@ export class ExuluContext {
             };
         }
 
+        console.log("[EXULU] POS 1 -- EXULU CONTEXT PROCESS FIELD")
         const result = await field.processor.execute({
             item,
             user,
@@ -1746,13 +1918,48 @@ export class ExuluContext {
                     delete: this.deleteItem
                 }
             },
-            config
+            exuluConfig
         });
 
         return {
             result,
             job: undefined
         };
+    }
+
+    public search = async (options: {
+        query: string,
+        filters: any[],
+        user?: User,
+        role?: string,
+        method: VectorMethod,
+        sort: any,
+        trigger: STATISTICS_LABELS,
+        limit: number,
+        page: number,
+    }): Promise<{
+        filters: any[]
+        query: string
+        method: VectorMethod
+        context: {
+            name: string
+            id: string
+            embedder: string
+        },
+        items: any[]
+    }> => {
+
+        const { db } = await postgresClient();
+
+        const result = await vectorSearch({
+            ...options,
+            user: options.user,
+            role: options.role,
+            context: this,
+            db,
+        });
+
+        return result;
     }
 
     public deleteAll = async (): Promise<VectorOperationResponse> => {
@@ -1765,8 +1972,15 @@ export class ExuluContext {
         }
     }
 
-    public executeSource = async (source: ExuluContextSource, inputs: any): Promise<Item[]> => {
-        return await source.execute(inputs);
+    public executeSource = async (
+        source: ExuluContextSource,
+        inputs: any,
+        exuluConfig: ExuluConfig
+    ): Promise<Item[]> => {
+        return await source.execute({
+            ...inputs,
+            exuluConfig
+        });
     }
 
     public tableExists = async () => {
@@ -1849,7 +2063,8 @@ export class ExuluContext {
         config: ExuluConfig,
         user?: number,
         role?: string,
-        upsert?: boolean
+        upsert?: boolean,
+        generateEmbeddingsOverwrite?: boolean | undefined
     ): Promise<{ item: Item, job?: string }> => {
 
         if (upsert && (
@@ -1887,16 +2102,67 @@ export class ExuluContext {
 
         console.log("[EXULU] context configuration", this.configuration)
 
-        if (
-            this.embedder && (
+        let jobs: string[] = [];
+
+        let shouldGenerateEmbeddings = (
+            this.embedder && generateEmbeddingsOverwrite !== false && (
+                generateEmbeddingsOverwrite ||
                 this.configuration.calculateVectors === "onUpdate" ||
+                this.configuration.calculateVectors === "onInsert" ||
                 this.configuration.calculateVectors === "always"
             )
-        ) {
+        )
+
+        for (const [key, value] of Object.entries(item)) {
+
+            console.log("[EXULU] Checking for processors for field", key)
+
+            // On purpose only running over the fields included in the item's payload
+            // from graphql, as we dont want to process fields that were not provided
+            // in the create call, assuming they were not provided on purpose.
+            const processor = this.fields.find(field => field.name === key.replace("_s3key", ""))?.processor;
+
+            console.log("[EXULU] Processor found", processor)
+
+            if (
+                processor &&
+                (
+                    processor?.config?.trigger === "onInsert" ||
+                    processor?.config?.trigger === "onUpdate" ||
+                    processor?.config?.trigger === "always"
+                )
+            ) {
+                const {
+                    job: processorJob,
+                    result: processorResult
+                } = await this.processField(
+                    "api",
+                    {
+                        ...item,
+                        id: results[0].id,
+                        field: key
+                    },
+                    config,
+                    user,
+                    role
+                )
+                if (processorJob) {
+                    jobs.push(processorJob);
+                }
+                if (!processorJob && processor.config?.generateEmbeddings) {
+                    // means the processor finished already, so we can trigger embeddings
+                    // generation directly if the processor has the generateEmbeddings flag 
+                    // set to true.
+                    shouldGenerateEmbeddings = true;
+                }
+            }
+        }
+
+        if (shouldGenerateEmbeddings) {
             console.log("[EXULU] generating embeddings for item", results[0].id)
-            const { job } = await this.embeddings.generate.one({
+            const { job: embeddingsJob } = await this.embeddings.generate.one({
                 item: {
-                    ...item, // important we need to full record here with all fields for the embedder
+                    ...item,
                     id: results[0].id
                 },
                 user: user,
@@ -1904,19 +2170,25 @@ export class ExuluContext {
                 trigger: "api",
                 config: config
             });
-            return {
-                item: results[0],
-                job
-            };
+
+            if (embeddingsJob) {
+                jobs.push(embeddingsJob);
+            }
         }
 
         return {
             item: results[0],
-            job: undefined
+            job: jobs.length > 0 ? jobs.join(",") : undefined
         };
     }
 
-    public updateItem = async (item: Item, config: ExuluConfig, user?: number, role?: string): Promise<{ item: Item, job?: string }> => {
+    public updateItem = async (
+        item: Item,
+        config: ExuluConfig,
+        user?: number,
+        role?: string,
+        generateEmbeddingsOverwrite?: boolean | undefined
+    ): Promise<{ item: Item, job?: string }> => {
         const { db } = await postgresClient();
 
         if (item.field) {
@@ -1946,28 +2218,73 @@ export class ExuluContext {
 
         await mutation;
 
-        if (
-            this.embedder && (
+        let jobs: string[] = [];
+
+        let shouldGenerateEmbeddings = (
+            this.embedder && generateEmbeddingsOverwrite !== false && (
+                generateEmbeddingsOverwrite ||
                 this.configuration.calculateVectors === "onUpdate" ||
                 this.configuration.calculateVectors === "always"
             )
-        ) {
-            const { job } = await this.embeddings.generate.one({
+        )
+
+        for (const [key, value] of Object.entries(item)) {
+
+            // On purpose only running over the fields included in the item's payload
+            // from graphql, as we dont want to process fields that were not provided
+            // in the update call, assuming they did not change.
+            const processor = this.fields.find(field => field.name === key.replace("_s3key", ""))?.processor;
+
+            if (
+                processor &&
+                (
+                    processor?.config?.trigger === "onInsert" ||
+                    processor?.config?.trigger === "onUpdate" ||
+                    processor?.config?.trigger === "always"
+                )
+            ) {
+                const {
+                    job: processorJob,
+                    result: processorResult
+                } = await this.processField(
+                    "api",
+                    {
+                        ...item,
+                        id: record.id,
+                        field: key
+                    },
+                    config,
+                    user,
+                    role
+                )
+                if (processorJob) {
+                    jobs.push(processorJob);
+                }
+                if (!processorJob && processor.config?.generateEmbeddings) {
+                    // means the processor finished already, so we can trigger embeddings
+                    // generation directly if the processor has the generateEmbeddings flag 
+                    // set to true.
+                    shouldGenerateEmbeddings = true;
+                }
+            }
+        }
+
+        if (shouldGenerateEmbeddings) {
+            const { job: embeddingsJob } = await this.embeddings.generate.one({
                 item: record, // important we need to full record here with all fields for the embedder
                 user: user,
                 role: role,
                 trigger: "api",
                 config: config
             });
-            return {
-                item: record,
-                job
-            };
+            if (embeddingsJob) {
+                jobs.push(embeddingsJob);
+            }
         }
 
         return {
             item: record,
-            job: undefined
+            job: jobs.length > 0 ? jobs.join(",") : undefined
         };
     }
 
@@ -2007,6 +2324,51 @@ export class ExuluContext {
         };
     }
 
+    public getItem = async ({ item }: { item: Item }): Promise<Item> => {
+        // Note this method does not apply access control, the developer that uses
+        // it is responsible for applying access control themselves. This is on 
+        // to expose a method to retrieve items for internal user.
+        const { db } = await postgresClient();
+
+        if (!item.id && !item.external_id) {
+            throw new Error("Item id or external id is required to get an item.");
+        }
+
+        const result = await db.from(getTableName(this.id)).where({
+            ...(item.id ? { id: item.id } : {}),
+            ...(item.external_id ? { external_id: item.external_id } : {}),
+        }).first();
+
+        if (result) {
+            const chunksCount = await db.from(getChunksTableName(this.id)).where(
+                { source: result.id }
+            ).count("id");
+            result.chunksCount = Number(chunksCount[0].count) || 0;
+        }
+
+        return result;
+    }
+
+    public getItems = async (
+        {
+            filters,
+            fields
+        }: {
+            filters?: any[],
+            fields?: string[]
+        }): Promise<Item[]> => {
+
+        // Note this method does not apply access control, the developer that uses
+        // it is responsible for applying access control themselves. This is on 
+        // to expose a method to retrieve items for internal user.
+        const { db } = await postgresClient();
+        let query = db.from(getTableName(this.id)).select(fields || "*");
+        const tableDefinition = contextToTableDefinition(this)
+        query = applyFilters(query, filters || [], tableDefinition);
+        const items = await query;
+        return items;
+    }
+
     public embeddings = {
         generate: {
             one: async ({
@@ -2037,6 +2399,19 @@ export class ExuluContext {
                     throw new Error("Item id is required for generating embeddings.")
                 }
 
+                const { db } = await postgresClient();
+
+                // Load the full record here so we make sure we have all the fields
+                // needed for generating embeddings, which is not guaranteed if for
+                // example the item in the input parameters comes from a graphql query
+                // with a limited set of fields.
+                const record = await db.from(getTableName(this.id)).where({ id: item.id }).first();
+                if (!record) {
+                    throw new Error("Item not found.")
+                }
+
+                item = record;
+
                 const queue = await this.embedder.queue;
                 if (queue?.queue.name) {
                     console.log("[EXULU] embedder is in queue mode, scheduling job.")
@@ -2059,7 +2434,7 @@ export class ExuluContext {
                     })
 
                     return {
-                        id: item.id,
+                        id: item.id!,
                         job: job.id,
                         chunks: 0
                     };
