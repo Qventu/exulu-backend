@@ -995,22 +995,27 @@ export class ExuluAgent {
                 return message;
             }
 
-            const processedParts = await Promise.all(message.parts.map(async (part: any) => {
+            const processedParts: UIMessage['parts'] = await Promise.all(message.parts.map(async (part: any) => {
                 // If not a file part, return as-is
                 if (part.type !== 'file') {
                     return part;
                 }
 
+                console.log(`[EXULU] Processing part`, part);
                 const { mediaType, url, filename } = part;
 
                 // Check if it's an image file - these are supported as image parts
-                const imageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
-                if (imageTypes.includes(mediaType)) {
+                console.log(`[EXULU] Media type: ${mediaType}`);
+                console.log(`[EXULU] URL: ${url}`);
+                console.log(`[EXULU] Filename: ${filename}`);
+                const imageTypes = ['.png', '.jpeg', '.jpg', '.gif', '.webp'];
+                const imageType = imageTypes.find(type => filename.toLowerCase().includes(type.toLowerCase()));
+                if (imageType) {
                     console.log(`[EXULU] Converting file part to image part: ${filename} `);
                     return {
-                        type: 'image',
-                        image: url,
-                        mimeType: mediaType
+                        type: 'file',
+                        mediaType: `image/${imageType.replace('.', '')}`,
+                        url: url,
                     };
                 }
 
@@ -1727,7 +1732,6 @@ export type ExuluContextFieldDefinition = {
     processor?: ExuluContextFieldProcessor
 }
 
-
 export const getTableName = (id: string) => {
     return sanitizeName(id) + "_items";
 }
@@ -1783,6 +1787,7 @@ export type ExuluContextSource = {
             default?: string
         }[]
     }
+
     execute: (inputs: {
         exuluConfig: ExuluConfig
         [key: string]: any;
