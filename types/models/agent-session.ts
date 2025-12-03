@@ -8,12 +8,12 @@ export interface AgentSession {
     project: string;
     title: string;
     created_by: string;
-    rights_mode: 'private' | 'users' | 'roles' | 'public' | 'projects'
+    rights_mode: 'private' | 'users' | 'roles' | 'public' /* | 'projects' */
     RBAC?: {
         type?: string;
         users?: Array<{ id: string; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
-        projects?: Array<{ id: string; rights: 'read' | 'write' }>;
+        /* projects?: Array<{ id: string; rights: 'read' | 'write' }>; */
     };
 }
 export interface AgentMessage {

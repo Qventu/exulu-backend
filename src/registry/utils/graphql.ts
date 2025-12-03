@@ -474,7 +474,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 throw new Error('Insufficient role permissions to edit this record');
             }
 
-            if (record.rights_mode === 'projects') {
+            /* if (record.rights_mode === 'projects') {
                 // For example when retrieving an item
                 // we check if that item has the rights_mode
                 // project, and if so, retrieve all RBAC entries
@@ -541,7 +541,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 if (checks.some(check => check)) {
                     return true;
                 }
-            }
+            } */
 
             throw new Error('Insufficient permissions to edit this record');
 
@@ -1299,7 +1299,9 @@ const addAgentFields = async (
     }
 
     if (requestedFields.includes("tools")) {
+
         if (result.tools) {
+
             result.tools = await Promise.all(result.tools.map(async (tool: {
                 config: any,
                 id: string
@@ -2203,7 +2205,7 @@ export const RBACResolver = async (
     type: string,
     users: any[],
     roles: any[],
-    projects: any[]
+    // projects: any[]
 }> => {
 
     // Get RBAC records for this resource
@@ -2222,21 +2224,21 @@ export const RBACResolver = async (
         .filter(r => r.access_type === 'Role')
         ?.map(r => ({ id: r.role_id, rights: r.rights }));
 
-    const projects = rbacRecords
+    /* const projects = rbacRecords
         .filter(r => r.access_type === 'Project')
-        ?.map(r => ({ id: r.project_id, rights: r.rights }));
+        ?.map(r => ({ id: r.project_id, rights: r.rights })); */
 
     // Determine the type based on rights_mode or presence of records
     let type = rights_mode || 'private';
     if (type === 'users' && users.length === 0) type = 'private';
     if (type === 'roles' && roles.length === 0) type = 'private';
-    if (type === 'projects' && projects.length === 0) type = 'private';
+    // if (type === 'projects' && projects.length === 0) type = 'private';
 
     return {
         type,
         users,
         roles,
-        projects
+        // projects
     };
 }
 
@@ -2353,6 +2355,26 @@ export function createSDL(
 
     tables = [...tables, ...contextSchemas]
 
+    // Removed from below:
+
+    // 1 RBACData {
+    // projects: [RBACProject!]
+
+    // 2 RBACInput 
+    // projects: [RBACProjectInput!]
+
+    // 3 
+    // type RBACProject {
+    //  id: ID!
+    //  rights: String!
+    // }
+
+    // 4 
+    // input RBACProjectInput {
+    //  id: ID!
+    //  rights: String!
+    // }
+
     console.log("[EXULU] Creating SDL.")
     let typeDefs = `
     scalar JSON
@@ -2362,7 +2384,7 @@ export function createSDL(
       type: String!
       users: [RBACUser!]
       roles: [RBACRole!]
-      projects: [RBACProject!]
+      
     }
     
     type RBACUser {
@@ -2375,15 +2397,9 @@ export function createSDL(
       rights: String!
     }
     
-    type RBACProject {
-      id: ID!
-      rights: String!
-    }
-    
     input RBACInput {
       users: [RBACUserInput!]
       roles: [RBACRoleInput!]
-      projects: [RBACProjectInput!]
     }
     
     input RBACUserInput {
@@ -2392,11 +2408,6 @@ export function createSDL(
     }
     
     input RBACRoleInput {
-      id: ID!
-      rights: String!
-    }
-    
-    input RBACProjectInput {
       id: ID!
       rights: String!
     }

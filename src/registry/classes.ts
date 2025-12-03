@@ -1736,7 +1736,7 @@ export const getChunksTableName = (id: string) => {
     return sanitizeName(id) + "_chunks";
 }
 
-export type ExuluRightsMode = "private" | "users" | "roles" | "public" | "projects"
+export type ExuluRightsMode = "private" | "users" | "roles" | "public"/*  | "projects" */
 
 export class ExuluStorage {
     private config: ExuluConfig

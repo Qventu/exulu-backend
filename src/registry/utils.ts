@@ -149,12 +149,12 @@ const checkRecordAccessCache = new Map<string, {
 }>();
 
 export const checkRecordAccess = async (record: any & {
-    rights_mode: 'private' | 'users' | 'roles' | 'public' | 'projects',
+    rights_mode: 'private' | 'users' | 'roles' | 'public'/*  | 'projects' */,
     created_by: string,
     RBAC: {
         users: { id: number, rights: string }[],
         roles: { id: string, rights: string }[],
-        projects: { id: string, rights: string }[]
+        /* projects: { id: string, rights: string }[] */
     }
 }, request: "read" | "write", user?: User,): Promise<boolean> => {
 
