@@ -30,6 +30,20 @@ import type { Project } from "@EXULU_TYPES/models/project";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import cookieParser from 'cookie-parser';
 
+const getExuluVersionNumber = async () => {
+    try {
+        // Load the root package.json file of the project from the process folder
+        const path = process.cwd();
+        const packageJson = fs.readFileSync(path + '/package.json', 'utf8');
+        const packageData = JSON.parse(packageJson);
+        const exuluVersion = packageData.dependencies['@exulu/backend'];
+        console.log(`[EXULU] Installed exulu-backend version: ${exuluVersion}`);
+        return exuluVersion;
+    } catch (error: any) {
+        console.error("Could not find or import package.json:", error.message);
+    }
+}
+
 export const global_queues = {
     eval_runs: "eval_runs"
 }
@@ -97,6 +111,15 @@ export const createExpressRoutes = async (
     app.use(bodyParser.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }))
     app.use(bodyParser.json({ limit: REQUEST_SIZE_LIMIT }))
     app.use(cookieParser())
+
+    // Add exulu-version header to all responses for debugging
+    app.use(async (req: Request, res: Response, next: Function) => {
+        const version = await getExuluVersionNumber();
+        if (version) {
+            res.setHeader('exulu-version', version);
+        }
+        next();
+    });
 
     console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -684,7 +707,7 @@ Mood: friendly and intelligent.
             } else {
                 let projectQuery = db('projects');
                 projectQuery.select("*");
-                projectQuery = applyAccessControl(projectsSchema(), projectQuery,authenticationResult.user);
+                projectQuery = applyAccessControl(projectsSchema(), projectQuery, authenticationResult.user);
                 projectQuery.where({ id: req.params.project });
                 project = await projectQuery.first();
 
