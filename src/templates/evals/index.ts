@@ -66,7 +66,10 @@ const llmAsJudgeEval = () => {
                 name: "prompt",
                 description: "The prompt to send to the LLM as a judge, make sure to instruct the LLM to output a numerical score between 0 and 100. Add {actual_output} to the prompt to replace with the last message content, and {expected_output} to replace with the expected output."
             }],
-            queue: ExuluQueues.register("llm_as_judge", 1, 1).use(),
+            queue: ExuluQueues.register("llm_as_judge", {
+                worker: 1,
+                queue: 1,
+            }, 1).use(),
             llm: true
         })
     }

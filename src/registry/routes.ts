@@ -92,7 +92,10 @@ export const createExpressRoutes = async (
     queues?: {
         queue: Queue,
         ratelimit: number
-        concurrency: number
+        concurrency: {
+            worker: number
+            queue: number
+        }
     }[]
 ): Promise<Express> => {
 
@@ -645,7 +648,7 @@ Mood: friendly and intelligent.
         config?.fileUploads?.s3secret &&
         config?.fileUploads?.s3Bucket
     ) {
-        await createUppyRoutes(app, config)
+        await createUppyRoutes(app, contexts ?? [], config)
     } else {
         console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in ExuluApp instance.")
     }

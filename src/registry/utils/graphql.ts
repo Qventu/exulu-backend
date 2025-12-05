@@ -5,7 +5,7 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
-import { createProjectRetrievalTool, ExuluAgent, ExuluEval, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
+import { createProjectRetrievalTool, ExuluAgent, ExuluEval, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluContextFieldProcessor, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
 import { addCoreFields } from "../../postgres/core-schema";
 import { sanitizeName } from "./sanitize-name";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -2329,7 +2329,10 @@ export function createSDL(
     queues: {
         queue: Queue,
         ratelimit: number
-        concurrency: number
+        concurrency: {
+            worker: number
+            queue: number
+        }
     }[]
 ) {
 
@@ -2639,7 +2642,10 @@ type PageInfo {
         const config = await queue.use();
         return {
             name: config.queue.name,
-            concurrency: config.concurrency,
+            concurrency: {
+                worker: config.concurrency?.worker || undefined,
+                queue: config.concurrency?.queue || undefined,
+            },
             ratelimit: config.ratelimit,
             isMaxed: await config.queue.isMaxed(),
             isPaused: await config.queue.isPaused(),
@@ -2716,7 +2722,10 @@ type PageInfo {
         }
 
         // Use a general eval queue for the main eval jobs
-        const evalQueue = await ExuluQueues.register("eval_runs", 1, 1).use();
+        const evalQueue = await ExuluQueues.register("eval_runs", {
+            worker: 1,
+            queue: 1,
+        }, 1).use();
 
         // Create one job per test case
         const jobIds: string[] = [];
@@ -2860,7 +2869,7 @@ type PageInfo {
         if (!client) {
             throw new Error("Redis client not created properly");
         }
-        console.log("[EXULU] Jobs pagination args", args);
+        
         const {
             jobs,
             count
@@ -2870,8 +2879,6 @@ type PageInfo {
             args.page || 1,
             args.limit || 100
         );
-
-        console.log("[EXULU] jobs", jobs.map(job => job.name));
 
         const requestedFields = getRequestedFields(info)
         return {
@@ -2905,6 +2912,27 @@ type PageInfo {
 
         const data = await Promise.all(contexts.map(async context => {
 
+            let processors = await Promise.all(context.fields.map(async field => {
+                if (field.processor) {
+                    let queueName: string | undefined = undefined;
+                    if (field.processor?.config?.queue) {
+                        const config = await field.processor?.config?.queue;
+                        queueName = config?.queue?.name || undefined;
+                    }
+                    return {
+                        field: field.name,
+                        description: field.processor?.description,
+                        queue: queueName,
+                        trigger: field.processor?.config?.trigger,
+                        timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
+                        generateEmbeddings: field.processor?.config?.generateEmbeddings || false,
+                    }
+                }
+                return null;
+            }));
+
+            processors = processors.filter(processor => processor !== null);
+
             const sources = await Promise.all(context.sources.map(async source => {
                 let queueName: string | undefined = undefined;
                 if (source.config) {
@@ -2936,6 +2964,7 @@ type PageInfo {
                 slug: "/contexts/" + context.id,
                 active: context.active,
                 sources,
+                processors,
                 fields: context.fields.map(field => {
                     return {
                         ...field,
@@ -2965,6 +2994,27 @@ type PageInfo {
         if (!data) {
             return null;
         }
+
+        let processors = await Promise.all(data.fields.map(async field => {
+            if (field.processor) {
+                let queueName: string | undefined = undefined;
+                if (field.processor?.config?.queue) {
+                    const config = await field.processor?.config?.queue;
+                    queueName = config?.queue?.name || undefined;
+                }
+                return {
+                    field: field.name,
+                    description: field.processor?.description,
+                    queue: queueName,
+                    trigger: field.processor?.config?.trigger,
+                    timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
+                    generateEmbeddings: field.processor?.config?.generateEmbeddings || false,
+                }
+            }
+            return null;
+        }));
+
+        processors = processors.filter(processor => processor !== null);
 
         const sources = await Promise.all(data.sources.map(async source => {
             let queueName: string | undefined = undefined;
@@ -3004,6 +3054,7 @@ type PageInfo {
             slug: "/contexts/" + data.id,
             active: data.active,
             sources,
+            processors,
             fields: await Promise.all(data.fields.map(async field => {
                 const label = field.name?.replace("_s3key", "");
                 if (field.type === "file" && !field.name.endsWith("_s3key")) {
@@ -3027,7 +3078,10 @@ type PageInfo {
                                 queue: {
                                     name: queue?.queue.name || undefined,
                                     ratelimit: queue?.ratelimit || undefined,
-                                    concurrency: queue?.concurrency || undefined,
+                                    concurrency: {
+                                        worker: queue?.concurrency?.worker || undefined,
+                                        queue: queue?.concurrency?.queue || undefined,
+                                    },
                                 },
                             },
                             execute: "function",
@@ -3119,11 +3173,17 @@ type PageInfo {
     modelDefs += `
     type QueueResult {
         name: String!
-        concurrency: Int!
+        concurrency: QueueConcurrency!
         ratelimit: Int!
         isMaxed: Boolean!
         isPaused: Boolean!
         jobs: QueueJobsCounts
+    }
+    `
+    modelDefs += `
+    type QueueConcurrency {
+        worker: Int
+        queue: Int
     }
     `
     modelDefs += `
@@ -3247,7 +3307,8 @@ type Context {
     active: Boolean
     fields: JSON
     configuration: JSON
-    sources: [ContextSource!]
+    sources: [ContextSource]
+    processors: [ContextProcessor]
 }
 type Embedder {
     name: String!
@@ -3259,6 +3320,14 @@ type EmbedderConfig {
     name: String!
     description: String
     default: String
+}
+type ContextProcessor {
+    field: String!
+    description: String
+    queue: String
+    trigger: String
+    timeoutInSeconds: Int
+    generateEmbeddings: Boolean
 }
 
 type ContextSource {
@@ -3396,10 +3465,7 @@ async function getJobsByQueueName(queueName: string, statusses?: JobState[], pag
     const config = await queue.use()
     const startIndex = (page || 1) - 1;
     const endIndex = (startIndex - 1) + (limit || 100);
-    console.log("[EXULU] Jobs pagination startIndex", startIndex);
-    console.log("[EXULU] Jobs pagination endIndex", endIndex);
     const jobs = await config.queue.getJobs(statusses || [], startIndex, endIndex, false);
-    console.log("[EXULU] Jobs pagination jobs", jobs?.length);
     const counts = await config.queue.getJobCounts(...(statusses || []));
     let total = 0;
     if (counts) {

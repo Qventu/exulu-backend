@@ -69,7 +69,7 @@ export const createProjectRetrievalTool = async ({
 }): Promise<ExuluTool | undefined> => {
 
     let project: Project | undefined;
-    
+
     const cachedProject = projectsCache.get(projectId);
     // Check if cached project more than 1 minute old
     // this to avoid fetching the project for each tool
@@ -123,18 +123,18 @@ export const createProjectRetrievalTool = async ({
                     throw new Error("The item added to the project does not have a valid gid with the context id as the prefix before the first slash.");
                 }
 
-                const id = item.split("/")[1];
+                const id = item.split("/").slice(1).join("/");
                 if (set[context]) {
                     set[context].push(id);
                 } else {
                     set[context] = [id];
                 }
             }
-            
+
             console.log("[EXULU] Project search tool searching through contexts", Object.keys(set));
             // Run retrieval for each context in paralal.
             // todo add typing
-            const results  = await Promise.all(Object.keys(set).map(async (contextName, index) => {
+            const results = await Promise.all(Object.keys(set).map(async (contextName, index) => {
                 const context = contexts.find(context => context.id === contextName);
                 if (!context) {
                     console.error("[EXULU] Context not found for project information retrieval tool.", contextName);
@@ -491,7 +491,10 @@ export type ExuluQueueConfig = {
     queue: Queue,
     ratelimit: number
     timeoutInSeconds?: number, // 3 minutes default
-    concurrency: number
+    concurrency: {
+        worker: number
+        queue: number
+    }
     retries?: number
     backoff?: {
         type: 'exponential' | 'linear'
@@ -1699,17 +1702,21 @@ export class ExuluTool {
 
 export type ExuluContextFieldProcessor = {
     description: string,
-    execute: ({ item, user, role, utils, exuluConfig }: {
-        item: Item & { field: string }, user?: number, role?: string, utils: {
+    execute: ({
+        item,
+        user,
+        role,
+        utils,
+        exuluConfig
+    }: {
+        item: Item & { field: string },
+        user?: number,
+        role?: string,
+        utils: {
             storage: ExuluStorage
-            items: {
-                update: ExuluContext['updateItem'],
-                create: ExuluContext['createItem'],
-                delete: ExuluContext['deleteItem']
-            }
         },
         exuluConfig: ExuluConfig
-    }) => Promise<string>,
+    }) => Promise<Item>,
     config?: {
         queue?: Promise<ExuluQueueConfig>,
         timeoutInSeconds?: number, // 3 minutes default
@@ -1749,13 +1756,28 @@ export class ExuluStorage {
     }
 
     public getPresignedUrl = async (key: string) => {
-        return await getPresignedUrlUppy(key, this.config);
+        const bucket = key.split("/")[0];
+        if (!bucket || typeof bucket !== 'string' || bucket.trim() === '') {
+            throw new Error("Invalid S3 key, must be in the format of <bucket>/<key>.");
+        }
+        key = key.split("/").slice(1).join("/");
+        if (!key || typeof key !== 'string' || key.trim() === '') {
+            throw new Error("Invalid S3 key, must be in the format of <bucket>/<key>.");
+        }
+        return await getPresignedUrlUppy(bucket, key, this.config);
     }
 
-    public uploadFile = async (file: Buffer | Uint8Array, key: string, type: string, user?: number, metadata?: Record<string, string>) => {
+    public uploadFile = async (
+        file: Buffer | Uint8Array, 
+        fileName: string, 
+        type: string,
+        user?: number,
+        metadata?: Record<string, string>,
+        customBucket?: string
+    ) => {
         return await uploadFileUppy(
             file,
-            key,
+            fileName,
             this.config,
             {
                 contentType: type,
@@ -1764,7 +1786,8 @@ export class ExuluStorage {
                     type: type
                 },
             },
-            user
+            user,
+            customBucket
         );
     }
     // todo add upload and delete methods
@@ -1868,9 +1891,14 @@ export class ExuluContext {
         user?: number,
         role?: string,
     ): Promise<{
-        result: string,
+        result: Item,
         job?: string
     }> => {
+
+        if (!item.field) {
+            throw new Error("Field property on item is required for running a specific processor.")
+        }
+
         // todo add tracking for processor execution
         console.log("[EXULU] processing field", item.field, " in context", this.id);
         console.log("[EXULU] fields", this.fields.map(field => field.name));
@@ -1905,29 +1933,43 @@ export class ExuluContext {
             })
 
             return {
-                result: "",
+                result: {},
                 job: job.id,
             };
         }
 
         console.log("[EXULU] POS 1 -- EXULU CONTEXT PROCESS FIELD")
-        const result = await field.processor.execute({
+        const processorResult = await field.processor.execute({
             item,
             user,
             role,
             utils: {
-                storage: exuluStorage,
-                items: {
-                    update: this.updateItem,
-                    create: this.createItem,
-                    delete: this.deleteItem
-                }
+                storage: exuluStorage
             },
             exuluConfig
         });
 
+        if (!processorResult) {
+            throw new Error("Processor result is required for updating the item in the db.")
+        }
+
+        const { db } = await postgresClient();
+
+
+        // The field key is used to define a processor, but is 
+        // not part of the database, so remove it here before
+        // we upadte the item in the db.
+        delete processorResult.field;
+
+        // Update the item in the db with the processor result
+        await db.from(getTableName(this.id)).where({
+            id: processorResult.id
+        }).update({
+            ...processorResult
+        });
+
         return {
-            result,
+            result: processorResult,
             job: undefined
         };
     }
@@ -2072,6 +2114,9 @@ export class ExuluContext {
         generateEmbeddingsOverwrite?: boolean | undefined
     ): Promise<{ item: Item, job?: string }> => {
 
+
+        console.log("[EXULU] creating item", item)
+        console.log("[EXULU] upsert", upsert)
         if (upsert && (
             !item.id &&
             !item.external_id
@@ -2112,7 +2157,6 @@ export class ExuluContext {
         let shouldGenerateEmbeddings = (
             this.embedder && generateEmbeddingsOverwrite !== false && (
                 generateEmbeddingsOverwrite ||
-                this.configuration.calculateVectors === "onUpdate" ||
                 this.configuration.calculateVectors === "onInsert" ||
                 this.configuration.calculateVectors === "always"
             )
@@ -2151,14 +2195,23 @@ export class ExuluContext {
                     user,
                     role
                 )
+
                 if (processorJob) {
                     jobs.push(processorJob);
                 }
-                if (!processorJob && processor.config?.generateEmbeddings) {
-                    // means the processor finished already, so we can trigger embeddings
-                    // generation directly if the processor has the generateEmbeddings flag 
-                    // set to true.
-                    shouldGenerateEmbeddings = true;
+
+                if (!processorJob) {
+                    // Update the item in the db with the processor result
+                    await db.from(getTableName(this.id)).where({ id: results[0].id }).update({
+                        ...processorResult
+                    });
+
+                    if (processor.config?.generateEmbeddings) {
+                        // means the processor finished already, so we can trigger embeddings
+                        // generation directly if the processor has the generateEmbeddings flag 
+                        // set to true.
+                        shouldGenerateEmbeddings = true;
+                    }
                 }
             }
         }
@@ -2194,6 +2247,8 @@ export class ExuluContext {
         role?: string,
         generateEmbeddingsOverwrite?: boolean | undefined
     ): Promise<{ item: Item, job?: string }> => {
+
+        console.log("[EXULU] updating item", item)
         const { db } = await postgresClient();
 
         if (item.field) {
@@ -2262,14 +2317,24 @@ export class ExuluContext {
                     user,
                     role
                 )
+
                 if (processorJob) {
                     jobs.push(processorJob);
                 }
-                if (!processorJob && processor.config?.generateEmbeddings) {
-                    // means the processor finished already, so we can trigger embeddings
-                    // generation directly if the processor has the generateEmbeddings flag 
-                    // set to true.
-                    shouldGenerateEmbeddings = true;
+
+                if (!processorJob) {
+
+                    // Update the item in the db with the processor result
+                    await db.from(getTableName(this.id)).where({ id: record.id }).update({
+                        ...processorResult
+                    });
+
+                    if (processor.config?.generateEmbeddings) {
+                        // means the processor finished already, so we can trigger embeddings
+                        // generation directly if the processor has the generateEmbeddings flag 
+                        // set to true.
+                        shouldGenerateEmbeddings = true;
+                    }
                 }
             }
         }
@@ -2297,6 +2362,10 @@ export class ExuluContext {
 
         const { db } = await postgresClient();
 
+        if (!item.id && !item.external_id) {
+            throw new Error("Item id or external id is required for deleting an item.")
+        }
+
         if (!item.id?.length && item?.external_id) {
             item = await db.from(getTableName(this.id)).where({ external_id: item.external_id }).first();
             if (!item || !item.id) {
@@ -2304,25 +2373,22 @@ export class ExuluContext {
             }
         }
 
+        const chunkTableExists = await this.chunksTableExists();
+        if (chunkTableExists) {
+            const chunks = await db.from(getChunksTableName(this.id))
+                .where({ source: item.id })
+                .select("id");
+
+            if (chunks.length > 0) {
+                // delete chunks first
+                await db.from(getChunksTableName(this.id))
+                    .where({ source: item.id })
+                    .delete();
+            }
+        }
+
         await db.from(getTableName(this.id)).where({ id: item.id }).delete();
 
-        if (!this.embedder) {
-            return {
-                id: item.id!,
-                job: undefined
-            };
-        }
-
-        const chunks = await db.from(getChunksTableName(this.id))
-            .where({ source: item.id })
-            .select("id");
-
-        if (chunks.length > 0) {
-            // delete chunks first
-            await db.from(getChunksTableName(this.id))
-                .where({ source: item.id })
-                .delete();
-        }
         return {
             id: item.id!,
             job: undefined
@@ -2625,7 +2691,7 @@ export class ExuluContext {
     }
 }
 
-export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code" | "user"
+export type STATISTICS_LABELS = "tool" | "agent" | "flow" | "api" | "claude-code" | "user" | "processor"
 export type ExuluStatistic = {
     name: string,
     label: string,

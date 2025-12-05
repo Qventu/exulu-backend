@@ -221,7 +221,10 @@ export class ExuluApp {
         const queueSet = new Set<ExuluQueueConfig>();
 
         if (redisServer.host?.length && redisServer.port?.length) {
-            ExuluQueues.register(global_queues.eval_runs, 1, 1);
+            ExuluQueues.register(global_queues.eval_runs, {
+                worker: 1,
+                queue: 1,
+            }, 1);
             for (const queue of ExuluQueues.list.values()) {
                 const config = await queue.use();
                 queueSet.add(config);

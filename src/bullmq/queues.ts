@@ -8,7 +8,10 @@ class ExuluQueues {
     queues: {
         queue: Queue,
         ratelimit: number
-        concurrency: number
+        concurrency: {
+            worker: number
+            queue: number
+        }
     }[]
     constructor() {
         this.queues = []
@@ -16,7 +19,10 @@ class ExuluQueues {
 
     public list: Map<string, {
         name: string,
-        concurrency: number,
+        concurrency: {
+            worker: number
+            queue: number
+        },
         ratelimit: number,
         use: () => Promise<ExuluQueueConfig>
     }> = new Map(); // list of queue names
@@ -24,12 +30,18 @@ class ExuluQueues {
     queue(name: string): {
         queue: Queue,
         ratelimit: number
-        concurrency: number
+        concurrency: {
+            worker: number
+            queue: number
+        }
     } | undefined {
         return this.queues.find(x => x.queue?.name === name) as {
             queue: Queue,
             ratelimit: number
-            concurrency: number
+            concurrency: {
+                worker: number
+                queue: number
+            }
         } | undefined
     }
 
@@ -43,22 +55,31 @@ class ExuluQueues {
     // as there is no way to store a rate limit value natively on a bullm queue.
     register = (
         name: string,
-        concurrency: number = 1,
+        concurrency: {
+            worker: number
+            queue: number
+        },
         ratelimit: number = 1
     ): {
         use: () => Promise<ExuluQueueConfig>
     } => {
+        const queueConcurrency = concurrency.queue || 1;
+        const workerConcurrency = concurrency.worker || 1;
+
         const use = async (): Promise<ExuluQueueConfig> => {
             const existing = this.queues.find(x => x.queue?.name === name);
             if (existing) {
                 const globalConcurrency = await existing.queue.getGlobalConcurrency();
-                if (globalConcurrency !== concurrency) {
-                    await existing.queue.setGlobalConcurrency(concurrency);
+                if (globalConcurrency !== queueConcurrency) {
+                    await existing.queue.setGlobalConcurrency(queueConcurrency);
                 }
                 return {
                     queue: existing.queue,
                     ratelimit,
-                    concurrency
+                    concurrency: {
+                        worker: workerConcurrency,
+                        queue: queueConcurrency
+                    }
                 };
             }
 
@@ -79,26 +100,35 @@ class ExuluQueues {
                     telemetry: new BullMQOtel("simple-guide"),
                 }
             );
-            await newQueue.setGlobalConcurrency(concurrency);
+            await newQueue.setGlobalConcurrency(queueConcurrency);
             this.queues.push({
                 queue: newQueue,
                 ratelimit,
-                concurrency
+                concurrency: {
+                    worker: workerConcurrency,
+                    queue: queueConcurrency
+                }
             })
             return {
                 queue: newQueue,
                 ratelimit,
-                concurrency
+                concurrency: {
+                    worker: workerConcurrency,
+                    queue: queueConcurrency
+                }
             }
         }
 
         this.list.set(name, {
             name,
-            concurrency,
+            concurrency: {
+                worker: workerConcurrency,
+                queue: queueConcurrency
+            },
             ratelimit,
             use
         });
-        
+
         return {
             use
         }

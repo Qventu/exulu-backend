@@ -61,8 +61,6 @@ export const authentication = async ({
             // uses the raw encrypted JWE token provided by next-auth via
             // a "Bearer {token}" in the authorization header.
 
-            console.log("[EXULU] authtoken", authtoken)
-
             if (!authtoken?.email) {
                 return {
                     error: true,

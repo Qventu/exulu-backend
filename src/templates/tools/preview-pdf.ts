@@ -9,11 +9,16 @@ export const previewPdfTool = new ExuluTool({
     type: "function",
     config: [],
     inputSchema: z.object({
-        s3key: z.string().describe("The S3 key of the PDF file to preview, can also optionally include a [bucket:name] to specify the bucket."),
+        s3key: z.string().describe("The S3 key of the PDF file to preview."),
         page: z.number().describe("The page number to preview, defaults to 1.").optional(),
     }),
     execute: async ({ s3key, page, exuluConfig }) => {
-        const url = await getPresignedUrl(s3key, exuluConfig);
+        const bucket = s3key.split("/")[0];
+        const key = s3key.split("/").slice(1).join("/");
+        if (!bucket || !key) {
+            throw new Error("Invalid S3 key, must be in the format of <bucket>/<key>.");
+        }
+        const url = await getPresignedUrl(bucket, key, exuluConfig);
         if (!url) {
             throw new Error("No URL provided for PDF preview");
         }

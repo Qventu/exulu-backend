@@ -88,7 +88,7 @@ passing full message arrays for stateless interactions.
 
 Also downgrades AI SDK from v5.0.95 to v5.0.65 for stability, adds cookie-parser dependency,
 and improves context embedding generation with better metadata handling and increased timeout
-limits. Enhances S3 integration with multi-bucket support via key notation [bucket:name],
+limits. Enhances S3 integration with multi-bucket support by making the bucket always be the part of the key before the first slash
 improves vector search result limits, and adds better error handling for encrypted variables
 and external ID lookups in context operations.
 
