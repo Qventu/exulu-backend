@@ -18,78 +18,8 @@ import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import { logMetadata } from "./log-metadata";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
-import fs from 'fs';
-import path from 'path';
 
 let redisConnection: IORedis;
-
-// Job logging utility
-class JobLogger {
-    private logFilePath: string;
-    private writeStream: fs.WriteStream;
-    private originalConsoleLog: typeof console.log;
-    private originalConsoleError: typeof console.error;
-    private originalConsoleWarn: typeof console.warn;
-
-    constructor(jobId: string) {
-        const logsDir = path.join(process.cwd(), 'logs', 'jobs');
-
-        // Create logs directory if it doesn't exist
-        if (!fs.existsSync(logsDir)) {
-            fs.mkdirSync(logsDir, { recursive: true });
-        }
-
-        this.logFilePath = path.join(logsDir, `job-${jobId}.log`);
-        console.log(`[EXULU] Job logger file: ${this.logFilePath}`);
-        this.writeStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
-
-        // Store original console methods
-        this.originalConsoleLog = console.log;
-        this.originalConsoleError = console.error;
-        this.originalConsoleWarn = console.warn;
-    }
-
-    start() {
-        const timestamp = () => new Date().toISOString();
-
-        // Override console.log
-        console.log = (...args: any[]) => {
-            const message = `[${timestamp()}] LOG: ${args.map(arg =>
-                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-            ).join(' ')}\n`;
-            this.writeStream.write(message);
-            this.originalConsoleLog(...args); // Still output to console
-        };
-
-        // Override console.error
-        console.error = (...args: any[]) => {
-            const message = `[${timestamp()}] ERROR: ${args.map(arg =>
-                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-            ).join(' ')}\n`;
-            this.writeStream.write(message);
-            this.originalConsoleError(...args); // Still output to console
-        };
-
-        // Override console.warn
-        console.warn = (...args: any[]) => {
-            const message = `[${timestamp()}] WARN: ${args.map(arg =>
-                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-            ).join(' ')}\n`;
-            this.writeStream.write(message);
-            this.originalConsoleWarn(...args); // Still output to console
-        };
-    }
-
-    stop() {
-        // Restore original console methods
-        console.log = this.originalConsoleLog;
-        console.error = this.originalConsoleError;
-        console.warn = this.originalConsoleWarn;
-
-        // Close the write stream
-        this.writeStream.end();
-    }
-}
 
 export const createWorkers = async (
     agents: ExuluAgent[],
@@ -138,10 +68,6 @@ export const createWorkers = async (
                 result: any,
                 metadata: any
             }> => {
-
-                // Initialize job-specific logger
-                const jobLogger = new JobLogger(bullmqJob.id || 'unknown');
-                jobLogger.start();
 
                 console.log("[EXULU] starting execution for job", logMetadata(bullmqJob.name, {
                     name: bullmqJob.name,
@@ -272,9 +198,9 @@ export const createWorkers = async (
                                 throw new Error(`[EXULU] Processor ${field.name} in context ${context.id}, running in job ${bullmqJob.id} did not return an item.`);
                             }
 
-                             // The field key is used to define a processor, but is
-                             // not part of the database, so remove it here before
-                             // we upadte the item in the db.
+                            // The field key is used to define a processor, but is
+                            // not part of the database, so remove it here before
+                            // we upadte the item in the db.
                             delete processorResult.field;
 
                             // Update the item in the db with the processor result
@@ -691,17 +617,11 @@ export const createWorkers = async (
                     } catch (error: unknown) {
                         console.error(`[EXULU] job failed.`, error instanceof Error ? error.message : String(error))
                         throw error;
-                    } finally {
-                        // Stop job logger and restore console in finally block
-                        jobLogger.stop();
                     }
                 })();
 
                 // Race between work and timeout
                 const result = await Promise.race([workPromise, timeoutPromise]);
-
-                // Ensure logger is stopped even if timeout occurs
-                jobLogger.stop();
 
                 return result;
             },
