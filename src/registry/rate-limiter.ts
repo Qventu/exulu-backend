@@ -2,6 +2,7 @@ import {redisClient} from "../redis/client.ts";
 
 export const rateLimiter = async (key: string, windowSeconds: number, limit: number, points: number) => {
     try {
+        
         const { client } = await redisClient();
 
         if (!client) {

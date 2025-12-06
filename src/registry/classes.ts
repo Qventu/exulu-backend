@@ -1768,8 +1768,8 @@ export class ExuluStorage {
     }
 
     public uploadFile = async (
-        file: Buffer | Uint8Array, 
-        fileName: string, 
+        file: Buffer | Uint8Array,
+        fileName: string,
         type: string,
         user?: number,
         metadata?: Record<string, string>,
@@ -1832,7 +1832,9 @@ export class ExuluContext {
     public resultReranker?: (results: any[]) => Promise<any[]>; // todo typings
     public configuration: {
         calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
+        maxRetrievalResults?: number, // max number of results to return for retrieval
         defaultRightsMode?: ExuluRightsMode
+        enableAsTool?: boolean
         language?: "german" | "english"
     };
     public sources: ExuluContextSource[] = [];
@@ -1864,7 +1866,9 @@ export class ExuluContext {
         configuration?: {
             calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
             defaultRightsMode?: ExuluRightsMode,
-            language?: "german" | "english"
+            enableAsTool?: boolean,
+            language?: "german" | "english",
+            maxRetrievalResults?: number,
         }
     }) {
         this.id = id;
@@ -1874,7 +1878,8 @@ export class ExuluContext {
         this.configuration = configuration || {
             calculateVectors: "manual",
             language: "english",
-            defaultRightsMode: "private"
+            defaultRightsMode: "private",
+            maxRetrievalResults: 10,
         };
         this.description = description;
         this.embedder = embedder;
@@ -1891,7 +1896,7 @@ export class ExuluContext {
         user?: number,
         role?: string,
     ): Promise<{
-        result: Item,
+        result: Item | undefined,
         job?: string
     }> => {
 
@@ -1933,7 +1938,7 @@ export class ExuluContext {
             })
 
             return {
-                result: {},
+                result: undefined,
                 job: job.id,
             };
         }
@@ -2004,6 +2009,7 @@ export class ExuluContext {
             role: options.role,
             context: this,
             db,
+            limit: options?.limit || this.configuration.maxRetrievalResults || 10,
         });
 
         return result;
@@ -2643,26 +2649,30 @@ export class ExuluContext {
     }
 
     // Exports the context as a tool that can be used by an agent
-    public tool = (): ExuluTool => {
+    public tool = (): ExuluTool | null => {
+        if (this.configuration.enableAsTool === false) {
+            return null;
+        }
         return new ExuluTool({
             id: this.id,
-            name: `${this.name}`,
+            name: `${this.name}_context_search`,
             type: "context",
             category: "contexts",
             inputSchema: z.object({
-                query: z.string(),
+                originalQuestion: z.string().describe("The original question that the user asked"),
+                relevantKeywords: z.array(z.string()).describe("The keywords that are relevant to the user's question, for example names of specific products, systems or parts, IDs, etc."),
             }),
             config: [],
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-            execute: async ({ query, user, role }: any) => {
+            execute: async ({ originalQuestion, relevantKeywords, user, role }: any) => {
                 const { db } = await postgresClient();
                 // todo make trigger more specific with the agent name
                 // todo roadmap, auto add the normal filter criteria of a context as input schema so the agent can
                 //   next to semantic search also add regular filters.
                 const result = await vectorSearch({
                     page: 1,
-                    limit: 50,
-                    query,
+                    limit: this.configuration.maxRetrievalResults ?? 10,
+                    query: originalQuestion,
                     filters: [],
                     user,
                     role,
@@ -2684,7 +2694,10 @@ export class ExuluContext {
                 })
 
                 return {
-                    items: result.items
+                    items: result.items.map((item: Item) => ({
+                        ...item,
+                        context: this.id
+                    }))
                 }
             },
         });

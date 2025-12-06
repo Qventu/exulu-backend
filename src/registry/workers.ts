@@ -694,7 +694,6 @@ export const createWorkers = async (
 
         process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-
         return worker;
     })
 

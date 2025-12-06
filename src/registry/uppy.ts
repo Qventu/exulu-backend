@@ -52,6 +52,8 @@ export const getPresignedUrl = async (bucket: string, key: string, config: Exulu
     if (!config.fileUploads) {
         throw new Error("File uploads are not configured")
     }
+    console.log("[EXULU] getting presigned url for bucket", bucket)
+    console.log("[EXULU] getting presigned url for key", key)
     const url = await getSignedUrl(
         getS3Client(config),
         new GetObjectCommand({

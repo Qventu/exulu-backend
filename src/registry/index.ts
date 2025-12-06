@@ -182,7 +182,7 @@ export class ExuluApp {
             ...[previewPdfTool],
             ...todoTools,
             // Add contexts as tools
-            ...Object.values(contexts || {}).map(context => context.tool()),
+            ...Object.values(contexts || {}).map(context => context.tool()).filter(Boolean) as ExuluTool[],
             // Because agents are stored in the database,  we add those as tools
             // at request time, not during ExuluApp initialization. We add them
             // in the grahql tools resolver.
@@ -388,10 +388,7 @@ export class ExuluApp {
                             console.warn("[EXULU] No queue configured for source", source.name);
                             continue;
                         }
-                        if (queue) {
-                            if (!source.config?.schedule) {
-                                throw new Error("Schedule is required for source when configuring a queue: " + source.name);
-                            }
+                        if (queue && source.config?.schedule) {
                             console.log("[EXULU] Creating ContextSource scheduler for", source.name, "in queue", queue.queue?.name);
                             await queue.queue?.upsertJobScheduler(source.id, {
                                 pattern: source.config?.schedule,

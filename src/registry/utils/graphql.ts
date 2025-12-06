@@ -852,12 +852,18 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
     if (table.type === "items") {
         if (table.fields.some(field => field.processor?.execute)) {
-            mutations[`${tableNameSingular}ProcessItemField`] = async (_, args, context, info) => {
+            
+            mutations[`${tableNameSingular}ProcessItemField`] = async (_, args, context, info): Promise<{
+                message: string,
+                result: string | undefined,
+                job: string | undefined
+            }> => {
                 if (!context.user?.super_admin) {
                     throw new Error("You are not authorized to process fields via API, user must be super admin.");
                 }
 
                 const exists = contexts.find(context => context.id === table.id)
+
                 if (!exists) {
                     throw new Error(`Context ${table.id} not found.`);
                 }
@@ -906,7 +912,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
                 return {
                     message: job ? "Processing job scheduled." : "Item processed successfully.",
-                    result: result,
+                    result: result ? JSON.stringify(result) : undefined,
                     job
                 }
 
@@ -1809,7 +1815,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             }
             const { limit = 10, page = 0, filters = [], sort } = args;
             return await vectorSearch({
-                limit,
+                limit: limit || exists.configuration.maxRetrievalResults || 10,
                 page,
                 filters,
                 sort,
@@ -2490,7 +2496,7 @@ export function createSDL(
 
     type ${tableNameSingular}ProcessItemFieldReturnPayload {
         message: String!
-        result: String!
+        result: String
         job: String
     }
 
