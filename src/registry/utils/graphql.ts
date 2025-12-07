@@ -5,7 +5,7 @@ import { GraphQLScalarType, Kind } from 'graphql';
 import CryptoJS from 'crypto-js';
 import { requestValidators } from '../route-validators';
 import bcrypt from "bcryptjs";
-import { createProjectRetrievalTool, ExuluAgent, ExuluEval, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluContextFieldProcessor, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
+import { createProjectRetrievalTool, ExuluAgent, ExuluEval, ExuluTool, getChunksTableName, getTableName, updateStatistic, type ExuluContext, type ExuluContextProcessor, type ExuluQueueConfig, type STATISTICS_LABELS } from "../classes";
 import { addCoreFields } from "../../postgres/core-schema";
 import { sanitizeName } from "./sanitize-name";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -19,11 +19,12 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "..";
 import { SALT_ROUNDS } from "../../auth/generate-key";
 import type { Job, JobState, Queue } from "bullmq";
-import { ExuluQueues, logMetadata } from "../..";
+import { ExuluQueues } from "../..";
 import { redisClient as getRedisClient } from "../../redis/client";
 import type { BullMqJobData } from "../decoraters/bullmq";
 import { v4 as uuidv4 } from 'uuid';
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import type { Item } from "@EXULU_TYPES/models/item";
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -851,45 +852,48 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
     };
 
     if (table.type === "items") {
-        if (table.fields.some(field => field.processor?.execute)) {
-            
-            mutations[`${tableNameSingular}ProcessItemField`] = async (_, args, context, info): Promise<{
+        if (table.processor) {
+            const contextItemProcessorMutation = async (context: ExuluContext, items: Item[], user?: number, role?: string): Promise<{
                 message: string,
-                result: string | undefined,
-                job: string | undefined
+                results: string[],
+                jobs: string[]
+            }> => {
+                let jobs: string[] = [];
+                let results: Item[] = [];
+                await Promise.all(items.map(async (item): Promise<void> => {
+                    const result = await context.processField(
+                        "api",
+                        item,
+                        config,
+                        user,
+                        role
+                    )
+                    if (result.job) {
+                        jobs.push(result.job);
+                    }
+                    if (result.result) {
+                        results.push(result.result);
+                    }
+                }))
+
+                return {
+                    message: jobs.length > 0 ? "Processing job scheduled." : "Items processed successfully.",
+                    results: results.map(result => JSON.stringify(result)),
+                    jobs: jobs
+                }
+            }
+
+            mutations[`${tableNameSingular}ProcessItem`] = async (_, args, context, info): Promise<{
+                message: string,
+                results: string[],
+                jobs: string[]
             }> => {
                 if (!context.user?.super_admin) {
                     throw new Error("You are not authorized to process fields via API, user must be super admin.");
                 }
-
-                const exists = contexts.find(context => context.id === table.id)
-
-                if (!exists) {
-                    throw new Error(`Context ${table.id} not found.`);
-                }
-
-                if (!args.field) {
-                    throw new Error("Field argument missing, the field argument is required.");
-                }
-
                 if (!args.item) {
                     throw new Error("Item argument missing, the item argument is required.");
                 }
-
-                const name = args.field?.replace("_s3key", "");
-                console.log("[EXULU] name", name)
-                console.log("[EXULU] fields", exists.fields.map(field => field.name))
-                const field = exists.fields.find(field => {
-                    return field.name.replace("_s3key", "") === name
-                })
-                if (!field) {
-                    throw new Error(`Field ${name} not found in context ${exists.id}].`);
-                }
-
-                if (!field.processor) {
-                    throw new Error(`Processor not set for field ${args.field} in context ${exists.id}.`);
-                }
-
                 const { db } = context;
                 let query = db.from(tableNamePlural).select("*").where({ id: args.item });
                 query = applyAccessControl(table, query, context.user);
@@ -899,23 +903,49 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                     throw new Error("Item not found, or your user does not have access to it.");
                 }
 
-                const { job, result } = await exists.processField(
-                    "api",
-                    {
-                        ...item,
-                        field: args.field
-                    },
-                    config,
-                    context.user.id,
-                    context.user.role?.id,
-                )
+                const exists = contexts.find(context => context.id === table.id)
 
-                return {
-                    message: job ? "Processing job scheduled." : "Item processed successfully.",
-                    result: result ? JSON.stringify(result) : undefined,
-                    job
+                if (!exists) {
+                    throw new Error(`Context ${table.id} not found.`);
                 }
 
+                return contextItemProcessorMutation(exists, [item], context.user.id, context.user.role?.id);
+            }
+
+            mutations[`${tableNameSingular}ProcessItems`] = async (_, args, context, info): Promise<{
+                message: string,
+                results: string[],
+                jobs: string[]
+            }> => {
+                if (!context.user?.super_admin) {
+                    throw new Error("You are not authorized to process fields via API, user must be super admin.");
+                }
+                const { limit = 10, filters = [], sort } = args;
+                const { db } = context;
+
+                const { items } = await paginationRequest({
+                    db,
+                    limit,
+                    page: 0,
+                    filters,
+                    sort,
+                    table,
+                    user: context.user,
+                    fields: "*"
+                });
+
+                const exists = contexts.find(context => context.id === table.id)
+
+                if (!exists) {
+                    throw new Error(`Context ${table.id} not found.`);
+                }
+
+                return contextItemProcessorMutation(
+                    exists,
+                    items,
+                    context.user.id,
+                    context.user.role?.id
+                );
             }
         }
         mutations[`${tableNameSingular}ExecuteSource`] = async (_, args, context, info) => {
@@ -1682,6 +1712,77 @@ const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DE
     return query;
 };
 
+const paginationRequest = async ({
+    db,
+    limit,
+    page,
+    filters,
+    sort,
+    table,
+    user,
+    fields
+}: {
+    db: KnexType,
+    limit: number,
+    page: number,
+    filters: any[]
+    sort: { field: string; direction: 'ASC' | 'DESC' }
+    table: ExuluTableDefinition,
+    user: User
+    fields?: string[] | "*",
+}): Promise<{
+    items: any[]
+    pageInfo: {
+        pageCount: number,
+        itemCount: number,
+        currentPage: number,
+        hasPreviousPage: boolean,
+        hasNextPage: boolean
+    }
+}> => {
+
+    if (limit > 10000) {
+        throw new Error("Limit cannot be greater than 10.000.")
+    }
+
+    // Create count query
+    const tableName = table.name.plural.toLowerCase();
+    let countQuery = db(tableName);
+    countQuery = applyFilters(countQuery, filters, table);
+    countQuery = applyAccessControl(table, countQuery, user);
+
+    // Get total count
+    const countResult = await countQuery.count('* as count');
+    const itemCount = Number(countResult[0]?.count || 0);
+    const pageCount = Math.ceil(itemCount / limit);
+    const currentPage = page;
+    const hasPreviousPage = currentPage > 1;
+    const hasNextPage = currentPage < pageCount - 1;
+
+    // Create separate data query
+    let dataQuery = db(tableName);
+    dataQuery = applyFilters(dataQuery, filters, table);
+    dataQuery = applyAccessControl(table, dataQuery, user);
+
+    dataQuery = applySorting(dataQuery, sort);
+    if (page > 1) {
+        dataQuery = dataQuery.offset((page - 1) * limit);
+    }
+
+    let items = await dataQuery.select(fields ? fields : "*").limit(limit);
+
+    return {
+        items,
+        pageInfo: {
+            pageCount,
+            itemCount,
+            currentPage,
+            hasPreviousPage,
+            hasNextPage
+        }
+    };
+}
+
 function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools: ExuluTool[], contexts: ExuluContext[]) {
     const tableNamePlural = table.name.plural.toLowerCase();
     const tableNameSingular = table.name.singular.toLowerCase();
@@ -1717,47 +1818,23 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             return finalizeRequestedFields({ args, table, requestedFields, agents, contexts, tools, result, user: context.user })
         },
         [`${tableNamePlural}Pagination`]: async (_, args, context, info) => {
-            const { limit = 10, page = 0, filters = [], sort } = args;
+
             const { db } = context;
-
-            if (limit > 500) {
-                throw new Error("Limit cannot be greater than 500.")
-            }
-
-            // Create count query
-            let countQuery = db(tableNamePlural);
-            countQuery = applyFilters(countQuery, filters, table);
-            countQuery = applyAccessControl(table, countQuery, context.user);
-
-            // Get total count
-            const countResult = await countQuery.count('* as count');
-            const itemCount = Number(countResult[0]?.count || 0);
-            const pageCount = Math.ceil(itemCount / limit);
-            const currentPage = page;
-            const hasPreviousPage = currentPage > 1;
-            const hasNextPage = currentPage < pageCount - 1;
-
-            // Create separate data query
-            let dataQuery = db(tableNamePlural);
-            dataQuery = applyFilters(dataQuery, filters, table);
-            dataQuery = applyAccessControl(table, dataQuery, context.user);
-
+            const { limit = 10, page = 0, filters = [], sort } = args;
             const requestedFields = getRequestedFields(info)
-
-            dataQuery = applySorting(dataQuery, sort);
-            if (page > 1) {
-                dataQuery = dataQuery.offset((page - 1) * limit);
-            }
             const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
-            let items = await dataQuery.select(sanitizedFields).limit(limit);
+            const { items, pageInfo } = await paginationRequest({
+                db,
+                limit,
+                page,
+                filters,
+                sort,
+                table,
+                user: context.user,
+                fields: sanitizedFields
+            });
             return {
-                pageInfo: {
-                    pageCount,
-                    itemCount,
-                    currentPage,
-                    hasPreviousPage,
-                    hasNextPage
-                },
+                pageInfo,
                 items: finalizeRequestedFields({ args, table, requestedFields, agents, contexts, tools, result: items, user: context.user })
             };
         },
@@ -2005,7 +2082,7 @@ export const vectorSearch = async ({
                 c.id,
                 c.source,
                 row_number() OVER (
-                  ORDER BY ts_rank_cd(c.fts, websearch_to_tsquery(?, ?)) DESC
+                  ORDER BY ts_rank(c.fts, websearch_to_tsquery(?, ?)) DESC
                 ) AS rank_ix
               FROM ${chunksTable} c
               WHERE c.fts @@ websearch_to_tsquery(?, ?)
@@ -2259,10 +2336,10 @@ export const contextToTableDefinition = (context: ExuluContext): ExuluTableDefin
             plural: tableName?.endsWith("s") ? tableName : tableName + "s" as any,
         },
         RBAC: true,
+        processor: context.processor,
         fields: context.fields.map(field => ({
             name: sanitizeName(field.name) as any,
             type: field.type,
-            processor: field.processor,
             required: field.required,
             default: field.default,
             index: field.index,
@@ -2339,6 +2416,7 @@ export function createSDL(
             worker: number
             queue: number
         }
+        timeoutInSeconds: number
     }[]
 ) {
 
@@ -2442,8 +2520,6 @@ export function createSDL(
         const tableNameSingular = table.name.singular.toLowerCase();
         const tableNameSingularUpperCaseFirst = table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
-        const processorFields = table.fields.filter(field => field.processor?.execute)
-
         typeDefs += `
         ${tableNameSingular === "agent" ?
                 `${tableNameSingular}ById(id: ID!, project: ID): ${tableNameSingular}` : `${tableNameSingular}ById(id: ID!): ${tableNameSingular}`
@@ -2475,9 +2551,10 @@ export function createSDL(
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}DeleteChunksReturnPayload
     `
 
-            if (processorFields?.length > 0) {
+            if (table.processor) {
                 mutationDefs += `
-    ${tableNameSingular}ProcessItemField(item: ID!, field: ${tableNameSingular}ProcessorFieldEnum!): ${tableNameSingular}ProcessItemFieldReturnPayload
+    ${tableNameSingular}ProcessItem(item: ID!): ${tableNameSingular}ProcessItemFieldReturnPayload
+    ${tableNameSingular}ProcessItems(limit: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}ProcessItemFieldReturnPayload
     `
             }
 
@@ -2496,8 +2573,8 @@ export function createSDL(
 
     type ${tableNameSingular}ProcessItemFieldReturnPayload {
         message: String!
-        result: String
-        job: String
+        results: [String]
+        jobs: [String]
     }
 
     type ${tableNameSingular}DeleteChunksReturnPayload {
@@ -2511,13 +2588,6 @@ export function createSDL(
         hybridSearch
         tsvector
     }
-
-    ${processorFields.length > 0 ? `
-    enum ${tableNameSingular}ProcessorFieldEnum {
-        ${processorFields.map(field => field.name).join("\n")}
-    }
-    ` : ""}
- 
 
   type ${tableNameSingular}VectorSearchResult {
         items: [${tableNameSingular}]!
@@ -2652,6 +2722,7 @@ type PageInfo {
                 worker: config.concurrency?.worker || undefined,
                 queue: config.concurrency?.queue || undefined,
             },
+            timeoutInSeconds: config.timeoutInSeconds,
             ratelimit: config.ratelimit,
             isMaxed: await config.queue.isMaxed(),
             isPaused: await config.queue.isPaused(),
@@ -2875,7 +2946,7 @@ type PageInfo {
         if (!client) {
             throw new Error("Redis client not created properly");
         }
-        
+
         const {
             jobs,
             count
@@ -2918,26 +2989,29 @@ type PageInfo {
 
         const data = await Promise.all(contexts.map(async context => {
 
-            let processors = await Promise.all(context.fields.map(async field => {
-                if (field.processor) {
-                    let queueName: string | undefined = undefined;
-                    if (field.processor?.config?.queue) {
-                        const config = await field.processor?.config?.queue;
-                        queueName = config?.queue?.name || undefined;
-                    }
-                    return {
-                        field: field.name,
-                        description: field.processor?.description,
-                        queue: queueName,
-                        trigger: field.processor?.config?.trigger,
-                        timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
-                        generateEmbeddings: field.processor?.config?.generateEmbeddings || false,
-                    }
-                }
-                return null;
-            }));
+            let processor: {
+                name: string,
+                description: string,
+                queue?: string,
+                trigger: string,
+                timeoutInSeconds: number,
+                generateEmbeddings: boolean,
+            } | null = null;
 
-            processors = processors.filter(processor => processor !== null);
+            if (context.processor) {
+                processor = await new Promise(async (resolve, reject) => {
+                    const config = await context.processor?.config;
+                    const queue = await config?.queue;
+                    resolve({
+                        name: context.processor!.name,
+                        description: context.processor!.description,
+                        queue: queue?.queue?.name || undefined,
+                        trigger: context.processor?.config?.trigger || "manual",
+                        timeoutInSeconds: queue?.timeoutInSeconds || 600,
+                        generateEmbeddings: context.processor?.config?.generateEmbeddings || false,
+                    });
+                });
+            }
 
             const sources = await Promise.all(context.sources.map(async source => {
                 let queueName: string | undefined = undefined;
@@ -2970,7 +3044,7 @@ type PageInfo {
                 slug: "/contexts/" + context.id,
                 active: context.active,
                 sources,
-                processors,
+                processor,
                 fields: context.fields.map(field => {
                     return {
                         ...field,
@@ -3000,27 +3074,29 @@ type PageInfo {
         if (!data) {
             return null;
         }
+        let processor: {
+            name: string,
+            description: string,
+            queue?: string,
+            trigger: string,
+            timeoutInSeconds: number,
+            generateEmbeddings: boolean,
+        } | null = null;
 
-        let processors = await Promise.all(data.fields.map(async field => {
-            if (field.processor) {
-                let queueName: string | undefined = undefined;
-                if (field.processor?.config?.queue) {
-                    const config = await field.processor?.config?.queue;
-                    queueName = config?.queue?.name || undefined;
-                }
-                return {
-                    field: field.name,
-                    description: field.processor?.description,
-                    queue: queueName,
-                    trigger: field.processor?.config?.trigger,
-                    timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
-                    generateEmbeddings: field.processor?.config?.generateEmbeddings || false,
-                }
-            }
-            return null;
-        }));
-
-        processors = processors.filter(processor => processor !== null);
+        if (data.processor) {
+            processor = await new Promise(async (resolve, reject) => {
+                const config = await data.processor?.config;
+                const queue = await config?.queue;
+                resolve({
+                    name: data.processor!.name,
+                    description: data.processor!.description,
+                    queue: queue?.queue?.name || undefined,
+                    trigger: data.processor?.config?.trigger || "manual",
+                    timeoutInSeconds: queue?.timeoutInSeconds || 600,
+                    generateEmbeddings: data.processor?.config?.generateEmbeddings || false,
+                });
+            });
+        }
 
         const sources = await Promise.all(data.sources.map(async source => {
             let queueName: string | undefined = undefined;
@@ -3060,38 +3136,17 @@ type PageInfo {
             slug: "/contexts/" + data.id,
             active: data.active,
             sources,
-            processors,
+            processor,
             fields: await Promise.all(data.fields.map(async field => {
                 const label = field.name?.replace("_s3key", "");
                 if (field.type === "file" && !field.name.endsWith("_s3key")) {
                     field.name = field.name + "_s3key";
-                }
-                let queue: ExuluQueueConfig | null = null;
-                if (field.processor?.config?.queue) {
-                    queue = await field.processor.config.queue;
                 }
                 return {
                     ...field,
                     name: sanitizeName(field.name),
                     ...(field.type === "file" ? {
                         allowedFileTypes: field.allowedFileTypes,
-                    } : {}),
-                    ...(field.processor ? {
-                        processor: {
-                            description: field.processor?.description,
-                            config: {
-                                trigger: field.processor?.config?.trigger,
-                                queue: {
-                                    name: queue?.queue.name || undefined,
-                                    ratelimit: queue?.ratelimit || undefined,
-                                    concurrency: {
-                                        worker: queue?.concurrency?.worker || undefined,
-                                        queue: queue?.concurrency?.queue || undefined,
-                                    },
-                                },
-                            },
-                            execute: "function",
-                        },
                     } : {}),
                     label
                 }
@@ -3180,6 +3235,7 @@ type PageInfo {
     type QueueResult {
         name: String!
         concurrency: QueueConcurrency!
+        timeoutInSeconds: Int!
         ratelimit: Int!
         isMaxed: Boolean!
         isPaused: Boolean!
@@ -3314,7 +3370,7 @@ type Context {
     fields: JSON
     configuration: JSON
     sources: [ContextSource]
-    processors: [ContextProcessor]
+    processor: ContextProcessor
 }
 type Embedder {
     name: String!
@@ -3328,7 +3384,7 @@ type EmbedderConfig {
     default: String
 }
 type ContextProcessor {
-    field: String!
+    name: String!
     description: String
     queue: String
     trigger: String
@@ -3392,6 +3448,9 @@ type Job {
   name: String!
   returnvalue: JSON
   stacktrace: [String]
+  finishedOn: Date
+  processedOn: Date
+  attemptsMade: Int
   failedReason: String
   state: String!
   data: JSON

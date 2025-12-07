@@ -17,12 +17,12 @@ export interface Context {
   }
   active: boolean
   slug: string
-  processors: {
-    field: string
-    description: string
-    queue: string
-    trigger: string
-    timeoutInSeconds: number
+  processor: {
+    name: string,
+    description: string,
+    queue: string,
+    trigger: string,
+    timeoutInSeconds: number,
     generateEmbeddings: boolean
   }[]
   sources: {

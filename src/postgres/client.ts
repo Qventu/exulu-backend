@@ -79,20 +79,31 @@ export async function postgresClient(): Promise<{
                     database: dbName,
                     password: process.env.POSTGRES_DB_PASSWORD,
                     ssl: process.env.POSTGRES_DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
-                    connectionTimeoutMillis: 10000,
+                    connectionTimeoutMillis: 30000, // Increased from 10s to 30s to handle connection spikes
+                    // PostgreSQL statement timeout (in milliseconds) - kills queries that run too long
+                    // This prevents runaway queries from blocking connections
+                    statement_timeout: 1800000, // 30 minutes - should be longer than max job timeout (1200s = 20m)
+                    // Connection idle timeout - how long pg client waits before timing out
+                    query_timeout: 1800000, // 30 minutes
                 },
                 pool: {
-                    min: 2,
-                    max: 20, // Increased from 20 to handle more concurrent operations
-                    acquireTimeoutMillis: 30000,
+                    min: 5, // Increased from 2 to ensure enough connections available
+                    max: 50, // Increased from 20 to handle more concurrent operations with processor jobs
+                    acquireTimeoutMillis: 60000, // Increased from 30s to 60s to handle pool contention
                     createTimeoutMillis: 30000,
-                    idleTimeoutMillis: 30000,
+                    idleTimeoutMillis: 60000, // Increased to keep connections alive longer
                     reapIntervalMillis: 1000,
                     createRetryIntervalMillis: 200,
                     // Log pool events to help debug connection issues
                     afterCreate: (conn: any, done: any) => {
                         console.log('[EXULU] New database connection created');
-                        done(null, conn);
+                        // Set statement_timeout on each new connection
+                        conn.query('SET statement_timeout = 1800000', (err: any) => {
+                            if (err) {
+                                console.error('[EXULU] Error setting statement_timeout:', err);
+                            }
+                            done(err, conn);
+                        });
                     },
                 }
             });

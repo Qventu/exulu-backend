@@ -8,6 +8,7 @@ export interface Item {
     source?: string;
     tags?: string[];
     textlength?: number;
+    last_processed_at?: string;
     chunks?: {
         id: string;
         index: number;

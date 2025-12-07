@@ -1700,7 +1700,8 @@ export class ExuluTool {
     }
 }
 
-export type ExuluContextFieldProcessor = {
+export type ExuluContextProcessor = {
+    name: string,
     description: string,
     execute: ({
         item,
@@ -1709,7 +1710,7 @@ export type ExuluContextFieldProcessor = {
         utils,
         exuluConfig
     }: {
-        item: Item & { field: string },
+        item: Item,
         user?: number,
         role?: string,
         utils: {
@@ -1735,8 +1736,6 @@ export type ExuluContextFieldDefinition = {
     index?: boolean
     enumValues?: string[]
     allowedFileTypes?: allFileTypes[]
-    // todo require defining a processor if type above is file
-    processor?: ExuluContextFieldProcessor
 }
 
 export const getTableName = (id: string) => {
@@ -1825,6 +1824,7 @@ export class ExuluContext {
     public name: string;
     public active: boolean;
     public fields: ExuluContextFieldDefinition[]
+    public processor?: ExuluContextProcessor
     public rateLimit?: RateLimiterRule;
     public description: string;
     public embedder?: ExuluEmbedder
@@ -1844,6 +1844,7 @@ export class ExuluContext {
         name,
         description,
         embedder,
+        processor,
         active,
         rateLimit,
         fields,
@@ -1860,6 +1861,7 @@ export class ExuluContext {
         sources: ExuluContextSource[],
         category?: string,
         active: boolean,
+        processor?: ExuluContextProcessor,
         rateLimit?: RateLimiterRule,
         queryRewriter?: (query: string) => Promise<string>,
         resultReranker?: (results: any[]) => Promise<any[]>,
@@ -1875,6 +1877,7 @@ export class ExuluContext {
         this.name = name;
         this.fields = fields || [];
         this.sources = sources || [];
+        this.processor = processor;
         this.configuration = configuration || {
             calculateVectors: "manual",
             language: "english",
@@ -1891,7 +1894,7 @@ export class ExuluContext {
 
     public processField = async (
         trigger: STATISTICS_LABELS,
-        item: Item & { field: string },
+        item: Item,
         exuluConfig: ExuluConfig,
         user?: number,
         role?: string,
@@ -1900,29 +1903,21 @@ export class ExuluContext {
         job?: string
     }> => {
 
-        if (!item.field) {
-            throw new Error("Field property on item is required for running a specific processor.")
-        }
-
         // todo add tracking for processor execution
-        console.log("[EXULU] processing field", item.field, " in context", this.id);
-        console.log("[EXULU] fields", this.fields.map(field => field.name));
-        const field = this.fields.find(field => {
-            return field.name.replace("_s3key", "") === item.field.replace("_s3key", "");
-        });
-        if (!field || !field.processor) {
-            console.error("[EXULU] field not found or processor not set for field", item.field, " in context", this.id);
-            throw new Error("Field not found or processor not set for field " + item.field + " in context " + this.id);
-        }
+        console.log("[EXULU] processing item, ", item, " in context", this.id);
         const exuluStorage = new ExuluStorage({ config: exuluConfig });
 
-        const queue = await field.processor.config?.queue;
+        if (!this.processor) {
+            throw new Error(`Processor is not set for this context: ${this.id}.`)
+        }
+
+        const queue = await this.processor.config?.queue;
         if (queue?.queue.name) {
             console.log("[EXULU] processor is in queue mode, scheduling job.")
             const job = await bullmqDecorator({
-                timeoutInSeconds: field.processor?.config?.timeoutInSeconds || 600,
-                label: `${this.name} ${field.name} data processor`,
-                processor: `${this.id}-${field.name}`,
+                timeoutInSeconds: this.processor.config?.timeoutInSeconds || 600,
+                label: `${this.name} ${this.processor.name} data processor`,
+                processor: `${this.id}-${this.processor.name}`,
                 context: this.id,
                 inputs: item,
                 item: item.id,
@@ -1944,7 +1939,7 @@ export class ExuluContext {
         }
 
         console.log("[EXULU] POS 1 -- EXULU CONTEXT PROCESS FIELD")
-        const processorResult = await field.processor.execute({
+        const processorResult = await this.processor.execute({
             item,
             user,
             role,
@@ -1970,7 +1965,8 @@ export class ExuluContext {
         await db.from(getTableName(this.id)).where({
             id: processorResult.id
         }).update({
-            ...processorResult
+            ...processorResult,
+            last_processed_at: new Date().toISOString()
         });
 
         return {
@@ -2168,14 +2164,9 @@ export class ExuluContext {
             )
         )
 
-        for (const [key, value] of Object.entries(item)) {
+        if (this.processor) {
 
-            console.log("[EXULU] Checking for processors for field", key)
-
-            // On purpose only running over the fields included in the item's payload
-            // from graphql, as we dont want to process fields that were not provided
-            // in the create call, assuming they were not provided on purpose.
-            const processor = this.fields.find(field => field.name === key.replace("_s3key", ""))?.processor;
+            const processor = this.processor
 
             console.log("[EXULU] Processor found", processor)
 
@@ -2195,7 +2186,6 @@ export class ExuluContext {
                     {
                         ...item,
                         id: results[0].id,
-                        field: key
                     },
                     config,
                     user,
@@ -2294,12 +2284,12 @@ export class ExuluContext {
             )
         )
 
-        for (const [key, value] of Object.entries(item)) {
+        if (this.processor) {
 
             // On purpose only running over the fields included in the item's payload
             // from graphql, as we dont want to process fields that were not provided
             // in the update call, assuming they did not change.
-            const processor = this.fields.find(field => field.name === key.replace("_s3key", ""))?.processor;
+            const processor = this.processor;
 
             if (
                 processor &&
@@ -2317,7 +2307,6 @@ export class ExuluContext {
                     {
                         ...item,
                         id: record.id,
-                        field: key
                     },
                     config,
                     user,

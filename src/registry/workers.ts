@@ -21,6 +21,38 @@ import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
 
 let redisConnection: IORedis;
 
+// Global handlers to prevent process crashes from unhandled errors
+// This is critical for BullMQ workers to properly mark jobs as failed
+let unhandledRejectionHandlerInstalled = false;
+
+const installGlobalErrorHandlers = () => {
+    if (unhandledRejectionHandlerInstalled) return;
+
+    process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+        console.error('[EXULU] Unhandled Promise Rejection detected! This would have crashed the worker.', {
+            reason: reason instanceof Error ? reason.message : String(reason),
+            stack: reason instanceof Error ? reason.stack : undefined,
+        });
+        // Don't exit - let the worker continue and BullMQ will handle job failure
+    });
+
+    process.on('uncaughtException', (error: Error) => {
+        console.error('[EXULU] Uncaught Exception detected! This would have crashed the worker.', {
+            error: error.message,
+            stack: error.stack,
+        });
+        // Don't exit for database timeouts and similar recoverable errors
+        // Only exit for truly fatal errors
+        if (error.message.includes('FATAL') || error.message.includes('Cannot find module')) {
+            console.error('[EXULU] Fatal error detected, exiting process.');
+            process.exit(1);
+        }
+    });
+
+    unhandledRejectionHandlerInstalled = true;
+    console.log('[EXULU] Global error handlers installed to prevent worker crashes');
+};
+
 export const createWorkers = async (
     agents: ExuluAgent[],
     queues: ExuluQueueConfig[],
@@ -34,6 +66,9 @@ export const createWorkers = async (
     console.log("[EXULU] queues", queues.map(q => q.queue.name));
     // Initializes any required workers for processing embedder
     // and agent jobs in the defined queues by checking the registry.
+
+    // Install global error handlers to prevent crashes
+    installGlobalErrorHandlers();
 
     if (!redisServer.host || !redisServer.port) {
         console.error("[EXULU] you are trying to start worker, but no redis server is configured in the environment.")
@@ -83,14 +118,17 @@ export const createWorkers = async (
                 const data: BullMqJobData = bullmqJob.data;
 
                 const timeoutInSeconds = data.timeoutInSeconds || 600;
-                // Create timeout promise
+                // Create timeout promise with proper error handling
                 const timeoutMs = timeoutInSeconds * 1000;
+                let timeoutHandle: NodeJS.Timeout;
                 const timeoutPromise: Promise<{
                     result: any,
                     metadata: any
                 }> = new Promise((_, reject) => {
-                    setTimeout(() => {
-                        reject(new Error(`Timeout for job ${bullmqJob.id} reached after ${timeoutInSeconds}s`));
+                    timeoutHandle = setTimeout(() => {
+                        const timeoutError = new Error(`Timeout for job ${bullmqJob.id} reached after ${timeoutInSeconds}s`);
+                        console.error(`[EXULU] ${timeoutError.message}`);
+                        reject(timeoutError);
                     }, timeoutMs);
                 });
 
@@ -165,26 +203,18 @@ export const createWorkers = async (
                                 throw new Error(`Context ${data.context} not found in the registry.`);
                             }
 
-                            const field = context.fields.find(field => {
-                                return field.name.replace("_s3key", "") === data.inputs.field.replace("_s3key", "");
-                            });
-
-                            if (!field) {
-                                throw new Error(`Field ${data.inputs.field} not found in the context ${data.context}.`);
-                            }
-
-                            if (!field.processor) {
-                                throw new Error(`Processor not set for field ${data.inputs.field} in the context ${data.context}.`);
-                            }
-
                             if (!data.inputs.id) {
-                                throw new Error(`[EXULU] Item not set for processor ${field.name} in context ${context.id}, running in job ${bullmqJob.id}.`);
+                                throw new Error(`[EXULU] Item not set for processor in context ${context.id}, running in job ${bullmqJob.id}.`);
+                            }
+
+                            if (!context.processor) {
+                                throw new Error(`Tried to run a processor job for context ${context.id}, but no processor is set.`);
                             }
 
                             const exuluStorage = new ExuluStorage({ config });
 
                             console.log("[EXULU] POS 2 -- EXULU CONTEXT PROCESS FIELD")
-                            const processorResult = await field.processor.execute({
+                            const processorResult = await context.processor.execute({
                                 item: data.inputs,
                                 user: data.user,
                                 role: data.role,
@@ -195,7 +225,7 @@ export const createWorkers = async (
                             });
 
                             if (!processorResult) {
-                                throw new Error(`[EXULU] Processor ${field.name} in context ${context.id}, running in job ${bullmqJob.id} did not return an item.`);
+                                throw new Error(`[EXULU] Processor in context ${context.id}, running in job ${bullmqJob.id} did not return an item.`);
                             }
 
                             // The field key is used to define a processor, but is
@@ -207,11 +237,12 @@ export const createWorkers = async (
                             await db.from(getTableName(context.id)).where({
                                 id: processorResult.id
                             }).update({
-                                ...processorResult
+                                ...processorResult,
+                                last_processed_at: new Date().toISOString()
                             });
 
                             let jobs: string[] = [];
-                            if (field.processor.config?.generateEmbeddings) {
+                            if (context.processor?.config?.generateEmbeddings) {
                                 // If the processor was configured to automatically trigger
                                 // the generation of embeddings, we trigger it here.
                                 // IMPORTANT: We need to fetch the complete item from the database
@@ -620,10 +651,18 @@ export const createWorkers = async (
                     }
                 })();
 
-                // Race between work and timeout
-                const result = await Promise.race([workPromise, timeoutPromise]);
-
-                return result;
+                // Race between work and timeout with proper cleanup
+                try {
+                    const result = await Promise.race([workPromise, timeoutPromise]);
+                    // Clear timeout if work completes successfully
+                    clearTimeout(timeoutHandle!);
+                    return result;
+                } catch (error: unknown) {
+                    // Clear timeout on error
+                    clearTimeout(timeoutHandle!);
+                    console.error(`[EXULU] job ${bullmqJob.id} failed (error caught in race handler).`, error instanceof Error ? error.message : String(error));
+                    throw error;
+                }
             },
             {
                 autorun: true,

@@ -722,6 +722,10 @@ export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinitio
             field.name = field.name + "_s3key"
         }
     })
+    schema.fields.push({
+        name: "last_processed_at",
+        type: "date"
+    })
     if (schema.RBAC) {
         if (!schema.fields.some(field => field.name === "rights_mode")) {
             schema.fields.push({

@@ -12,6 +12,7 @@ class ExuluQueues {
             worker: number
             queue: number
         }
+        timeoutInSeconds: number
     }[]
     constructor() {
         this.queues = []
@@ -24,6 +25,7 @@ class ExuluQueues {
             queue: number
         },
         ratelimit: number,
+        timeoutInSeconds: number,
         use: () => Promise<ExuluQueueConfig>
     }> = new Map(); // list of queue names
 
@@ -59,7 +61,8 @@ class ExuluQueues {
             worker: number
             queue: number
         },
-        ratelimit: number = 1
+        ratelimit: number = 1,
+        timeoutInSeconds: number = 180
     ): {
         use: () => Promise<ExuluQueueConfig>
     } => {
@@ -79,7 +82,8 @@ class ExuluQueues {
                     concurrency: {
                         worker: workerConcurrency,
                         queue: queueConcurrency
-                    }
+                    },
+                    timeoutInSeconds
                 };
             }
 
@@ -107,7 +111,8 @@ class ExuluQueues {
                 concurrency: {
                     worker: workerConcurrency,
                     queue: queueConcurrency
-                }
+                },
+                timeoutInSeconds
             })
             return {
                 queue: newQueue,
@@ -115,7 +120,8 @@ class ExuluQueues {
                 concurrency: {
                     worker: workerConcurrency,
                     queue: queueConcurrency
-                }
+                },
+                timeoutInSeconds,
             }
         }
 
@@ -126,6 +132,7 @@ class ExuluQueues {
                 queue: queueConcurrency
             },
             ratelimit,
+            timeoutInSeconds,
             use
         });
 
