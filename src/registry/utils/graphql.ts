@@ -1163,7 +1163,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
     return mutations;
 }
 
-export const applyAccessControl = (table: ExuluTableDefinition, query: any, user?: User) => {
+export const applyAccessControl = (table: ExuluTableDefinition, query: any, user?: User, field_prefix?: string) => {
 
     const tableNamePlural = table.name.plural.toLowerCase();
 
@@ -1194,16 +1194,17 @@ export const applyAccessControl = (table: ExuluTableDefinition, query: any, user
         return query;
     }
 
+    const prefix = field_prefix ? field_prefix + "." : "";
     try {
         // New RBAC system
         query = query.where(function (this: any) {
             // Public records
-            this.where('rights_mode', 'public');
-            this.orWhere('created_by', user.id);
+            this.where(`${prefix}rights_mode`, 'public');
+            this.orWhere(`${prefix}created_by`, user.id);
 
             // Records shared with users via RBAC table
             this.orWhere(function (this: any) {
-                this.where('rights_mode', 'users')
+                this.where(`${prefix}rights_mode`, 'users')
                     .whereExists(function (this: any) {
                         this.select('*')
                             .from('rbac')
@@ -1217,7 +1218,7 @@ export const applyAccessControl = (table: ExuluTableDefinition, query: any, user
             // Records shared with roles via RBAC table (if user has a role)
             if (user.role) {
                 this.orWhere(function (this: any) {
-                    this.where('rights_mode', 'roles')
+                    this.where(`${prefix}rights_mode`, 'roles')
                         .whereExists(function (this: any) {
                             this.select('*')
                                 .from('rbac')
@@ -1238,10 +1239,14 @@ export const applyAccessControl = (table: ExuluTableDefinition, query: any, user
     return query;
 };
 
-const converOperatorToQuery = (query: any, fieldName: string, operators: any, table?: ExuluTableDefinition) => {
+const converOperatorToQuery = (query: any, fieldName: string, operators: any, table?: ExuluTableDefinition, field_prefix?: string) => {
     // Check if field is JSON type
     const field = table?.fields.find(f => f.name === fieldName);
     const isJsonField = field?.type === 'json';
+
+    const prefix = field_prefix ? field_prefix + "." : "";
+
+    fieldName = prefix + fieldName;
 
     if (operators.eq !== undefined) {
         if (isJsonField) {
@@ -1659,23 +1664,21 @@ const finalizeRequestedFields = async ({
                 const query = db.from(getChunksTableName(context.id))
                     .where({ source: result.id })
                     .select("id", "content", "source", "chunk_index", "createdAt", "updatedAt");
-                query.select(
-                    db.raw('vector_dims(??) as embedding_size', [`embedding`])
-                );
 
                 const chunks = await query;
 
                 result.chunks = chunks.map((chunk: any) => ({
-                    cosine_distance: 0,
-                    fts_rank: 0,
-                    hybrid_score: 0,
-                    content: chunk.content,
-                    source: chunk.source,
+                    chunk_content: chunk.content,
+                    chunk_source: chunk.source,
                     chunk_index: chunk.chunk_index,
                     chunk_id: chunk.id,
                     chunk_created_at: chunk.createdAt,
                     chunk_updated_at: chunk.updatedAt,
-                    embedding_size: chunk.embedding_size,
+                    item_updated_at: chunk.item_updated_at,
+                    item_created_at: chunk.item_created_at,
+                    item_id: chunk.item_id,
+                    item_external_id: chunk.item_external_id,
+                    item_name: chunk.item_name,
                 }))
 
             }
@@ -1684,29 +1687,31 @@ const finalizeRequestedFields = async ({
     return result;
 }
 
-export const applyFilters = (query: any, filters: any[], table?: ExuluTableDefinition) => {
+export const applyFilters = (query: any, filters: any[], table?: ExuluTableDefinition, field_prefix?: string) => {
     filters.forEach(filter => {
         Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
             if (operators) {
                 if (operators.and !== undefined) {
                     operators.and.forEach(operator => {
-                        query = converOperatorToQuery(query, fieldName, operator, table);
+                        query = converOperatorToQuery(query, fieldName, operator, table, field_prefix);
                     });
                 }
                 if (operators.or !== undefined) {
                     operators.or.forEach(operator => {
-                        query = converOperatorToQuery(query, fieldName, operator, table);
+                        query = converOperatorToQuery(query, fieldName, operator, table, field_prefix);
                     });
                 }
-                query = converOperatorToQuery(query, fieldName, operators, table)
+                query = converOperatorToQuery(query, fieldName, operators, table, field_prefix);
             }
         });
     });
     return query;
 };
 
-const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }) => {
+const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DESC' }, field_prefix?: string) => {
+    const prefix = field_prefix ? field_prefix + "." : "";
     if (sort) {
+        sort.field = prefix + sort.field;
         query = query.orderBy(sort.field, sort.direction.toLowerCase());
     }
     return query;
@@ -1910,6 +1915,24 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
     return queries;
 }
 
+export type VectorSearchChunkResult = {
+    chunk_content: string,
+    chunk_index: number,
+    chunk_id: string,
+    chunk_source: string,
+    chunk_metadata: Record<string, string>,
+    chunk_created_at: string,
+    chunk_updated_at: string,
+    item_id: string,
+    item_external_id: string,
+    item_name: string,
+    item_updated_at: string,
+    item_created_at: string,
+    chunk_cosine_distance?: number,
+    chunk_fts_rank?: number,
+    chunk_hybrid_score?: number,
+}
+
 export const vectorSearch = async ({
     limit,
     page,
@@ -1943,7 +1966,7 @@ export const vectorSearch = async ({
         id: string
         embedder: string
     },
-    items: any[]
+    chunks: VectorSearchChunkResult[]
 }> => {
 
     const table = contextToTableDefinition(context)
@@ -1984,94 +2007,105 @@ export const vectorSearch = async ({
 
     const mainTable = getTableName(id)
     const chunksTable = getChunksTableName(id);
-    // Create count query
-    let countQuery = db(mainTable);
-    countQuery = applyFilters(countQuery, filters, table);
-    countQuery = applyAccessControl(table, countQuery, user);
 
     // Create separate data query
-    const columns = await db(mainTable).columnInfo();
+    // const columns = await db(chunksTable).columnInfo();
 
-    let itemsQuery = db(mainTable).select((Object.keys(columns).map(column => mainTable + "." + column)));
-    itemsQuery = applyFilters(itemsQuery, filters, table);
-    itemsQuery = applyAccessControl(table, itemsQuery, user);
-    itemsQuery = applySorting(itemsQuery, sort);
+    let chunksQuery = db(chunksTable + " as chunks").select([
+        "chunks.id as chunk_id",
+        "chunks.source",
+        "chunks.content",
+        "chunks.chunk_index",
+        db.raw('chunks."createdAt" as chunk_created_at'),
+        db.raw('chunks."updatedAt" as chunk_updated_at'),
+        "chunks.metadata",
+        "items.id as item_id",
+        "items.name as item_name",
+        "items.external_id as item_external_id",
+        db.raw('items."updatedAt" as item_updated_at'),
+        db.raw('items."createdAt" as item_created_at'),
+    ]);
+
+    chunksQuery.leftJoin(mainTable + " as items", function () {
+        // @ts-ignore
+        this.on("chunks.source", "=", "items.id")
+    })
+
+    // Important: apply access control on and filters
+    // on the main items table as the required 
+    // fields such as rights_mode, name, description, etc. are
+    // on the main table.
+    chunksQuery = applyFilters(chunksQuery, filters, table, "items");
+    chunksQuery = applyAccessControl(table, chunksQuery, user, "items");
+    chunksQuery = applySorting(chunksQuery, sort, "items");
+
     if (queryRewriter) {
         query = await queryRewriter(query);
     }
 
-    // For semantic search we increase the scope, so we 
-    // can rerank the results.
-    itemsQuery.limit(limit * 3);
-
-    itemsQuery.leftJoin(chunksTable, function () {
-        // @ts-ignore
-        this.on(chunksTable + ".source", "=", mainTable + ".id")
-    })
-
-    itemsQuery.select(chunksTable + ".id as chunk_id")
-    itemsQuery.select(chunksTable + ".source")
-    itemsQuery.select(chunksTable + ".content")
-    itemsQuery.select(chunksTable + ".chunk_index")
-    itemsQuery.select(chunksTable + ".createdAt as chunk_created_at")
-    itemsQuery.select(chunksTable + ".updatedAt as chunk_updated_at")
-    itemsQuery.select(db.raw('vector_dims(??) as embedding_size', [`${chunksTable}.embedding`]))
-
-    const { chunks } = await embedder.generateFromQuery(context.id, query, {
+    const { chunks: queryChunks } = await embedder.generateFromQuery(context.id, query, {
         label: table.name.singular,
         trigger
     }, user?.id, role)
 
-    if (!chunks?.[0]?.vector) {
+    if (!queryChunks?.[0]?.vector) {
         throw new Error("No vector generated for query.")
     }
 
-    const vector = chunks[0].vector;
+    const vector = queryChunks[0].vector;
     const vectorStr = `ARRAY[${vector.join(",")}]`;
     const vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
 
     const language = (configuration.language || 'english');
 
-    let items: any[] = [];
+    let resultChunks: any[] = [];
 
     switch (method) {
         case "tsvector":
+            // For semantic search we increase the scope, so we 
+            // can rerank the results.
+            chunksQuery.limit(limit * 2);
             // rank + filter + sort (DESC)
-            itemsQuery
+            chunksQuery
                 .select(db.raw(
-                    `ts_rank(${chunksTable}.fts, websearch_to_tsquery(?, ?)) as fts_rank`,
+                    `ts_rank(chunks.fts, websearch_to_tsquery(?, ?)) as fts_rank`,
                     [language, query]
                 ))
                 .whereRaw(
-                    `${chunksTable}.fts @@ websearch_to_tsquery(?, ?)`,
+                    `chunks.fts @@ websearch_to_tsquery(?, ?)`,
                     [language, query]
                 )
                 .orderByRaw(`fts_rank DESC`);
-            items = await itemsQuery;
+            resultChunks = await chunksQuery;
             break;
 
         case "cosineDistance":
-        default:
+            // For semantic search we increase the scope, so we 
+            // can rerank the results.
+            chunksQuery.limit(limit * 2);
             // Ensure we don't rank rows without embeddings
-            itemsQuery.whereNotNull(`${chunksTable}.embedding`);
+            chunksQuery.whereNotNull(`chunks.embedding`);
+
+            console.log("[EXULU] Chunks query:", chunksQuery.toQuery());
 
             // Select cosine *similarity* for display/stats:
             // similarity = 1 - cosine_distance  (cosine_distance in [0,2])
             // If you prefer pure distance in your stats, change the alias below accordingly.
-            itemsQuery.select(
-                db.raw(`1 - (${chunksTable}.embedding <=> ${vectorExpr}) AS cosine_distance`)
+            chunksQuery.select(
+                db.raw(`1 - (chunks.embedding <=> ${vectorExpr}) AS cosine_distance`)
             );
 
             // Very important: ORDER BY the raw distance expression so pgvector can use the index
-            itemsQuery.orderByRaw(
-                `${chunksTable}.embedding <=> ${vectorExpr} ASC NULLS LAST`
+            chunksQuery.orderByRaw(
+                `chunks.embedding <=> ${vectorExpr} ASC NULLS LAST`
             );
-            items = await itemsQuery;
+            
+            resultChunks = await chunksQuery;
             break;
         case "hybridSearch":
 
             // Tunables
-            const matchCount = Math.min(limit * 5, 100);
+            const matchCount = Math.min(limit * 2, 100);
             const fullTextWeight = 1.0;
             const semanticWeight = 1.0;
             const rrfK = 50;
@@ -2079,42 +2113,44 @@ export const vectorSearch = async ({
             const hybridSQL = `
             WITH full_text AS (
               SELECT
-                c.id,
-                c.source,
+                chunks.id,
+                chunks.source,
                 row_number() OVER (
-                  ORDER BY ts_rank(c.fts, websearch_to_tsquery(?, ?)) DESC
+                  ORDER BY ts_rank(chunks.fts, websearch_to_tsquery(?, ?)) DESC
                 ) AS rank_ix
-              FROM ${chunksTable} c
-              WHERE c.fts @@ websearch_to_tsquery(?, ?)
+              FROM ${chunksTable} as chunks
+              WHERE chunks.fts @@ websearch_to_tsquery(?, ?)
               ORDER BY rank_ix
               LIMIT LEAST(?, 15) * 2
             ),
             semantic AS (
               SELECT
-                c.id,
-                c.source,
+                chunks.id,
+                chunks.source,
                 row_number() OVER (
-                  ORDER BY c.embedding <=> ${vectorExpr} ASC
+                  ORDER BY chunks.embedding <=> ${vectorExpr} ASC
                 ) AS rank_ix
-              FROM ${chunksTable} c
-              WHERE c.embedding IS NOT NULL
+              FROM ${chunksTable} as chunks
+              WHERE chunks.embedding IS NOT NULL
               ORDER BY rank_ix
               LIMIT LEAST(?, 50) * 2
             )
             SELECT
-              m.*,
-              c.id AS chunk_id,
-              c.source,
-              c.content,
-              c.chunk_index,
-              c.metadata,
-              c."createdAt" AS chunk_created_at,
-              c."updatedAt" AS chunk_updated_at,
-              vector_dims(c.embedding) as embedding_size,
-        
+              items.id as item_id,
+              items.name as item_name,
+              items.external_id as item_external_id,
+              chunks.id AS chunk_id,
+              chunks.source,
+              chunks.content,
+              chunks.chunk_index,
+              chunks.metadata,
+              chunks."createdAt" as chunk_created_at,
+              chunks."updatedAt" as chunk_updated_at,
+              items."updatedAt" as item_updated_at,
+              items."createdAt" as item_created_at,
               /* Per-signal scores for introspection */
-              ts_rank(c.fts, websearch_to_tsquery(?, ?)) AS fts_rank,
-              (1 - (c.embedding <=> ${vectorExpr})) AS cosine_distance,
+              ts_rank(chunks.fts, websearch_to_tsquery(?, ?)) AS fts_rank,
+              (1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance,
         
               /* Hybrid RRF score */
               (
@@ -2126,10 +2162,10 @@ export const vectorSearch = async ({
             FROM full_text ft
             FULL OUTER JOIN semantic se
               ON ft.id = se.id
-            JOIN ${chunksTable} c
-              ON COALESCE(ft.id, se.id) = c.id
-            JOIN ${mainTable} m
-              ON m.id = c.source
+            JOIN ${chunksTable} as chunks
+              ON COALESCE(ft.id, se.id) = chunks.id
+            JOIN ${mainTable} as items
+              ON items.id = chunks.source
             ORDER BY hybrid_score DESC
             LIMIT LEAST(?, 50)
             OFFSET 0
@@ -2152,110 +2188,75 @@ export const vectorSearch = async ({
 
                 matchCount                     // final limit
             ];
-            items = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
+
+            // todo apply access control to this raw query
+            // todo apply filters to this raw query
+            resultChunks = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
     }
 
     // Filter out duplicate sources, keeping only the first occurrence
     // because the vector search returns multiple chunks for the same
     // source.
-    console.log("[EXULU] Vector search results:", items?.length)
-    const seenSources = new Map();
-    items = items.reduce((acc, item) => {
-        if (!seenSources.has(item.source)) {
-            seenSources.set(item.source, {
-                ...Object.fromEntries(
-                    Object.keys(item)
-                        .filter(key =>
-                            key !== "cosine_distance" &&   // kept per chunk below
-                            key !== "fts_rank" &&          // kept per chunk below
-                            key !== "hybrid_score" &&      // we will compute per item below
-                            key !== "content" &&
-                            key !== "source" &&
-                            key !== "chunk_index" &&
-                            key !== "chunk_id" &&
-                            key !== "chunk_created_at" &&
-                            key !== "chunk_updated_at" &&
-                            key !== "embedding_size"
-                        )
-                        .map(key => [key, item[key]])
-                ),
-                chunks: [{
-                    content: item.content,
-                    chunk_index: item.chunk_index,
-                    chunk_id: item.chunk_id,
-                    source: item.source,
-                    metadata: item.metadata,
-                    chunk_created_at: item.chunk_created_at,
-                    chunk_updated_at: item.chunk_updated_at,
-                    embedding_size: item.embedding_size,
-                    ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
-                    ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
-                    ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
-                }]
-            });
-            acc.push(seenSources.get(item.source));
-        } else {
-            seenSources.get(item.source).chunks.push({
-                content: item.content,
-                chunk_index: item.chunk_index,
-                chunk_id: item.chunk_id,
-                chunk_created_at: item.chunk_created_at,
-                embedding_size: item.embedding_size,
-                metadata: item.metadata,
-                source: item.source,
-                chunk_updated_at: item.chunk_updated_at,
-                ...(method === "cosineDistance" && { cosine_distance: item.cosine_distance }),
-                ...((method === "tsvector" || method === "hybridSearch") && { fts_rank: item.fts_rank }),
-                ...(method === "hybridSearch" && { hybrid_score: item.hybrid_score })
-            });
+    console.log("[EXULU] Vector search chunk results:", resultChunks?.length)
+
+    resultChunks = resultChunks.map(chunk => ({
+        chunk_content: chunk.content,
+        chunk_index: chunk.chunk_index,
+        chunk_id: chunk.chunk_id,
+        chunk_source: chunk.source,
+        chunk_metadata: chunk.metadata,
+        chunk_created_at: chunk.chunk_created_at,
+        chunk_updated_at: chunk.chunk_updated_at,
+        item_updated_at: chunk.item_updated_at,
+        item_created_at: chunk.item_created_at,
+        item_id: chunk.item_id,
+        item_external_id: chunk.item_external_id,
+        item_name: chunk.item_name,
+        context: {
+            name: table.name.singular,
+            id: table.id || "",
+        },
+        ...(method === "cosineDistance" && { chunk_cosine_distance: chunk.cosine_distance }),
+        ...((method === "tsvector" || method === "hybridSearch") && { chunk_fts_rank: chunk.fts_rank }),
+        ...(method === "hybridSearch" && { chunk_hybrid_score: chunk.hybrid_score })
+    }))
+
+    // Apply adaptive threshold filtering to remove irrelevant results
+    if (resultChunks.length > 0 && (method === "cosineDistance" || method === "hybridSearch")) {
+        const scoreKey = method === "cosineDistance" ? "chunk_cosine_distance" : "chunk_hybrid_score";
+        const topScore = resultChunks[0][scoreKey];
+        const bottomScore = resultChunks[resultChunks.length - 1][scoreKey];
+        const medianScore = resultChunks[Math.floor(resultChunks.length / 2)][scoreKey];
+
+        console.log("[EXULU] Score distribution:", {
+            method,
+            count: resultChunks.length,
+            topScore: topScore?.toFixed(4),
+            bottomScore: bottomScore?.toFixed(4),
+            medianScore: medianScore?.toFixed(4)
+        });
+
+        // Adaptive threshold: keep results within 70% of the best match
+        const adaptiveThreshold = topScore * 0.7;
+        const beforeFilterCount = resultChunks.length;
+
+        resultChunks = resultChunks.filter(chunk => {
+            const score = chunk[scoreKey];
+            return score !== undefined && score >= adaptiveThreshold;
+        });
+
+        const filteredCount = beforeFilterCount - resultChunks.length;
+        if (filteredCount > 0) {
+            console.log(`[EXULU] Filtered ${filteredCount} low-quality results (threshold: ${adaptiveThreshold.toFixed(4)})`);
         }
-        return acc;
-    }, []);
-
-    console.log("[EXULU] Vector search results after deduplication:", items?.length)
-
-    items.forEach(item => {
-        if (!item.chunks?.length) { return; }
-
-        if (method === "tsvector") {
-            const ranks = item.chunks
-                .map(c => (typeof c.fts_rank === 'number' ? c.fts_rank : 0));
-            const total = ranks.reduce((a, b) => a + b, 0);
-            const average = ranks.length ? total / ranks.length : 0;
-            item.averageRelevance = average;
-            item.totalRelevance = total;
-
-        } else if (method === "cosineDistance") {
-            let methodProperty = "cosine_distance";
-            const average = item.chunks.reduce((acc, item) => {
-                return acc + item[methodProperty];
-            }, 0) / item.chunks.length;
-
-            const total = item.chunks.reduce((acc, item) => {
-                return acc + item[methodProperty];
-            }, 0);
-            item.averageRelevance = average;
-            item.totalRelevance = total;
-
-        } else if (method === "hybridSearch") {
-
-            // we multiply by 10 and add 1 to somewhat normalize the score against when cosine distance is used
-            const scores = item.chunks.map(c => (typeof c.hybrid_score === 'number' ? (c.hybrid_score * 10) + 1 : 0));
-            const total = scores.reduce((a, b) => a + b, 0);
-            const average = scores.length ? total / scores.length : 0;
-            item.averageRelevance = average;
-            item.totalRelevance = total;
-        }
-    })
+    }
 
     // todo if query && resultReranker, rerank the results
     if (resultReranker && query) {
-        items = await resultReranker(items);
+        resultChunks = await resultReranker(resultChunks);
     }
 
-    // items = items.slice(0, limit);
-
-    console.log("[EXULU] Vector search results after slicing:", items?.length)
+    resultChunks = resultChunks.slice(0, limit);
 
     await updateStatistic({
         name: "count",
@@ -2275,7 +2276,7 @@ export const vectorSearch = async ({
             id: table.id || "",
             embedder: embedder.name
         },
-        items
+        chunks: resultChunks
     }
 }
 
@@ -2416,7 +2417,7 @@ export function createSDL(
             worker: number
             queue: number
         }
-        timeoutInSeconds: number
+        timeoutInSeconds?: number
     }[]
 ) {
 
@@ -2589,12 +2590,30 @@ export function createSDL(
         tsvector
     }
 
-  type ${tableNameSingular}VectorSearchResult {
-        items: [${tableNameSingular}]!
+    type ${tableNameSingular}VectorSearchResult {
+        chunks: [${tableNameSingular}VectorSearchChunk!]!
         context: VectoSearchResultContext!
         filters: JSON!
         query: String!
         method: VectorMethodEnum!
+    }
+        
+    type ${tableNameSingular}VectorSearchChunk {
+        chunk_content: String
+        chunk_index: Int
+        chunk_id: String
+        chunk_source: String
+        chunk_metadata: JSON
+        chunk_created_at: Date
+        chunk_updated_at: Date
+        item_updated_at: Date
+        item_created_at: Date
+        item_id: String!
+        item_external_id: String
+        item_name: String!
+        chunk_cosine_distance: Float
+        chunk_fts_rank: Float
+        chunk_hybrid_score: Float
     }
 
     type VectoSearchResultContext {
@@ -3324,17 +3343,12 @@ type AgentEvalFunctionConfig {
 }
 
 type ItemChunks {
-    cosine_distance: Float
-    fts_rank: Float
-    hybrid_score: Float
-    content: String
-    source: ID
-    chunk_index: Int
-    chunk_id: ID
-    chunk_created_at: Date
-    chunk_updated_at: Date
-    embedding_size: Float
-    metadata: JSON
+    chunk_id: String!
+    chunk_index: Int!
+    chunk_content: String!
+    chunk_source: String!
+    chunk_created_at: Date!
+    chunk_updated_at: Date!
 }
 
 type Provider {

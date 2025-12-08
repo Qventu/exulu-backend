@@ -14,7 +14,6 @@ export interface Item {
         index: number;
         content: string;
         source: string;
-        embedding_size: number;
         createdAt: string;
         updatedAt: string;
     }[];

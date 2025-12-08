@@ -10,7 +10,7 @@ import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';
-import { applyFilters, contextToTableDefinition, vectorSearch } from "./utils/graphql";
+import { applyFilters, contextToTableDefinition, vectorSearch, type VectorSearchChunkResult } from "./utils/graphql";
 import {
     PutObjectCommand,
     S3Client,
@@ -1829,7 +1829,29 @@ export class ExuluContext {
     public description: string;
     public embedder?: ExuluEmbedder
     public queryRewriter?: (query: string) => Promise<string>;
-    public resultReranker?: (results: any[]) => Promise<any[]>; // todo typings
+    public resultReranker?: (results: {
+        chunk_content: string,
+        chunk_index: number,
+        chunk_id: string,
+        chunk_source: string,
+        chunk_metadata: Record<string, string>,
+        chunk_created_at: string,
+        chunk_updated_at: string,
+        item_id: string,
+        item_external_id: string,
+        item_name: string,
+    }[]) => Promise<{
+        chunk_content: string,
+        chunk_index: number,
+        chunk_id: string,
+        chunk_source: string,
+        chunk_metadata: Record<string, string>,
+        chunk_created_at: string,
+        chunk_updated_at: string,
+        item_id: string,
+        item_external_id: string,
+        item_name: string,
+    }[]>
     public configuration: {
         calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always",
         maxRetrievalResults?: number, // max number of results to return for retrieval
@@ -1994,7 +2016,7 @@ export class ExuluContext {
             id: string
             embedder: string
         },
-        items: any[]
+        chunks: VectorSearchChunkResult[]
     }> => {
 
         const { db } = await postgresClient();
@@ -2683,10 +2705,13 @@ export class ExuluContext {
                 })
 
                 return {
-                    items: result.items.map((item: Item) => ({
-                        ...item,
-                        context: this.id
-                    }))
+                    result: JSON.stringify(result.chunks.map((chunk: VectorSearchChunkResult) => ({
+                        ...chunk,
+                        context: {
+                            name: this.name,
+                            id: this.id
+                        }
+                    })))
                 }
             },
         });

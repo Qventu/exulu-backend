@@ -93,6 +93,7 @@ export const createExpressRoutes = async (
     queues?: {
         queue: Queue,
         ratelimit: number
+        timeoutInSeconds?: number
         concurrency: {
             worker: number
             queue: number
