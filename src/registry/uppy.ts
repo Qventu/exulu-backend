@@ -128,8 +128,9 @@ export const uploadFile = async (
     let defaultBucket = config.fileUploads.s3Bucket;
 
     let key = fileName;
-    key = addGeneralPrefixToKey(key, config);
     key = addUserPrefixToKey(key, user || "api");
+    key = addGeneralPrefixToKey(key, config);
+
 
     console.log("[EXULU] uploading file to s3 into bucket", defaultBucket, "with key", key)
 
@@ -245,6 +246,9 @@ export const createUppyRoutes = async (
             res.status(405).json({ error: 'Not allowed to access the files in the folder based on authenticated user.' });
             return;
         }
+
+        key = key.replace(`${bucket}/`, '');
+        console.log("[EXULU] deleting file from s3 into bucket", bucket, "with key", key)
 
         const client = getS3Client(config);
         const command = new DeleteObjectCommand({
@@ -409,7 +413,7 @@ export const createUppyRoutes = async (
 
         const command = new ListObjectsV2Command({
             Bucket: config.fileUploads.s3Bucket,
-            Prefix: `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, '') + "/" : ''}` + `${authenticationResult.user.id}`,
+            Prefix: `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, '') + "/" : ''}` + `user_${authenticationResult.user.id}`,
             MaxKeys: 9,
             ...(req.query.continuationToken && { ContinuationToken: req.query.continuationToken as string }),
         })
@@ -424,7 +428,17 @@ export const createUppyRoutes = async (
             ))
         }
 
-        res.json(response)
+        res.json({
+            ...response,
+            Contents: response.Contents?.map((content) => {
+                return {
+                    ...content,
+                    // For consistency and to support multi-bucket environments
+                    // we prepend the bucket name to the key here.
+                    Key: `${config.fileUploads?.s3Bucket}/${content.Key}`
+                }
+            })
+        })
         res.end()
 
     })
@@ -506,8 +520,11 @@ export const createUppyRoutes = async (
         // Generate S3 key and prepare command
         const key = generateS3Key(filename)
 
-        let fullKey = addGeneralPrefixToKey(key, config);
-        fullKey = addUserPrefixToKey(fullKey, user.type === "api" ? "api" : user.id);
+        
+        let fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+        fullKey = addGeneralPrefixToKey(fullKey, config);
+
+        console.log("[EXULU] signing on server for user", user.id, "with key", fullKey)
 
         getSignedUrl(
             getS3Client(config),
@@ -575,8 +592,10 @@ export const createUppyRoutes = async (
         }
         const key = `${randomUUID()}-_EXULU_${filename}`
 
-        let fullKey = addGeneralPrefixToKey(key, config);
-        fullKey = addUserPrefixToKey(fullKey, user.type === "api" ? "api" : user.id);
+        let fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+        fullKey = addGeneralPrefixToKey(fullKey, config);
+
+        console.log("[EXULU] signing on server for user", user.id, "with key", fullKey)
 
         const params = {
             Bucket: config.fileUploads.s3Bucket,

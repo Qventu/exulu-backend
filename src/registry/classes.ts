@@ -194,7 +194,9 @@ export const convertToolsArrayToObject = async (
 ): Promise<Record<string, Tool>> => {
 
     if (!currentTools) return {};
-    if (!allExuluTools) return {};
+    if (!allExuluTools) {
+        allExuluTools = [];
+    };
     if (!contexts) {
         contexts = [];
     }
@@ -235,6 +237,7 @@ export const convertToolsArrayToObject = async (
                         ...cur.tool,
                         description,
                         async *execute(inputs: any, options: any) { // generator function allows to use yield to stream tool call results
+                            console.log("[EXULU] Executing tool", cur.name, "with inputs", inputs, "and options", options)
                             if (!cur.tool?.execute) {
                                 console.error("[EXULU] Tool execute function is undefined.", cur.tool)
                                 throw new Error("Tool execute function is undefined.")
@@ -862,6 +865,7 @@ export class ExuluAgent {
 
             } else {
                 console.log("[EXULU] Generating text for agent: " + this.name, "with prompt: " + prompt?.slice(0, 100) + "...")
+
                 const { text, totalUsage } = await generateText({
                     model: model,
                     system,
@@ -1698,11 +1702,112 @@ export class ExuluTool {
             execute
         });
     }
+
+    public execute = async ({
+        agent,
+        config,
+        user,
+        inputs,
+        project
+    }: {
+        agent: string,
+        config: ExuluConfig,
+        user?: User,
+        inputs: any,
+        project?: string
+    }) => {
+
+        const agentInstance = await loadAgent(agent);
+        if (!agentInstance) {
+            throw new Error("Agent not found.");
+        }
+
+        const { db } = await postgresClient();
+
+        let providerapikey: string | undefined;
+        const variableName = agentInstance.providerapikey;
+
+        if (variableName) {
+
+            console.log("[EXULU] provider api key variable name", variableName)
+            // Look up the variable from the variables table
+            const variable = await db.from("variables").where({ name: variableName }).first();
+            if (!variable) {
+                throw new Error("Provider API key variable not found for " + agentInstance.name + " (" + agentInstance.id + ").");
+            }
+
+            // Get the API key from the variable (decrypt if encrypted)
+            providerapikey = variable.value;
+
+            if (!variable.encrypted) {
+                throw new Error("Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.");
+            }
+
+            if (variable.encrypted) {
+                const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+                providerapikey = bytes.toString(CryptoJS.enc.Utf8);
+            }
+
+        }
+
+        const tools = await convertToolsArrayToObject(
+            [this],
+            [],
+            agentInstance.tools,
+            providerapikey,
+            undefined,
+            user,
+            config,
+            undefined,
+            undefined,
+            project
+        )
+
+        const tool = tools[sanitizeName(this.name)] || tools[this.name] || tools[this.id];
+        if (!tool?.execute) {
+            throw new Error("Tool " + sanitizeName(this.name) + " not found in " + JSON.stringify(tools));
+        }
+
+        console.log("[EXULU] Tool found", this.name)
+
+        const generator = tool.execute(inputs, {
+            toolCallId: this.id + "_" + randomUUID(),
+            messages: [],
+        });
+
+        let lastValue;
+        for await (const chunk of generator) {
+            lastValue = chunk;
+        }
+
+        if (typeof lastValue === 'string') {
+            lastValue = JSON.parse(lastValue);
+        }
+        if (lastValue?.result && typeof lastValue.result === 'string') {
+            lastValue.result = JSON.parse(lastValue.result);
+        }
+        return lastValue;
+    }
 }
 
 export type ExuluContextProcessor = {
     name: string,
     description: string,
+    filter: ({
+        item,
+        user,
+        role,
+        utils,
+        exuluConfig
+    }: {
+        item: Item,
+        user?: number,
+        role?: string,
+        utils: {
+            storage: ExuluStorage
+        },
+        exuluConfig: ExuluConfig
+    }) => Promise<Item | undefined | null>,
     execute: ({
         item,
         user,
@@ -1857,6 +1962,15 @@ export class ExuluContext {
         maxRetrievalResults?: number, // max number of results to return for retrieval
         defaultRightsMode?: ExuluRightsMode
         enableAsTool?: boolean
+        cutoffs?: {
+            cosineDistance?: number,
+            tsvector?: number
+            hybrid?: number
+        }
+        expand?: {
+            before?: number,
+            after?: number
+        }
         language?: "german" | "english"
     };
     public sources: ExuluContextSource[] = [];
@@ -1893,6 +2007,15 @@ export class ExuluContext {
             enableAsTool?: boolean,
             language?: "german" | "english",
             maxRetrievalResults?: number,
+            expand?: {
+                before?: number,
+                after?: number
+            }
+            cutoffs?: {
+                cosineDistance?: number,
+                tsvector?: number,
+                hybrid?: number
+            }
         }
     }) {
         this.id = id;
@@ -1905,6 +2028,15 @@ export class ExuluContext {
             language: "english",
             defaultRightsMode: "private",
             maxRetrievalResults: 10,
+            expand: {
+                before: 0,
+                after: 0
+            },
+            cutoffs: {
+                cosineDistance: 0.5,
+                tsvector: 0.5,
+                hybrid: 0.5
+            }
         };
         this.description = description;
         this.embedder = embedder;
@@ -1931,6 +2063,25 @@ export class ExuluContext {
 
         if (!this.processor) {
             throw new Error(`Processor is not set for this context: ${this.id}.`)
+        }
+
+        if (this.processor.filter) {
+            const result = await this.processor.filter({
+                item,
+                user,
+                role,
+                utils: {
+                    storage: exuluStorage
+                },
+                exuluConfig
+            });
+
+            if (!result) {
+                return {
+                    result: undefined,
+                    job: undefined
+                };
+            }
         }
 
         const queue = await this.processor.config?.queue;
@@ -2007,6 +2158,15 @@ export class ExuluContext {
         trigger: STATISTICS_LABELS,
         limit: number,
         page: number,
+        cutoffs?: {
+            cosineDistance?: number,
+            tsvector?: number,
+            hybrid?: number
+        }
+        expand?: {
+            before?: number,
+            after?: number
+        }
     }): Promise<{
         filters: any[]
         query: string
@@ -2028,6 +2188,8 @@ export class ExuluContext {
             context: this,
             db,
             limit: options?.limit || this.configuration.maxRetrievalResults || 10,
+            cutoffs: options.cutoffs,
+            expand: options.expand,
         });
 
         return result;

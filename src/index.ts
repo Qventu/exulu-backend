@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
+export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluStorage, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
