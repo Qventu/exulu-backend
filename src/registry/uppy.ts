@@ -23,8 +23,6 @@ import {
     GetFederationTokenCommand,
 } from '@aws-sdk/client-sts';
 import { randomUUID } from 'node:crypto';
-import { applyAccessControl, contextToTableDefinition } from "./utils/graphql";
-import { coreSchemas } from "../postgres/core-schema";
 import type { ExuluContext } from "./classes";
 
 const expiresIn = 60 * 60 * 24 * 1 // S3 signature expires within 1 day.
@@ -68,6 +66,49 @@ export const getPresignedUrl = async (bucket: string, key: string, config: Exulu
 export interface UploadOptions {
     contentType?: string;
     metadata?: Record<string, string>;
+}
+
+/**
+ * S3 metadata values must be US-ASCII characters. This function sanitizes
+ * metadata by URL-encoding non-ASCII characters to prevent signature mismatches.
+ * See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html
+ */
+function sanitizeMetadata(metadata?: Record<string, string>): Record<string, string> | undefined {
+    if (!metadata) return undefined;
+
+    const sanitized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+        if (typeof value === 'string') {
+            // URL-encode to handle special characters like ä, ö, ü, etc.
+            sanitized[key] = encodeURIComponent(value);
+        } else {
+            sanitized[key] = String(value);
+        }
+    }
+    return sanitized;
+}
+
+/**
+ * Decodes URL-encoded metadata values back to their original form.
+ * Use this when retrieving metadata from S3 objects.
+ */
+export function decodeMetadata(metadata?: Record<string, string>): Record<string, string> | undefined {
+    if (!metadata) return undefined;
+
+    const decoded: Record<string, string> = {};
+    for (const [key, value] of Object.entries(metadata)) {
+        if (typeof value === 'string') {
+            try {
+                decoded[key] = decodeURIComponent(value);
+            } catch (e) {
+                // If decoding fails, use original value
+                decoded[key] = value;
+            }
+        } else {
+            decoded[key] = String(value);
+        }
+    }
+    return decoded;
 }
 
 // Helper function to add s3prefix to a key path
@@ -131,20 +172,50 @@ export const uploadFile = async (
     key = addUserPrefixToKey(key, user || "api");
     key = addGeneralPrefixToKey(key, config);
 
-
-    console.log("[EXULU] uploading file to s3 into bucket", defaultBucket, "with key", key)
+    // Sanitize metadata to ensure only ASCII characters (prevents SignatureDoesNotMatch errors)
+    const sanitizedMetadata = sanitizeMetadata(options.metadata);
 
     const command = new PutObjectCommand({
         Bucket: customBucket || defaultBucket,
         Key: key,
         Body: file,
         ContentType: options.contentType,
-        Metadata: options.metadata,
+        Metadata: sanitizedMetadata,
         ContentLength: file.byteLength,
     });
 
-    await client.send(command);
-    console.log("[EXULU] file uploaded to s3 into bucket", customBucket || defaultBucket, "with key", key)
+    // Retry logic for handling intermittent signature errors
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            await client.send(command);
+            break; // Success, exit retry loop
+        } catch (error: any) {
+            lastError = error;
+
+            // Only retry on signature/auth errors
+            if (error.name === 'SignatureDoesNotMatch' || error.name === 'InvalidAccessKeyId' || error.name === 'AccessDenied') {
+                if (attempt < maxRetries) {
+                    const backoffMs = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+                    await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+                    // Force recreation of S3 client on signature errors
+                    s3Client = undefined;
+                    getS3Client(config);
+                    continue;
+                }
+            } else {
+                // For non-auth errors, throw immediately
+                throw error;
+            }
+        }
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
 
     return addBucketPrefixToKey(
         key,
