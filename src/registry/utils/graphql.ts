@@ -1770,7 +1770,7 @@ const paginationRequest = async ({
     const pageCount = Math.ceil(itemCount / limit);
     const currentPage = page;
     const hasPreviousPage = currentPage > 1;
-    const hasNextPage = currentPage < pageCount - 1;
+    const hasNextPage = currentPage <= pageCount - 1;
 
     // Create separate data query
     let dataQuery = db(tableName);

@@ -472,7 +472,6 @@ Mood: friendly and intelligent.
             let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
 
             let providerapikey: string | undefined;
-            // Get the variable name from user's anthropic_token field
             const variableName = agentInstance.providerapikey;
 
             if (variableName) {
