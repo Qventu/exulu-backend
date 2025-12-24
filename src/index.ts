@@ -13,8 +13,6 @@ import { execute as initDb } from "./postgres/init-db"
 import { generateApiKey } from './auth/generate-key'
 import { create } from './registry/otel'
 import type { ExuluContext } from './registry/classes'
-import { codeStandardsContext } from './templates/contexts/code-standards'
-import { outputsContext } from './templates/contexts/outputs'
 import CryptoJS from 'crypto-js';
 import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
@@ -30,11 +28,6 @@ export const ExuluJobs = {
     jobs: {
         validate: validateJob
     }
-}
-
-export const ExuluDefaultContexts = {
-    codeStandards: codeStandardsContext,
-    outputs: outputsContext
 }
 
 export const ExuluDefaultAgents = {

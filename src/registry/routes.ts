@@ -455,17 +455,6 @@ Mood: friendly and intelligent.
                 }
             }
 
-            if (
-                user?.type !== "api" &&
-                !user?.super_admin &&
-                req.body.resourceId !== user?.id
-            ) {
-                res.status(400).json({
-                    message: "The provided user id in the resourceId field is not the same as the authenticated user. Only super admins and API users can impersonate other users."
-                })
-                return;
-            }
-
             console.log("[EXULU] agent tools", agentInstance.tools?.map(x => x.name + " (" + x.id + ")"))
 
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];

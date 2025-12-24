@@ -139,6 +139,7 @@ ${enumValues}
         fields.push("  maxContextLength: Int")
         fields.push("  provider: String")
         fields.push("  authenticationInformation: String")
+        fields.push("  systemInstructions: String")
         fields.push("  slug: String")
     }
 
@@ -219,6 +220,8 @@ input FilterOperatorDate {
 input FilterOperatorFloat {
   eq: Float
   ne: Float
+  lte: Float
+  gte: Float
   in: [Float]
   and: [FilterOperatorFloat]
   or: [FilterOperatorFloat]
@@ -293,7 +296,7 @@ const getRequestedFields = (info: any): string[] => {
 
 // Helper function to handle RBAC updates
 const handleRBACUpdate = async (db: any, entityName: string, resourceId: string, rbacData: any, existingRbacRecords: any[]) => {
-    const { users = [], roles = [], projects = [] } = rbacData;
+    const { users = [], roles = [], /* projects = [] */ } = rbacData;
 
     // Get existing RBAC records if not provided
     if (!existingRbacRecords) {
@@ -308,7 +311,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     // Create sets for comparison
     const newUserRecords = new Set(users.map((u: any) => `${u.id}:${u.rights}`));
     const newRoleRecords = new Set(roles.map((r: any) => `${r.id}:${r.rights}`));
-    const newProjectRecords = new Set(projects.map((p: any) => `${p.id}:${p.rights}`));
+    // const newProjectRecords = new Set(projects.map((p: any) => `${p.id}:${p.rights}`));
     const existingUserRecords = new Set(existingRbacRecords
         .filter(r => r.access_type === 'User')
         .map(r => `${r.user_id}:${r.rights}`));
@@ -322,15 +325,15 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     // Records to create
     const usersToCreate = users.filter((u: any) => !existingUserRecords.has(`${u.id}:${u.rights}`));
     const rolesToCreate = roles.filter((r: any) => !existingRoleRecords.has(`${r.id}:${r.rights}`));
-    const projectsToCreate = projects.filter((p: any) => !existingProjectRecords.has(`${p.id}:${p.rights}`));
+    // const projectsToCreate = projects.filter((p: any) => !existingProjectRecords.has(`${p.id}:${p.rights}`));
 
     // Records to remove
     const usersToRemove = existingRbacRecords
         .filter(r => r.access_type === 'User' && !newUserRecords.has(`${r.user_id}:${r.rights}`));
     const rolesToRemove = existingRbacRecords
         .filter(r => r.access_type === 'Role' && !newRoleRecords.has(`${r.role_id}:${r.rights}`));
-    const projectsToRemove = existingRbacRecords
-        .filter(r => r.access_type === 'Project' && !newProjectRecords.has(`${r.project_id}:${r.rights}`));
+    // const projectsToRemove = existingRbacRecords
+    //     .filter(r => r.access_type === 'Project' && !newProjectRecords.has(`${r.project_id}:${r.rights}`));
 
     // Remove obsolete records
     if (usersToRemove.length > 0) {
@@ -339,9 +342,9 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
     if (rolesToRemove.length > 0) {
         await db.from('rbac').whereIn('id', rolesToRemove.map(r => r.id)).del();
     }
-    if (projectsToRemove.length > 0) {
-        await db.from('rbac').whereIn('id', projectsToRemove.map(r => r.id)).del();
-    }
+    // if (projectsToRemove.length > 0) {
+    //     await db.from('rbac').whereIn('id', projectsToRemove.map(r => r.id)).del();
+    // }
 
     // Create new records
     const recordsToInsert: any[] = [];
@@ -370,7 +373,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
         });
     });
 
-    projectsToCreate.forEach((project: any) => {
+    /* projectsToCreate.forEach((project: any) => {
         recordsToInsert.push({
             entity: entityName,
             access_type: 'Project',
@@ -380,7 +383,7 @@ const handleRBACUpdate = async (db: any, entityName: string, resourceId: string,
             createdAt: new Date(),
             updatedAt: new Date()
         });
-    });
+    }); */
 
     if (recordsToInsert.length > 0) {
         await db.from('rbac').insert(recordsToInsert);
@@ -398,13 +401,28 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 return true; // todo roadmap - scoping api users to specific resources
             }
 
-            if (!user.super_admin && (!user.role || (
-                !(table.name.plural === "agents" && user.role.agents === "write") &&
-                !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
-                !(table.name.plural === "variables" && user.role.variables === "write") &&
-                !(table.name.plural === "users" && user.role.users === "write") &&
-                !((table.name.plural === "test_cases" || table.name.plural === "eval_sets" || table.name.plural === "eval_runs") && user.role.evals === "write")
-            ))) {
+            if (
+                !user.super_admin &&
+                (
+                    table.name.plural === "agents" ||
+                    table.name.plural === "workflow_templates" ||
+                    table.name.plural === "variables" ||
+                    table.name.plural === "users" ||
+                    table.name.plural === "test_cases" ||
+                    table.name.plural === "eval_sets" ||
+                    table.name.plural === "eval_runs"
+                ) &&
+                (!user.role || (
+                    !(table.name.plural === "agents" && user.role.agents === "write") &&
+                    !(table.name.plural === "workflow_templates" && user.role.workflows === "write") &&
+                    !(table.name.plural === "variables" && user.role.variables === "write") &&
+                    !(table.name.plural === "users" && user.role.users === "write") &&
+                    !((
+                        table.name.plural === "test_cases" ||
+                        table.name.plural === "eval_sets" ||
+                        table.name.plural === "eval_runs"
+                    ) && user.role.evals === "write")
+                ))) {
                 console.error('Access control error: no role found for current user or no access to entity type.');
                 // Return empty result on error
                 throw new Error('Access control error: no role found for current user or no access to entity type.');
@@ -555,6 +573,77 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
     };
 
     const mutations = {
+        [`${tableNamePlural}CopyOneById`]: async (_, args, context, info) => {
+            const { db } = context;
+            const requestedFields = getRequestedFields(info)
+            let { id } = args;
+
+            if (!id) {
+                throw new Error('ID is required for copying a record.');
+            }
+
+            await validateWriteAccess(id, context);
+
+            const item = await db.from(tableNamePlural).select("*").where({ id }).first();
+            if (!item) {
+                throw new Error('Record not found');
+            }
+
+            // For copied records we set the rights 
+            // mode to private and the created_by to 
+            // the current user.
+            if (item.rights_mode) {
+                item.rights_mode = 'private';                
+            }
+
+            if (item.created_at) {
+                item.created_at = new Date();
+            }
+            if (item.createdAt) {
+                item.createdAt = new Date();
+            }
+            if (item.updated_at) {
+                item.updated_at = new Date();
+            }
+            if (item.updatedAt) {
+                item.updatedAt = new Date();
+            }
+            if (item.created_by) {
+                item.created_by = context.user.id;
+            }
+            if (item.createdBy) {
+                item.createdBy = context.user.id;
+            }
+
+            if (item.name) {
+                item.name = item.name + " (Copy)";
+            }
+
+
+            // Check for each field if it is a json field, and if 
+            // so, check if it is an object or array and convert 
+            // it to a string.
+            Object.keys(item).forEach(key => {
+                if (table.fields.find(field => field.name === key)?.type === "json") {
+                    if (typeof item[key] === "object" || Array.isArray(item[key])) {
+                        item[key] = JSON.stringify(item[key]);
+                    }
+                }
+            });
+
+            const insert = db(tableNamePlural).insert({
+                ...item,
+                id: db.fn.uuid()
+            }).returning("*");
+
+            const result = await insert;
+            if (!result[0]) {
+                throw new Error('Failed to copy record.');
+            }
+            return {
+                item: finalizeRequestedFields({ args, table, requestedFields, agents, contexts, tools, result: result[0], user: context.user }),
+            }
+        },
         [`${tableNamePlural}CreateOne`]: async (_, args, context, info) => {
             const { db } = context;
             const requestedFields = getRequestedFields(info)
@@ -923,7 +1012,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 const { limit = 10, filters = [], sort } = args;
                 const { db } = context;
 
-                const { items } = await paginationRequest({
+                const { items } = await itemsPaginationRequest({
                     db,
                     limit,
                     page: 0,
@@ -1046,11 +1135,8 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             };
         }
         mutations[`${tableNameSingular}GenerateChunks`] = async (_, args, context, info) => {
-            if (!context.user?.super_admin) {
-                throw new Error("You are not authorized to generate chunks via API, user must be super admin.");
-            }
-            // Dont need to validate write access here, as we limit it to super admin only.
 
+            // Dont need to validate write access here, as we limit it to super admin only.
             const { db } = await postgresClient();
             const exists = contexts.find(context => context.id === table.id)
             if (!exists) {
@@ -1068,13 +1154,19 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
             // Generating all chunks for the context.
             if (!args.where) {
+
+                if (!context.user?.super_admin) {
+                    throw new Error("You are not authorized to generate all chunks via API, user must be super admin.");
+                }
+
                 const {
                     jobs,
                     items
                 } = await embeddings.generate.all(
                     config,
                     context.user.id,
-                    context.user.role?.id
+                    context.user.role?.id,
+                    args.limit
                 );
                 return {
                     message: "Chunks generated successfully.",
@@ -1086,6 +1178,10 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             // Generating chunks for the items in the context
             // that match the where clause.
             query = applyFilters(query, args.where, table);
+
+            if (args.limit) {
+                query = query.limit(args.limit);
+            }
 
             const items = await query;
             if (items.length === 0) {
@@ -1113,25 +1209,28 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
 
         }
         mutations[`${tableNameSingular}DeleteChunks`] = async (_, args, context, info) => {
-            if (!context.user?.super_admin) {
-                throw new Error("You are not authorized to delete chunks via API, user must be super admin.");
-            }
 
             // Dont need to validate write access here, as we limit it to super admin only.
-
             const { db } = await postgresClient();
             const id = contexts.find(context => context.id === table.id)?.id
+
             if (!id) {
                 throw new Error(`Context ${table.id} not found.`);
             }
 
-
-
             if (args.where) {
+
                 // Allow filtering by the parent item of the chunks
                 let query = db.from(getTableName(id)).select("id");
                 query = applyFilters(query, args.where, table);
+                query = applyAccessControl(table, query, context.user);
+
+                if (args.limit) {
+                    query = query.limit(args.limit);
+                }
+
                 const items = await query;
+
                 if (items.length === 0) {
                     throw new Error("No items found to delete chunks for.");
                 }
@@ -1146,13 +1245,24 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
                 }
 
             } else {
+
                 // Delete all chunks for the context if no filter criteria are provided
-                const count = await db.from(getChunksTableName(id)).count();
-                await db.from(getChunksTableName(id)).truncate();
+                if (!context.user?.super_admin) {
+                    throw new Error("You are not authorized to delete all chunks via API, user must be super admin.");
+                }
+
+                let count = 0;
+                if (!args.limit) {
+                    const result = await db.from(getChunksTableName(id)).count();
+                    count = parseInt(result[0].count);
+                    await db.from(getChunksTableName(id)).truncate();
+                } else {
+                    count = await db.from(getChunksTableName(id)).limit(args.limit).delete();
+                }
 
                 return {
                     message: "Chunks deleted successfully.",
-                    items: parseInt(count[0].count),
+                    items: count,
                     jobs: []
                 }
             }
@@ -1176,14 +1286,30 @@ export const applyAccessControl = (table: ExuluTableDefinition, query: any, user
 
     console.log("[EXULU] user.role", user?.role)
     console.log("[EXULU] table.name.plural", table.name.plural)
-    if (user && !user?.super_admin && (!user?.role || (
-        !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
-        !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
-        !(table.name.plural === "variables" && (user.role.variables === "read" || user.role.variables === "write")) &&
-        !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write")) &&
-        !((table.name.plural === "test_cases" || table.name.plural === "eval_sets" || table.name.plural === "eval_runs") && (user.role.evals === "read" || user.role.evals === "write"))
-    ))) {
-        console.error('==== Access control error: no role found or no access to entity type. ====');
+    if (
+        user &&
+        !user?.super_admin &&
+        (
+            table.name.plural === "agents" ||
+            table.name.plural === "workflow_templates" ||
+            table.name.plural === "variables" ||
+            table.name.plural === "users" ||
+            table.name.plural === "test_cases" ||
+            table.name.plural === "eval_sets" ||
+            table.name.plural === "eval_runs"
+        ) &&
+        (!user?.role || (
+            !(table.name.plural === "agents" && (user.role.agents === "read" || user.role.agents === "write")) &&
+            !(table.name.plural === "workflow_templates" && (user.role.workflows === "read" || user.role.workflows === "write")) &&
+            !(table.name.plural === "variables" && (user.role.variables === "read" || user.role.variables === "write")) &&
+            !(table.name.plural === "users" && (user.role.users === "read" || user.role.users === "write")) &&
+            !((
+                table.name.plural === "test_cases" ||
+                table.name.plural === "eval_sets" ||
+                table.name.plural === "eval_runs"
+            ) && (user.role.evals === "read" || user.role.evals === "write"))
+        ))) {
+        console.error('==== Access control error: no role found or no access to entity type. ====', user, table.name.plural);
         // Return empty result on error
         throw new Error('Access control error: no role found or no access to entity type.');
     }
@@ -1256,6 +1382,8 @@ const converOperatorToQuery = (query: any, fieldName: string, operators: any, ta
 
     fieldName = prefix + fieldName;
 
+    console.log("[EXULU] operators", operators)
+
     if (operators.eq !== undefined) {
         if (isJsonField) {
             // For JSON fields, use JSON equality operator
@@ -1292,7 +1420,14 @@ const converOperatorToQuery = (query: any, fieldName: string, operators: any, ta
         }
     }
     if (operators.lte !== undefined) {
-        query = query.where(fieldName, '<=', operators.lte);
+        console.log("[EXULU] operators.lte", operators.lte)
+        console.log("[EXULU] fieldName", fieldName)
+        if (operators.lte === 0 || operators.lte === "0") {
+            // Also include empty / null values as well as 0 values
+            query = query.whereNull(fieldName).orWhere(fieldName, '=', 0);
+        } else {
+            query = query.where(fieldName, '<=', operators.lte);
+        }
     }
     if (operators.gte !== undefined) {
         query = query.where(fieldName, '>=', operators.gte);
@@ -1309,7 +1444,8 @@ const backendAgentFields = [
     "capabilities",
     "maxContextLength",
     "provider",
-    "authenticationInformation"
+    "authenticationInformation",
+    "systemInstructions"
 ]
 
 const removeAgentFields = (requestedFields: string[]) => {
@@ -1427,6 +1563,9 @@ const addAgentFields = async (
     }
     if (requestedFields.includes("provider")) {
         result.provider = backend?.provider || ""
+    }
+    if (requestedFields.includes("systemInstructions")) {
+        result.systemInstructions = backend?.config?.instructions || undefined
     }
     if (!requestedFields.includes("backend")) {
         delete result.backend
@@ -1725,7 +1864,7 @@ const applySorting = (query: any, sort?: { field: string; direction: 'ASC' | 'DE
     return query;
 };
 
-const paginationRequest = async ({
+const itemsPaginationRequest = async ({
     db,
     limit,
     page,
@@ -1782,7 +1921,9 @@ const paginationRequest = async ({
         dataQuery = dataQuery.offset((page - 1) * limit);
     }
 
-    let items = await dataQuery.select(fields ? fields : "*").limit(limit);
+    dataQuery = dataQuery.select(fields ? fields : "*").limit(limit);
+
+    let items = await dataQuery;
 
     return {
         items,
@@ -1836,7 +1977,7 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
             const { limit = 10, page = 0, filters = [], sort } = args;
             const requestedFields = getRequestedFields(info)
             const sanitizedFields = sanitizeRequestedFields(table, requestedFields)
-            const { items, pageInfo } = await paginationRequest({
+            const { items, pageInfo } = await itemsPaginationRequest({
                 db,
                 limit,
                 page,
@@ -1919,6 +2060,54 @@ function createQueries(table: ExuluTableDefinition, agents: ExuluAgent[], tools:
                 cutoffs: args.cutoffs,
                 expand: args.expand
             })
+        }
+        queries[`${tableNameSingular}ChunkById`] = async (_, args, context, info) => {
+            const exists = contexts.find(ctx => ctx.id === table.id)
+            if (!exists) {
+                throw new Error("Context " + table.id + " not found in registry.")
+            }
+            const { db } = context;
+            const chunksTable = getChunksTableName(exists.id);
+            const mainTable = getTableName(exists.id);
+
+            // Query the chunk with its associated item
+            const chunk = await db(chunksTable + " as chunks")
+                .select([
+                    "chunks.id as chunk_id",
+                    "chunks.source as chunk_source",
+                    "chunks.content as chunk_content",
+                    "chunks.chunk_index",
+                    "chunks.metadata as chunk_metadata",
+                    db.raw('chunks."createdAt" as chunk_created_at'),
+                    db.raw('chunks."updatedAt" as chunk_updated_at'),
+                    "items.id as item_id",
+                    "items.name as item_name",
+                    "items.external_id as item_external_id",
+                    db.raw('items."updatedAt" as item_updated_at'),
+                    db.raw('items."createdAt" as item_created_at'),
+                ])
+                .leftJoin(mainTable + " as items", "chunks.source", "items.id")
+                .where("chunks.id", args.id)
+                .first();
+
+            if (!chunk) {
+                return null;
+            }
+
+            return {
+                chunk_content: chunk.chunk_content,
+                chunk_index: chunk.chunk_index,
+                chunk_id: chunk.chunk_id,
+                chunk_source: chunk.chunk_source,
+                chunk_metadata: chunk.chunk_metadata,
+                chunk_created_at: chunk.chunk_created_at,
+                chunk_updated_at: chunk.chunk_updated_at,
+                item_id: chunk.item_id,
+                item_name: chunk.item_name,
+                item_external_id: chunk.item_external_id,
+                item_updated_at: chunk.item_updated_at,
+                item_created_at: chunk.item_created_at,
+            };
         }
     }
 
@@ -2038,7 +2227,7 @@ export const vectorSearch = async ({
     cutoffs = {
         cosineDistance: cutoffs?.cosineDistance || context.configuration?.cutoffs?.cosineDistance || 0,
         tsvector: cutoffs?.tsvector || context.configuration?.cutoffs?.tsvector || 0,
-        hybrid: cutoffs?.hybrid ? (cutoffs?.hybrid ?? 0 ) / 100 : context.configuration?.cutoffs ? (context.configuration?.cutoffs?.hybrid ?? 0) / 100 : 0,
+        hybrid: cutoffs?.hybrid ? (cutoffs?.hybrid ?? 0) / 100 : context.configuration?.cutoffs ? (context.configuration?.cutoffs?.hybrid ?? 0) / 100 : 0,
     }
 
     expand = {
@@ -2174,113 +2363,91 @@ export const vectorSearch = async ({
             const semanticWeight = 1.0;
             const rrfK = 50;
 
-            const hybridSQL = `
-            WITH full_text AS (
-              SELECT
-                chunks.id,
-                chunks.source,
-                row_number() OVER (
-                  ORDER BY ts_rank(chunks.fts, plainto_tsquery(?, ?)) DESC
-                ) AS rank_ix
-              FROM ${chunksTable} as chunks
-              LEFT JOIN ${mainTable} as items ON items.id = chunks.source
-              WHERE chunks.fts @@ plainto_tsquery(?, ?)
-                AND ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?
-                AND (items.archived IS FALSE OR items.archived IS NULL)
-              ORDER BY rank_ix
-              LIMIT LEAST(?, 250) * 2
-            ),
-            semantic AS (
-              SELECT
-                chunks.id,
-                chunks.source,
-                row_number() OVER (
-                  ORDER BY chunks.embedding <=> ${vectorExpr} ASC
-                ) AS rank_ix
-              FROM ${chunksTable} as chunks
-              LEFT JOIN ${mainTable} as items ON items.id = chunks.source
-              WHERE chunks.embedding IS NOT NULL
-                AND (1 - (chunks.embedding <=> ${vectorExpr})) >= ?
-                AND (items.archived IS FALSE OR items.archived IS NULL)
-              ORDER BY rank_ix
-              LIMIT LEAST(?, 250) * 2
-            )
-            SELECT
-              items.id as item_id,
-              items.name as item_name,
-              items.external_id as item_external_id,
-              chunks.id AS chunk_id,
-              chunks.source,
-              chunks.content,
-              chunks.chunk_index,
-              chunks.metadata,
-              chunks."createdAt" as chunk_created_at,
-              chunks."updatedAt" as chunk_updated_at,
-              items."updatedAt" as item_updated_at,
-              items."createdAt" as item_created_at,
-              /* Per-signal scores for introspection */
-              ts_rank(chunks.fts, plainto_tsquery(?, ?)) AS fts_rank,
-              (1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance,
-        
-              /* Hybrid RRF score */
-              (
-                COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
-                +
-                COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
-              )::float AS hybrid_score
-        
-            FROM full_text ft
-            FULL OUTER JOIN semantic se
-              ON ft.id = se.id
-            JOIN ${chunksTable} as chunks
-              ON COALESCE(ft.id, se.id) = chunks.id
-            JOIN ${mainTable} as items
-              ON items.id = chunks.source
-            WHERE (
-              COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
-              +
-              COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
-            ) >= ?
-            AND (chunks.fts IS NULL OR ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?)
-            AND (chunks.embedding IS NULL OR (1 - (chunks.embedding <=> ${vectorExpr})) >= ?)
-            ORDER BY hybrid_score DESC
-            LIMIT LEAST(?, 250)
-            OFFSET 0
-          `;
-            const bindings = [
-                // full_text: plainto_tsquery(lang, query) in rank and where
-                language, query,
-                language, query,
-                language, query,
-                cutoffs?.tsvector || 0,        // full_text tsvector cutoff
-                matchCount,                    // full_text limit
+            // Build the full_text CTE subquery
+            let fullTextQuery = db(chunksTable + " as chunks")
+                .select([
+                    "chunks.id",
+                    "chunks.source",
+                    db.raw(`row_number() OVER (ORDER BY ts_rank(chunks.fts, plainto_tsquery(?, ?)) DESC) AS rank_ix`, [language, query])
+                ])
+                .leftJoin(mainTable + " as items", "items.id", "chunks.source")
+                .whereRaw(`chunks.fts @@ plainto_tsquery(?, ?)`, [language, query])
+                .whereRaw(`ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?`, [language, query, cutoffs?.tsvector || 0])
+                .whereRaw(`(items.archived IS FALSE OR items.archived IS NULL)`)
+                .limit(Math.min(matchCount * 2, 500));
 
-                cutoffs?.cosineDistance || 0,  // semantic cosine distance cutoff
-                matchCount,                    // semantic limit
+            // Apply filters and access control to full_text CTE
+            fullTextQuery = applyFilters(fullTextQuery, filters, table, "items");
+            fullTextQuery = applyAccessControl(table, fullTextQuery, user, "items");
 
-                // fts_rank (ts_rank) call
-                language, query,
+            // Build the semantic CTE subquery
+            let semanticQuery = db(chunksTable + " as chunks")
+                .select([
+                    "chunks.id",
+                    "chunks.source",
+                    db.raw(`row_number() OVER (ORDER BY chunks.embedding <=> ${vectorExpr} ASC) AS rank_ix`)
+                ])
+                .leftJoin(mainTable + " as items", "items.id", "chunks.source")
+                .whereNotNull("chunks.embedding")
+                .whereRaw(`(1 - (chunks.embedding <=> ${vectorExpr})) >= ?`, [cutoffs?.cosineDistance || 0])
+                .whereRaw(`(items.archived IS FALSE OR items.archived IS NULL)`)
+                .limit(Math.min(matchCount * 2, 500));
 
-                // RRF fusion parameters
-                rrfK, fullTextWeight,
-                rrfK, semanticWeight,
+            // Apply filters and access control to semantic CTE
+            semanticQuery = applyFilters(semanticQuery, filters, table, "items");
+            semanticQuery = applyAccessControl(table, semanticQuery, user, "items");
 
-                // WHERE clause hybrid_score filter
-                rrfK, fullTextWeight,
-                rrfK, semanticWeight,
-                cutoffs?.hybrid || 0,
+            // Build the main query with CTEs
+            let hybridQuery = db
+                .with('full_text', fullTextQuery)
+                .with('semantic', semanticQuery)
+                .select([
+                    "items.id as item_id",
+                    "items.name as item_name",
+                    "items.external_id as item_external_id",
+                    "chunks.id as chunk_id",
+                    "chunks.source",
+                    "chunks.content",
+                    "chunks.chunk_index",
+                    "chunks.metadata",
+                    db.raw('chunks."createdAt" as chunk_created_at'),
+                    db.raw('chunks."updatedAt" as chunk_updated_at'),
+                    db.raw('items."updatedAt" as item_updated_at'),
+                    db.raw('items."createdAt" as item_created_at'),
+                    db.raw(`ts_rank(chunks.fts, plainto_tsquery(?, ?)) AS fts_rank`, [language, query]),
+                    db.raw(`(1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance`),
+                    db.raw(`
+                        (
+                            COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
+                            +
+                            COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
+                        )::float AS hybrid_score
+                    `, [rrfK, fullTextWeight, rrfK, semanticWeight])
+                ])
+                .from('full_text as ft')
+                .fullOuterJoin('semantic as se', 'ft.id', 'se.id')
+                .join(chunksTable + ' as chunks', function() {
+                    // @ts-ignore - Knex doesn't properly type raw expressions in join conditions
+                    this.on(db.raw('COALESCE(ft.id, se.id)'), '=', 'chunks.id');
+                })
+                .join(mainTable + ' as items', 'items.id', 'chunks.source')
+                .whereRaw(`
+                    (
+                        COALESCE(1.0 / (? + ft.rank_ix), 0.0) * ?
+                        +
+                        COALESCE(1.0 / (? + se.rank_ix), 0.0) * ?
+                    ) >= ?
+                `, [rrfK, fullTextWeight, rrfK, semanticWeight, cutoffs?.hybrid || 0])
+                .whereRaw(`(chunks.fts IS NULL OR ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?)`, [language, query, cutoffs?.tsvector || 0])
+                .whereRaw(`(chunks.embedding IS NULL OR (1 - (chunks.embedding <=> ${vectorExpr})) >= ?)`, [cutoffs?.cosineDistance || 0])
+                .orderByRaw('hybrid_score DESC')
+                .limit(Math.min(matchCount, 250));
 
-                // Additional cutoff filters in main WHERE clause
-                language, query,
-                cutoffs?.tsvector || 0,        // tsvector cutoff for results from semantic CTE
-                cutoffs?.cosineDistance || 0,  // cosine distance cutoff for results from full_text CTE
+            // Note: Hybrid search uses its own relevance-based ordering (hybrid_score)
+            // We don't apply additional sorting here as it would override the relevance ranking
+            // and the "items" table reference is not available in the outer query context with CTEs
 
-                matchCount                     // final limit
-            ];
-
-            // todo apply access control to this raw query
-            // todo apply filters to this raw query
-            resultChunks = await db.raw(hybridSQL, bindings).then(r => r.rows ?? r);
+            resultChunks = await hybridQuery;
     }
 
     // Filter out duplicate sources, keeping only the first occurrence
@@ -2307,7 +2474,7 @@ export const vectorSearch = async ({
         },
         ...((method === "cosineDistance" || method === "hybridSearch") && { chunk_cosine_distance: chunk.cosine_distance }),
         ...((method === "tsvector" || method === "hybridSearch") && { chunk_fts_rank: chunk.fts_rank }),
-        ...(method === "hybridSearch" && { chunk_hybrid_score: (chunk.hybrid_score  * 10000) / 100 })
+        ...(method === "hybridSearch" && { chunk_hybrid_score: (chunk.hybrid_score * 10000) / 100 })
     }))
 
     // Apply adaptive threshold filtering to remove irrelevant results
@@ -2589,8 +2756,8 @@ export const contextToTableDefinition = (context: ExuluContext): ExuluTableDefin
         type: "text",
     })
     definition.fields.push({
-        name: "embeddings_updated_at",
-        type: "date",
+        name: "chunks_count",
+        type: "number",
     })
     definition.fields.push({
         name: "name",
@@ -2746,11 +2913,14 @@ export function createSDL(
         if (table.type === "items") {
             typeDefs += `
       ${tableNamePlural}VectorSearch(query: String!, method: VectorMethodEnum!, filters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
+      ${tableNameSingular}ChunkById(id: ID!): ${tableNameSingular}VectorSearchChunk
     `;
         }
         // todo add the fields of each table as filter options
         mutationDefs += `
       ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}CopyOneById(id: ID!): ${tableNameSingular}MutationPayload
+
       ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
       ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
       ${tableNamePlural}RemoveOneById(id: ID!): ${tableNameSingular}
@@ -2759,9 +2929,9 @@ export function createSDL(
 
         if (table.type === "items") {
             mutationDefs += `
-    ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}GenerateChunksReturnPayload
+    ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}GenerateChunksReturnPayload
     ${tableNameSingular}ExecuteSource(source: ID!, inputs: JSON!): ${tableNameSingular}ExecuteSourceReturnPayload
-    ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}]): ${tableNameSingular}DeleteChunksReturnPayload
+    ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}DeleteChunksReturnPayload
     `
 
             if (table.processor) {
@@ -2906,6 +3076,10 @@ type PageInfo {
 
     typeDefs += `
     contextById(id: ID!): Context
+    `
+
+    typeDefs += `
+    getUniquePromptTags: [String!]!
     `
 
     mutationDefs += `
@@ -3465,6 +3639,52 @@ type PageInfo {
         array.push("contexts");
         array.push("agents");
         return [...new Set(array)].sort();
+    }
+
+    resolvers.Query["getUniquePromptTags"] = async (_, args, context, info) => {
+        const { db } = context;
+        const user = context.user;
+
+        // Find the prompt_library table definition to apply access control
+        const promptTable = tables.find(t => t.name.plural === "prompt_library");
+        if (!promptTable) {
+            throw new Error("Prompt library table not found");
+        }
+
+        // Build query with access control
+        let query = db.from("prompt_library").select("tags");
+        query = applyAccessControl(promptTable, query, user);
+
+        const results = await query;
+
+        // Extract and flatten all tags
+        const allTags: string[] = [];
+        for (const row of results) {
+            if (row.tags) {
+                let tags: string[] = [];
+                // Handle both JSON string and array formats
+                if (typeof row.tags === 'string') {
+                    try {
+                        tags = JSON.parse(row.tags);
+                    } catch (e) {
+                        // If it's not valid JSON, treat it as a single tag
+                        tags = [row.tags];
+                    }
+                } else if (Array.isArray(row.tags)) {
+                    tags = row.tags;
+                }
+
+                // Add valid tags to the collection
+                tags.forEach(tag => {
+                    if (tag && typeof tag === 'string' && tag.trim()) {
+                        allTags.push(tag.trim().toLowerCase());
+                    }
+                });
+            }
+        }
+
+        // Return unique tags, sorted alphabetically
+        return [...new Set(allTags)].sort();
     }
 
     modelDefs += `

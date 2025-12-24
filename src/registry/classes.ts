@@ -608,6 +608,7 @@ export class ExuluAgent {
         audio: string[],
         video: string[]
     }
+
     constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, provider, queue, authenticationInformation }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
@@ -845,6 +846,30 @@ export class ExuluAgent {
 
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
+
+        const includesContextSearchTool = currentTools?.some(tool => tool.name.toLowerCase().includes("context_search") || tool.id.includes("context_search"));
+        console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
+        console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
+        if (includesContextSearchTool) {
+            system += "\n\n" + `
+
+            When you use a context search tool, you will include references to the items
+            retrieved from the context search tool inline in the response using this exact JSON format
+            (all on one line, no line breaks):
+            {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
+
+            IMPORTANT formatting rules:
+            - Use the exact format shown above, all on ONE line
+            - Do NOT use quotes around field names or values
+            - Use the context ID (e.g., "dx-newlift-newton-knowledge-g3y6r1") from the tool result
+            - Include the file/item name, not the full path
+            - Separate multiple citations with spaces
+
+            Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
+
+            The citations will be rendered as interactive badges in the UI.
+            `;
+        }
 
         if (prompt) {
             let result: { object?: any, text?: string } = { object: null, text: "" };
@@ -1164,6 +1189,30 @@ export class ExuluAgent {
 
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
+
+        const includesContextSearchTool = currentTools?.some(tool => tool.name.toLowerCase().includes("context_search") || tool.id.includes("context_search"));
+        console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
+        console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
+        if (includesContextSearchTool) {
+            system += "\n\n" + `
+
+            When you use a context search tool, you will include references to the items
+            retrieved from the context search tool inline in the response using this exact JSON format
+            (all on one line, no line breaks):
+            {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
+
+            IMPORTANT formatting rules:
+            - Use the exact format shown above, all on ONE line
+            - Do NOT use quotes around field names or values
+            - Use the context ID (e.g., "dx-newlift-newton-knowledge-g3y6r1") from the tool result
+            - Include the file/item name, not the full path
+            - Separate multiple citations with spaces
+
+            Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
+
+            The citations will be rendered as interactive badges in the UI.
+            `;
+        }
 
         const result = streamText({
             model: model, // Should be a LanguageModelV1
@@ -2281,6 +2330,7 @@ export class ExuluContext {
         }
 
         await db.from(getTableName(this.id)).where({ id: item.id }).update({
+            chunks_count: chunks?.length || 0,
             embeddings_updated_at: new Date().toISOString()
         }).returning("id")
 
@@ -2696,15 +2746,20 @@ export class ExuluContext {
                     trigger: trigger || "agent"
                 }, role, undefined);
             },
-            all: async (config: ExuluConfig, userId?: number, roleId?: string): Promise<{
+            all: async (config: ExuluConfig, userId?: number, roleId?: string, limit?: number): Promise<{
                 jobs: string[],
                 items: number
             }> => {
 
                 const { db } = await postgresClient();
 
-                const items = await db.from(getTableName(this.id))
-                    .select("*");
+                let query = db.from(getTableName(this.id)).select("*");
+
+                if (limit) {
+                    query = query.limit(limit);
+                 }
+
+                const items = await query;
 
                 const jobs: string[] = [];
 
@@ -2759,7 +2814,7 @@ export class ExuluContext {
             table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
             table.integer('textlength');
             table.text('source');
-            table.timestamp('embeddings_updated_at')
+            table.integer('chunks_count').defaultTo(0);
             for (const field of this.fields) {
                 let { type, name, unique } = field;
                 if (!type || !name) {

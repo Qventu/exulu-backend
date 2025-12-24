@@ -158,7 +158,10 @@ export const uploadFile = async (
     config: ExuluConfig,
     options: UploadOptions = {},
     user?: number,
-    customBucket?: string
+    customBucket?: string,
+    // if set to true, this uploads the file to a global directory
+    // instead of the user's private directory.
+    global?: boolean,
 ): Promise<string> => {
 
     if (!config.fileUploads) {
@@ -169,7 +172,9 @@ export const uploadFile = async (
     let defaultBucket = config.fileUploads.s3Bucket;
 
     let key = fileName;
-    key = addUserPrefixToKey(key, user || "api");
+    if (!global) {
+        key = addUserPrefixToKey(key, user || "api");
+    }
     key = addGeneralPrefixToKey(key, config);
 
     // Sanitize metadata to ensure only ASCII characters (prevents SignatureDoesNotMatch errors)
@@ -382,6 +387,7 @@ export const createUppyRoutes = async (
         if (
             user.type === "api" ||
             user.super_admin ||
+            !key.includes(`user_`) ||
             key.includes(`user_${user.id}/`)
         ) {
             allowed = true;
@@ -482,9 +488,19 @@ export const createUppyRoutes = async (
         }
         const client = getS3Client(config);
 
+        let prefix = `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, '') + "/" : ''}`
+
+        if (!req.headers.global) {
+            prefix += `user_${authenticationResult.user.id}`
+        } else {
+            prefix += "global"
+        }
+
+        console.log("[EXULU] prefix", prefix)
+
         const command = new ListObjectsV2Command({
             Bucket: config.fileUploads.s3Bucket,
-            Prefix: `${config.fileUploads.s3prefix ? config.fileUploads.s3prefix.replace(/\/$/, '') + "/" : ''}` + `user_${authenticationResult.user.id}`,
+            Prefix: prefix,
             MaxKeys: 9,
             ...(req.query.continuationToken && { ContinuationToken: req.query.continuationToken as string }),
         })
@@ -591,8 +607,14 @@ export const createUppyRoutes = async (
         // Generate S3 key and prepare command
         const key = generateS3Key(filename)
 
-        
-        let fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+
+        let fullKey = key;
+        console.log("[EXULU] global", req.headers.global)
+        if (!req.headers.global) {
+            fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+        } else {
+            fullKey = "global/" + key;
+        }
         fullKey = addGeneralPrefixToKey(fullKey, config);
 
         console.log("[EXULU] signing on server for user", user.id, "with key", fullKey)
@@ -663,7 +685,13 @@ export const createUppyRoutes = async (
         }
         const key = `${randomUUID()}-_EXULU_${filename}`
 
-        let fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+        let fullKey = key;
+        console.log("[EXULU] global", req.headers.global)
+        if (!req.headers.global) {
+            fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
+        } else {
+            fullKey = "global/" + key;
+        }
         fullKey = addGeneralPrefixToKey(fullKey, config);
 
         console.log("[EXULU] signing on server for user", user.id, "with key", fullKey)
@@ -706,6 +734,7 @@ export const createUppyRoutes = async (
         if (!validatePartNumber(partNumber)) {
             return res.status(400).json({ error: 's3: the part number must be an integer between 1 and 10000.' })
         }
+
         if (typeof key !== 'string') {
             return res.status(400).json({ error: 's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"' })
         }
@@ -766,6 +795,7 @@ export const createUppyRoutes = async (
     function isValidPart(part) {
         return part && typeof part === 'object' && Number(part.PartNumber) && typeof part.ETag === 'string'
     }
+
     app.post('/s3/multipart/:uploadId/complete', (req, res, next) => {
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")

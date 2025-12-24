@@ -33,6 +33,7 @@ export interface Agent {
     }[];
     maxContextLength?: number;
     authenticationInformation?: string;
+    systemInstructions?: string;
     capabilities?: {
         text: boolean;
         images: imageTypes[];

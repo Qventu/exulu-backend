@@ -726,6 +726,10 @@ export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinitio
         name: "last_processed_at",
         type: "date"
     })
+    schema.fields.push({
+        name: "embeddings_updated_at",
+        type: "date"
+    })
     if (schema.RBAC) {
         if (!schema.fields.some(field => field.name === "rights_mode")) {
             schema.fields.push({

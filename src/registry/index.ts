@@ -19,8 +19,6 @@ import {
 } from "../templates/agents/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "./logger.ts";
-import { codeStandardsContext } from "../templates/contexts/code-standards.ts";
-import { outputsContext } from "../templates/contexts/outputs.ts";
 import { postgresClient } from "../postgres/client.ts";
 import winston, { type transport } from "winston";
 import util from "util";
@@ -140,9 +138,7 @@ export class ExuluApp {
         ] : [];
 
         this._contexts = {
-            ...contexts,
-            codeStandardsContext,
-            outputsContext
+            ...contexts
         };
 
         this._agents = [

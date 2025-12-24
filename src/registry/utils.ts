@@ -173,7 +173,9 @@ export const checkRecordAccess = async (record: any & {
     const isPublic = record.rights_mode === "public";
     const byUsers = record.rights_mode === "users";
     const byRoles = record.rights_mode === "roles";
-    const isCreator = user ? record.created_by === user.id.toString() : false;
+
+    const createdBy = typeof record.created_by === "string" ? record.created_by : record.created_by?.toString();
+    const isCreator = user ? createdBy === user.id.toString() : false;
     const isAdmin = user ? user.super_admin : false;
     const isApi = user ? user.type === "api" : false;
 
