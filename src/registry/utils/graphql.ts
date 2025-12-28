@@ -593,7 +593,7 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             // mode to private and the created_by to 
             // the current user.
             if (item.rights_mode) {
-                item.rights_mode = 'private';                
+                item.rights_mode = 'private';
             }
 
             if (item.created_at) {
@@ -618,7 +618,6 @@ function createMutations(table: ExuluTableDefinition, agents: ExuluAgent[], cont
             if (item.name) {
                 item.name = item.name + " (Copy)";
             }
-
 
             // Check for each field if it is a json field, and if 
             // so, check if it is an object or array and convert 
@@ -1635,16 +1634,6 @@ const postprocessUpdate = async ({
             if (!context.embedder) {
                 return result;
             }
-            const { db } = await postgresClient();
-            console.log("[EXULU] Deleting chunks for item", result.id)
-            // delete chunks first
-            await db.from(getChunksTableName(context.id))
-                .where({ source: result.id })
-                .delete();
-
-            console.log("[EXULU] Deleted chunks for item", result.id)
-            console.log("[EXULU] Embedder", context.embedder)
-            console.log("[EXULU] Configuration", context.configuration)
 
             if (
                 context.embedder && (
@@ -1652,7 +1641,23 @@ const postprocessUpdate = async ({
                     context.configuration.calculateVectors === "always"
                 )
             ) {
+
+                const { db } = await postgresClient();
+                console.log("[EXULU] Deleting chunks for item", result.id)
+
+                const exists = await context.chunksTableExists();
+                // delete chunks first
+                if (exists) {
+                    await db.from(getChunksTableName(context.id))
+                        .where({ source: result.id })
+                        .delete();
+                    console.log("[EXULU] Deleted chunks for item", result.id)
+                }
+
+                console.log("[EXULU] Embedder", context.embedder)
+                console.log("[EXULU] Configuration", context.configuration)
                 console.log("[EXULU] Generating embeddings for item", result.id)
+
                 const { job } = await context.embeddings.generate.one({
                     item: result,
                     user: user,
@@ -1692,7 +1697,14 @@ const postprocessDeletion = async ({
     }
     if (Array.isArray(result)) {
         result = result.map(item => {
-            return postprocessDeletion({ table, requestedFields, agents, contexts, tools, result: item })
+            return postprocessDeletion({
+                table,
+                requestedFields,
+                agents,
+                contexts,
+                tools,
+                result: item
+            })
         })
     } else {
         if (table.type === "items") {
@@ -1729,6 +1741,17 @@ const postprocessDeletion = async ({
             await db.from("agent_messages").where({ session: result.id })
                 .where({ session: result.id })
                 .delete();
+        }
+        if (table.type === "eval_runs") {
+            if (!result.id) {
+                return result;
+            }
+            const { db } = await postgresClient();
+            // Find any entries in job_results 
+            // that contain the eval run id as
+            // part of the label.
+            await db.from("job_results").where({ label: { contains: result.id } }).del();
+            await db.from("eval_runs").where({ id: result.id }).del();
         }
     }
     return result;
@@ -2426,7 +2449,7 @@ export const vectorSearch = async ({
                 ])
                 .from('full_text as ft')
                 .fullOuterJoin('semantic as se', 'ft.id', 'se.id')
-                .join(chunksTable + ' as chunks', function() {
+                .join(chunksTable + ' as chunks', function () {
                     // @ts-ignore - Knex doesn't properly type raw expressions in join conditions
                     this.on(db.raw('COALESCE(ft.id, se.id)'), '=', 'chunks.id');
                 })
@@ -3083,7 +3106,7 @@ type PageInfo {
     `
 
     mutationDefs += `
-    runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
+    runEval(id: ID!, cases: [ID!]): RunEvalReturnPayload
     `
 
     mutationDefs += `

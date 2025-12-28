@@ -22,10 +22,19 @@ const llmAsJudgeEval = () => {
                     throw new Error("Prompt is required for llm as judge eval but none is provided.");
                 }
 
+                console.log("[EXULU] messages", messages);
+
+                const lastTypes = messages[messages.length - 1]?.parts?.map((part) => ({
+                    type: part.type,
+                    text: part.type === "text" ? part.text?.slice(0, 100) : undefined,
+                }));
+
                 const lastMessage = messages[messages.length - 1]?.parts?.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 
+                
                 console.log("[EXULU] last message", lastMessage);
-
+                console.log("[EXULU] last types", lastTypes);
+                
                 if (!lastMessage) {
                     return 0;
                 }

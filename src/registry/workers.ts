@@ -70,6 +70,10 @@ export const createWorkers = async (
     // Install global error handlers to prevent crashes
     installGlobalErrorHandlers();
 
+    // Increase max listeners to accommodate multiple workers (each adds SIGINT/SIGTERM listeners)
+    // Each worker adds 2 listeners (SIGINT + SIGTERM), so set to queues.length * 2 + buffer
+    process.setMaxListeners(Math.max(queues.length * 2 + 5, 15));
+
     if (!redisServer.host || !redisServer.port) {
         console.error("[EXULU] you are trying to start worker, but no redis server is configured in the environment.")
         throw new Error("No redis server configured in the environment, so cannot start worker.")
@@ -117,7 +121,7 @@ export const createWorkers = async (
                 // on the main object while keeping auto completion.
                 const data: BullMqJobData = bullmqJob.data;
 
-                const timeoutInSeconds = data.timeoutInSeconds || 600;
+                const timeoutInSeconds = data.timeoutInSeconds || queue.timeoutInSeconds || 600;
                 // Create timeout promise with proper error handling
                 const timeoutMs = timeoutInSeconds * 1000;
                 let timeoutHandle: NodeJS.Timeout;
@@ -405,7 +409,7 @@ export const createWorkers = async (
                                         // many AI services are quite unstable.
                                         attempts: queue.retries || 3, // todo make this configurable?
                                         removeOnComplete: 5000,
-                                        removeOnFail: 10000,
+                                        removeOnFail: 5000,
                                         backoff: queue.backoff || {
                                             type: 'exponential',
                                             delay: 2000,
@@ -688,8 +692,8 @@ export const createWorkers = async (
 
             await db.from("job_results").where({ job_id: job.id }).update({
                 state: JOB_STATUS_ENUM.completed,
-                result: returnvalue.result ? JSON.stringify(returnvalue.result) : null,
-                metadata: returnvalue.metadata ? JSON.stringify(returnvalue.metadata) : null,
+                result: returnvalue.result != null ? JSON.stringify(returnvalue.result) : null,
+                metadata: returnvalue.metadata != null ? JSON.stringify(returnvalue.metadata) : null,
             });
         });
 
@@ -843,13 +847,16 @@ const pollJobResult = async ({ queue, jobId }: { queue: ExuluQueueConfig, jobId:
             console.log(`[EXULU] eval function job ${job.name} completed, getting result from database...`);
             const { db } = await postgresClient();
             const entry = await db.from("job_results").where({ job_id: job.id }).first();
+
+            console.log("[EXULU] eval function job ${job.name} result", entry);
             result = entry?.result;
             if (
                 result === undefined ||
                 result === null ||
                 result === ""
             ) {
-                throw new Error(`Eval function ${job.id} result not found in database for job eval function job ${job.name}.`);
+                throw new Error(`Eval function ${job.id} result not found in database 
+                    for job eval function job ${job.name}. Entry data from DB: ${JSON.stringify(entry)}.`);
             }
             console.log(`[EXULU] eval function ${job.id} result: ${result}`);
             break;

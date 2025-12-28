@@ -908,7 +908,7 @@ export class ExuluAgent {
                         req,
                         project
                     ),
-                    stopWhen: [stepCountIs(2)],
+                    stopWhen: [stepCountIs(5)],
                 });
                 result.text = text;
                 inputTokens = totalUsage?.inputTokens || 0;
@@ -970,7 +970,7 @@ export class ExuluAgent {
                     req,
                     project
                 ),
-                stopWhen: [stepCountIs(2)],
+                stopWhen: [stepCountIs(5)],
             });
 
             if (statistics) {
@@ -1244,7 +1244,7 @@ export class ExuluAgent {
                 console.error("[EXULU] chat stream error.", error);
                 throw new Error(`Chat stream error: ${error instanceof Error ? error.message : String(error)}`);
             },
-            // stopWhen: [stepCountIs(1)],
+            stopWhen: [stepCountIs(5)],
         });
 
         return {
@@ -1410,7 +1410,6 @@ export class ExuluEmbedder {
 
             // Look up the variable from the variables table
             const variable = await db.from("variables").where({ name: variableName }).first();
-
             if (!variable) {
                 throw new Error("Variable not found for embedder setting: " + name + " in context: " + context + " and embedder: " + this.id);
             }
@@ -2350,7 +2349,6 @@ export class ExuluContext {
         generateEmbeddingsOverwrite?: boolean | undefined
     ): Promise<{ item: Item, job?: string }> => {
 
-
         console.log("[EXULU] creating item", item)
         console.log("[EXULU] upsert", upsert)
         if (upsert && (
@@ -2361,6 +2359,18 @@ export class ExuluContext {
         }
 
         const { db } = await postgresClient();
+
+        // Check for each field if it is a json field, and if 
+        // so, check if it is an object or array and convert 
+        // it to a string.
+        Object.keys(item).forEach(key => {
+            if (this.fields.find(field => field.name === key)?.type === "json") {
+                if (typeof item[key] === "object" || Array.isArray(item[key])) {
+                    item[key] = JSON.stringify(item[key]);
+                }
+            }
+        });
+
         const mutation = db.from(getTableName(
             this.id
         )).insert(
@@ -2494,6 +2504,18 @@ export class ExuluContext {
         if (!record) {
             throw new Error("Item not found.")
         }
+
+
+        // Check for each field if it is a json field, and if 
+        // so, check if it is an object or array and convert 
+        // it to a string.
+        Object.keys(item).forEach(key => {
+            if (this.fields.find(field => field.name === key)?.type === "json") {
+                if (typeof item[key] === "object" || Array.isArray(item[key])) {
+                    item[key] = JSON.stringify(item[key]);
+                }
+            }
+        });
 
         const mutation = db.from(
             getTableName(this.id)
@@ -2757,7 +2779,7 @@ export class ExuluContext {
 
                 if (limit) {
                     query = query.limit(limit);
-                 }
+                }
 
                 const items = await query;
 
@@ -2812,6 +2834,8 @@ export class ExuluContext {
             table.text('created_by');
             table.text('ttl')
             table.text('rights_mode').defaultTo(this.configuration?.defaultRightsMode ?? "private");
+            table.timestamp('embeddings_updated_at').defaultTo(null);
+            table.timestamp('last_processed_at').defaultTo(null);
             table.integer('textlength');
             table.text('source');
             table.integer('chunks_count').defaultTo(0);
