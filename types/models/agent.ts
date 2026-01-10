@@ -7,6 +7,12 @@ export interface Agent {
     name: string;
     image?: string;
     providerapikey?: string;
+    workflows?: {
+        enabled: boolean;
+        queue?: {
+            name: string;
+        };
+    };
     firewall?: {
         enabled: boolean;
         scanners?: {

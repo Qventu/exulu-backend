@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq, getEnabledTools, loadAgent } from "./utils";
-import { ExuluAgent, ExuluContext, ExuluEval, ExuluStorage, ExuluTool, getTableName, updateStatistic, type ExuluQueueConfig, type STATISTICS_LABELS } from "./classes";
+import { ExuluAgent, ExuluContext, ExuluEval, ExuluStorage, ExuluTool, getTableName, updateStatistic, type ExuluQueueConfig, type ExuluWorkflow, type STATISTICS_LABELS } from "./classes";
 import { postgresClient } from "../postgres/client";
 import type { BullMqJobData } from "./decoraters/bullmq";
 import { type Tracer } from "@opentelemetry/api";
@@ -278,6 +278,87 @@ export const createWorkers = async (
                                     jobs: jobs.length > 0 ? jobs.join(",") : undefined
                                 }
                             };
+                        }
+
+                        if (data.type === "workflow") {
+
+                            console.log("[EXULU] running a workflow job.", logMetadata(bullmqJob.name));
+
+                            const label = `workflow-run-${data.workflow}`;
+
+                            await db.from("job_results").insert({
+                                job_id: bullmqJob.id,
+                                label: label,
+                                state: await bullmqJob.getState(),
+                                result: null,
+                                metadata: {},
+                                tries: 1
+                            });
+
+                            const {
+                                agentInstance,
+                                backend: agentBackend,
+                                user,
+                                messages: inputMessages,
+                            } = await validateWorkflowPayload(data, agents);
+
+                            const retries = 3;
+                            let attempts = 0;
+
+                            // todo allow setting queue on agent backend and then create a job with type "agent"
+                            const promise = new Promise<{
+                                messages: UIMessage[],
+                                metadata: {
+                                    tokens: {
+                                        totalTokens: number,
+                                        reasoningTokens: number,
+                                        inputTokens: number,
+                                        outputTokens: number,
+                                        cachedInputTokens: number,
+                                    },
+                                    duration: number,
+                                }
+                            }>(async (resolve, reject) => {
+                                while (attempts < retries) {
+                                    try {
+                                        const messages = await processUiMessagesFlow({
+                                            agents,
+                                            agentInstance,
+                                            agentBackend,
+                                            inputMessages,
+                                            contexts,
+                                            user,
+                                            tools,
+                                            config,
+                                            variables: data.inputs
+                                        });
+                                        resolve(messages);
+                                        break;
+                                    } catch (error: unknown) {
+                                        console.error(`[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`, logMetadata(bullmqJob.name, {
+                                            error: error instanceof Error ? error.message : String(error),
+                                        }))
+                                        attempts++;
+                                        if (attempts >= retries) {
+                                            reject(error);
+                                        }
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                    }
+                                }
+                            });
+
+                            const result = await promise;
+                            const messages = result.messages;
+                            const metadata = result.metadata;
+
+                            return {
+                                result: messages[messages.length - 1], // last message
+                                metadata: {
+                                    messages,
+                                    ...metadata
+                                }
+                            };
+
                         }
 
                         if (data.type === "eval_run") {
@@ -743,6 +824,63 @@ export const createWorkers = async (
     return workers;
 }
 
+export const validateWorkflowPayload = async (data: BullMqJobData, agents: ExuluAgent[]): Promise<{
+    agentInstance: Agent,
+    backend: ExuluAgent,
+    user: User,
+    workflow: ExuluWorkflow,
+    variables: Record<string, any>,
+    messages: UIMessage[],
+}> => {
+
+    if (!data.workflow) {
+        throw new Error(`No workflow ID set for workflow job.`);
+    }
+
+    if (!data.user) {
+        throw new Error(`No user set for workflow job.`);
+    }
+
+    if (!data.role) {
+        throw new Error(`No role set for workflow job.`);
+    }
+
+    const { db } = await postgresClient();
+
+    const workflow = await db.from("workflow_templates").where({ id: data.workflow }).first();
+
+    if (!workflow) {
+        throw new Error(`Workflow ${data.workflow} not found in the database.`);
+    }
+
+    const agentInstance = await loadAgent(workflow.agent);
+
+    if (!agentInstance) {
+        throw new Error(`Agent ${workflow.agent} not found in the database.`);
+    }
+
+    const backend = agents.find(a => a.id === agentInstance.backend);
+
+    if (!backend) {
+        throw new Error(`Backend ${agentInstance.backend} not found in the database.`);
+    }
+
+    const user = await db.from("users").where({ id: data.user }).first();
+
+    if (!user) {
+        throw new Error(`User ${data.user} not found in the database.`);
+    }
+
+    return {
+        agentInstance,
+        backend,
+        user,
+        workflow,
+        variables: data.inputs,
+        messages: workflow.steps_json,
+    };
+}
+
 const validateEvalPayload = async (data: BullMqJobData, agents: ExuluAgent[]): Promise<{
     agentInstance: Agent,
     backend: ExuluAgent,
@@ -867,7 +1005,7 @@ const pollJobResult = async ({ queue, jobId }: { queue: ExuluQueueConfig, jobId:
     return result;
 }
 
-const processUiMessagesFlow = async ({
+export const processUiMessagesFlow = async ({
     agents,
     agentInstance,
     agentBackend,
@@ -876,6 +1014,7 @@ const processUiMessagesFlow = async ({
     user,
     tools,
     config,
+    variables,
 }: {
     agents: ExuluAgent[],
     agentInstance: Agent,
@@ -885,6 +1024,7 @@ const processUiMessagesFlow = async ({
     user: User,
     tools: ExuluTool[],
     config: ExuluConfig,
+    variables?: Record<string, any>,
 }): Promise<{
     messages: UIMessage[],
     metadata: {
@@ -973,12 +1113,38 @@ const processUiMessagesFlow = async ({
         }
     }
 
+    console.log("[EXULU] variables", variables)
     for (const currentMessage of messagesWithoutPlaceholder) {
 
         console.log("[EXULU] running through the conversation");
         console.log("[EXULU] current index", index);
         console.log("[EXULU] current message", currentMessage);
         console.log("[EXULU] message history", messageHistory);
+
+        // Identify {variable_name} in the current message parts
+        // Replace them with the values in variables
+        // If any are missing, throw an error
+        for (const part of currentMessage.parts) {
+            if (part.type === "text") {
+                const text = part.text;
+                const variableNames = [...text.matchAll(/{([^}]+)}/g)].map(match => match[1]);
+                if (variableNames) {
+                    for (const variableName of variableNames) {
+                        if (!variableName) {
+                            continue;
+                        }
+                        console.log("[EXULU] variableName", variableName)
+                        const variableValue = variables?.[variableName];
+                        console.log("[EXULU] variableValue", variableValue)
+                        if (variableValue) {
+                            part.text = part.text.replaceAll(`{${variableName}}`, variableValue);
+                        } else {
+                            throw new Error(`Value for variable ${variableName} not provided in variables for processing message flow. Either remove it from the messages, or provide it as an argument.`);
+                        }
+                    }
+                }
+            }
+        }
 
         const statistics = {
             label: agentInstance.name,

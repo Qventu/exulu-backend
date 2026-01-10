@@ -455,6 +455,7 @@ interface ExuluAgentParams {
     maxContextLength?: number;
     authenticationInformation?: string;
     provider: string;
+    workflows?: ExuluAgentWorkflowConfig;
     capabilities?: {
         text: boolean;
         images: imageTypes[];
@@ -580,6 +581,11 @@ export class ExuluEval {
     }
 }
 
+type ExuluAgentWorkflowConfig = {
+    enabled: boolean;
+    queue?: Promise<ExuluQueueConfig>;
+}
+
 export class ExuluAgent {
 
     // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or
@@ -594,6 +600,7 @@ export class ExuluAgent {
     public streaming: boolean = false;
     public authenticationInformation?: string;
     public maxContextLength?: number;
+    public workflows?: ExuluAgentWorkflowConfig
     public queue?: ExuluQueueConfig;
     public rateLimit?: RateLimiterRule;
     public config?: ExuluAgentConfig | undefined;
@@ -609,9 +616,23 @@ export class ExuluAgent {
         video: string[]
     }
 
-    constructor({ id, name, description, config, rateLimit, capabilities, type, maxContextLength, provider, queue, authenticationInformation }: ExuluAgentParams) {
+    constructor({
+        id,
+        name,
+        description,
+        config,
+        rateLimit,
+        capabilities,
+        type,
+        maxContextLength,
+        provider,
+        queue,
+        authenticationInformation,
+        workflows
+    }: ExuluAgentParams) {
         this.id = id;
         this.name = name;
+        this.workflows = workflows;
         this.description = description;
         this.rateLimit = rateLimit;
         this.provider = provider;
@@ -1543,7 +1564,10 @@ export interface ExuluWorkflow {
     description?: string
     rights_mode?: ExuluRightsMode
     RBAC?: ExuluRBAC
-    variables?: WorkflowVariable[]
+    created_by: number
+    createdAt: string
+    updatedAt: string
+    agent: string
     steps_json?: WorkflowStep[]
 }
 

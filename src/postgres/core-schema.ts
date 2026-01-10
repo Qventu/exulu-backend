@@ -112,35 +112,13 @@ const workflowTemplatesSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
-            name: "owner",
-            type: "number",
-            required: true
-        },
-        {
-            name: "visibility",
-            type: "text",
-            required: true
-        },
-        {
-            name: "shared_user_ids",
-            type: "json"
-        },
-        {
-            name: "shared_role_ids",
-            type: "json"
-        },
-        {
-            name: "variables",
-            type: "json"
+            name: "agent",
+            type: "uuid",
         },
         {
             name: "steps_json",
             type: "json",
             required: true
-        },
-        {
-            name: "example_metadata_json",
-            type: "json"
         }
     ]
 }

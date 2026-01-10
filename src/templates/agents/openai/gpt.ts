@@ -1,12 +1,19 @@
 import { ExuluAgent } from "../../../registry/classes"
 import { createOpenAI } from '@ai-sdk/openai';
 
-
 export const gpt5proAgent = new ExuluAgent({
     id: `default_gpt_5_pro_agent`,
     provider: "openai",
     name: `GPT-5-PRO`,
-    description: `GPT-5 pro uses more compute to think harder and provide consistently better answers. GPT-5 pro is available in the Responses API only to enable support for multi-turn model interactions before responding to API requests, and other advanced API features in the future. Since GPT-5 pro is designed to tackle tough problems, some requests may take several minutes to finish. To avoid timeouts, try using background mode. As our most advanced reasoning model, GPT-5 pro defaults to (and only supports) reasoning.effort: high. GPT-5 pro does not support code interpreter.`,
+    description: `
+    GPT-5 pro uses more compute to think harder and provide consistently better 
+    answers. GPT-5 pro is available in the Responses API only to enable support
+    for multi-turn model interactions before responding to API requests, and other
+    advanced API features in the future. Since GPT-5 pro is designed to tackle tough
+    problems, some requests may take several minutes to finish. To avoid timeouts, 
+    try using background mode. As our most advanced reasoning model, GPT-5 pro defaults
+    to (and only supports) reasoning.effort: high. GPT-5 pro does not support code 
+    interpreter.`,
     type: "agent",
     capabilities: {
         text: true,
@@ -16,6 +23,10 @@ export const gpt5proAgent = new ExuluAgent({
         video: [],
     },
     maxContextLength: 400000,
+    workflows: {
+        enabled: false,
+        queue: undefined
+    },
     config: {
         name: `GPT-5-PRO`,
         instructions: "",
