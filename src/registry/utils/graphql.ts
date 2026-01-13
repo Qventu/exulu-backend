@@ -1661,7 +1661,7 @@ export const applyAccessControl = (
           ) {
             this.select("*")
               .from("rbac")
-              .whereRaw("rbac.target_resource_id = " + tableNamePlural + ".id")
+              .whereRaw("rbac.target_resource_id = " + (prefix ? prefix.slice(0, -1) : tableNamePlural) + ".id")
               .where("rbac.entity", table.name.singular)
               .where("rbac.access_type", "User")
               .where("rbac.user_id", user.id);
@@ -1677,7 +1677,7 @@ export const applyAccessControl = (
           ) {
             this.select("*")
               .from("rbac")
-              .whereRaw("rbac.target_resource_id = " + tableNamePlural + ".id")
+              .whereRaw("rbac.target_resource_id = " + (prefix ? prefix.slice(0, -1) : tableNamePlural) + ".id")
               .where("rbac.entity", table.name.singular)
               .where("rbac.access_type", "Role")
               .where("rbac.role_id", user.role.id);
