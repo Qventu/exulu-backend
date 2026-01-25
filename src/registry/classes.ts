@@ -868,14 +868,18 @@ export class ExuluAgent {
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
-        const includesContextSearchTool = currentTools?.some(tool => tool.name.toLowerCase().includes("context_search") || tool.id.includes("context_search"));
+        const includesContextSearchTool = currentTools?.some(tool => 
+            tool.name.toLowerCase().includes("context_search") || 
+            tool.id.includes("context_search") ||
+            tool.type === "context"
+        );
         console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
         console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
         if (includesContextSearchTool) {
             system += "\n\n" + `
 
             When you use a context search tool, you will include references to the items
-            retrieved from the context search tool inline in the response using this exact JSON format
+            retrieved from the tool call result inline in the response using this exact JSON format
             (all on one line, no line breaks):
             {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
 
@@ -1211,14 +1215,18 @@ export class ExuluAgent {
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
-        const includesContextSearchTool = currentTools?.some(tool => tool.name.toLowerCase().includes("context_search") || tool.id.includes("context_search"));
+        const includesContextSearchTool = currentTools?.some(tool => 
+            tool.name.toLowerCase().includes("context_search") || 
+            tool.id.includes("context_search") ||
+            tool.type === "context"
+        );
         console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
         console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
         if (includesContextSearchTool) {
             system += "\n\n" + `
 
             When you use a context search tool, you will include references to the items
-            retrieved from the context search tool inline in the response using this exact JSON format
+            retrieved from the tool call result inline in the response using this exact JSON format
             (all on one line, no line breaks):
             {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
 
