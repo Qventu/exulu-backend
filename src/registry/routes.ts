@@ -1,5 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import { errorHandler, type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextProcessor, ExuluEval, type ExuluTool, saveChat, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
+import { errorHandler, type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextProcessor, ExuluEval, ExuluReranker, type ExuluTool, getChunksTableName, getTableName, saveChat, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
 import { requestValidators } from "./route-validators";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
@@ -7,7 +7,7 @@ import express from 'express';
 import { ApolloServer } from '@apollo/server';
 import cors from 'cors';
 import 'reflect-metadata'
-import { createSDL, applyAccessControl } from "./utils/graphql.ts";
+import { createSDL, applyAccessControl, contextToTableDefinition, applyFilters } from "./utils/graphql.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { coreSchemas } from "../postgres/core-schema.ts";
@@ -98,7 +98,8 @@ export const createExpressRoutes = async (
             worker: number
             queue: number
         }
-    }[]
+    }[],
+    rerankers?: ExuluReranker[]
 ): Promise<Express> => {
 
     // todo make this more secure / configurable
@@ -156,7 +157,7 @@ export const createExpressRoutes = async (
         workflowTemplatesSchema(),
         statisticsSchema(),
         rbacSchema()
-    ], contexts ?? [], agents, tools, config, evals, queues || []);
+    ], contexts ?? [], agents, tools, config, evals, queues || [], rerankers || []);
 
     interface GraphqlContext {
         db: Knex;
@@ -209,6 +210,85 @@ export const createExpressRoutes = async (
             },
         }),
     );
+
+    app.post("/test", async (req: Request, res: Response) => {
+        const { item_name, context_id } = req.body;
+        let itemFilters: any = [];
+        if (item_name) {
+            itemFilters.push({ name: { contains: item_name } });
+        }
+
+        const { db } = await postgresClient();
+
+        let itemsQuery = db(getTableName(context_id) + " as items").select([
+            "items.id as item_id",
+            "items.name as item_name",
+            "items.external_id as item_external_id",
+            db.raw('items."updatedAt" as item_updated_at'),
+            db.raw('items."createdAt" as item_created_at'),
+        ]);
+
+        const limit = 10;
+        itemsQuery = itemsQuery.limit(limit);
+
+        const ctx = contexts?.find(ctx => ctx.id === context_id);
+
+        if (!ctx) {
+            res.status(400).json({
+                message: "Context not found."
+            })
+            return;
+        }
+
+        const tableDefinition = contextToTableDefinition(ctx);
+        itemsQuery = applyFilters(itemsQuery, itemFilters || [], tableDefinition, "items");
+        itemsQuery = applyAccessControl(tableDefinition, itemsQuery, {
+            email: "test@test.com",
+            id: 1,
+            role: {
+                id: "test",
+                name: "test",
+                agents: "read",
+                evals: "read",
+                workflows: "read",
+                variables: "read",
+                users: "read"
+            },
+            super_admin: true
+        }, "items");
+
+        const items = await itemsQuery;
+
+        const formattedResults: (any | null)[] = await Promise.all(items.map(async (item, index) => {
+            const chunksTable = getChunksTableName(ctx?.id || "");
+            console.log("[EXULU] chunksTable", chunksTable)
+            if (!item.item_id) {
+                console.error("[EXULU] Item id is required to get chunks.", item)
+                throw new Error("Item id is required to get chunks.");
+            }
+            const chunks: any[] = await db.from(chunksTable).select(["id", "source", "metadata"]).where("source", item.item_id).limit(1);
+
+            if (!chunks || !chunks[0]) {
+                console.error("[EXULU] No chunks found for item.", item)
+                return null;
+            }
+
+            console.log("[EXULU] chunks found for item.", chunks)
+            return {
+                item_name: item.name,
+                item_id: item.id,
+                context: ctx?.id || "",
+                chunk_id: chunks[0].id,
+                chunk_index: 1,
+                chunk_content: undefined,
+                metadata: chunks[0].metadata
+            }
+        }));
+
+        res.json({
+            items: formattedResults.filter(result => result !== null)
+        });
+    });
 
     app.post("/generate/agent/image", async (req: Request, res: Response) => {
         console.log("[EXULU] generate/agent/image", req.body)
@@ -312,7 +392,6 @@ Mood: friendly and intelligent.
         if (!fs.existsSync("public")) {
             fs.mkdirSync("public");
         }
-        fs.writeFileSync(`public/${uuid}.png`, image_bytes);
         // update the agent with the image
         res.status(200).json({
             message: "Image generated successfully.",
@@ -383,6 +462,8 @@ Mood: friendly and intelligent.
         if (!slug) return;
 
         app.post(slug + "/:instance", async (req: Request, res: Response) => {
+
+            console.log("[EXULU] POST " + slug + "/:instance", req.body)
 
             const headers: {
                 stream: boolean,
@@ -458,7 +539,7 @@ Mood: friendly and intelligent.
             console.log("[EXULU] agent tools", agentInstance.tools?.map(x => x.name + " (" + x.id + ")"))
 
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
-            let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
+            let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, contexts || [], rerankers || [], disabledTools, agents, user)
 
             let providerapikey: string | undefined;
             const variableName = agentInstance.providerapikey;
@@ -509,14 +590,19 @@ Mood: friendly and intelligent.
                     message = req.body.message;
                 }
 
+                const approvedTools = req.body.approvedTools ? typeof req.body.approvedTools === 'string' ? JSON.parse(req.body.approvedTools) : req.body.approvedTools : [];
+
                 const result = await agent.generateStream({
                     contexts: contexts,
+                    rerankers: rerankers || [],
+                    agentInstance: agentInstance,
                     user,
                     instructions: agentInstance.instructions,
                     session: headers.session as string,
                     message,
                     previousMessages,
                     currentTools: enabledTools,
+                    approvedTools: approvedTools,
                     allExuluTools: tools,
                     providerapikey,
                     toolConfigs: agentInstance.tools,
@@ -608,12 +694,14 @@ Mood: friendly and intelligent.
                 return;
             } else {
                 const response = await agent.generateSync({
+                    contexts: contexts,
+                    rerankers: rerankers || [],
+                    agentInstance: agentInstance,
                     user,
                     req: req,
                     instructions: agentInstance.instructions,
                     session: headers.session as string,
                     inputMessages: [req.body.message],
-                    contexts: contexts,
                     currentTools: enabledTools,
                     allExuluTools: tools,
                     providerapikey,
@@ -785,7 +873,7 @@ Mood: friendly and intelligent.
             }> = {};
 
             const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
-            let enabledTools: ExuluTool[] = await getEnabledTools(agent, tools, disabledTools, agents, user)
+            let enabledTools: ExuluTool[] = await getEnabledTools(agent, tools, contexts || [], rerankers || [], disabledTools, agents, user)
 
             let system: string | {
                 type: "text",

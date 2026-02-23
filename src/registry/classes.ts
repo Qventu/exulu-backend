@@ -1,8 +1,8 @@
 import { Queue } from "bullmq";
-import { z } from "zod"
+import { z, ZodSchema } from "zod"
 import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
-import { postgresClient, refreshPostgresClient } from "../postgres/client";
+import { postgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
 import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
@@ -10,7 +10,7 @@ import { bullmqDecorator } from "./decoraters/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';
-import { applyFilters, contextToTableDefinition, vectorSearch, type VectorSearchChunkResult } from "./utils/graphql";
+import { applyFilters, contextToTableDefinition, vectorSearch, type SearchFilters, type VectorSearchChunkResult } from "./utils/graphql";
 import {
     PutObjectCommand,
     S3Client,
@@ -27,7 +27,8 @@ import type { Request } from "express";
 import { parseOfficeAsync } from 'officeparser';
 import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import type { Project } from "@EXULU_TYPES/models/project";
-
+import { createAgenticRetrievalTool } from "./agentic-retrieval";
+import fs from "fs";
 /**
  * @type {S3Client}
  */
@@ -37,26 +38,128 @@ export function sanitizeToolName(name) {
     if (typeof name !== 'string') return '';
 
     // Step 1: Replace invalid characters with underscores
-    // Only keep a-z, A-Z, 0-9, hyphens and underscores
-    let sanitized = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
+    // Keep a-z, A-Z, 0-9, underscores (_), dots (.), colons (:), and dashes (-)
+    let sanitized = name.replace(/[^a-zA-Z0-9_.\:-]+/g, '_');
 
-    // Step 2: Remove leading/trailing underscores
+    // Step 2: Ensure it starts with a letter or underscore (Vertex AI requirement)
+    // If it starts with a number, dash, dot, or colon, prepend an underscore
+    if (sanitized.length > 0 && !/^[a-zA-Z_]/.test(sanitized)) {
+        sanitized = '_' + sanitized;
+    }
+
+    // Step 3: Remove leading/trailing underscores (but keep at least one if needed for validation)
     sanitized = sanitized.replace(/^_+|_+$/g, '');
 
-    // Step 3: Trim to 128 characters
-    if (sanitized.length > 128) {
-        sanitized = sanitized.substring(0, 128);
+    // Step 4: If empty after cleanup, provide a default
+    if (!sanitized) {
+        sanitized = 'tool';
+    }
+
+    // Step 5: Trim to 64 characters (Vertex AI requirement)
+    if (sanitized.length > 64) {
+        sanitized = sanitized.substring(0, 64);
+    }
+
+    // Step 6: Final check - ensure it still starts with letter or underscore after trimming
+    if (!/^[a-zA-Z_]/.test(sanitized)) {
+        sanitized = '_' + sanitized.substring(1);
     }
 
     return sanitized;
 }
 
-const projectsCache = new Map<string, {
-    age: Date,
-    project: Project
-}>();
+export const createNewMemoryItemTool = (agent: Agent, context: ExuluContext): ExuluTool => {
 
-export const createProjectRetrievalTool = async ({
+    const fields: Record<string, ZodSchema> = {
+        name: z.string().describe("The name of the item to create"),
+        description: z.string().describe("The description of the item to create"),
+    };
+    for (const field of context.fields) {
+        switch (field.type) {
+            case "text":
+            case "longText":
+            case "shortText":
+            case "code":
+            case "enum":
+                fields[field.name] = z.string().describe("The " + field.name + " of the item to create");
+                break;
+            case "json":
+                fields[field.name] = z.string({}).describe("The " + field.name + " of the item to create, it should be a valid JSON string.");
+                break;
+            case "markdown":
+                fields[field.name] = z.string().describe("The " + field.name + " of the item to create, it should be a valid Markdown string.");
+                break;
+            case "number":
+                fields[field.name] = z.number().describe("The " + field.name + " of the item to create");
+                break;
+            case "boolean":
+                fields[field.name] = z.boolean().describe("The " + field.name + " of the item to create");
+                break;
+            case "file":
+            case "uuid":
+            case "date":
+                // not supported
+                break;
+            default:
+                fields[field.name] = z.string().describe("The " + field.name + " of the item to create");
+                break;
+        }
+    }
+
+    return new ExuluTool({
+        id: "create_" + agent.name + "_memory_item",
+        name: "Create " + agent.name + " Memory Item",
+        category: agent.name + "_memory",
+        description: "Create a new memory item in the " + agent.name + " memory context",
+        type: "function",
+        inputSchema: z.object(fields),
+        config: [],
+        execute: async ({ name, description, mode, information, exuluConfig, user }) => {
+
+            let result: { result: string } = { result: "" };
+            switch (mode) {
+                case "learnings":
+
+                    break;
+                case "knowledge":
+                    const newItem = {
+                        name: name,
+                        description: description,
+                        information: information,
+                        rights_mode: "public",
+                    }
+                    const { item: createdItem, job: createdJob } = await context.createItem(
+                        newItem,
+                        exuluConfig,
+                        user?.id,
+                        user?.role?.id,
+                        false
+                    )
+
+                    if (createdJob) {
+                        result = {
+                            result: `Created a Job to create the memory item with the following ID: ${createdJob}`,
+                        }
+                    } else if (createdItem) {
+                        result = {
+                            result: `Created memory item with the following ID: ${createdItem.id}`
+                        };
+                    } else {
+                        result = {
+                            result: `Failed to create memory item`
+                        };
+                    }
+                    break;
+                default:
+                    throw new Error(`Invalid mode: ${mode}`);
+            }
+
+            return result;
+        }
+    })
+}
+
+export const createProjectItemsRetrievalTool = async ({
     user,
     role,
     contexts,
@@ -70,25 +173,14 @@ export const createProjectRetrievalTool = async ({
 
     let project: Project | undefined;
 
-    const cachedProject = projectsCache.get(projectId);
     // Check if cached project more than 1 minute old
     // this to avoid fetching the project for each tool
     // array generation.
     const OneMinuteAgo = new Date(Date.now() - 1000 * 60);
-    if (cachedProject && cachedProject.age > OneMinuteAgo) {
-        project = cachedProject.project;
-    } else {
-        const { db } = await postgresClient();
-        project = await db.from("projects").where("id", projectId).first();
-        if (project) {
-            projectsCache.set(projectId, {
-                age: new Date(),
-                project: project
-            });
-        }
-        else {
-            return;
-        }
+    const { db } = await postgresClient();
+    project = await db.from("projects").where("id", projectId).first();
+    if (!project) {
+        return;
     }
     console.log("[EXULU] Project search tool created for project", project);
 
@@ -97,14 +189,14 @@ export const createProjectRetrievalTool = async ({
     }
 
     const projectRetrievalTool = new ExuluTool({
-        id: "project_information_retrieval_tool_" + projectId,
-        name: "Project information retrieval tool for project " + project.name,
+        id: "context_search_in_knowledge_items_added_to_project_" + projectId,
+        name: "context_search in knowledge items added to project " + project.name,
         description: "This tool retrieves information about a project from conversations and items that were added to the project " + project.name + ".",
         inputSchema: z.object({
             query: z.string().describe("The query to retrieve information about the project " + project.name + "."),
             keywords: z.array(z.string()).describe("The most relevant keywords in the query, such as names of people, companies, products, etc. in the project " + project.name + "."),
         }),
-        type: "function",
+        type: "context",
         category: "project",
         config: [],
         execute: async ({ query, keywords }: any) => {
@@ -141,8 +233,112 @@ export const createProjectRetrievalTool = async ({
                     return [];
                 }
                 const itemIds = set[contextName];
-
                 console.log("[EXULU] Project search tool searching through items", itemIds);
+                // Run retrieval over the items that are added to
+                // the project.
+                const result = await context.search({
+                    // todo check if it is more performant to use a concatenation of
+                    // the query and keywords, or just the keywords, instead of the 
+                    // query itself.
+                    query: query,
+                    itemFilters: [{
+                        id: {
+                            in: itemIds
+                        }
+                    }],
+                    chunkFilters: [],
+                    user: user,
+                    role: role,
+                    method: "hybridSearch",
+                    sort: {
+                        field: "updatedAt",
+                        direction: "desc",
+                    },
+                    trigger: "tool",
+                    limit: 10,
+                    page: 1,
+                });
+
+                return {
+                    result: result.chunks.map((chunk: VectorSearchChunkResult) => ({
+                        ...chunk,
+                        context: {
+                            name: context.name,
+                            id: context.id
+                        }
+                    }))
+                }
+            }));
+
+            // Todo for contexts that dont have an embedder fall back to keyword search.
+            console.log("[EXULU] Project search tool results", results);
+            return {
+                result: JSON.stringify(results.flat()),
+            }
+        }
+    })
+
+    return projectRetrievalTool;
+}
+
+export const createSessionItemsRetrievalTool = async ({
+    user,
+    role,
+    contexts,
+    items
+}: {
+    user?: User,
+    role?: string,
+    contexts: ExuluContext[]
+    items: string[]
+}): Promise<ExuluTool | undefined> => {
+
+    console.log("[EXULU] Session search tool created for session", items);
+
+    const sessionItemsRetrievalTool = new ExuluTool({
+        id: "session_items_information_context_search",
+        name: "context_search in knowledge items added to session.",
+        description: "Context search in knowledge items added to session.",
+        inputSchema: z.object({
+            query: z.string().describe("The query to retrieve information from knowledge items added to the session."),
+        }),
+        type: "context",
+        category: "session",
+        config: [],
+        execute: async ({ query, keywords }: any) => {
+
+            console.log("[EXULU] Session search tool searching for session items", items);
+
+            const set = {}
+            for (const item of items) {
+                // Items array in session are structured as 
+                // global ids ('<context_id>/<item_id>').
+                const context: string | undefined = item.split("/")[0];
+
+                if (!context) {
+                    throw new Error("The item added to the project does not have a valid gid with the context id as the prefix before the first slash.");
+                }
+
+                const id = item.split("/").slice(1).join("/");
+                if (set[context]) {
+                    set[context].push(id);
+                } else {
+                    set[context] = [id];
+                }
+            }
+
+            console.log("[EXULU] Session search tool searching through contexts", Object.keys(set));
+            // Run retrieval for each context in paralal.
+            // todo add typing
+            const results = await Promise.all(Object.keys(set).map(async (contextName, index) => {
+                const context = contexts.find(context => context.id === contextName);
+                if (!context) {
+                    console.error("[EXULU] Context not found for project information retrieval tool.", contextName);
+                    return [];
+                }
+                const itemIds = set[contextName];
+
+                console.log("[EXULU] Session search tool searching through items", itemIds);
 
                 // Run retrieval over the items that are added to
                 // the project.
@@ -151,11 +347,12 @@ export const createProjectRetrievalTool = async ({
                     // the query and keywords, or just the keywords, instead of the 
                     // query itself.
                     query: query,
-                    filters: [{
+                    itemFilters: [{
                         id: {
                             in: itemIds
                         }
                     }],
+                    chunkFilters: [],
                     user: user,
                     role: role,
                     method: "hybridSearch",
@@ -170,30 +367,36 @@ export const createProjectRetrievalTool = async ({
             }));
 
             // Todo for contexts that dont have an embedder fall back to keyword search.
-            console.log("[EXULU] Project search tool results", results);
+            console.log("[EXULU] Session search tool results", results);
             return {
                 result: JSON.stringify(results.flat()),
             }
         }
     })
 
-    return projectRetrievalTool;
+    return sessionItemsRetrievalTool;
 }
 
 export const convertToolsArrayToObject = async (
     currentTools: ExuluTool[] | undefined,
+    approvedTools: string[] | undefined,
     allExuluTools: ExuluTool[] | undefined,
     configs: ExuluAgentToolConfig[] | undefined,
     providerapikey?: string,
     contexts?: ExuluContext[] | undefined,
+    rerankers?: ExuluReranker[] | undefined,
     user?: User,
     exuluConfig?: ExuluConfig,
     sessionID?: string,
     req?: Request,
-    project?: string
+    project?: string,
+    items?: string[],
+    model?: LanguageModel,
+    agentInstance?: Agent,
 ): Promise<Record<string, Tool>> => {
 
     if (!currentTools) return {};
+
     if (!allExuluTools) {
         allExuluTools = [];
     };
@@ -201,8 +404,9 @@ export const convertToolsArrayToObject = async (
         contexts = [];
     }
 
+    let projectRetrievalTool: ExuluTool | undefined;
     if (project) {
-        const projectRetrievalTool = await createProjectRetrievalTool({
+        projectRetrievalTool = await createProjectItemsRetrievalTool({
             user: user,
             role: user?.role?.id,
             contexts: contexts,
@@ -213,12 +417,59 @@ export const convertToolsArrayToObject = async (
         }
     }
 
+    console.log("[EXULU] Convert tools array to object, session items", items);
+    if (items) {
+        const sessionItemsRetrievalTool = await createSessionItemsRetrievalTool({
+            user: user,
+            role: user?.role?.id,
+            contexts: contexts,
+            items: items
+        });
+        if (sessionItemsRetrievalTool) {
+            currentTools.push(sessionItemsRetrievalTool);
+        }
+    }
+
+    console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
+    if (contexts?.length && model) {
+        const agenticSearchTool = createAgenticRetrievalTool({
+            contexts: contexts.filter(context => context.id !== agentInstance?.memory), // dont include the agents memory in the agentic search tool!
+            rerankers: rerankers || [],
+            user: user,
+            role: user?.role?.id,
+            model: model,
+            projectRetrievalTool: projectRetrievalTool,
+        });
+        if (!agenticSearchTool) {
+            throw new Error("Agentic search tool could not be instantiated, this is an internal error in the Exulu framework, please contact support.");
+        }
+        if (agenticSearchTool) {
+            // Replace the agentic search tool with the new one.
+            const index = currentTools.findIndex(tool => tool.id === "agentic_context_search");
+            if (index !== -1) {
+                currentTools[index] = {
+                    ...currentTools[index], // important to keep the original tool config
+                    ...agenticSearchTool,
+                };
+            }
+        }
+    } else {
+        // Double check to remove the agentic search tool if it 
+        // was enabled but no contexts or model are available.
+        const agenticSearchTool = currentTools.find(tool => tool.id === "agentic_context_search");
+        if (agenticSearchTool) {
+            currentTools.splice(currentTools.indexOf(agenticSearchTool), 1);
+        }
+    }
+
     const sanitizedTools = currentTools ? currentTools.map(tool => ({
         ...tool,
         name: sanitizeToolName(tool.name)
     })) : [];
 
     console.log("[EXULU] Sanitized tools", sanitizedTools.map(x => x.name + " (" + x.id + ")"))
+
+    console.log("[EXULU] Approved tools", approvedTools);
 
     return {
         ...sanitizedTools?.reduce(
@@ -232,10 +483,14 @@ export const convertToolsArrayToObject = async (
                 const toolDescription = cur.description;
                 const description = userDefinedConfigDescription || defaultConfigDescription || toolDescription;
 
+                console.log("[EXULU] Tool", cur.name, "needs approval", approvedTools?.includes(cur.name) ? false : true);
                 return {
                     ...prev, [cur.name]: {
                         ...cur.tool,
                         description,
+                        // The approvedTools array uses the tool.name lookup as the frontend
+                        // Vercel AI SDK uses the sanitized tool name as the key, so this matches.
+                        needsApproval: approvedTools?.includes("tool-" + cur.name) ? false : true, // todo make configurable
                         async *execute(inputs: any, options: any) { // generator function allows to use yield to stream tool call results
                             console.log("[EXULU] Executing tool", cur.name, "with inputs", inputs, "and options", options)
                             if (!cur.tool?.execute) {
@@ -325,11 +580,17 @@ export const convertToolsArrayToObject = async (
                                 return acc;
                             }, {});
 
+                            const toolVariablesConfigData = toolVariableConfig ? toolVariableConfig.config.reduce((acc, curr) => {
+                                acc[curr.name] = curr.value;
+                                return acc;
+                            }, {}) : {}
+
                             const response = await cur.tool.execute({
                                 ...inputs,
+                                model: model,
                                 sessionID: sessionID,
                                 req: req,
-                                // Convert config to object format if a config object 
+                                // Convert config to object format if a config object
                                 // is available, after we added the .value property
                                 // by hydrating it from the variables table.
                                 providerapikey: providerapikey,
@@ -339,10 +600,7 @@ export const convertToolsArrayToObject = async (
                                 contexts: contextsMap,
                                 upload,
                                 exuluConfig,
-                                toolVariablesConfig: toolVariableConfig ? toolVariableConfig.config.reduce((acc, curr) => {
-                                    acc[curr.name] = curr.value;
-                                    return acc;
-                                }, {}) : {}
+                                toolVariablesConfig: toolVariablesConfigData
                             }, options);
 
                             await updateStatistic({
@@ -355,15 +613,27 @@ export const convertToolsArrayToObject = async (
                                 role: user?.role?.id
                             })
 
-                            yield response;
-                            return response;
+                            // Check if response is an async generator
+                            if (response && typeof response === 'object' && Symbol.asyncIterator in response) {
+                                let lastValue;
+                                // Iterate through all yielded values from the generator
+                                for await (const value of response) {
+                                    yield value;
+                                    lastValue = value;
+                                }
+                                return lastValue;
+                            } else {
+                                // Regular response (not a generator)
+                                yield response;
+                                return response;
+                            }
                         }
                     }
-                }
+                };
             }, {}
         ),
         // askForConfirmation
-    }
+    };
 }
 
 const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
@@ -374,14 +644,24 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
             return toolConfig;
         }
 
-        // Get the variable name from user's anthropic_token field
         const variableName = toolConfig.variable;
+        const type = toolConfig.type;
 
-        // Look up the variable from the variables table
+        if (type === "boolean") {
+            toolConfig.value = toolConfig.variable === 'true' || toolConfig.variable === true || toolConfig.variable === 1;
+            return toolConfig;
+        } else if (type === "number") {
+            toolConfig.value = parseInt(toolConfig.variable.toString());
+            return toolConfig;
+        } else if (type === "string") {
+            toolConfig.value = toolConfig.variable;
+            return toolConfig;
+        }
+
         const variable = await db.from("variables").where({ name: variableName }).first();
 
         if (!variable) {
-            throw new Error("Variable " + variableName + " not found.")
+            throw new Error("Variable " + variableName + " not found in hydrateVariables method, with type " + type + ".")
         }
 
         // Get the API key from the variable (decrypt if encrypted)
@@ -440,7 +720,7 @@ export type ExuluAgentConfig = {
 }
 
 export type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
-export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
+export type fileTypes = '.pdf' | '.docx' | '.doc' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt' | '.txt' | '.md' | '.json' | '.srt' | '.html';
 export type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
 export type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
 export type allFileTypes = imageTypes | fileTypes | audioTypes | videoTypes;
@@ -472,10 +752,40 @@ interface ExuluAgentToolConfig {
     type: string,
     config: {
         name: string,
-        variable: string // is a variable name
+        variable: string | boolean | number // is a variable name
+        type: "boolean" | "string" | "number" | "variable"
         value?: any // fetched on demand from the database based on the variable name
-        default?: string
+        default?: string | boolean | number
     }[]
+}
+
+export class ExuluReranker {
+    public id: string;
+    public name: string;
+    public description: string;
+    public execute: (params: {
+        query: string,
+        chunks: VectorSearchChunkResult[],
+    }) => Promise<VectorSearchChunkResult[]>;
+
+    constructor({ id, name, description, execute }: {
+        id: string,
+        name: string,
+        description: string,
+        execute: (params: {
+            query: string,
+            chunks: VectorSearchChunkResult[],
+        }) => Promise<VectorSearchChunkResult[]>
+    }) {
+        this.id = id;
+        this.name = name;
+        this.description = description;
+        this.execute = execute;
+    }
+
+    public async run(query: string, chunks: VectorSearchChunkResult[]): Promise<VectorSearchChunkResult[]> {
+        return await this.execute({ query, chunks });
+    }
 }
 
 export function errorHandler(error: unknown) {
@@ -671,7 +981,7 @@ export class ExuluAgent {
     }
 
     // Exports the agent as a tool that can be used by another agent
-    public tool = async (instance: string, agents: ExuluAgent[]): Promise<ExuluTool | null> => {
+    public tool = async (instance: string, agents: ExuluAgent[], contexts: ExuluContext[], rerankers: ExuluReranker[]): Promise<ExuluTool | null> => {
 
         const agentInstance = await loadAgent(instance);
 
@@ -698,7 +1008,7 @@ export class ExuluAgent {
                     throw new Error("You don't have access to this agent.");
                 }
 
-                let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allExuluTools, [], agents, user)
+                let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allExuluTools, contexts, rerankers, [], agents, user)
 
                 // Get the variable name from user's anthropic_token field
                 const variableName = agentInstance.providerapikey;
@@ -736,6 +1046,9 @@ export class ExuluAgent {
                 // enabling this in the future by adding a "outputSchema" field to the inputSchema of this 
                 // tool definition so agents can dynamically define a desired output schema.
                 const response = await this.generateSync({
+                    agentInstance: agentInstance,
+                    contexts: contexts,
+                    rerankers: rerankers,
                     instructions: agentInstance.instructions,
                     prompt: "The user has asked the following question: " + prompt + " and the following information is available: " + information,
                     providerapikey: providerapikey,
@@ -777,15 +1090,17 @@ export class ExuluAgent {
         toolConfigs,
         providerapikey,
         contexts,
+        rerankers,
         exuluConfig,
         outputSchema,
+        agentInstance,
         instructions
-
     }: {
         prompt?: string,
         user?: User,
         req?: Request,
         session?: string,
+        agentInstance?: Agent,
         inputMessages?: UIMessage[],
         currentTools?: ExuluTool[],
         allExuluTools?: ExuluTool[],
@@ -793,6 +1108,7 @@ export class ExuluAgent {
         toolConfigs?: ExuluAgentToolConfig[],
         providerapikey?: string | undefined,
         contexts?: ExuluContext[] | undefined
+        rerankers?: ExuluReranker[] | undefined
         exuluConfig?: ExuluConfig,
         instructions?: string,
         outputSchema?: z.ZodType
@@ -847,9 +1163,53 @@ export class ExuluAgent {
         console.log("[EXULU] Message count for agent: " + this.name, "loaded for generating sync.", messages.length)
 
         let project: string | undefined;
+        let sessionItems: string[] | undefined;
         if (session) {
             const sessionData = await getSession({ sessionID: session })
+            sessionItems = sessionData.session_items;
             project = sessionData.project;
+        }
+
+        const query = prompt;
+
+        // If memory context was configured for the agent, we retrieve
+        // relevant memory items and add it to the genericContext
+        let memoryContext = "";
+        if (agentInstance?.memory && contexts?.length && query) {
+            const context = contexts.find(context => context.id === agentInstance?.memory);
+            if (!context) {
+                throw new Error("Context was set for agent memory but not found in the contexts: " + agentInstance?.memory + " please double check with a developer to see if the context was removed from code.");
+            }
+            const result = await context?.search({
+                query: query,
+                itemFilters: [],
+                chunkFilters: [],
+                method: "hybridSearch",
+                sort: {
+                    field: "updatedAt",
+                    direction: "desc"
+                },
+                trigger: "agent",
+                limit: 10, // todo make this configurable?
+                page: 1,
+            })
+
+            if (result?.chunks?.length) {
+                // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
+                memoryContext = `
+                Pre-fetched relevant information for this query:
+
+                ${result.chunks.map(chunk => chunk.chunk_content).join("\n\n")
+                    }`;
+            }
+
+            const createNewMemoryTool = createNewMemoryItemTool(agentInstance, context);
+            if (createNewMemoryTool) {
+                if (!currentTools) {
+                    currentTools = [];
+                }
+                currentTools.push(createNewMemoryTool);
+            }
         }
 
         const personalizationInformation = exuluConfig?.privacy?.systemPromptPersonalization !== false ? `
@@ -868,11 +1228,22 @@ export class ExuluAgent {
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
-        const includesContextSearchTool = currentTools?.some(tool => 
-            tool.name.toLowerCase().includes("context_search") || 
+        if (memoryContext) {
+            system += "\n\n" + memoryContext;
+        }
+
+        const includesContextSearchTool = currentTools?.some(tool =>
+            tool.name.toLowerCase().includes("context_search") ||
             tool.id.includes("context_search") ||
             tool.type === "context"
         );
+
+        const includesWebSearchTool = currentTools?.some(tool =>
+            tool.name.toLowerCase().includes("web_search") ||
+            tool.id.includes("web_search") ||
+            tool.type === "web_search"
+        );
+
         console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
         console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
         if (includesContextSearchTool) {
@@ -886,13 +1257,28 @@ export class ExuluAgent {
             IMPORTANT formatting rules:
             - Use the exact format shown above, all on ONE line
             - Do NOT use quotes around field names or values
-            - Use the context ID (e.g., "dx-newlift-newton-knowledge-g3y6r1") from the tool result
+            - Use the context ID from the tool result
             - Include the file/item name, not the full path
             - Separate multiple citations with spaces
 
             Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
 
             The citations will be rendered as interactive badges in the UI.
+            `;
+        }
+
+        if (includesWebSearchTool) {
+            system += "\n\n" + `
+            When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
+            (all on one line, no line breaks):
+            {url: <url>, title: <title>, snippet: <snippet>}
+
+            IMPORTANT formatting rules:
+            - Use the exact format shown above, all on ONE line
+            - Do NOT use quotes around field names or values
+            - Separate multiple results with spaces
+
+            Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
             `;
         }
 
@@ -923,15 +1309,20 @@ export class ExuluAgent {
                     maxRetries: 2,
                     tools: await convertToolsArrayToObject(
                         currentTools,
+                        [],
                         allExuluTools,
                         toolConfigs,
                         providerapikey,
                         contexts,
+                        rerankers,
                         user,
                         exuluConfig,
                         session,
                         req,
-                        project
+                        project,
+                        sessionItems,
+                        model,
+                        agentInstance
                     ),
                     stopWhen: [stepCountIs(5)],
                 });
@@ -979,21 +1370,26 @@ export class ExuluAgent {
             const { text, totalUsage } = await generateText({
                 model: model, // Should be a LanguageModelV1
                 system,
-                messages: convertToModelMessages(messages, {
+                messages: await convertToModelMessages(messages, {
                     ignoreIncompleteToolCalls: true
                 }),
                 maxRetries: 2,
                 tools: await convertToolsArrayToObject(
                     currentTools,
+                    [],
                     allExuluTools,
                     toolConfigs,
                     providerapikey,
                     contexts,
+                    rerankers,
                     user,
                     exuluConfig,
                     session,
                     req,
-                    project
+                    project,
+                    sessionItems,
+                    model,
+                    agentInstance
                 ),
                 stopWhen: [stepCountIs(5)],
             });
@@ -1126,30 +1522,40 @@ export class ExuluAgent {
     generateStream = async ({
         user,
         session,
+        agentInstance,
         message,
         previousMessages,
         currentTools,
+        approvedTools,
         allExuluTools,
         toolConfigs,
         providerapikey,
         contexts,
+        rerankers,
         exuluConfig,
         instructions,
         req,
     }: {
         user?: User,
         session?: string,
+        agentInstance?: Agent,
         message?: UIMessage,
         previousMessages?: UIMessage[],
         currentTools?: ExuluTool[],
+        approvedTools?: string[],
         allExuluTools?: ExuluTool[],
         toolConfigs?: ExuluAgentToolConfig[],
         providerapikey?: string | undefined,
         contexts?: ExuluContext[] | undefined
+        rerankers?: ExuluReranker[] | undefined
         exuluConfig?: ExuluConfig,
         instructions?: string,
         req?: Request,
-    }) => {
+    }): Promise<{
+        stream: ReturnType<typeof streamText>,
+        originalMessages: UIMessage[],
+        previousMessages: UIMessage[]
+    }> => {
 
         if (!this.model) {
             console.error("[EXULU] Model is required for streaming.")
@@ -1174,9 +1580,11 @@ export class ExuluAgent {
         let previousMessagesContent: UIMessage[] = previousMessages || [];
         // load the previous messages from the server:
         let project: string | undefined;
+        let sessionItems: string[] | undefined;
         if (session) {
             const sessionData = await getSession({ sessionID: session })
             project = sessionData.project;
+            sessionItems = sessionData.session_items;
 
             console.log("[EXULU] loading previous messages from session: " + session)
             const previousMessages = await getAgentMessages({
@@ -1196,9 +1604,55 @@ export class ExuluAgent {
             messages: [...previousMessagesContent, message],
         });
 
+        const query = message.parts?.[0]?.type === "text" ? message.parts[0].text : undefined;
+
+        // If memory context was configured for the agent, we retrieve
+        // relevant memory items and add it to the genericContext
+        let memoryContext = "";
+        if (agentInstance?.memory && contexts?.length && query) {
+            const context = contexts.find(context => context.id === agentInstance?.memory);
+            if (!context) {
+                throw new Error("Context was set for agent memory but not found in the contexts: " + agentInstance?.memory + " please double check with a developer to see if the context was removed from code.");
+            }
+            const result = await context?.search({
+                query: query,
+                itemFilters: [],
+                chunkFilters: [],
+                method: "hybridSearch",
+                sort: {
+                    field: "updatedAt",
+                    direction: "desc"
+                },
+                trigger: "agent",
+                limit: 10, // todo make this configurable?
+                page: 1,
+            })
+
+            if (result?.chunks?.length) {
+                // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
+                memoryContext = `
+                Pre-fetched relevant information for this query:
+
+                ${result.chunks.map(chunk => chunk.chunk_content).join("\n\n")
+                    }`;
+            }
+
+            const createNewMemoryTool = createNewMemoryItemTool(agentInstance, context);
+            if (createNewMemoryTool) {
+                if (!currentTools) {
+                    currentTools = [];
+                }
+                currentTools.push(createNewMemoryTool);
+            }
+        }
+
         // filter out messages with duplicate ids
+        // If we encounter a duplicate message ID, we take the last
+        // message with that ID, this happens for example when in the history
+        // there is a message with state "approval-requested", and the frontend
+        // then sends the same message id but with state updated to "approval-responded".
         messages = messages.filter((message, index, self) =>
-            index === self.findIndex((t) => t.id === message.id)
+            index === self.findLastIndex((t) => t.id === message.id)
         );
 
         // Process file parts to convert them to OpenAI Responses API compatible format
@@ -1215,13 +1669,24 @@ export class ExuluAgent {
         let system = instructions || "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
         system += "\n\n" + genericContext;
 
-        const includesContextSearchTool = currentTools?.some(tool => 
-            tool.name.toLowerCase().includes("context_search") || 
+        if (memoryContext) {
+            system += "\n\n" + memoryContext;
+        }
+
+        const includesContextSearchTool = currentTools?.some(tool =>
+            tool.name.toLowerCase().includes("context_search") ||
             tool.id.includes("context_search") ||
             tool.type === "context"
         );
+        const includesWebSearchTool = currentTools?.some(tool =>
+            tool.name.toLowerCase().includes("web_search") ||
+            tool.id.includes("web_search") ||
+            tool.type === "web_search"
+        );
         console.log("[EXULU] Current tools: " + currentTools?.map(tool => tool.name));
         console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
+        console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
+
         if (includesContextSearchTool) {
             system += "\n\n" + `
 
@@ -1233,7 +1698,7 @@ export class ExuluAgent {
             IMPORTANT formatting rules:
             - Use the exact format shown above, all on ONE line
             - Do NOT use quotes around field names or values
-            - Use the context ID (e.g., "dx-newlift-newton-knowledge-g3y6r1") from the tool result
+            - Use the context ID from the tool result
             - Include the file/item name, not the full path
             - Separate multiple citations with spaces
 
@@ -1243,9 +1708,24 @@ export class ExuluAgent {
             `;
         }
 
+        if (includesWebSearchTool) {
+            system += "\n\n" + `
+            When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
+            (all on one line, no line breaks):
+            {url: <url>, title: <title>, snippet: <snippet>}
+
+            IMPORTANT formatting rules:
+            - Use the exact format shown above, all on ONE line
+            - Do NOT use quotes around field names or values
+            - Separate multiple results with spaces
+
+            Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
+            `;
+        }
+
         const result = streamText({
             model: model, // Should be a LanguageModelV1
-            messages: convertToModelMessages(messages, {
+            messages: await convertToModelMessages(messages, {
                 ignoreIncompleteToolCalls: true
             }),
             // PrepareStep could be used here to set the model 
@@ -1259,15 +1739,20 @@ export class ExuluAgent {
             },
             tools: await convertToolsArrayToObject(
                 currentTools,
+                approvedTools,
                 allExuluTools,
                 toolConfigs,
                 providerapikey,
                 contexts,
+                rerankers,
                 user,
                 exuluConfig,
                 session,
                 req,
-                project
+                project,
+                sessionItems,
+                model,
+                agentInstance
             ),
             onError: error => {
                 console.error("[EXULU] chat stream error.", error);
@@ -1739,12 +2224,13 @@ export class ExuluTool {
     public description: string;
     public category: string;
     public inputSchema?: z.ZodType;
-    public type: "context" | "function" | "agent";
+    public type: "context" | "function" | "agent" | "web_search";
     public tool: Tool
     public config: {
         name: string,
         description: string
-        default?: string
+        type: "boolean" | "string" | "number" | "variable"
+        default?: string | boolean | number | "variable"
     }[]
 
     constructor({ id, name, description, category, inputSchema, type, execute, config }: {
@@ -1753,11 +2239,12 @@ export class ExuluTool {
         description: string,
         category?: string,
         inputSchema?: z.ZodType,
-        type: "context" | "function" | "agent",
+        type: "context" | "function" | "agent" | "web_search",
         config: {
             name: string,
             description: string
-            default?: string
+            type: "boolean" | "string" | "number" | "variable"
+            default?: string | boolean | number | "variable"
         }[],
         execute: (inputs: any) => Promise<{
             result?: string
@@ -1788,14 +2275,25 @@ export class ExuluTool {
         config,
         user,
         inputs,
-        project
+        project,
+        items
     }: {
         agent: string,
         config: ExuluConfig,
         user?: User,
         inputs: any,
         project?: string
+        items?: string[]
     }) => {
+
+        console.log("[EXULU] Calling tool execute directly", {
+            agent,
+            config,
+            user,
+            inputs,
+            project,
+            items
+        })
 
         const agentInstance = await loadAgent(agent);
         if (!agentInstance) {
@@ -1827,20 +2325,24 @@ export class ExuluTool {
                 const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
                 providerapikey = bytes.toString(CryptoJS.enc.Utf8);
             }
-
         }
 
         const tools = await convertToolsArrayToObject(
             [this],
             [],
+            [],
             agentInstance.tools,
             providerapikey,
+            undefined,
             undefined,
             user,
             config,
             undefined,
             undefined,
-            project
+            project,
+            items,
+            undefined,
+            agentInstance
         )
 
         const tool = tools[sanitizeName(this.name)] || tools[this.name] || tools[this.id];
@@ -1850,8 +2352,16 @@ export class ExuluTool {
 
         console.log("[EXULU] Tool found", this.name)
 
+        const toolCallId = this.id + "_" + randomUUID();
+
+        console.log("[EXULU] Calling tool execute", {
+            inputs,
+            toolCallId,
+            messages: []
+        })
+
         const generator = tool.execute(inputs, {
-            toolCallId: this.id + "_" + randomUUID(),
+            toolCallId,
             messages: [],
         });
 
@@ -1914,6 +2424,7 @@ export type ExuluContextProcessor = {
 export type ExuluContextFieldDefinition = {
     name: string,
     type: ExuluFieldTypes
+    editable?: boolean
     unique?: boolean
     required?: boolean
     default?: any
@@ -2208,7 +2719,6 @@ export class ExuluContext {
 
         const { db } = await postgresClient();
 
-
         // The field key is used to define a processor, but is 
         // not part of the database, so remove it here before
         // we upadte the item in the db.
@@ -2222,6 +2732,35 @@ export class ExuluContext {
             last_processed_at: new Date().toISOString()
         });
 
+        if (this.processor?.config?.generateEmbeddings) {
+            // If the processor was configured to automatically trigger
+            // the generation of embeddings, we trigger it here.
+            // IMPORTANT: We need to fetch the complete item from the database
+            // to ensure we have all fields (especially external_id) for embeddings
+            const fullItem = await db.from(getTableName(this.id)).where({
+                id: processorResult.id
+            }).first();
+
+            if (!fullItem) {
+                throw new Error(`[EXULU] Item ${processorResult.id} not found after processor update in context ${this.id}`);
+            }
+
+            const { job: embeddingsJob } = await this.embeddings.generate.one({
+                item: fullItem,
+                user: user,
+                role: role,
+                trigger: "processor",
+                config: exuluConfig
+            });
+
+            if (embeddingsJob) {
+                return {
+                    result: processorResult,
+                    job: embeddingsJob
+                };
+            }
+        }
+
         return {
             result: processorResult,
             job: undefined
@@ -2229,8 +2768,10 @@ export class ExuluContext {
     }
 
     public search = async (options: {
-        query: string,
-        filters: any[],
+        query?: string,
+        keywords?: string[],
+        itemFilters: SearchFilters,
+        chunkFilters: SearchFilters,
         user?: User,
         role?: string,
         method: VectorMethod,
@@ -2248,8 +2789,10 @@ export class ExuluContext {
             after?: number
         }
     }): Promise<{
-        filters: any[]
-        query: string
+        itemFilters: SearchFilters
+        chunkFilters: SearchFilters
+        query?: string
+        keywords?: string[]
         method: VectorMethod
         context: {
             name: string
@@ -2265,6 +2808,8 @@ export class ExuluContext {
             ...options,
             user: options.user,
             role: options.role,
+            itemFilters: options.itemFilters,
+            chunkFilters: options.chunkFilters,
             context: this,
             db,
             limit: options?.limit || this.configuration.maxRetrievalResults || 10,
@@ -2887,11 +3432,7 @@ export class ExuluContext {
     }
 
     public createChunksTable = async () => {
-        // We refresh the connection here because when running this as
-        // part of the database initialization, the connection might not
-        // have all extensions setup yet, which can cause issues with the
-        // the use of vector_cosine_ops.
-        const { db } = await refreshPostgresClient();
+        const { db } = await postgresClient();
         const tableName = getChunksTableName(this.id);
         console.log("[EXULU] Creating table: " + tableName);
 
@@ -2943,12 +3484,15 @@ export class ExuluContext {
             type: "context",
             category: "contexts",
             inputSchema: z.object({
-                originalQuestion: z.string().describe("The original question that the user asked"),
-                relevantKeywords: z.array(z.string()).describe("The keywords that are relevant to the user's question, for example names of specific products, systems or parts, IDs, etc."),
+                query: z.string().describe("The original question that the user asked"),
+                keywords: z.array(z.string()).describe("The keywords that are relevant to the user's question, for example names of specific products, systems or parts, IDs, etc."),
+                method: z.enum(["keyword", "semantic", "hybrid"]).default("hybrid").describe(
+                    "Search method: 'hybrid' (best for most queries - combines semantic understanding with exact term matching), 'keyword' (best for exact terms, technical names, IDs, or specific phrases), 'semantic' (best for conceptual queries where synonyms and paraphrasing matter)"
+                ),
             }),
             config: [],
             description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-            execute: async ({ originalQuestion, relevantKeywords, user, role }: any) => {
+            execute: async ({ query, keywords, user, role, method }: any) => {
                 const { db } = await postgresClient();
                 // todo make trigger more specific with the agent name
                 // todo roadmap, auto add the normal filter criteria of a context as input schema so the agent can
@@ -2956,11 +3500,13 @@ export class ExuluContext {
                 const result = await vectorSearch({
                     page: 1,
                     limit: this.configuration.maxRetrievalResults ?? 10,
-                    query: originalQuestion,
-                    filters: [],
+                    query: query,
+                    keywords: keywords,
+                    itemFilters: [],
+                    chunkFilters: [],
                     user,
                     role,
-                    method: "hybridSearch",
+                    method: method === "hybrid" ? "hybridSearch" : method === "keyword" ? "tsvector" : "cosineDistance",
                     context: this,
                     db,
                     sort: undefined,

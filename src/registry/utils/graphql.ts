@@ -7,9 +7,10 @@ import { requestValidators } from "../route-validators";
 import bcrypt from "bcryptjs";
 import cron from 'cron-validator';
 import {
-  createProjectRetrievalTool,
+  createProjectItemsRetrievalTool,
   ExuluAgent,
   ExuluEval,
+  ExuluReranker,
   ExuluTool,
   getChunksTableName,
   getTableName,
@@ -47,6 +48,96 @@ import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { processUiMessagesFlow, validateWorkflowPayload } from "../workers";
 import type { UIMessage } from "ai";
+import { createAgenticRetrievalTool } from "../agentic-retrieval";
+import { preprocessQuery } from "../query-preprocessing";
+
+/**
+ * Base operator type with comparison operations
+ */
+type BaseOperator<T> = {
+  /** Equals */
+  eq?: T;
+  /** Not equals */
+  ne?: T;
+  /** In array */
+  in?: T[];
+  /** AND conditions */
+  and?: BaseOperator<T>[];
+  /** OR conditions */
+  or?: BaseOperator<T>[];
+};
+
+/**
+ * String field filter operators
+ */
+type StringOperator = BaseOperator<string> & {
+  /** Contains (case-insensitive substring match) */
+  contains?: string;
+};
+
+/**
+ * Number field filter operators
+ */
+type NumberOperator = BaseOperator<number> & {
+  /** Less than or equal to */
+  lte?: number;
+  /** Greater than or equal to */
+  gte?: number;
+};
+
+/**
+ * Date field filter operators
+ */
+type DateOperator = BaseOperator<Date | string> & {
+  /** Less than or equal to */
+  lte?: Date | string;
+  /** Greater than or equal to */
+  gte?: Date | string;
+};
+
+/**
+ * Boolean field filter operators
+ */
+type BooleanOperator = BaseOperator<boolean>;
+
+/**
+ * JSON field filter operators
+ */
+type JsonOperator = BaseOperator<any> & {
+  /** Contains (PostgreSQL @> operator for JSON containment) */
+  contains?: any;
+};
+
+/**
+ * Filter operator type based on field type
+ */
+type FilterOperator =
+  | BaseOperator<any>
+  | StringOperator
+  | NumberOperator
+  | DateOperator
+  | BooleanOperator
+  | JsonOperator;
+
+/**
+ * Single filter object - a record of field names to their filter operators
+ */
+type Filter = Record<string, FilterOperator>;
+
+/**
+ * Type for the filters parameter used throughout the codebase
+ * Filters is an array of filter objects, where each object contains field names mapped to their operators
+ *
+ * @example
+ * ```typescript
+ * const filters: Filters = [
+ *   { name: { contains: "test" } },
+ *   { age: { gte: 18, lte: 65 } },
+ *   { status: { in: ["active", "pending"] } }
+ * ];
+ * ```
+ */
+export type SearchFilters = Filter[];
 
 // Custom Date scalar to handle timestamp conversion
 const GraphQLDate = new GraphQLScalarType({
@@ -333,6 +424,47 @@ const getRequestedFields = (info: any): string[] => {
   // remove pageInfo and items
 };
 
+const contextItemProcessorMutation = async (
+  context: ExuluContext,
+  config: ExuluConfig,
+  items: Item[],
+  user?: number,
+  role?: string,
+): Promise<{
+  message: string;
+  results: string[];
+  jobs: string[];
+}> => {
+  let jobs: string[] = [];
+  let results: Item[] = [];
+  await Promise.all(
+    items.map(async (item): Promise<void> => {
+      const result = await context.processField(
+        "api",
+        item,
+        config,
+        user,
+        role,
+      );
+      if (result.job) {
+        jobs.push(result.job);
+      }
+      if (result.result) {
+        results.push(result.result);
+      }
+    }),
+  );
+
+  return {
+    message:
+      jobs.length > 0
+        ? "Processing job scheduled."
+        : "Items processed successfully.",
+    results: results.map((result) => JSON.stringify(result)),
+    jobs: jobs,
+  };
+};
+
 // Helper function to handle RBAC updates
 const handleRBACUpdate = async (
   db: any,
@@ -468,6 +600,7 @@ function createMutations(
   table: ExuluTableDefinition,
   agents: ExuluAgent[],
   contexts: ExuluContext[],
+  rerankers: ExuluReranker[],
   tools: ExuluTool[],
   config: ExuluConfig,
 ) {
@@ -740,6 +873,7 @@ function createMutations(
           requestedFields,
           agents,
           contexts,
+          rerankers,
           tools,
           result: result[0],
           user: context.user,
@@ -842,6 +976,7 @@ function createMutations(
           requestedFields,
           agents,
           contexts,
+          rerankers,
           tools,
           result: results[0],
           user: context.user,
@@ -957,6 +1092,7 @@ function createMutations(
           requestedFields,
           agents,
           contexts,
+          rerankers,
           tools,
           result,
           user: context.user.id,
@@ -1056,6 +1192,7 @@ function createMutations(
           requestedFields,
           agents,
           contexts,
+          rerankers,
           tools,
           result,
           user: context.user.id,
@@ -1122,6 +1259,7 @@ function createMutations(
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result,
         user: context.user.id,
@@ -1174,6 +1312,7 @@ function createMutations(
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result,
         user: context.user.id,
@@ -1183,46 +1322,6 @@ function createMutations(
 
   if (table.type === "items") {
     if (table.processor) {
-      const contextItemProcessorMutation = async (
-        context: ExuluContext,
-        items: Item[],
-        user?: number,
-        role?: string,
-      ): Promise<{
-        message: string;
-        results: string[];
-        jobs: string[];
-      }> => {
-        let jobs: string[] = [];
-        let results: Item[] = [];
-        await Promise.all(
-          items.map(async (item): Promise<void> => {
-            const result = await context.processField(
-              "api",
-              item,
-              config,
-              user,
-              role,
-            );
-            if (result.job) {
-              jobs.push(result.job);
-            }
-            if (result.result) {
-              results.push(result.result);
-            }
-          }),
-        );
-
-        return {
-          message:
-            jobs.length > 0
-              ? "Processing job scheduled."
-              : "Items processed successfully.",
-          results: results.map((result) => JSON.stringify(result)),
-          jobs: jobs,
-        };
-      };
-
       mutations[`${tableNameSingular}ProcessItem`] = async (
         _,
         args,
@@ -1265,6 +1364,7 @@ function createMutations(
 
         return contextItemProcessorMutation(
           exists,
+          config,
           [item],
           context.user.id,
           context.user.role?.id,
@@ -1308,6 +1408,7 @@ function createMutations(
 
         return contextItemProcessorMutation(
           exists,
+          config,
           items,
           context.user.id,
           context.user.role?.id,
@@ -1811,6 +1912,7 @@ const addAgentFields = async (
   tools: ExuluTool[],
   user: User,
   contexts: ExuluContext[],
+  rerankers: ExuluReranker[],
 ) => {
   let backend = agents.find((a) => a.id === result?.backend);
   if (requestedFields.includes("providerName")) {
@@ -1842,6 +1944,24 @@ const addAgentFields = async (
             Omit<ExuluTool, "tool" | "execute"> | null | undefined
           > => {
             let hydrated: ExuluTool | null | undefined;
+
+            if (tool.id === "agentic_context_search") {
+              const instance = createAgenticRetrievalTool({
+                contexts: [],
+                rerankers: [],
+                user: user,
+                role: user.role?.id,
+                model: undefined
+              });
+              return {
+                ...instance,
+                name: instance.name,
+                description: instance.description,
+                category: instance.category,
+                config: tool.config,
+              }
+            }
+
             if (tool.type === "agent") {
               if (tool.id === result.id) {
                 return null;
@@ -1874,7 +1994,7 @@ const addAgentFields = async (
                 return null;
               }
 
-              hydrated = await backend.tool(instance.id, agents);
+              hydrated = await backend.tool(instance.id, agents, contexts, rerankers);
             } else {
               hydrated = tools.find((t) => t.id === tool.id);
             }
@@ -1893,7 +2013,7 @@ const addAgentFields = async (
       );
 
       if (args.project) {
-        const projectTool = await createProjectRetrievalTool({
+        const projectTool = await createProjectItemsRetrievalTool({
           projectId: args.project,
           user: user,
           role: user.role?.id,
@@ -2064,6 +2184,26 @@ const postprocessUpdate = async ({
         };
       }
 
+      if (
+        context.processor &&
+        (context.processor.config?.trigger === "onUpdate" ||
+          context.processor.config?.trigger === "always")
+      ) {
+        const {
+          jobs
+        } = await contextItemProcessorMutation(
+          context,
+          config,
+          [result],
+          user,
+          role,
+        );
+        return {
+          result: result,
+          job: jobs[0],
+        };
+      }
+
       return result;
     }
   }
@@ -2163,6 +2303,7 @@ const finalizeRequestedFields = async ({
   requestedFields,
   agents,
   contexts,
+  rerankers,
   tools,
   result,
   user,
@@ -2172,6 +2313,7 @@ const finalizeRequestedFields = async ({
   requestedFields: string[];
   agents: ExuluAgent[];
   contexts: ExuluContext[];
+  rerankers: ExuluReranker[];
   tools: ExuluTool[];
   result: any | [];
   user: User;
@@ -2190,6 +2332,7 @@ const finalizeRequestedFields = async ({
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result: item,
         user: user,
@@ -2238,6 +2381,7 @@ const finalizeRequestedFields = async ({
         tools,
         user,
         contexts,
+        rerankers,
       );
       if (!requestedFields.includes("backend")) {
         delete result.backend;
@@ -2296,10 +2440,13 @@ const finalizeRequestedFields = async ({
 
 export const applyFilters = (
   query: any,
-  filters: any[],
+  filters: SearchFilters,
   table?: ExuluTableDefinition,
   field_prefix?: string,
 ) => {
+  if (!filters) {
+    return query;
+  }
   filters.forEach((filter) => {
     Object.entries(filter).forEach(([fieldName, operators]: [string, any]) => {
       if (operators) {
@@ -2315,14 +2462,18 @@ export const applyFilters = (
           });
         }
         if (operators.or !== undefined) {
-          operators.or.forEach((operator) => {
-            query = converOperatorToQuery(
-              query,
-              fieldName,
-              operator,
-              table,
-              field_prefix,
-            );
+          query = query.where((builder: any) => {
+            operators.or.forEach((operator: any) => {
+              builder.orWhere((subBuilder: any) => {
+                converOperatorToQuery(
+                  subBuilder,
+                  fieldName,
+                  operator,
+                  table,
+                  field_prefix,
+                );
+              });
+            });
           });
         }
         query = converOperatorToQuery(
@@ -2338,7 +2489,7 @@ export const applyFilters = (
   return query;
 };
 
-const applySorting = (
+export const applySorting = (
   query: any,
   sort?: { field: string; direction: "ASC" | "DESC" },
   field_prefix?: string,
@@ -2428,6 +2579,7 @@ function createQueries(
   agents: ExuluAgent[],
   tools: ExuluTool[],
   contexts: ExuluContext[],
+  rerankers: ExuluReranker[],
 ) {
   const tableNamePlural = table.name.plural.toLowerCase();
   const tableNameSingular = table.name.singular.toLowerCase();
@@ -2448,6 +2600,7 @@ function createQueries(
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result,
         user: context.user,
@@ -2469,6 +2622,7 @@ function createQueries(
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result,
         user: context.user,
@@ -2490,6 +2644,7 @@ function createQueries(
         requestedFields,
         agents,
         contexts,
+        rerankers,
         tools,
         result,
         user: context.user,
@@ -2518,6 +2673,7 @@ function createQueries(
           requestedFields,
           agents,
           contexts,
+          rerankers,
           tools,
           result: items,
           user: context.user,
@@ -2526,12 +2682,14 @@ function createQueries(
     },
     // Add generic statistics query for all tables
     [`${tableNamePlural}Statistics`]: async (_, args, context, info) => {
-      const { filters = [], groupBy } = args;
+      const { filters = [], groupBy, limit = 10 } = args;
       const { db } = context;
 
       let query = db(tableNamePlural);
       query = applyFilters(query, filters, table);
       query = applyAccessControl(table, query, context.user);
+
+      query = query.limit(limit);
 
       // Group by the specified field and count
       if (groupBy) {
@@ -2583,11 +2741,12 @@ function createQueries(
       if (!exists) {
         throw new Error("Context " + table.id + " not found in registry.");
       }
-      const { limit = 10, page = 0, filters = [], sort } = args;
+      const { limit = 10, page = 0, itemFilters = [], chunkFilters = [], sort } = args;
       return await vectorSearch({
         limit: limit || exists.configuration.maxRetrievalResults || 10,
         page,
-        filters,
+        itemFilters,
+        chunkFilters,
         sort,
         context: exists,
         db: context.db,
@@ -2683,11 +2842,13 @@ export type VectorSearchChunkResult = {
 export const vectorSearch = async ({
   limit,
   page,
-  filters,
+  itemFilters,
+  chunkFilters,
   sort,
   context,
   db,
   query,
+  keywords,
   method,
   user,
   role,
@@ -2697,11 +2858,13 @@ export const vectorSearch = async ({
 }: {
   limit: number;
   page: number;
-  filters: any[];
+  itemFilters: SearchFilters;
+  chunkFilters: SearchFilters;
   sort: any;
   context: ExuluContext;
   db: KnexType;
-  query: string;
+  query?: string;
+  keywords?: string[];
   method: VectorMethod;
   user?: User;
   role?: string;
@@ -2716,8 +2879,10 @@ export const vectorSearch = async ({
     hybrid?: number;
   };
 }): Promise<{
-  filters: any[];
-  query: string;
+  itemFilters: SearchFilters;
+  chunkFilters: SearchFilters;
+  query?: string;
+  keywords?: string[];
   method: VectorMethod;
   context: {
     name: string;
@@ -2731,7 +2896,8 @@ export const vectorSearch = async ({
   console.log("[EXULU] Called vector search.", {
     limit,
     page,
-    filters,
+    itemFilters,
+    chunkFilters,
     sort,
     context: context.id,
     query,
@@ -2746,7 +2912,7 @@ export const vectorSearch = async ({
     throw new Error("Limit cannot be greater than 1000.");
   }
 
-  if (!query) {
+  if (!query && !keywords) {
     throw new Error("Query is required.");
   }
 
@@ -2817,32 +2983,84 @@ export const vectorSearch = async ({
   // on the main items table as the required
   // fields such as rights_mode, name, description, etc. are
   // on the main table.
-  chunksQuery = applyFilters(chunksQuery, filters, table, "items");
+  chunksQuery = applyFilters(chunksQuery, itemFilters, table, "items");
+  chunksQuery = applyFilters(chunksQuery, chunkFilters, table, "chunks");
   chunksQuery = applyAccessControl(table, chunksQuery, user, "items");
   chunksQuery = applySorting(chunksQuery, sort, "items");
 
-  if (queryRewriter) {
+  if (queryRewriter && query) {
     query = await queryRewriter(query);
   }
 
-  const { chunks: queryChunks } = await embedder.generateFromQuery(
-    context.id,
-    query,
-    {
-      label: table.name.singular,
-      trigger,
-    },
-    user?.id,
-    role,
-  );
+  let vector: number[] = [];
+  let vectorStr: string = "";
+  let vectorExpr: string = "";
 
-  if (!queryChunks?.[0]?.vector) {
-    throw new Error("No vector generated for query.");
+  if (query) {
+
+    // Preprocess query with language detection and stemming
+    const { processed: stemmedQuery, language } = preprocessQuery(query, {
+      enableStemming: true,
+      detectLanguage: true,
+    });
+
+    console.log("[EXULU] Stemmed query:", stemmedQuery);
+
+    if (stemmedQuery) {
+      query = stemmedQuery;
+    }
+
+    const result = await embedder.generateFromQuery(
+      context.id,
+      query,
+      {
+        label: table.name.singular,
+        trigger,
+      },
+      user?.id,
+      role,
+    );
+
+    if (!result?.chunks?.[0]?.vector) {
+      throw new Error("No vector generated for query.");
+    }
+    vector = result.chunks[0].vector;
+    vectorStr = `ARRAY[${vector.join(",")}]`;
+    vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
   }
 
-  const vector = queryChunks[0].vector;
-  const vectorStr = `ARRAY[${vector.join(",")}]`;
-  const vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
+  let keywordsQuery: string[] = [];
+
+  if (keywords) {
+    console.log("[EXULU] Using keywords:", keywords);
+    let tokens = keywords?.map(keyword => keyword.trim()).filter(token => token.length > 0);
+
+    // Take each token, and create a version with, and without special characters
+    const sanitized = tokens?.map(token => {
+      return token.replace(/[^a-zA-Z0-9]/g, '');
+    }).filter(token => token.length > 0);
+
+    keywordsQuery = [...new Set([...sanitized!, ...tokens!])];
+  } else if (query) {
+    console.log("[EXULU] Extracting keywords from query:", query);
+    // Use the query and extract the keywords using good
+    // old fashioned code.
+    // Split query into tokens and create OR query for partial matching
+    // This handles technical terms like "CBM-2", "0x02", "ABC-Fehler" better
+    // by matching ANY term instead of requiring ALL terms
+    const tokens = query
+      .trim()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+
+    console.log("[EXULU] Query tokens:", tokens);
+
+    // Sanitize tokens: extract alphanumeric words from each token
+    keywordsQuery = Array.from(new Set(tokens.flatMap((t) => {
+      // Split on non-alphanumeric, but keep the parts
+      return t.split(/[^\w]+/).filter((part) => part.length > 0);
+    })));
+  }
 
   const language = configuration.language || "english";
 
@@ -2856,27 +3074,11 @@ export const vectorSearch = async ({
       // can rerank the results.
       chunksQuery.limit(limit * 2);
 
-      // Split query into tokens and create OR query for partial matching
-      // This handles technical terms like "CBM-2", "0x02", "ABC-Fehler" better
-      // by matching ANY term instead of requiring ALL terms
-      const tokens = query
-        .trim()
-        .split(/\s+/)
-        .filter((t) => t.length > 0);
-
-      // Sanitize tokens: extract alphanumeric words from each token
-      // "CBM-2" -> ["CBM", "2"], "0x02" -> ["0x02"], "ABC-Fehler" -> ["ABC", "Fehler"]
-      const sanitizedTokens = tokens.flatMap((t) => {
-        // Split on non-alphanumeric, but keep the parts
-        return t.split(/[^\w]+/).filter((part) => part.length > 0);
-      });
-
-      const orQuery = sanitizedTokens.join(" | ");
+      const orQuery = keywordsQuery.join(" | ");
 
       console.log("[EXULU] FTS query transformation:", {
         original: query,
-        tokens,
-        sanitizedTokens,
+        keywordsQuery,
         orQuery,
         cutoff: cutoffs?.tsvector,
       });
@@ -2959,7 +3161,8 @@ export const vectorSearch = async ({
         .limit(Math.min(matchCount * 2, 500));
 
       // Apply filters and access control to full_text CTE
-      fullTextQuery = applyFilters(fullTextQuery, filters, table, "items");
+      fullTextQuery = applyFilters(fullTextQuery, itemFilters, table, "items");
+      fullTextQuery = applyFilters(fullTextQuery, chunkFilters, table, "chunks");
       fullTextQuery = applyAccessControl(table, fullTextQuery, user, "items");
 
       // Build the semantic CTE subquery
@@ -2980,7 +3183,8 @@ export const vectorSearch = async ({
         .limit(Math.min(matchCount * 2, 500));
 
       // Apply filters and access control to semantic CTE
-      semanticQuery = applyFilters(semanticQuery, filters, table, "items");
+      semanticQuery = applyFilters(semanticQuery, itemFilters, table, "items");
+      semanticQuery = applyFilters(semanticQuery, chunkFilters, table, "chunks");
       semanticQuery = applyAccessControl(table, semanticQuery, user, "items");
 
       // Build the main query with CTEs
@@ -3270,8 +3474,10 @@ export const vectorSearch = async ({
   });
 
   return {
-    filters,
+    itemFilters,
+    chunkFilters,
     query,
+    keywords,
     method,
     context: {
       name: table.name.singular,
@@ -3382,6 +3588,7 @@ export const contextToTableDefinition = (
   definition.fields.push({
     name: "chunks_count",
     type: "number",
+
   });
   definition.fields.push({
     name: "name",
@@ -3422,6 +3629,7 @@ export function createSDL(
     };
     timeoutInSeconds?: number;
   }[],
+  rerankers: ExuluReranker[]
 ) {
   const contextSchemas: ExuluTableDefinition[] = contexts.map((context) =>
     contextToTableDefinition(context),
@@ -3541,11 +3749,11 @@ export function createSDL(
       ${tableNameSingular}ByIds(ids: [ID!]!): [${tableNameSingular}]!
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
       ${tableNameSingular}One(filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingular}
-      ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String): [StatisticsResult]!
+      ${tableNamePlural}Statistics(filters: [Filter${tableNameSingularUpperCaseFirst}], groupBy: String, limit: Int): [StatisticsResult]!
     `;
     if (table.type === "items") {
       typeDefs += `
-      ${tableNamePlural}VectorSearch(query: String!, method: VectorMethodEnum!, filters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
+      ${tableNamePlural}VectorSearch(query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
       ${tableNameSingular}ChunkById(id: ID!): ${tableNameSingular}VectorSearchChunk
     `;
     }
@@ -3619,7 +3827,8 @@ export function createSDL(
     type ${tableNameSingular}VectorSearchResult {
         chunks: [${tableNameSingular}VectorSearchChunk!]!
         context: VectoSearchResultContext!
-        filters: JSON!
+        itemFilters: JSON!
+        chunkFilters: JSON!
         query: String!
         method: VectorMethodEnum!
     }
@@ -3673,11 +3882,11 @@ type PageInfo {
 `;
     Object.assign(
       resolvers.Query,
-      createQueries(table, agents, tools, contexts),
+      createQueries(table, agents, tools, contexts, rerankers),
     );
     Object.assign(
       resolvers.Mutation,
-      createMutations(table, agents, contexts, tools, config),
+      createMutations(table, agents, contexts, rerankers, tools, config),
     );
 
     // Add RBAC resolver if enabled
@@ -3722,6 +3931,10 @@ type PageInfo {
     `;
 
   typeDefs += `
+    rerankers: RerankerPaginationResult
+    `;
+
+  typeDefs += `
     contextById(id: ID!): Context
     `;
 
@@ -3730,7 +3943,7 @@ type PageInfo {
     `;
 
   mutationDefs += `
-    runEval(id: ID!, cases: [ID!]): RunEvalReturnPayload
+    runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
     `;
 
   mutationDefs += `
@@ -4221,6 +4434,7 @@ type PageInfo {
                 agentBackend,
                 inputMessages,
                 contexts,
+                rerankers,
                 user,
                 tools,
                 config,
@@ -4546,6 +4760,19 @@ type PageInfo {
     };
   };
 
+  resolvers.Query["rerankers"] = async (_, args, context, info) => {
+    const requestedFields = getRequestedFields(info);
+    return {
+      items: rerankers.map((reranker: ExuluReranker) => {
+        const object = {};
+        requestedFields.forEach((field) => {
+          object[field] = reranker[field];
+        });
+        return object;  
+      }),
+    };
+  };
+
   resolvers.Query["contexts"] = async (_, args, context, info) => {
     const data = await Promise.all(
       contexts.map(async (context) => {
@@ -4595,6 +4822,7 @@ type PageInfo {
             };
           }),
         );
+
         return {
           id: context.id,
           name: context.name,
@@ -4610,13 +4838,25 @@ type PageInfo {
           active: context.active,
           sources,
           processor,
-          fields: context.fields.map((field) => {
-            return {
-              ...field,
-              name: sanitizeName(field.name),
-              label: field.name?.replace("_s3key", ""),
-            };
-          }),
+          fields: await Promise.all(
+            context.fields.map(async (field) => {
+              const label = field.name?.replace("_s3key", "");
+              if (field.type === "file" && !field.name.endsWith("_s3key")) {
+                field.name = field.name + "_s3key";
+              }
+              return {
+                ...field,
+                name: sanitizeName(field.name),
+                editable: field.editable,
+                ...(field.type === "file"
+                  ? {
+                    allowedFileTypes: field.allowedFileTypes,
+                  }
+                  : {}),
+                label: field.name?.replace("_s3key", ""),
+              };
+            }),
+          ),
         };
       }),
     );
@@ -4718,6 +4958,7 @@ type PageInfo {
           return {
             ...field,
             name: sanitizeName(field.name),
+            editable: field.editable,
             ...(field.type === "file"
               ? {
                 allowedFileTypes: field.allowedFileTypes,
@@ -4753,14 +4994,29 @@ type PageInfo {
         if (!backend) {
           return null;
         }
-        return await backend.tool(instance.id, agents);
+        return await backend.tool(instance.id, agents, contexts, rerankers);
       }),
     );
+
+    let agenticRetrievalTool: ExuluTool | undefined = undefined;
 
     const filtered: ExuluTool[] = agentTools.filter(
       (tool) => tool !== null,
     ) as ExuluTool[];
     let allTools = [...filtered, ...tools];
+
+    if (contexts?.length) {
+      agenticRetrievalTool = createAgenticRetrievalTool({
+        contexts: contexts,
+        rerankers: rerankers,
+        user: context.user,
+        role: context.user?.role?.id,
+        model: undefined, // irrelevant at this point as we only retrieve the tool information here, not execute it
+      });
+      if (agenticRetrievalTool) {
+        allTools.push(agenticRetrievalTool);
+      }
+    }
 
     // Apply search filter
     if (search && search.trim()) {
@@ -4909,6 +5165,12 @@ type PageInfo {
     `;
 
   modelDefs += `
+    type RerankerPaginationResult {
+    items: [Reranker]!
+    }
+    `;
+
+  modelDefs += `
     type ToolPaginationResult {
     items: [Tool]!
     total: Int!
@@ -5012,6 +5274,11 @@ type Context {
     configuration: JSON
     sources: [ContextSource]
     processor: ContextProcessor
+}
+type Reranker {
+    id: ID!
+    name: String!
+    description: String
 }
 type Embedder {
     name: String!

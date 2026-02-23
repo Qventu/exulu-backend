@@ -1,10 +1,11 @@
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import type { BullMqJobData } from "./decoraters/bullmq.ts";
-import type { ExuluAgent, ExuluTool } from "./classes.ts";
+import type { ExuluAgent, ExuluContext, ExuluReranker, ExuluTool } from "./classes.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { RBACResolver } from "./utils/graphql.ts";
 import { rateLimiter } from "./rate-limiter.ts";
 import type { User } from "@EXULU_TYPES/models/user.ts";
+import { createAgenticRetrievalTool } from "./agentic-retrieval.ts";
 
 export const bullmq = {
     validate: (id: string | undefined, data: BullMqJobData): void => {
@@ -34,6 +35,8 @@ export const bullmq = {
 export const getEnabledTools = async (
     agentInstance: Agent,
     allExuluTools: ExuluTool[],
+    allContexts: ExuluContext[],
+    allRerankers: ExuluReranker[] | undefined,
     disabledTools: string[] = [],
     agents: ExuluAgent[],
     user?: User
@@ -43,6 +46,18 @@ export const getEnabledTools = async (
         const results = await Promise.all(agentInstance.tools.map(
             async ({ config, id, type }) => {
                 let hydrated: ExuluTool | null | undefined;
+                if (id === "agentic_context_search") {
+                    return createAgenticRetrievalTool({
+                        // This tool is reinstantiated in the convertToolsArrayToObject function, where 
+                        // we can access the activated contexts and model that is calling it but we also 
+                        // return it here so we know it was generally enabled as a tool.
+                        contexts: allContexts,
+                        rerankers: allRerankers || [],
+                        user: user,
+                        role: user?.role?.id,
+                        model: undefined
+                    });
+                }
                 if (
                     type === "agent"
                 ) {
@@ -58,7 +73,7 @@ export const getEnabledTools = async (
                     if (!backend) {
                         throw new Error("Trying to load a tool of type 'agent', but the associated agent with id " + id + " does not have a backend set for it.")
                     }
-                    
+
                     // if no access do not return it
                     const hasAccessToAgent = await checkRecordAccess(instance, "read", user);
 
@@ -66,7 +81,7 @@ export const getEnabledTools = async (
                         return null;
                     }
 
-                    hydrated = await backend.tool(instance.id, agents)
+                    hydrated = await backend.tool(instance.id, agents, allContexts, allRerankers || [])
                 } else {
                     hydrated = allExuluTools.find(t => t.id === id)
                 }
@@ -104,7 +119,7 @@ export const loadAgents = async () => {
     return agents;
 }
 
-export const loadAgent = async (id: string) => {
+export const loadAgent = async (id: string): Promise<Agent> => {
     const cachedAgent = loadAgentCache.get(id);
     if (cachedAgent && cachedAgent.expiresAt > new Date()) {
         return cachedAgent.agent;

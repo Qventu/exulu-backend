@@ -2,6 +2,7 @@ import {
   ExuluAgent,
   ExuluContext,
   ExuluEval,
+  ExuluReranker,
   getTableName,
   type ExuluContextSource,
   type ExuluQueueConfig,
@@ -17,8 +18,10 @@ import {
   claudeOpus4Agent,
   claudeSonnet45Agent,
 } from "../templates/agents/anthropic/claude";
+import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "../templates/agents/cerebras";
 import {
   vertexGemini25FlashAgent,
+  vertexGemini25ProAgent,
   vertexGemini3ProAgent,
 } from "../templates/agents/google/vertex";
 import {
@@ -53,8 +56,8 @@ const consoleTransport = new winston.transports.Console({
 });
 import { getDefaultEvals } from "../templates/evals/index.ts";
 import { ExuluQueues } from "../index.ts";
-import { mathTools } from "../templates/tools/math.ts";
 import { todoTools } from "../templates/tools/todo/todo.ts";
+import { perplexityTools } from "../templates/tools/perplexity.ts";
 
 // Monkey-patch console to use Winston with metadata support
 const formatArg = (arg: any) =>
@@ -135,6 +138,7 @@ export class ExuluApp {
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
   private _queues: ExuluQueueConfig[] = [];
+  private _rerankers: ExuluReranker[] = [];
   private _contexts?: Record<string, ExuluContext> = {};
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
@@ -149,11 +153,13 @@ export class ExuluApp {
     config,
     tools,
     evals,
+    rerankers,
   }: {
     // mcps
     contexts?: Record<string, ExuluContext>;
     config: ExuluConfig;
     agents?: ExuluAgent[];
+    rerankers?: ExuluReranker[];
     evals?: ExuluEval[];
     tools?: ExuluTool[];
     // mcps?: ExuluMcpToolsClient[]
@@ -167,10 +173,18 @@ export class ExuluApp {
       ...contexts,
     };
 
+    this._rerankers = [
+      ...(rerankers ?? []),
+    ];
+
     this._agents = [
       claudeSonnet4Agent,
       claudeOpus4Agent,
+      gptOss120bAgent,
+      llama38bAgent,
+      llama3370bAgent,
       vertexGemini25FlashAgent,
+      vertexGemini25ProAgent,
       vertexGemini3ProAgent,
       claudeSonnet45Agent,
       gpt5MiniAgent,
@@ -200,8 +214,8 @@ export class ExuluApp {
 
     this._tools = [
       ...(tools ?? []),
-      ...mathTools,
       ...todoTools,
+      ...perplexityTools,
       // Add contexts as tools
       ...(Object.values(contexts || {})
         .map((context) => context.tool())
@@ -215,7 +229,7 @@ export class ExuluApp {
     const checks: {
       name: string;
       id: string;
-      type: "context" | "agent" | "tool";
+      type: "context" | "agent" | "tool" | "reranker";
     }[] = [
       ...Object.keys(this._contexts || {}).map((x) => ({
         name: this._contexts?.[x]?.name ?? "",
@@ -232,13 +246,18 @@ export class ExuluApp {
         id: tool.id ?? "",
         type: "tool" as const,
       })),
+      ...this._rerankers.map((reranker) => ({
+        name: reranker.name ?? "",
+        id: reranker.id ?? "",
+        type: "reranker" as const,
+      })),
     ];
 
     // Integrate validation into the create method
     const invalid = checks.filter((x) => !isValidPostgresName(x?.id ?? ""));
     if (invalid.length > 0) {
       console.error(
-        `%c[EXULU] Invalid ID found for a context, tool or agent: ${invalid.map((x) => x.id).join(", ")}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`,
+        `%c[EXULU] Invalid ID found for a context, tool, reranker or agent: ${invalid.map((x) => x.id).join(", ")}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`,
         "color: orange; font-weight: bold; \n \n",
       );
       throw new Error(
@@ -472,6 +491,7 @@ export class ExuluApp {
           filteredQueues,
           this._config,
           Object.values(this._contexts ?? {}),
+          this._rerankers,
           this._evals,
           this._tools,
           tracer,
@@ -524,6 +544,7 @@ export class ExuluApp {
           this._evals,
           tracer,
           this._queues,
+          this._rerankers,
         );
 
         if (this._config?.MCP.enabled) {
@@ -533,6 +554,7 @@ export class ExuluApp {
             allTools: this._tools,
             allAgents: this._agents,
             allContexts: Object.values(this._contexts ?? {}),
+            allRerankers: this._rerankers,
             config: this._config,
           });
         }

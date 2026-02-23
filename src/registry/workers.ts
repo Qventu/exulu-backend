@@ -2,7 +2,7 @@ import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq, getEnabledTools, loadAgent } from "./utils";
-import { ExuluAgent, ExuluContext, ExuluEval, ExuluStorage, ExuluTool, getTableName, updateStatistic, type ExuluQueueConfig, type ExuluWorkflow, type STATISTICS_LABELS } from "./classes";
+import { ExuluAgent, ExuluContext, ExuluEval, ExuluReranker, ExuluStorage, ExuluTool, getTableName, sanitizeToolName, updateStatistic, type ExuluQueueConfig, type ExuluWorkflow, type STATISTICS_LABELS } from "./classes";
 import { postgresClient } from "../postgres/client";
 import type { BullMqJobData } from "./decoraters/bullmq";
 import { type Tracer } from "@opentelemetry/api";
@@ -58,6 +58,7 @@ export const createWorkers = async (
     queues: ExuluQueueConfig[],
     config: ExuluConfig,
     contexts: ExuluContext[],
+    rerankers: ExuluReranker[],
     evals: ExuluEval[],
     tools: ExuluTool[],
     tracer?: Tracer
@@ -327,6 +328,7 @@ export const createWorkers = async (
                                             agentBackend,
                                             inputMessages,
                                             contexts,
+                                            rerankers,
                                             user,
                                             tools,
                                             config,
@@ -425,6 +427,7 @@ export const createWorkers = async (
                                             agentBackend,
                                             inputMessages,
                                             contexts,
+                                            rerankers,
                                             user,
                                             tools,
                                             config
@@ -1011,6 +1014,7 @@ export const processUiMessagesFlow = async ({
     agentBackend,
     inputMessages,
     contexts,
+    rerankers,
     user,
     tools,
     config,
@@ -1021,6 +1025,7 @@ export const processUiMessagesFlow = async ({
     agentBackend: ExuluAgent,
     inputMessages: UIMessage[],
     contexts: ExuluContext[],
+    rerankers: ExuluReranker[],
     user: User,
     tools: ExuluTool[],
     config: ExuluConfig,
@@ -1046,7 +1051,7 @@ export const processUiMessagesFlow = async ({
     console.log("[EXULU] agent tools", agentInstance.tools?.map(x => x.name + " (" + x.id + ")"))
 
     const disabledTools = [];
-    let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, disabledTools, agents, user)
+    let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, tools, contexts, rerankers, disabledTools, agents, user)
 
     console.log("[EXULU] enabled tools", enabledTools?.map(x => x.name + " (" + x.id + ")"))
 
@@ -1168,10 +1173,12 @@ export const processUiMessagesFlow = async ({
             const startTime = Date.now();
 
             try {
-
                 const result = await agentBackend.generateStream({
                     contexts,
+                    rerankers,
+                    agentInstance: agentInstance,
                     user,
+                    approvedTools: tools.map(tool => "tool-" + sanitizeToolName(tool.name)),
                     instructions: agentInstance.instructions,
                     session: undefined,
                     previousMessages: messageHistory.messages,

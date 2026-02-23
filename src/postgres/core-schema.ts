@@ -54,6 +54,10 @@ const agentSessionsSchema: ExuluTableDefinition = {
             type: "uuid"
         },
         {
+            name: "session_items", // array of items as global ids ('<context_id>/<item_id>')
+            type: "json",
+        },
+        {
             name: "title",
             type: "text"
         },
@@ -180,8 +184,16 @@ const agentsSchema: ExuluTableDefinition = {
             type: "text"
         },
         {
+            name: "welcomemessage",
+            type: "text"
+        },
+        {
             name: "instructions",
             type: "text"
+        },
+        {
+            name: "memory",
+            type: "text" // allows selecting a exulu context as native memory for the agent
         },
         {
             name: "providerapikey",

@@ -23,6 +23,7 @@ const TodoWriteTool = new ExuluTool({
   config: [{
     name: "description",
     description: "The description of the todo list, if set overwrites the default description.",
+    type: "string",
     default: DESCRIPTION_WRITE
   }],
   inputSchema: z.object({
@@ -71,6 +72,7 @@ const TodoReadTool = new ExuluTool({
   config: [{
     name: "description",
     description: "The description of the todo list, if set overwrites the default description.",
+    type: "string",
     default: DESCRIPTION_READ
   }],
   execute: async (inputs) => {

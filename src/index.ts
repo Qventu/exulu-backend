@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
 import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluStorage, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
+export { ExuluContext, ExuluReranker, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluStorage, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
 export { ExuluApp } from "./registry/index"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
@@ -18,8 +18,8 @@ import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
 import { gpt5MiniAgent, gpt5agent, gpt5proAgent, gpt5CodexAgent, gpt5NanoAgent, gpt41Agent, gpt41MiniAgent, gpt4oAgent, gpt4oMiniAgent } from './templates/agents/openai/gpt'
 import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from './templates/agents/anthropic/claude'
-import { vertexGemini25FlashAgent, vertexGemini3ProAgent } from './templates/agents/google/vertex'
-
+import { vertexGemini25FlashAgent, vertexGemini3ProAgent, vertexGemini25ProAgent } from './templates/agents/google/vertex'
+import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from './templates/agents/cerebras'
 import type { Item } from '@EXULU_TYPES/models/item'
 export type { Item as ExuluItem }
 
@@ -36,8 +36,14 @@ export const ExuluDefaultAgents = {
         sonnet4: claudeSonnet4Agent,
         sonnet45: claudeSonnet45Agent
     },
+    cerebras: {
+        gptOss120b: gptOss120bAgent,
+        llama38b: llama38bAgent,
+        llama3370b: llama3370bAgent
+    },
     google: {
         vertexGemini25Flash: vertexGemini25FlashAgent,
+        vertexGemini25Pro: vertexGemini25ProAgent,
         vertexGemini3Pro: vertexGemini3ProAgent
     },
     openai: {

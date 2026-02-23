@@ -125,16 +125,3 @@ export async function postgresClient(): Promise<{
         db: db["exulu"]
     };
 }
-
-export const refreshPostgresClient = async (): Promise<{
-    db: KnexType
-}> => {
-    if (db["exulu"]) {
-        await db["exulu"].destroy();
-        db["exulu"] = undefined;
-    }
-    const { db: refreshed } = await postgresClient();
-    return {
-        db: refreshed
-    };
-}

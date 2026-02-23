@@ -6,6 +6,13 @@
       "headers": {
         "Authorization": "Bearer ${EXULU_TOKEN}"
       }
+    },
+    "exulu-mcp-server-mr.-sol": {
+      "type": "http",
+      "url": "https://backend.ai.open.de/mcp/5fff62d1-e7ef-4c3c-b490-51cb95512360",
+      "headers": {
+        "Authorization": "Bearer ${EXULU_TOKEN}"
+      }
     }
   }
 }

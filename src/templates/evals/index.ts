@@ -54,6 +54,9 @@ const llmAsJudgeEval = () => {
                 console.log("[EXULU] prompt", prompt);
 
                 const response = await backend.generateSync({
+                    agentInstance: agent,
+                    contexts: [],
+                    rerankers: [],
                     prompt,
                     outputSchema: z.object({
                         score: z.number().min(0).max(100).describe("The score between 0 and 100."),

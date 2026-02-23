@@ -369,12 +369,18 @@ export const createUppyRoutes = async (
 
         let bucket = key.split("/")[0];
 
+        console.log("[EXULU] bucket", bucket)
+
         if (!bucket || typeof bucket !== 'string' || bucket.trim() === '') {
             res.status(400).json({ error: 'Missing or invalid `bucket` (should be the first part of the key before the first slash).' });
             return;
         }
 
+        console.log("[EXULU] key for download before split", key)
+
         key = key.split("/").slice(1).join("/")
+
+        console.log("[EXULU] key for download after split", key)
 
         if (typeof key !== 'string' || key.trim() === '') {
             res.status(400).json({ error: 'Missing or invalid `key` query parameter.' });

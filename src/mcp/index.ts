@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"
-import { convertToolsArrayToObject, ExuluAgent, ExuluContext, sanitizeToolName, type ExuluTool } from "../registry/classes";
+import { convertToolsArrayToObject, ExuluAgent, ExuluContext, ExuluReranker, sanitizeToolName, type ExuluTool } from "../registry/classes";
 import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
 import { requestValidators } from "../registry/route-validators";
@@ -27,13 +27,14 @@ export class ExuluMCP {
     constructor() {
     }
 
-    private configure = async ({ user, agentInstance, allTools, allAgents, allContexts, config, tracer }: {
+    private configure = async ({ user, agentInstance, allTools, allAgents, allContexts, allRerankers, config, tracer }: {
         agentInstance: Agent,
         user: User,
         tracer?: Tracer,
         allTools: ExuluTool[],
         allAgents: ExuluAgent[],
         allContexts: ExuluContext[],
+        allRerankers: ExuluReranker[],
         config: ExuluConfig,
     }): Promise<McpServer> => {
 
@@ -51,7 +52,7 @@ export class ExuluMCP {
         }
 
         const disabledTools = []
-        let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allTools, disabledTools, allAgents, user)
+        let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allTools, allContexts, allRerankers, disabledTools, allAgents, user)
 
         const backend = allAgents.find(a => a.id === agentInstance.backend);
 
@@ -61,7 +62,7 @@ export class ExuluMCP {
 
         // Add the agent itself as a tool so MCP clients can also call the
         // agent directly, instead of just its tools.
-        const agentTool = await backend.tool(agentInstance.id, allAgents)
+        const agentTool = await backend.tool(agentInstance.id, allAgents, allContexts, allRerankers)
 
         if (agentTool) {
             enabledTools = [
@@ -121,12 +122,17 @@ export class ExuluMCP {
 
                 const tools = await convertToolsArrayToObject(
                     [tool],
+                    [],
                     allTools,
                     configValues,
                     providerapikey,
                     allContexts,
+                    allRerankers,
                     user,
-                    config
+                    config,
+                    undefined,
+                    undefined,
+                    undefined,
                 )
 
                 const convertedTool = tools[sanitizeToolName(tool.name)];
@@ -273,11 +279,12 @@ export class ExuluMCP {
         return server.mcp;
     }
 
-    create = async ({ express, allTools, allAgents, allContexts, config }: {
+    create = async ({ express, allTools, allAgents, allContexts, allRerankers, config }: {
         express: Express,
         allTools: ExuluTool[],
         allAgents: ExuluAgent[],
         allContexts: ExuluContext[],
+        allRerankers: ExuluReranker[],
         config: ExuluConfig,
     }): Promise<Express> => {
 
@@ -334,6 +341,7 @@ export class ExuluMCP {
                 allTools,
                 allAgents,
                 allContexts,
+                allRerankers,
                 config,
             })
 

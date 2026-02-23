@@ -8,6 +8,7 @@ export interface AgentSession {
     project: string;
     title: string;
     created_by: string;
+    session_items: string[];
     rights_mode: 'private' | 'users' | 'roles' | 'public' /* | 'projects' */
     RBAC?: {
         type?: string;

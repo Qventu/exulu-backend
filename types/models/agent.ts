@@ -3,6 +3,8 @@ export interface Agent {
     modelName?: string;
     providerName?: string;
     backend: string;
+    memory?: string;
+    welcomemessage?: string;
     type: "agent";
     name: string;
     image?: string;
@@ -33,6 +35,7 @@ export interface Agent {
         config: {
             name: string;
             variable: string;
+            type: "boolean" | "string" | "number" | "variable";
         }[];
         name: string;
         description: string;
