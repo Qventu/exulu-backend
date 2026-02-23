@@ -196,7 +196,7 @@ function createCustomAgenticRetrievalToolLoopAgent({
             fs.writeFileSync("reranker.json", JSON.stringify(reranker, null, 2));
 
             let finished = false;
-            let maxSteps = 12;
+            let maxSteps = 2;
             let currentStep = 0;
             const output: AgenticRetrievalOutput = {
                 reasoning: [],
@@ -500,25 +500,44 @@ export const createAgenticRetrievalAgent = ({
 } => {
     // Create the system instructions for the agent
 
-    const searchItemsByNameTools = contexts.reduce((acc, ctx) => {
-        return {
-            ...acc,
-            ["search_items_by_name_" + ctx.id]: tool({
-                description: `
-            Search for relevant items by name in the "${ctx.name}" knowledge base.`,
-                inputSchema: z.object({
-                    item_name: z.string().describe("The name of the item to search for."),
-                    limit: z.number().default(100).describe("Maximum number of items to return (max 400)"),
-                }),
-                execute: async ({ item_name, limit }) => {
+    const searchItemsByNameTool = {
+        "search_items_by_name": tool({
+            description: `
+        Search for relevant items by name across the available knowledge bases.`,
+            inputSchema: z.object({
+                knowledge_base_ids: z.array(z.enum(contexts.map(ctx => ctx.id) as [string, ...string[]])).describe(`
+                    The available knowledge bases are:
+                    ${contexts.map(ctx => `
+                        <knowledge_base>
+                            <id>${ctx.id}</id>
+                            <name>${ctx.name}</name>
+                            <description>${ctx.description}</description>
+                        </knowledge_base>
+                    `).join("\n")}
+                `),
+                item_name: z.string().describe("The name of the item to search for."),
+                limit: z.number().default(100).describe("Maximum number of items to return (max 400), if searching through multiple knowledge bases, the limit is applied for each knowledge base individually."),
+            }),
+            execute: async ({ item_name, limit, knowledge_base_ids }) => {
 
-                    let itemFilters: SearchFilters = [];
-                    if (item_name) {
-                        itemFilters.push({ name: { contains: item_name } });
+                if (!knowledge_base_ids?.length) {
+                    // Default to all
+                    knowledge_base_ids = contexts.map(ctx => ctx.id);
+                }
+
+                let itemFilters: SearchFilters = [];
+                if (item_name) {
+                    itemFilters.push({ name: { contains: item_name } });
+                }
+
+                const { db } = await postgresClient();
+
+                const results = await Promise.all(knowledge_base_ids.map(async (knowledge_base_id) => {
+                    const ctx = contexts.find(ctx => ctx.id === knowledge_base_id || ctx.id.toLowerCase().includes(knowledge_base_id.toLowerCase()));
+                    if (!ctx) {
+                        console.error("[EXULU] Knowledge base ID that was provided to search items by name not found.", knowledge_base_id);
+                        throw new Error("Knowledge base ID that was provided to search items by name not found.");
                     }
-
-                    const { db } = await postgresClient();
-
                     let itemsQuery = db(getTableName(ctx.id) + " as items").select([
                         "items.id as item_id",
                         "items.name as item_name",
@@ -540,94 +559,119 @@ export const createAgenticRetrievalAgent = ({
 
                     const items = await itemsQuery;
 
-                    const formattedResults: (ToolResult | null)[] = await Promise.all(items.map(async (item, index) => {
-
-                        if (!item.item_id) {
-                            console.error("[EXULU] Item id is required to get chunks.", item)
-                            throw new Error("Item id is required to get chunks.");
-                        }
-
-                        const chunksTable = getChunksTableName(ctx.id);
-                        const chunks: any[] = await db.from(chunksTable).select(["id", "source", "metadata"]).where("source", item.item_id).limit(1);
-
-                        if (!chunks || !chunks[0]) {
-                            return null;
-                        }
-
-                        return {
-                            item_name: item.item_name,
-                            item_id: item.item_id,
-                            context: ctx?.id || "",
-                            chunk_id: chunks[0].id,
-                            chunk_index: 1,
-                            chunk_content: undefined,
-                            metadata: chunks[0].metadata
-                        }
+                    return items?.map(item => ({
+                        ...item,
+                        context: ctx.id,
                     }));
+                }));
 
-                    return JSON.stringify(formattedResults.filter(result => result !== null), null, 2);
+                const items = results.flat();
+
+                const formattedResults: (ToolResult | null)[] = await Promise.all(items.map(async (item, index) => {
+
+                    if (!item.item_id || !item.context) {
+                        console.error("[EXULU] Item id and context are required to get chunks.", item)
+                        throw new Error("Item id is required to get chunks.");
+                    }
+
+                    const chunksTable = getChunksTableName(item.context);
+                    const chunks: any[] = await db.from(chunksTable).select(["id", "source", "metadata"]).where("source", item.item_id).limit(1);
+
+                    if (!chunks || !chunks[0]) {
+                        return null;
+                    }
+
+                    return {
+                        item_name: item.item_name,
+                        item_id: item.item_id,
+                        context: item.context || "",
+                        chunk_id: chunks[0].id,
+                        chunk_index: 1,
+                        chunk_content: undefined,
+                        metadata: chunks[0].metadata
+                    }
+                }));
+
+                return JSON.stringify(formattedResults.filter(result => result !== null), null, 2);
+            }
+        })
+    }
+
+    const searchTools = {
+        "search_content": tool({
+            description: `
+            Search for relevant information within the actual content of the items across available knowledge bases.
+
+            This tool provides a number of strategies:
+            - Keyword search: search for exact terms, technical names, IDs, or specific phrases
+            - Semantic search: search for conceptual queries where synonyms and paraphrasing matter
+            - Hybrid search: best for most queries - combines semantic understanding with exact term matching
+
+            You can use the includeContent parameter to control whether to return
+            the full chunk content or just metadata.
+
+            Use with includeContent: true (default) when you need to:
+            - Find specific information or answers within documents
+            - Get actual text content that answers a query
+            - Extract details, explanations, or instructions from content
+
+            Use with includeContent: false when you need to:
+            - List which documents/items contain certain topics
+            - Count or overview items that match a content query
+            - Find item names/metadata without loading full content
+            - You can always fetch content later if needed
+            
+            `,
+            inputSchema: z.object({
+                query: z.string().describe("The search query to find relevant chunks, this must always be related to the content you are looking for, not something like 'Page 2'."),
+                knowledge_base_ids: z.array(z.enum(contexts.map(ctx => ctx.id) as [string, ...string[]])).describe(`
+                    The available knowledge bases are:
+                    ${contexts.map(ctx => `
+                        <knowledge_base>
+                            <id>${ctx.id}</id>
+                            <name>${ctx.name}</name>
+                            <description>${ctx.description}</description>
+                        </knowledge_base>
+                    `).join("\n")}
+                `),
+                keywords: z.array(z.string()).optional().describe("Keywords to search for. Usually extracted from the query, allowing for more precise search results."),
+                searchMethod: z.enum(["keyword", "semantic", "hybrid"]).default("hybrid").describe(
+                    "Search method: 'hybrid' (best for most queries - combines semantic understanding with exact term matching), 'keyword' (best for exact terms, technical names, IDs, or specific phrases), 'semantic' (best for conceptual queries where synonyms and paraphrasing matter)"
+                ),
+                includeContent: z.boolean().default(true).describe(
+                    "Whether to include the full chunk content in results. " +
+                    "Set to FALSE when you only need to know WHICH documents/items are relevant (lists, overviews, counts). " +
+                    "Set to TRUE when you need the ACTUAL content to answer the question (information, details, explanations). " +
+                    "You can always fetch content later, so prefer FALSE for efficiency when listing documents."
+                ),
+
+                item_ids: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item ID."),
+                item_names: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item name. Can be a partial match."),
+                item_external_ids: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item external ID. Can be a partial match."),
+                limit: z.number().default(10).describe("Maximum number of chunks to return (max 10)"),
+            }),
+            execute: async ({ query, searchMethod, limit, includeContent, item_ids, item_names, item_external_ids, keywords, knowledge_base_ids }) => {
+
+                if (!knowledge_base_ids?.length) {
+                    // Default to all
+                    knowledge_base_ids = contexts.map(ctx => ctx.id);
                 }
-            })
-        }
-    }, {});
 
-    const searchTools = contexts.reduce((acc, ctx) => {
-        return {
-            ...acc,
-            ["search_" + ctx.id]: tool({
-                description: `
-                Search for relevant information within the actual content of the items in the "${ctx.name}" knowledge base.
+                const results: VectorSearchChunkResult[][] = await Promise.all(knowledge_base_ids.map(async (knowledge_base_id) => {
 
-                Knowledge base name: ${ctx.name}
+                    const ctx = contexts.find(ctx => ctx.id === knowledge_base_id || ctx.id.toLowerCase().includes(knowledge_base_id.toLowerCase()));
 
-                Knowledge base description: ${ctx.description}
-
-                It provides a number of strategies:
-                - Keyword search: search for exact terms, technical names, IDs, or specific phrases
-                - Semantic search: search for conceptual queries where synonyms and paraphrasing matter
-                - Hybrid search: best for most queries - combines semantic understanding with exact term matching
-
-                You can use the includeContent parameter to control whether to return
-                the full chunk content or just metadata.
-
-                Use with includeContent: true (default) when you need to:
-                - Find specific information or answers within documents
-                - Get actual text content that answers a query
-                - Extract details, explanations, or instructions from content
-
-                Use with includeContent: false when you need to:
-                - List which documents/items contain certain topics
-                - Count or overview items that match a content query
-                - Find item names/metadata without loading full content
-                - You can always fetch content later if needed
-                
-                `,
-                inputSchema: z.object({
-                    query: z.string().describe("The search query to find relevant chunks, this must always be related to the content you are looking for, not something like 'Page 2'."),
-                    keywords: z.array(z.string()).optional().describe("Keywords to search for. Usually extracted from the query, allowing for more precise search results."),
-                    searchMethod: z.enum(["keyword", "semantic", "hybrid"]).default("hybrid").describe(
-                        "Search method: 'hybrid' (best for most queries - combines semantic understanding with exact term matching), 'keyword' (best for exact terms, technical names, IDs, or specific phrases), 'semantic' (best for conceptual queries where synonyms and paraphrasing matter)"
-                    ),
-                    includeContent: z.boolean().default(true).describe(
-                        "Whether to include the full chunk content in results. " +
-                        "Set to FALSE when you only need to know WHICH documents/items are relevant (lists, overviews, counts). " +
-                        "Set to TRUE when you need the ACTUAL content to answer the question (information, details, explanations). " +
-                        "You can always fetch content later, so prefer FALSE for efficiency when listing documents."
-                    ),
-
-                    item_ids: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item ID."),
-                    item_names: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item name. Can be a partial match."),
-                    item_external_ids: z.array(z.string()).optional().describe("Use if you wish to retrieve content from specific items (documents) based on the item external ID. Can be a partial match."),
-                    limit: z.number().default(10).describe("Maximum number of chunks to return (max 10)"),
-                }),
-                execute: async ({ query, searchMethod, limit, includeContent, item_ids, item_names, item_external_ids, keywords }) => {
+                    if (!ctx) {
+                        console.error("[EXULU] Knowledge base ID that was provided to search content not found.", knowledge_base_id);
+                        throw new Error("Knowledge base ID that was provided to search content not found.");
+                    }
 
                     let itemFilters: SearchFilters = [];
                     if (item_ids) {
                         itemFilters.push({ id: { in: item_ids } });
                     }
                     if (item_names) {
-                        itemFilters.push({ name: { or: item_names.map(name => ({ contains: name }))} });
+                        itemFilters.push({ name: { or: item_names.map(name => ({ contains: name })) } });
                     }
                     if (item_external_ids) {
                         itemFilters.push({ external_id: { in: item_external_ids } });
@@ -651,26 +695,30 @@ export const createAgenticRetrievalAgent = ({
                         trigger: "tool",
                     });
 
-                    // Format results with citation info
-                    const formattedResults: ToolResult[] = results.chunks.map((chunk, index) => ({
-                        item_name: chunk.item_name,
-                        item_id: chunk.item_id,
-                        context: ctx.id,
-                        chunk_id: chunk.chunk_id,
-                        chunk_index: chunk.chunk_index,
-                        chunk_content: includeContent ? chunk.chunk_content : undefined,
-                        metadata: {
-                            ...chunk.chunk_metadata,
-                            cosine_distance: chunk.chunk_cosine_distance,
-                            fts_rank: chunk.chunk_fts_rank,
-                            hybrid_score: chunk.chunk_hybrid_score,
-                        }
-                    }));
-                    return JSON.stringify(formattedResults, null, 2);
-                }
-            })
-        }
-    }, {});
+                    return results.chunks.map(chunk => (chunk));
+                }))
+
+                const resultsFlat: VectorSearchChunkResult[] = results.flat();
+
+                // Format results with citation info
+                const formattedResults: ToolResult[] = resultsFlat.map((chunk, index) => ({
+                    item_name: chunk.item_name,
+                    item_id: chunk.item_id,
+                    context: chunk.context?.id || "",
+                    chunk_id: chunk.chunk_id,
+                    chunk_index: chunk.chunk_index,
+                    chunk_content: includeContent ? chunk.chunk_content : undefined,
+                    metadata: {
+                        ...chunk.chunk_metadata,
+                        cosine_distance: chunk.chunk_cosine_distance,
+                        fts_rank: chunk.chunk_fts_rank,
+                        hybrid_score: chunk.chunk_hybrid_score,
+                    }
+                }));
+                return JSON.stringify(formattedResults, null, 2);
+            }
+        })
+    }
 
     console.log("[EXULU] Search tools:", Object.keys(searchTools));
 
@@ -681,8 +729,8 @@ export const createAgenticRetrievalAgent = ({
         model,
         customInstructions: custom,
         tools: {
-            ...searchItemsByNameTools,
             ...searchTools,
+            ...searchItemsByNameTool,
             ...(projectRetrievalTool ? { [projectRetrievalTool.id]: projectRetrievalTool.tool } : {})
         },
     })
