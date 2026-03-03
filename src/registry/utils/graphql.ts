@@ -42,7 +42,7 @@ import { SALT_ROUNDS } from "../../auth/generate-key";
 import type { Job, JobState, Queue } from "bullmq";
 import { ExuluQueues } from "../..";
 import { redisClient as getRedisClient } from "../../redis/client";
-import type { BullMqJobData } from "../decoraters/bullmq";
+import type { BullMqJobData } from "../decorators/bullmq";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { Item } from "@EXULU_TYPES/models/item";

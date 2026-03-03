@@ -6,7 +6,7 @@ import { postgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
 import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
-import { bullmqDecorator } from "./decoraters/bullmq";
+import { bullmqDecorator } from "./decorators/bullmq";
 import { mapType } from "./utils/map-types";
 import { sanitizeName } from "./utils/sanitize-name";
 import CryptoJS from 'crypto-js';

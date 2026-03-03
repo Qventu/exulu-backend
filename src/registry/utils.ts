@@ -1,5 +1,5 @@
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
-import type { BullMqJobData } from "./decoraters/bullmq.ts";
+import type { BullMqJobData } from "./decorators/bullmq.ts";
 import type { ExuluAgent, ExuluContext, ExuluReranker, ExuluTool } from "./classes.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { RBACResolver } from "./utils/graphql.ts";

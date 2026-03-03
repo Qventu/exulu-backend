@@ -22,7 +22,16 @@
     "build": "tsup",
     "dev": "npm link && tsup --watch",
     "prepare": "husky",
-    "semantic-release": "semantic-release"
+    "semantic-release": "semantic-release",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit",
+    "validate": "npm run type-check && npm run lint && npm run test"
   },
   "keywords": [
     "exulu"
@@ -37,11 +46,20 @@
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.1",
     "@types/graphql-type-json": "^0.3.5",
+    "@types/jest": "^29.5.14",
     "@types/node": "^22.14.0",
     "@types/pg": "^8.15.1",
+    "@types/supertest": "^6.0.2",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
     "conventional-changelog-atom": "^5.0.0",
+    "eslint": "^9.20.0",
     "husky": "^9.1.7",
+    "jest": "^29.7.0",
+    "prettier": "^3.4.2",
     "semantic-release": "^24.2.7",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
     "tsup": "^8.5.0",
     "tsx": "^4.19.3"
   },

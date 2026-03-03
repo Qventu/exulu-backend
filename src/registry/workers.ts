@@ -4,7 +4,7 @@ import { Job, Worker, type JobState } from "bullmq";
 import { bullmq, getEnabledTools, loadAgent } from "./utils";
 import { ExuluAgent, ExuluContext, ExuluEval, ExuluReranker, ExuluStorage, ExuluTool, getTableName, sanitizeToolName, updateStatistic, type ExuluQueueConfig, type ExuluWorkflow, type STATISTICS_LABELS } from "./classes";
 import { postgresClient } from "../postgres/client";
-import type { BullMqJobData } from "./decoraters/bullmq";
+import type { BullMqJobData } from "./decorators/bullmq";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from ".";
 import { v4 as uuidv4 } from 'uuid';
