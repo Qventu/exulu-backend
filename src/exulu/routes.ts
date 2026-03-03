@@ -4,7 +4,7 @@ import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
 import express from "express";
-import { ApolloServer } from "@apollo/server";
+import { ApolloServer } from '@apollo/server';
 import cors from "cors";
 import "reflect-metadata";
 import { createSDL } from "src/graphql/schemas/index.ts";
