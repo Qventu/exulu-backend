@@ -52,12 +52,11 @@ export interface Agent {
     }
     // New RBAC fields
     rights_mode?: 'private' | 'users' | 'roles' | 'public' /* | 'projects' */;
-    created_by?: string;
+    created_by?: string | number;
     RBAC?: {
         type?: string;
         users?: Array<{ id: number; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
-        /* projects?: Array<{ id: string; rights: 'read' | 'write' }>; */
     };
     createdAt?: string;
     updatedAt?: string;

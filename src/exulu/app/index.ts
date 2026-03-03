@@ -7,23 +7,23 @@ import {
   type ExuluContextSource,
   type ExuluQueueConfig,
   type ExuluTool,
-} from "./classes.ts"; /* ExuluMcpToolsClient */
+} from "src/exulu/classes.ts"; /* ExuluMcpToolsClient */
 import { type Express } from "express";
-import { createExpressRoutes, global_queues } from "./routes.ts";
-import { createWorkers } from "./workers.ts";
-import { ExuluMCP } from "../mcp";
+import { createExpressRoutes, global_queues } from "src/exulu/routes.ts";
+import { createWorkers } from "src/exulu/workers.ts";
+import { ExuluMCP } from "src/mcp/index.ts";
 import express from "express";
 import {
   claudeSonnet4Agent,
   claudeOpus4Agent,
   claudeSonnet45Agent,
-} from "../templates/agents/anthropic/claude";
-import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "../templates/agents/cerebras";
+} from "src/templates/agents/anthropic/claude";
+import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "src/templates/agents/cerebras";
 import {
   vertexGemini25FlashAgent,
   vertexGemini25ProAgent,
   vertexGemini3ProAgent,
-} from "../templates/agents/google/vertex";
+} from "src/templates/agents/google/vertex";
 import {
   gpt5MiniAgent,
   gpt5agent,
@@ -34,13 +34,18 @@ import {
   gpt41MiniAgent,
   gpt4oAgent,
   gpt4oMiniAgent,
-} from "../templates/agents/openai/gpt.ts";
+} from "src/templates/agents/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
-import createLogger from "./logger.ts";
-import { postgresClient } from "../postgres/client.ts";
+import createLogger from "src/exulu/logger.ts";
+import { postgresClient } from "src/postgres/client.ts";
 import winston, { type transport } from "winston";
 import util from "util";
-import { redisServer } from "../bullmq/server.ts";
+import { redisServer } from "src/bullmq/server.ts";
+import { getDefaultEvals } from "src/templates/evals/index.ts";
+import { ExuluQueues } from "src/index.ts";
+import { todoTools } from "src/templates/tools/todo/todo.ts";
+import { perplexityTools } from "src/templates/tools/perplexity.ts";
+import { isValidPostgresName } from "src/validators/postgres-name.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 const consoleTransport = new winston.transports.Console({
@@ -49,15 +54,11 @@ const consoleTransport = new winston.transports.Console({
         winston.format.colorize(),
         winston.format.timestamp({ format: "HH:mm:ss" }),
         winston.format.printf(({ timestamp, level, message }) => {
-          return `${timestamp} [${level}] ${message}`;
+          return `${timestamp as string} [${level as string}] ${message as string}`;
         }),
       )
     : winston.format.json(),
 });
-import { getDefaultEvals } from "../templates/evals/index.ts";
-import { ExuluQueues } from "../index.ts";
-import { todoTools } from "../templates/tools/todo/todo.ts";
-import { perplexityTools } from "../templates/tools/perplexity.ts";
 
 // Monkey-patch console to use Winston with metadata support
 const formatArg = (arg: any) =>
@@ -87,14 +88,6 @@ const createLogMethod = (
     const message = messageArgs.map(formatArg).join(" ");
     logger[logLevel](message, metadata);
   };
-};
-
-// Add a helper function to validate PostgreSQL table names
-const isValidPostgresName = (id: string): boolean => {
-  const regex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-  const isValid = regex.test(id);
-  const length = id.length;
-  return isValid && length <= 80 && length > 2;
 };
 
 export type ExuluConfig = {
@@ -134,6 +127,7 @@ export type ExuluConfig = {
 };
 
 export class ExuluApp {
+
   private _agents: ExuluAgent[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];

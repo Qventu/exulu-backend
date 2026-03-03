@@ -1,11 +1,11 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
 import { coreSchemas } from "./core-schema";
-import { mapType } from "../registry/utils/map-types";
-import { sanitizeName } from "../registry/utils/sanitize-name";
-import { encryptString, generateApiKey } from "../auth/generate-key";
-import type { ExuluTableDefinition } from "../registry/routes";
-import type { ExuluContext } from "../registry/classes";
+import { mapType } from "src/utils/map-types";
+import { sanitizeName } from "src/utils/sanitize-name";
+import { encryptString, generateApiKey } from "src/auth/generate-key";
+import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluContext } from "src/exulu/classes";
 
 const {
     agentsSchema,
@@ -202,7 +202,6 @@ export const execute = async ({ contexts }: {
     const existingAdminRole = await db.from("roles").where({ name: "admin" }).first();
     const existingDefaultRole = await db.from("roles").where({ name: "default" }).first();
     let adminRoleId;
-    let defaultRoleId;
 
     if (!existingAdminRole) {
         console.log("[EXULU] Creating admin role.");
@@ -223,7 +222,7 @@ export const execute = async ({ contexts }: {
 
     if (!existingDefaultRole) {
         console.log("[EXULU] Creating default role.");
-        const role = await db.from("roles").insert({
+        await db.from("roles").insert({
             name: "default",
             agents: "write",
             api: "read",
@@ -232,9 +231,6 @@ export const execute = async ({ contexts }: {
             users: "read",
             evals: "read"
         }).returning("id");
-        defaultRoleId = role[0].id;
-    } else {
-        defaultRoleId = existingDefaultRole.id;
     }
 
 

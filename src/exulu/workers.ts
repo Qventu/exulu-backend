@@ -1,12 +1,14 @@
 import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker, type JobState } from "bullmq";
-import { bullmq, getEnabledTools, loadAgent } from "./utils";
+import { loadAgent } from "src/utils/load-agent.ts";
+import { bullmq } from "src/validators/bullmq.ts";
+import { getEnabledTools } from "src/utils/enabled-tools.ts";
 import { ExuluAgent, ExuluContext, ExuluEval, ExuluReranker, ExuluStorage, ExuluTool, getTableName, sanitizeToolName, updateStatistic, type ExuluQueueConfig, type ExuluWorkflow, type STATISTICS_LABELS } from "./classes";
 import { postgresClient } from "../postgres/client";
-import type { BullMqJobData } from "./decorators/bullmq";
+import type { BullMqJobData } from "src/bullmq/decorator.ts";
 import { type Tracer } from "@opentelemetry/api";
-import type { ExuluConfig } from ".";
+import type { ExuluConfig } from "./app/index.ts";
 import { v4 as uuidv4 } from 'uuid';
 import { type UIMessage } from "ai";
 import CryptoJS from 'crypto-js';
@@ -15,7 +17,6 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import type { User } from "@EXULU_TYPES/models/user";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
-import { logMetadata } from "./log-metadata";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
 
@@ -28,7 +29,7 @@ let unhandledRejectionHandlerInstalled = false;
 const installGlobalErrorHandlers = () => {
     if (unhandledRejectionHandlerInstalled) return;
 
-    process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+    process.on('unhandledRejection', (reason: any) => {
         console.error('[EXULU] Unhandled Promise Rejection detected! This would have crashed the worker.', {
             reason: reason instanceof Error ? reason.message : String(reason),
             stack: reason instanceof Error ? reason.stack : undefined,
@@ -109,12 +110,12 @@ export const createWorkers = async (
                 metadata: any
             }> => {
 
-                console.log("[EXULU] starting execution for job", logMetadata(bullmqJob.name, {
+                console.log("[EXULU] starting execution for job", {
                     name: bullmqJob.name,
                     jobId: bullmqJob.id,
                     status: await bullmqJob.getState(),
                     type: bullmqJob.data.type,
-                }));
+                });
 
                 const { db } = await postgresClient();
 
@@ -148,7 +149,7 @@ export const createWorkers = async (
 
                         if (data.type === "embedder") {
 
-                            console.log("[EXULU] running an embedder job.", logMetadata(bullmqJob.name));
+                            console.log("[EXULU] running an embedder job.", bullmqJob.name);
 
                             const label = `embedder-${bullmqJob.name}`;
 
@@ -283,7 +284,7 @@ export const createWorkers = async (
 
                         if (data.type === "workflow") {
 
-                            console.log("[EXULU] running a workflow job.", logMetadata(bullmqJob.name));
+                            console.log("[EXULU] running a workflow job.", bullmqJob.name);
 
                             const label = `workflow-run-${data.workflow}`;
 
@@ -337,9 +338,7 @@ export const createWorkers = async (
                                         resolve(messages);
                                         break;
                                     } catch (error: unknown) {
-                                        console.error(`[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`, logMetadata(bullmqJob.name, {
-                                            error: error instanceof Error ? error.message : String(error),
-                                        }))
+                                        console.error(`[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`, error instanceof Error ? error.message : String(error))
                                         attempts++;
                                         if (attempts >= retries) {
                                             reject(error);
@@ -365,7 +364,7 @@ export const createWorkers = async (
 
                         if (data.type === "eval_run") {
 
-                            console.log("[EXULU] running an eval run job.", logMetadata(bullmqJob.name));
+                            console.log("[EXULU] running an eval run job.", bullmqJob.name);
 
                             const label = `eval-run-${data.eval_run_id}-${data.test_case_id}`;
 
@@ -435,9 +434,7 @@ export const createWorkers = async (
                                         resolve(messages);
                                         break;
                                     } catch (error: unknown) {
-                                        console.error(`[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`, logMetadata(bullmqJob.name, {
-                                            error: error instanceof Error ? error.message : String(error),
-                                        }))
+                                        console.error(`[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`, error instanceof Error ? error.message : String(error))
                                         attempts++;
                                         if (attempts >= retries) {
                                             reject(error);
@@ -515,9 +512,9 @@ export const createWorkers = async (
                                         result: result || 0
                                     }
 
-                                    console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, logMetadata(bullmqJob.name, {
+                                    console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, {
                                         result: result || 0,
-                                    }));
+                                    });
 
                                     evalFunctionResults.push(evalFunctionResult);
 
@@ -542,9 +539,9 @@ export const createWorkers = async (
 
                                     evalFunctionResults.push(evalFunctionResult);
 
-                                    console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, logMetadata(bullmqJob.name, {
+                                    console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, {
                                         result: result || 0,
-                                    }));
+                                    });
                                 }
                             }
 
@@ -584,7 +581,7 @@ export const createWorkers = async (
                         }
 
                         if (data.type === "eval_function") {
-                            console.log("[EXULU] running an eval function job.", logMetadata(bullmqJob.name));
+                            console.log("[EXULU] running an eval function job.", bullmqJob.name);
 
                             if (data.eval_functions?.length !== 1) {
                                 throw new Error(`Expected 1 eval function for eval function job, got ${data.eval_functions?.length}.`);
@@ -649,9 +646,9 @@ export const createWorkers = async (
                                     inputMessages,
                                     evalFunction.config || {}
                                 )
-                                console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, logMetadata(bullmqJob.name, {
+                                console.log(`[EXULU] eval function ${evalFunction.id} result: ${result}`, {
                                     result: result || 0,
-                                }));
+                                });
                             }
 
                             return {
@@ -662,7 +659,7 @@ export const createWorkers = async (
 
                         if (data.type === "source") {
 
-                            console.log("[EXULU] running a source job.", logMetadata(bullmqJob.name));
+                            console.log("[EXULU] running a source job.", bullmqJob.name);
 
                             if (!data.source) {
                                 throw new Error(`No source id set for source job.`);
@@ -699,16 +696,16 @@ export const createWorkers = async (
                                 );
                                 if (job) {
                                     jobs.push(job);
-                                    console.log(`[EXULU] Scheduled job through source update job for item ${createdItem.id} (Job ID: ${job})`, logMetadata(bullmqJob.name, {
+                                    console.log(`[EXULU] Scheduled job through source update job for item ${createdItem.id} (Job ID: ${job})`, {
                                         item: createdItem,
                                         job: job,
-                                    }));
+                                    });
                                 }
                                 if (createdItem.id) {
                                     items.push(createdItem.id);
-                                    console.log(`[EXULU] created item through source update job ${createdItem.id}`, logMetadata(bullmqJob.name, {
+                                    console.log(`[EXULU] created item through source update job ${createdItem.id}`, {
                                         item: createdItem,
-                                    }));
+                                    });
                                 }
                             }
 
@@ -794,9 +791,9 @@ export const createWorkers = async (
                 });
                 return;
             }
-            console.error(`[EXULU] job failed.`, job?.name ? logMetadata(job.name, {
+            console.error(`[EXULU] job failed.`, job?.name ? {
                 error: error instanceof Error ? error.message : String(error),
-            }) : error);
+            } : error);
         });
 
         worker.on('error', (error: Error) => {
@@ -804,9 +801,9 @@ export const createWorkers = async (
         });
 
         worker.on('progress', (job, progress) => {
-            console.log(`[EXULU] job progress ${job.id}.`, logMetadata(job.name, {
+            console.log(`[EXULU] job progress ${job.id}.`, job.name, {
                 progress: progress,
-            }));
+            });
         });
 
 
@@ -1203,6 +1200,7 @@ export const processUiMessagesFlow = async ({
                                 cachedInputTokens: part.totalUsage.cachedInputTokens,
                             };
                         }
+                        return undefined;
                     },
                     originalMessages: result.originalMessages,
                     sendReasoning: true,

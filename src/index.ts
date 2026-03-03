@@ -1,18 +1,28 @@
 import 'dotenv/config'
 import { redisClient } from "./redis/client"
-import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluReranker, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluStorage, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
-export { ExuluApp } from "./registry/index"
+export {
+    ExuluContext,
+    ExuluReranker,
+    ExuluEmbedder,
+    ExuluAgent,
+    ExuluTool,
+    ExuluEval,
+    type ExuluStorage,
+    type ExuluQueueConfig,
+    type ExuluEvalMetadata,
+    type ExuluEvalTokenMetadata
+    /* ExuluMcpToolsClient */
+} from "src/exulu/classes"
+export { ExuluApp } from "./exulu/app/index.ts"
 export { authentication as ExuluAuthentication } from "./auth/auth"
 export { queues as ExuluQueues } from "./bullmq/queues"
-export { logMetadata } from "./registry/log-metadata"
 import { RecursiveChunker } from "./chunking/recursive";
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db"
 import { generateApiKey } from './auth/generate-key'
-import { create } from './registry/otel'
-import type { ExuluContext } from './registry/classes'
+import { create } from './exulu/otel'
+import type { ExuluContext } from './exulu/classes'
 import CryptoJS from 'crypto-js';
 import { postgresClient } from './postgres/client'
 import { type Variable } from '@EXULU_TYPES/models/variable'
@@ -24,10 +34,7 @@ import type { Item } from '@EXULU_TYPES/models/item'
 export type { Item as ExuluItem }
 
 export const ExuluJobs = {
-    redis: redisClient,
-    jobs: {
-        validate: validateJob
-    }
+    redis: redisClient
 }
 
 export const ExuluDefaultAgents = {
@@ -114,7 +121,7 @@ export const ExuluUtils = {
             console.log(`[EXULU] Utils function, processing batch ${start / size + 1} of ${Math.ceil(inputs.length / size)} (${Math.min(start + 1, inputs.length)}-${Math.min(start + size, inputs.length)} of ${inputs.length})`);
             const end = start + size > inputs.length ? inputs.length : start + size;
 
-            const slicedResults = await Promise.all(inputs.slice(start, end).map((data, i) => {
+            const slicedResults = await Promise.all(inputs.slice(start, end).map((data) => {
                 if (retries?.max) {
                     return ExuluUtils.retry({
                         fn: async () => {

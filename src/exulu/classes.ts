@@ -1,40 +1,46 @@
 import { Queue } from "bullmq";
 import { z, ZodSchema } from "zod"
-import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs, hasToolCall } from "ai";
+import { convertToModelMessages, generateObject, generateText, type LanguageModel, streamText, tool, type Tool, type UIMessage, validateUIMessages, stepCountIs } from "ai";
 import { type STATISTICS_TYPE, STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import { postgresClient } from "../postgres/client";
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
 import type { Item } from "@EXULU_TYPES/models/item";
 import pgvector from 'pgvector/knex'; // DONT REMOVE THIS
-import { bullmqDecorator } from "./decorators/bullmq";
-import { mapType } from "./utils/map-types";
-import { sanitizeName } from "./utils/sanitize-name";
+import { bullmqDecorator } from "src/bullmq/decorator.ts";
+import { sanitizeName } from "src/utils/sanitize-name.ts";
 import CryptoJS from 'crypto-js';
-import { applyFilters, contextToTableDefinition, vectorSearch, type SearchFilters, type VectorSearchChunkResult } from "./utils/graphql";
+import { type VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
+import { vectorSearch } from "src/graphql/resolvers/vector-search";
+import type { SearchFilters } from "src/graphql/types";
 import {
     PutObjectCommand,
     S3Client,
     S3ServiceException,
 } from "@aws-sdk/client-s3";
-import type { ExuluConfig } from ".";
+import type { ExuluConfig } from "./app/index.ts";
 import { randomUUID } from 'node:crypto';
-import { checkRecordAccess, getEnabledTools, loadAgent } from "./utils";
+import { checkRecordAccess } from "src/utils/check-record-access.ts";
+import { loadAgent } from "src/utils/load-agent.ts";
 import type { User } from "@EXULU_TYPES/models/user";
-import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "./uppy";
+import { getPresignedUrl as getPresignedUrlUppy, uploadFile as uploadFileUppy } from "../uppy/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import type { Request } from "express";
 import { parseOfficeAsync } from 'officeparser';
 import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import type { Project } from "@EXULU_TYPES/models/project";
-import { createAgenticRetrievalTool } from "./agentic-retrieval";
+import { createAgenticRetrievalTool } from "src/templates/tools/agentic-retrieval/index.ts";
+import { mapType } from "src/utils/map-types.ts";
+import { getEnabledTools } from "src/utils/enabled-tools.ts";
+import { applyFilters } from "src/graphql/resolvers/apply-filters.ts";
+import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition.ts";
 
 /**
  * @type {S3Client}
  */
-let s3Client
+let s3Client: S3Client | undefined;
 
-export function sanitizeToolName(name) {
+export function sanitizeToolName(name: string): string {
     if (typeof name !== 'string') return '';
 
     // Step 1: Replace invalid characters with underscores
@@ -176,7 +182,6 @@ export const createProjectItemsRetrievalTool = async ({
     // Check if cached project more than 1 minute old
     // this to avoid fetching the project for each tool
     // array generation.
-    const OneMinuteAgo = new Date(Date.now() - 1000 * 60);
     const { db } = await postgresClient();
     project = await db.from("projects").where("id", projectId).first();
     if (!project) {
@@ -199,7 +204,7 @@ export const createProjectItemsRetrievalTool = async ({
         type: "context",
         category: "project",
         config: [],
-        execute: async ({ query, keywords }: any) => {
+        execute: async ({ query }: any) => {
 
             console.log("[EXULU] Project search tool searching for project", project);
 
@@ -226,7 +231,7 @@ export const createProjectItemsRetrievalTool = async ({
             console.log("[EXULU] Project search tool searching through contexts", Object.keys(set));
             // Run retrieval for each context in paralal.
             // todo add typing
-            const results = await Promise.all(Object.keys(set).map(async (contextName, index) => {
+            const results = await Promise.all(Object.keys(set).map(async (contextName) => {
                 const context = contexts.find(context => context.id === contextName);
                 if (!context) {
                     console.error("[EXULU] Context not found for project information retrieval tool.", contextName);
@@ -302,7 +307,7 @@ export const createSessionItemsRetrievalTool = async ({
         type: "context",
         category: "session",
         config: [],
-        execute: async ({ query, keywords }: any) => {
+        execute: async ({ query }: any) => {
 
             console.log("[EXULU] Session search tool searching for session items", items);
 
@@ -327,7 +332,7 @@ export const createSessionItemsRetrievalTool = async ({
             console.log("[EXULU] Session search tool searching through contexts", Object.keys(set));
             // Run retrieval for each context in paralal.
             // todo add typing
-            const results = await Promise.all(Object.keys(set).map(async (contextName, index) => {
+            const results = await Promise.all(Object.keys(set).map(async (contextName) => {
                 const context = contexts.find(context => context.id === contextName);
                 if (!context) {
                     console.error("[EXULU] Context not found for project information retrieval tool.", contextName);
@@ -380,8 +385,8 @@ export const convertToolsArrayToObject = async (
     allExuluTools: ExuluTool[] | undefined,
     configs: ExuluAgentToolConfig[] | undefined,
     providerapikey?: string,
-    contexts?: ExuluContext[] | undefined,
-    rerankers?: ExuluReranker[] | undefined,
+    contexts?: ExuluContext[],
+    rerankers?: ExuluReranker[],
     user?: User,
     exuluConfig?: ExuluConfig,
     sessionID?: string,
@@ -528,8 +533,7 @@ export const convertToolsArrayToObject = async (
                                 upload = async ({
                                     name,
                                     data,
-                                    type,
-                                    tags
+                                    type
                                 }: {
                                     name: string,
                                     type: allFileTypes,
@@ -540,7 +544,7 @@ export const convertToolsArrayToObject = async (
                                     const prefix = exuluConfig?.fileUploads?.s3prefix
                                         ? `${exuluConfig.fileUploads.s3prefix.replace(/\/$/, '')}/`
                                         : '';
-                                    const key = `${prefix}${user}/${generateS3Key(name)}${type}`;
+                                    const key = `${prefix}${user?.id}/${generateS3Key(name)}${type}`;
                                     const command = new PutObjectCommand({
                                         Bucket: exuluConfig?.fileUploads?.s3Bucket,
                                         Key: key,
@@ -548,6 +552,9 @@ export const convertToolsArrayToObject = async (
                                         ContentType: mime
                                     });
                                     try {
+                                        if (!s3Client) {
+                                            throw new Error("S3 client not initialized");
+                                        }
                                         const response = await s3Client.send(command);
                                         console.log(response);
                                         return response;
@@ -556,15 +563,11 @@ export const convertToolsArrayToObject = async (
                                             caught instanceof S3ServiceException &&
                                             caught.name === "EntityTooLarge"
                                         ) {
-                                            console.error(
-                                                `[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
+                                            throw new Error(`[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
                                     The object was too large. To upload objects larger than 5GB, use the S3 console (160GB max) \
-                                    or the multipart upload API (5TB max).`,
-                                            );
+                                    or the multipart upload API (5TB max).`);
                                         } else if (caught instanceof S3ServiceException) {
-                                            console.error(
-                                                `[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}.  ${caught.name}: ${caught.message}`,
-                                            );
+                                            throw new Error(`[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}.  ${caught.name}: ${caught.message}`);
                                         } else {
                                             throw caught;
                                         }
@@ -1005,7 +1008,15 @@ export class ExuluAgent {
                     throw new Error("You don't have access to this agent.");
                 }
 
-                let enabledTools: ExuluTool[] = await getEnabledTools(agentInstance, allExuluTools, contexts, rerankers, [], agents, user)
+                let enabledTools: ExuluTool[] = await getEnabledTools(
+                    agentInstance,
+                    allExuluTools,
+                    contexts,
+                    rerankers,
+                    [],
+                    agents,
+                    user
+                )
 
                 // Get the variable name from user's anthropic_token field
                 const variableName = agentInstance.providerapikey;
@@ -1109,7 +1120,8 @@ export class ExuluAgent {
         exuluConfig?: ExuluConfig,
         instructions?: string,
         outputSchema?: z.ZodType
-    }): Promise<string | any> => {
+        // todo get rid of any
+    }): Promise<any> => {
 
         console.log("[EXULU] Called generate sync for agent: " + this.name, "with prompt: " + prompt?.slice(0, 100) + "...")
 
@@ -3259,7 +3271,7 @@ export class ExuluContext {
         // to expose a method to retrieve items for internal user.
         const { db } = await postgresClient();
         let query = db.from(getTableName(this.id)).select(fields || "*");
-        const tableDefinition = contextToTableDefinition(this)
+        const tableDefinition = convertContextToTableDefinition(this)
         query = applyFilters(query, filters || [], tableDefinition);
         const items = await query;
         return items;

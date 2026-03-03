@@ -1,11 +1,11 @@
 import { Queue } from "bullmq";
-import type { STATISTICS_LABELS } from "../classes.ts";
 import { v4 as uuidv4 } from 'uuid';
 import type { UIMessage } from "ai";
+import type { STATISTICS_LABELS } from "src/exulu/classes";
 
-export type ExuluJobType = "embedder" | "workflow" | "eval" | "processor"
+type ExuluJobType = "embedder" | "workflow" | "eval" | "processor"
 
-export type ExuluBullMqDecoratorData = {
+type ExuluBullMqDecoratorData = {
     queue: Queue,
     label: string,
     embedder?: string,

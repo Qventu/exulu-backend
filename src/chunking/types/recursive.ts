@@ -99,17 +99,6 @@ export class RecursiveLevel {
   public static fromDict(data: RecursiveLevelData): RecursiveLevel {
     return new RecursiveLevel(data);
   }
-
-  /** Create RecursiveLevel object from a recipe
-   * 
-   * @param {string} name - The name of the recipe.
-   * @param {string} lang - The language of the recipe.
-   * @returns {Promise<RecursiveLevel>} The RecursiveLevel object.
-   */
-  public static async fromRecipe(name: string, lang: string = 'en'): Promise<RecursiveLevel> {
-    // TODO: Implement Hubbie integration
-    throw new Error('Not implemented');
-  }
 }
 
 /** Interface for RecursiveRules data
@@ -199,22 +188,6 @@ export class RecursiveRules {
     return {
       levels: this.levels.map(level => level.toDict()),
     };
-  }
-
-  /** Create a RecursiveRules object from a recipe
-   * 
-   * @param {string} name - The name of the recipe.
-   * @param {string} lang - The language of the recipe.
-   * @param {string} path - The path to the recipe.
-   * @returns {Promise<RecursiveRules>} The RecursiveRules object.
-   */
-  public static async fromRecipe(
-    name: string = 'default',
-    lang: string = 'en',
-    path?: string
-  ): Promise<RecursiveRules> {
-    // TODO: Implement Hubbie integration
-    throw new Error('Not implemented');
   }
 }
 

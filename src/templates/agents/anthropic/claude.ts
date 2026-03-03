@@ -1,4 +1,4 @@
-import { ExuluAgent } from "../../../registry/classes"
+import { ExuluAgent } from "src/exulu/classes"
 import { createAnthropic } from '@ai-sdk/anthropic';
 
 export const claudeOpus4Agent = new ExuluAgent({

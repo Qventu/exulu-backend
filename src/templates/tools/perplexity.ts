@@ -1,4 +1,4 @@
-import { ExuluTool } from "../../registry/classes";
+import { ExuluTool } from "src/exulu/classes";
 import z from "zod"
 import Perplexity from '@perplexity-ai/perplexity_ai';
 
@@ -49,14 +49,13 @@ const internetSearchTool = new ExuluTool({
             apiKey: apiKey,
         });
 
-        let recency_filter: "hour" | "day" | "week" | "month" | "year";
+        let recency_filter: "hour" | "day" | "week" | "month" | "year" | undefined = undefined;
         if (search_recency_filter && ["day", "week", "month", "year"].includes(search_recency_filter)) {
             recency_filter = search_recency_filter;
         }
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             try {
-
                 const result = await client.chat.completions.create({
                     messages: [{
                         "role": "user", "content": `${query}`

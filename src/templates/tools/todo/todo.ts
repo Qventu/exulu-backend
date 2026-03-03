@@ -1,8 +1,8 @@
 import DESCRIPTION_WRITE from "./todowrite.txt"
 import DESCRIPTION_READ from "./todoread.txt"
 import z from "zod"
-import { ExuluTool, getSession } from "../../../registry/classes"
-import { checkRecordAccess } from "../../../registry/utils"
+import { ExuluTool, getSession } from "src/exulu/classes.ts"
+import { checkRecordAccess } from "src/utils/check-record-access.ts"
 import type { AgentSession } from "@EXULU_TYPES/models/agent-session"
 import { postgresClient } from "../../../postgres/client"
 

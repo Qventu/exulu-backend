@@ -1,7 +1,7 @@
 import {type User} from "@EXULU_TYPES/models/user";
-import { getToken } from "../../auth/get-token.ts" // old: next-auth/jwt
-import { postgresClient } from "../../postgres/client.ts";
-import { authentication } from "../../auth/auth.ts";
+import { getToken } from "../auth/get-token.ts" // old: next-auth/jwt
+import { postgresClient } from "../postgres/client.ts";
+import { authentication } from "../auth/auth.ts";
 
 export const requestValidators = {
     authenticate: async (req):  Promise<{ error: boolean, message?: string, code?: number, user?: User}> => {

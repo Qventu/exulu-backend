@@ -2,15 +2,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js"
-import { convertToolsArrayToObject, ExuluAgent, ExuluContext, ExuluReranker, sanitizeToolName, type ExuluTool } from "../registry/classes";
+import { convertToolsArrayToObject, ExuluAgent, ExuluContext, ExuluReranker, sanitizeToolName, type ExuluTool } from "../exulu/classes.ts";
 import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
-import { requestValidators } from "../registry/route-validators";
-import { checkRecordAccess, getEnabledTools, loadAgent } from "../registry/utils";
+import { requestValidators } from "../validators/requests.ts";
+import { checkRecordAccess } from "src/utils/check-record-access.ts";
+import { loadAgent } from "src/utils/load-agent.ts";
+import { getEnabledTools } from "src/utils/enabled-tools.ts";
 import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
 import CryptoJS from 'crypto-js';
-import type { ExuluConfig } from "../registry";
+import type { ExuluConfig } from "../exulu/app/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
@@ -27,7 +29,7 @@ export class ExuluMCP {
     constructor() {
     }
 
-    private configure = async ({ user, agentInstance, allTools, allAgents, allContexts, allRerankers, config, tracer }: {
+    private configure = async ({ user, agentInstance, allTools, allAgents, allContexts, allRerankers, config }: {
         agentInstance: Agent,
         user: User,
         tracer?: Tracer,

@@ -1,6 +1,23 @@
+import type { ExuluAgent } from "src/exulu/classes.ts";
 import {redisClient} from "../redis/client.ts";
 
-export const rateLimiter = async (key: string, windowSeconds: number, limit: number, points: number) => {
+export const checkAgentRateLimit = async (agent: ExuluAgent) => {
+    if (agent.rateLimit) {
+        console.log("[EXULU] rate limiting agent.", agent.rateLimit)
+        const limit = await agentRateLimiter(
+            agent.rateLimit.name || agent.id,
+            agent.rateLimit.rate_limit.time,
+            agent.rateLimit.rate_limit.limit,
+            1
+        )
+
+        if (!limit.status) {
+            throw new Error("Rate limit exceeded.");
+        }
+    }
+}
+
+const agentRateLimiter = async (key: string, windowSeconds: number, limit: number, points: number) => {
     try {
         
         const { client } = await redisClient();

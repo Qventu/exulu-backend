@@ -1,4 +1,4 @@
-import { ExuluAgent } from "../../../../registry/classes"
+import { ExuluAgent } from "src/exulu/classes"
 import { createVertex } from '@ai-sdk/google-vertex'
 
 const vertexAuthenticationInformation = `

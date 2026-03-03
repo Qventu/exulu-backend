@@ -17,7 +17,7 @@ export class ExuluTokenizer {
         }
         const time = performance.now();
         console.log("[EXULU] Loading tokenizer.", modelName)
-        const model = await load(registry[models[modelName]]);
+        const model = await load(registry[models[modelName] as keyof typeof registry]);
         console.log("[EXULU] Loaded tokenizer.", modelName, performance.now() - time)
         const encoder = new Tiktoken(
             model.bpe_ranks,

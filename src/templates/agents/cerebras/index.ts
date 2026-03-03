@@ -1,4 +1,4 @@
-import { ExuluAgent } from "../../../registry/classes"
+import { ExuluAgent } from "src/exulu/classes"
 import { createCerebras } from '@ai-sdk/cerebras';
 
 export const gptOss120bAgent = new ExuluAgent({

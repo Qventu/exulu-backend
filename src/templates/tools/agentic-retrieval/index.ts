@@ -1,13 +1,16 @@
 import { z } from "zod";
 import { stepCountIs, tool, type LanguageModel, type Tool as AITool, Output, generateText } from "ai";
-import { ExuluReranker, ExuluTool, sanitizeToolName, type ExuluContext } from "./classes";
+import { ExuluReranker, ExuluTool, sanitizeToolName, type ExuluContext } from "src/exulu/classes.ts";
 import type { User } from "@EXULU_TYPES/models/user";
-import { postgresClient } from "../postgres/client";
-import { getChunksTableName, getTableName } from "./classes";
-import { applyAccessControl, applyFilters, applySorting, contextToTableDefinition, type SearchFilters, type VectorSearchChunkResult } from "./utils/graphql";
-import fs from "fs";
-import { preprocessQuery } from "./query-preprocessing";
+import { postgresClient } from "src/postgres/client";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { preprocessQuery } from "./query-preprocessing";
+import { getChunksTableName, getTableName } from "src/exulu/classes.ts";
+import type { SearchFilters } from "src/graphql/types";
+import type { VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
+import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition";
+import { applyFilters } from "src/graphql/resolvers/apply-filters";
+import { applyAccessControl } from "src/graphql/utilities/access-control";
 /**
  * Agentic Retrieval Tool
  *
@@ -169,7 +172,6 @@ Filtering and Limits:
 
 // Generator function
 function createCustomAgenticRetrievalToolLoopAgent({
-    language,
     tools,
     model,
     customInstructions
@@ -470,7 +472,7 @@ function createCustomAgenticRetrievalToolLoopAgent({
  * Creates an agentic retrieval tool that uses ToolLoopAgent to reason about
  * and retrieve relevant information across ALL available knowledge bases
  */
-export const createAgenticRetrievalAgent = ({
+const createAgenticRetrievalAgent = ({
     contexts,
     user,
     role,
@@ -544,7 +546,7 @@ export const createAgenticRetrievalAgent = ({
                     limit = Math.min(limit, 400);
                     itemsQuery = itemsQuery.limit(limit);
 
-                    const tableDefinition = contextToTableDefinition(ctx);
+                    const tableDefinition = convertContextToTableDefinition(ctx);
                     itemsQuery = applyFilters(itemsQuery, itemFilters || [], tableDefinition, "items");
                     itemsQuery = applyAccessControl(tableDefinition, itemsQuery, user, "items");
 
@@ -558,7 +560,7 @@ export const createAgenticRetrievalAgent = ({
 
                 const items = results.flat();
 
-                const formattedResults: (ToolResult | null)[] = await Promise.all(items.map(async (item, index) => {
+                const formattedResults: (ToolResult | null)[] = await Promise.all(items.map(async (item) => {
 
                     if (!item.item_id || !item.context) {
                         console.error("[EXULU] Item id and context are required to get chunks.", item)
@@ -692,7 +694,7 @@ export const createAgenticRetrievalAgent = ({
                 const resultsFlat: VectorSearchChunkResult[] = results.flat();
 
                 // Format results with citation info
-                const formattedResults: ToolResult[] = resultsFlat.map((chunk, index) => ({
+                const formattedResults: ToolResult[] = resultsFlat.map((chunk) => ({
                     item_name: chunk.item_name,
                     item_id: chunk.item_id,
                     context: chunk.context?.id || "",
@@ -733,7 +735,7 @@ export const createAgenticRetrievalAgent = ({
  * Generator function that can be used as the execute function for an ExuluTool
  * This streams progress updates as the agent works
  */
-export async function* executeAgenticRetrieval({
+async function* executeAgenticRetrieval({
     contexts,
     reranker,
     query,

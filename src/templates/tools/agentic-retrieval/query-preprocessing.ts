@@ -37,7 +37,7 @@ const COMMON_LANGUAGES = ['eng', 'deu', 'fra', 'spa', 'ita', 'por', 'rus', 'nld'
  * @param minLength - Minimum query length for reliable detection (default: 10)
  * @returns ISO 639-3 language code (e.g., 'eng', 'deu') or 'und' if undetermined
  */
-export function detectQueryLanguage(query: string, minLength: number = 10): string {
+function detectQueryLanguage(query: string, minLength: number = 10): string {
     // Clean the query
     const cleaned = query.trim();
 
@@ -78,7 +78,7 @@ export function detectQueryLanguage(query: string, minLength: number = 10): stri
  * @param languageCode - ISO 639-3 language code
  * @returns Stemmed word
  */
-export function stemWord(word: string, languageCode: string): string {
+function stemWord(word: string, languageCode: string): string {
     const stemmer = STEMMER_MAP[languageCode] || natural.PorterStemmer;
 
     // Remove punctuation and normalize
@@ -147,7 +147,7 @@ export function preprocessQuery(
         const stemmed = stemWord(word, language);
 
         // Preserve original case if requested
-        if (preserveCase && word[0] === word[0].toUpperCase()) {
+        if (preserveCase && word[0] && word[0] === word[0].toUpperCase()) {
             return stemmed.charAt(0).toUpperCase() + stemmed.slice(1);
         }
 
@@ -164,65 +164,4 @@ export function preprocessQuery(
         language,
         stemmed: true,
     };
-}
-
-/**
- * Creates query variations for more comprehensive search
- * Useful when the exact language is uncertain or for multilingual contexts
- *
- * @param query - The original query
- * @param languages - Languages to create variations for (default: common languages)
- * @returns Array of query variations with language info
- */
-export function createQueryVariations(
-    query: string,
-    languages: string[] = ['eng', 'deu', 'fra', 'spa']
-): Array<{ query: string; language: string }> {
-    const variations: Array<{ query: string; language: string }> = [];
-
-    // Always include original
-    variations.push({ query, language: 'original' });
-
-    // Create stemmed version for each language
-    for (const lang of languages) {
-        const words = query.split(/\s+/);
-        const stemmedWords = words.map(word => stemWord(word, lang));
-        const stemmedQuery = stemmedWords.join(' ');
-
-        // Only add if different from original
-        if (stemmedQuery !== query) {
-            variations.push({ query: stemmedQuery, language: lang });
-        }
-    }
-
-    return variations;
-}
-
-/**
- * Gets the PostgreSQL full-text search language configuration
- * Maps ISO 639-3 codes to PostgreSQL language configs
- *
- * @param languageCode - ISO 639-3 language code
- * @returns PostgreSQL language configuration name
- */
-export function getPostgresLanguage(languageCode: string): string {
-    const mapping: Record<string, string> = {
-        'eng': 'english',
-        'deu': 'german',
-        'fra': 'french',
-        'rus': 'russian',
-        'ita': 'italian',
-        'nld': 'dutch',
-        'por': 'portuguese',
-        'spa': 'spanish',
-        'swe': 'swedish',
-        'nor': 'norwegian',
-        'dan': 'danish',
-        'fin': 'finnish',
-        'hun': 'hungarian',
-        'ron': 'romanian',
-        'tur': 'turkish',
-    };
-
-    return mapping[languageCode] || 'english';
 }

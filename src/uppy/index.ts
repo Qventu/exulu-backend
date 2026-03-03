@@ -2,7 +2,7 @@ import { type Express } from "express";
 import { authentication } from "../auth/auth";
 import { getToken } from "../auth/get-token"
 import { postgresClient } from "../postgres/client";
-import type { ExuluConfig } from "./index";
+import type { ExuluConfig } from "../exulu/app/index";
 import {
     S3Client,
     AbortMultipartUploadCommand,
@@ -23,7 +23,6 @@ import {
     GetFederationTokenCommand,
 } from '@aws-sdk/client-sts';
 import { randomUUID } from 'node:crypto';
-import type { ExuluContext } from "./classes";
 
 const expiresIn = 60 * 60 * 24 * 1 // S3 signature expires within 1 day.
 
@@ -63,7 +62,7 @@ export const getPresignedUrl = async (bucket: string, key: string, config: Exulu
     return url;
 }
 
-export interface UploadOptions {
+interface UploadOptions {
     contentType?: string;
     metadata?: Record<string, string>;
 }
@@ -86,29 +85,6 @@ function sanitizeMetadata(metadata?: Record<string, string>): Record<string, str
         }
     }
     return sanitized;
-}
-
-/**
- * Decodes URL-encoded metadata values back to their original form.
- * Use this when retrieving metadata from S3 objects.
- */
-export function decodeMetadata(metadata?: Record<string, string>): Record<string, string> | undefined {
-    if (!metadata) return undefined;
-
-    const decoded: Record<string, string> = {};
-    for (const [key, value] of Object.entries(metadata)) {
-        if (typeof value === 'string') {
-            try {
-                decoded[key] = decodeURIComponent(value);
-            } catch (e) {
-                // If decoding fails, use original value
-                decoded[key] = value;
-            }
-        } else {
-            decoded[key] = String(value);
-        }
-    }
-    return decoded;
 }
 
 // Helper function to add s3prefix to a key path
@@ -230,7 +206,6 @@ export const uploadFile = async (
 
 export const createUppyRoutes = async (
     app: Express,
-    contexts: ExuluContext[],
     config: ExuluConfig
 ) => {
 
@@ -274,7 +249,7 @@ export const createUppyRoutes = async (
         return stsClient
     }
 
-    app.delete('/s3/delete', async (req, res, next) => {
+    app.delete('/s3/delete', async (req, res) => {
 
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")
@@ -413,7 +388,7 @@ export const createUppyRoutes = async (
         }
     });
 
-    app.post('/s3/object', async (req, res, next) => {
+    app.post('/s3/object', async (req, res) => {
 
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")
@@ -467,7 +442,7 @@ export const createUppyRoutes = async (
         res.end();
     })
 
-    app.get('/s3/list', async (req, res, next) => {
+    app.get('/s3/list', async (req, res) => {
 
         if (!config.fileUploads) {
             throw new Error("File uploads are not configured")

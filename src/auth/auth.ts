@@ -131,7 +131,7 @@ export const authentication = async ({
             }
         }
 
-        const filtered = users.filter(({ apikey, id }: { apikey: string, id: string }) => apikey.includes(request_key_name))
+        const filtered = users.filter(({ apikey }: { apikey: string, id: string }) => apikey.includes(request_key_name))
 
         for (const user of filtered) {
             const user_key_last_slash_index = user.apikey.lastIndexOf("/");

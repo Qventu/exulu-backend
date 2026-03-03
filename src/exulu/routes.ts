@@ -1,17 +1,19 @@
 import { type Express, type Request, type Response } from "express";
 import { errorHandler, type ExuluAgent, ExuluContext, type ExuluContextFieldDefinition, type ExuluContextProcessor, ExuluEval, ExuluReranker, type ExuluTool, getChunksTableName, getTableName, saveChat, type STATISTICS_LABELS, updateStatistic } from "./classes.ts";
-import { requestValidators } from "./route-validators";
+import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
 import express from 'express';
 import { ApolloServer } from '@apollo/server';
 import cors from 'cors';
 import 'reflect-metadata'
-import { createSDL, applyAccessControl, contextToTableDefinition, applyFilters } from "./utils/graphql.ts";
+import { createSDL } from "src/graphql/schemas/index.ts";
+import { applyFilters } from "src/graphql/resolvers/apply-filters.ts";
+import { applyAccessControl } from "src/graphql/utilities/access-control.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from '@as-integrations/express5';
 import { coreSchemas } from "../postgres/core-schema.ts";
-import { createUppyRoutes } from "./uppy.ts";
+import { createUppyRoutes } from "../uppy/index.ts";
 import { InMemoryLRUCache } from '@apollo/utils.keyvaluecache';
 import bodyParser from 'body-parser';
 import CryptoJS from 'crypto-js';
@@ -19,16 +21,20 @@ import OpenAI from "openai";
 import fs from "fs";
 import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
-import type { ExuluConfig } from "./index.ts";
-import { checkAgentRateLimit, checkRecordAccess, getEnabledTools, loadAgent } from "./utils.ts";
+import type { ExuluConfig } from "./app/index.ts";
+import { checkAgentRateLimit } from "src/utils/check-agent-rate-limit.ts";
+import { checkRecordAccess } from "src/utils/check-record-access.ts";
+import { loadAgent } from "src/utils/load-agent.ts";
+import { getEnabledTools } from "src/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = '50mb';
 import Anthropic from '@anthropic-ai/sdk';
-import { CLAUDE_MESSAGES } from "./utils/claude-messages.ts";
+import { CLAUDE_MESSAGES } from "../utils/claude-messages.ts";
 import type { Queue } from "bullmq";
 import { createIdGenerator, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import cookieParser from 'cookie-parser';
+import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition.ts";
 
 const getExuluVersionNumber = async () => {
     try {
@@ -102,12 +108,18 @@ export const createExpressRoutes = async (
     rerankers?: ExuluReranker[]
 ): Promise<Express> => {
 
+
+
     // todo make this more secure / configurable
-    var corsOptions = {
+    let corsOptions = {
         origin: '*',
         exposedHeaders: "*",
         allowedHeaders: "*",
         optionsSuccessStatus: 200 // some legacy browsers (IE11, various SmartTVs) choke on 204
+    }
+
+    if (tracer) {
+        console.log("[EXULU] tracer configured", tracer)
     }
 
     // important to set the limit here, otherwise the proxy will 
@@ -240,7 +252,7 @@ export const createExpressRoutes = async (
             return;
         }
 
-        const tableDefinition = contextToTableDefinition(ctx);
+        const tableDefinition = convertContextToTableDefinition(ctx);
         itemsQuery = applyFilters(itemsQuery, itemFilters || [], tableDefinition, "items");
         itemsQuery = applyAccessControl(tableDefinition, itemsQuery, {
             email: "test@test.com",
@@ -625,6 +637,7 @@ Mood: friendly and intelligent.
                                 cachedInputTokens: part.totalUsage.cachedInputTokens,
                             };
                         }
+                        return undefined;
                     },
                     originalMessages: result.originalMessages,
                     sendReasoning: true,
@@ -726,7 +739,7 @@ Mood: friendly and intelligent.
         config?.fileUploads?.s3secret &&
         config?.fileUploads?.s3Bucket
     ) {
-        await createUppyRoutes(app, contexts ?? [], config)
+        await createUppyRoutes(app, config)
     } else {
         console.log("[EXULU] skipping uppy file upload routes, because no S3 compatible region, key or secret is set in ExuluApp instance.")
     }
