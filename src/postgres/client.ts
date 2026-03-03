@@ -1,6 +1,7 @@
 import Knex from "knex";
 import { Knex as KnexType } from "knex";
-import pgvector from "pgvector/knex"; // DONT REMOVE THIS
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import pgvector from "pgvector/knex"; // Side-effect import: registers pgvector methods with knex
 let db: Record<string, KnexType | undefined> = {};
 let databaseExistsChecked = false;
 
@@ -102,9 +103,9 @@ export async function postgresClient(): Promise<{
         },
       });
       try {
-        // @ts-ignore - createExtensionIfNotExists gets added by importing pgvector
-        // but it's not typed so we must ignore this.
-        await knex.schema.createExtensionIfNotExists("vector");
+        // Unfortunately, knex does not include createExtensionIfNotExists in
+        // its type definitions, so we need to cast it to any.
+        await (knex.schema as any).createExtensionIfNotExists("vector");
       } catch (error) {
         console.error(
           "[EXULU] Error creating vector extension, this might be fine if you already activated the extension and the 'user' running this script does not have higher level database permissions.",

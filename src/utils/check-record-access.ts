@@ -1,4 +1,3 @@
-import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 
 const checkRecordAccessCache = new Map<

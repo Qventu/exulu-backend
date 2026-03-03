@@ -42,10 +42,12 @@ ExuluContext.
 */
 function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Generate enum definitions for enum fields
-  const enumDefs = table.fields
+  const enumDefs: string = table.fields
     .filter((field) => field.type === "enum" && field.enumValues)
     .map((field) => {
-      // @ts-ignore
+      if (!field.enumValues) {
+        return null;
+      }
       const enumValues = field.enumValues
         .map((value) => {
           // Convert enum values to valid GraphQL identifiers
@@ -61,6 +63,7 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   ${enumValues}
   }`;
     })
+    .filter((enumDef) => enumDef !== null)
     .join("\n");
 
   let fields = table.fields.map((field) => {
@@ -320,11 +323,10 @@ export function createSDL(
       table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
     typeDefs += `
-        ${
-          tableNameSingular === "agent"
-            ? `${tableNameSingular}ById(id: ID!, project: ID): ${tableNameSingular}`
-            : `${tableNameSingular}ById(id: ID!): ${tableNameSingular}`
-        }
+        ${tableNameSingular === "agent"
+        ? `${tableNameSingular}ById(id: ID!, project: ID): ${tableNameSingular}`
+        : `${tableNameSingular}ById(id: ID!): ${tableNameSingular}`
+      }
 
       ${tableNameSingular}ByIds(ids: [ID!]!): [${tableNameSingular}]!
       ${tableNamePlural}Pagination(limit: Int, page: Int, filters: [Filter${tableNameSingularUpperCaseFirst}], sort: SortBy): ${tableNameSingularUpperCaseFirst}PaginationResult
@@ -613,10 +615,10 @@ type PageInfo {
     if (!agentBackend) {
       throw new Error(
         "Agent backend: " +
-          agentInstance.backend +
-          " not found for agent instance " +
-          agentInstance.id +
-          ".",
+        agentInstance.backend +
+        " not found for agent instance " +
+        agentInstance.id +
+        ".",
       );
     }
 
@@ -718,10 +720,10 @@ type PageInfo {
     if (!agentBackend) {
       throw new Error(
         "Agent backend: " +
-          agentInstance.backend +
-          " not found for agent instance " +
-          agentInstance.id +
-          ".",
+        agentInstance.backend +
+        " not found for agent instance " +
+        agentInstance.id +
+        ".",
       );
     }
 
@@ -788,10 +790,10 @@ type PageInfo {
     if (!agentBackend) {
       throw new Error(
         "Agent backend: " +
-          agentInstance.backend +
-          " not found for agent instance " +
-          agentInstance.id +
-          ".",
+        agentInstance.backend +
+        " not found for agent instance " +
+        agentInstance.id +
+        ".",
       );
     }
 
@@ -815,9 +817,9 @@ type PageInfo {
     if (!queue) {
       throw new Error(
         "Queue not found for agent backend: " +
-          agentBackend?.id +
-          " for workflow template: " +
-          workflow_template_id,
+        agentBackend?.id +
+        " for workflow template: " +
+        workflow_template_id,
       );
     }
 
@@ -886,10 +888,10 @@ type PageInfo {
     if (!agentBackend) {
       throw new Error(
         "Agent backend: " +
-          agentInstance.backend +
-          " not found for agent instance " +
-          agentInstance.id +
-          ".",
+        agentInstance.backend +
+        " not found for agent instance " +
+        agentInstance.id +
+        ".",
       );
     }
 
@@ -1365,10 +1367,10 @@ type PageInfo {
           description: context.description,
           embedder: context.embedder
             ? {
-                name: context.embedder.name,
-                id: context.embedder.id,
-                config: context.embedder?.config || undefined,
-              }
+              name: context.embedder.name,
+              id: context.embedder.id,
+              config: context.embedder?.config || undefined,
+            }
             : undefined,
           slug: "/contexts/" + context.id,
           active: context.active,
@@ -1385,8 +1387,8 @@ type PageInfo {
                 editable: field.editable,
                 ...(field.type === "file"
                   ? {
-                      allowedFileTypes: field.allowedFileTypes,
-                    }
+                    allowedFileTypes: field.allowedFileTypes,
+                  }
                   : {}),
                 label: field.name?.replace("_s3key", ""),
               };
@@ -1471,11 +1473,11 @@ type PageInfo {
       description: data.description,
       embedder: data.embedder
         ? {
-            name: data.embedder.name,
-            id: data.embedder.id,
-            config: data.embedder?.config || undefined,
-            queue: embedderQueue?.queue.name || undefined,
-          }
+          name: data.embedder.name,
+          id: data.embedder.id,
+          config: data.embedder?.config || undefined,
+          queue: embedderQueue?.queue.name || undefined,
+        }
         : undefined,
       slug: "/contexts/" + data.id,
       active: data.active,
@@ -1493,8 +1495,8 @@ type PageInfo {
             editable: field.editable,
             ...(field.type === "file"
               ? {
-                  allowedFileTypes: field.allowedFileTypes,
-                }
+                allowedFileTypes: field.allowedFileTypes,
+              }
               : {}),
             label,
           };
@@ -1616,7 +1618,7 @@ type PageInfo {
         if (typeof row.tags === "string") {
           try {
             tags = JSON.parse(row.tags);
-          } catch (error: unknown) {
+          } catch {
             // If it's not valid JSON, treat it as a single tag
             tags = [row.tags];
           }

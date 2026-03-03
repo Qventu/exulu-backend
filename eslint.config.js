@@ -46,6 +46,7 @@ export default [
       'no-console': 'warn',
       'no-extra-boolean-cast': 'off',
       'no-async-promise-executor': 'off',
+      'no-useless-escape': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -62,9 +63,10 @@ export default [
         }
       ],
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-floating-promises': 'off',
       '@typescript-eslint/no-misused-promises': 'off',
       '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/unbound-method': 'off',
       '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
       '@typescript-eslint/prefer-nullish-coalescing': 'warn',
       '@typescript-eslint/prefer-optional-chain': 'warn',

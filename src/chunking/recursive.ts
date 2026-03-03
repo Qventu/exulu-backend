@@ -166,7 +166,7 @@ export class RecursiveChunker extends BaseChunker {
       minCharactersPerChunk = 24,
     } = options;
 
-    const tokenizerInstance = await new ExuluTokenizer();
+    const tokenizerInstance = new ExuluTokenizer();
     await tokenizerInstance.create(tokenizer);
 
     const plainInstance = new RecursiveChunker(
@@ -284,7 +284,7 @@ export class RecursiveChunker extends BaseChunker {
       return merged;
     } else {
       // Encode, Split, and Decode
-      const encoded = await this.tokenizer.encode(text);
+      const encoded = this.tokenizer.encode(text);
       const tokenSplits: Uint32Array[] = [];
       for (let i = 0; i < encoded.length; i += this.chunkSize) {
         tokenSplits.push(encoded.slice(i, i + this.chunkSize));
@@ -497,8 +497,8 @@ export class RecursiveChunker extends BaseChunker {
    */
   public toString(): string {
     return (
-      `RecursiveChunker(tokenizer=${this.tokenizer}, ` +
-      `rules=${this.rules}, chunkSize=${this.chunkSize}, ` +
+      `RecursiveChunker(tokenizer=${JSON.stringify(this.tokenizer)}, ` +
+      `rules=${JSON.stringify(this.rules)}, chunkSize=${this.chunkSize}, ` +
       `minCharactersPerChunk=${this.minCharactersPerChunk})`
     );
   }

@@ -602,6 +602,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
 
     let fullKey = key;
     console.log("[EXULU] global", req.headers.global);
+
     if (!req.headers.global) {
       fullKey = addUserPrefixToKey(key, user.type === "api" ? "api" : user.id);
     } else {
@@ -627,7 +628,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
         method: "PUT",
       });
       res.end();
-    }, next);
+    }, next)
   };
 
   app.get("/s3/params", async (req, res, next) => {
@@ -765,7 +766,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       return;
     }
 
-    const parts = [];
+    const parts: any[] = [];
 
     function listPartsPage(startAt) {
       if (!config.fileUploads) {
@@ -784,8 +785,7 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
             return;
           }
 
-          // @ts-ignore
-          parts.push(...data.Parts);
+          parts.push(...(data?.Parts ?? []));
 
           if (data?.IsTruncated) {
             // Get the next page.

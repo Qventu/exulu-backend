@@ -289,7 +289,7 @@ export function serialize(name: string, val: string, options?: SerializeOptions)
 
   if (options.expires) {
     if (!isDate(options.expires) || !Number.isFinite(options.expires.valueOf())) {
-      throw new TypeError(`option expires is invalid: ${options.expires}`);
+      throw new TypeError(`option expires is invalid: ${options.expires.toUTCString()}`);
     }
 
     str += "; Expires=" + options.expires.toUTCString();
@@ -355,7 +355,7 @@ function decode(str: string): string {
 
   try {
     return decodeURIComponent(str);
-  } catch (e) {
+  } catch {
     return str;
   }
 }

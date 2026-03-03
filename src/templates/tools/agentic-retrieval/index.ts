@@ -246,7 +246,9 @@ function createCustomAgenticRetrievalToolLoopAgent({
                                     ${
                                       tools[tool]?.inputSchema
                                         ? `
-                                        <inputSchema>${zodToJsonSchema(tools[tool]?.inputSchema as z.ZodObject<any>)}</inputSchema>
+                                        <inputSchema>${JSON.stringify(
+                                          zodToJsonSchema(tools[tool]?.inputSchema as z.ZodObject<any>), null, 2
+                                        )}</inputSchema>
                                     `
                                         : ""
                                     }

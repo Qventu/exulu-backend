@@ -400,8 +400,7 @@ export const vectorSearch = async ({
         .from("full_text as ft")
         .fullOuterJoin("semantic as se", "ft.id", "se.id")
         .join(chunksTable + " as chunks", function () {
-          // @ts-ignore - Knex doesn't properly type raw expressions in join conditions
-          this.on(db.raw("COALESCE(ft.id, se.id)"), "=", "chunks.id");
+          this.on(db.raw("COALESCE(ft.id, se.id)") as any, "=", "chunks.id");
         })
         .join(mainTable + " as items", "items.id", "chunks.source")
         .whereRaw(

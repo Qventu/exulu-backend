@@ -57,7 +57,7 @@ export class ExuluTokenizer {
     if (!this.encoder) {
       throw new Error("Tokenizer not initialized");
     }
-    const promises = texts.map((text) => this.countTokens(text));
+    const promises = texts.map((text) => Promise.resolve(this.countTokens(text)));
     return await Promise.all(promises);
   }
 

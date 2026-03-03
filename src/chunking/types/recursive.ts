@@ -78,7 +78,7 @@ export class RecursiveLevel {
    * @returns {string} The string representation of the RecursiveLevel.
    */
   public toString(): string {
-    return `RecursiveLevel(delimiters=${this.delimiters}, whitespace=${this.whitespace}, includeDelim=${this.includeDelim})`;
+    return `RecursiveLevel(delimiters=${JSON.stringify(this.delimiters)}, whitespace=${this.whitespace}, includeDelim=${this.includeDelim})`;
   }
 
   /** Return the RecursiveLevel as a dictionary-like object
@@ -162,7 +162,7 @@ export class RecursiveRules {
    * @returns {string} The string representation of the RecursiveRules.
    */
   public toString(): string {
-    return `RecursiveRules(levels=${this.levels})`;
+    return `RecursiveRules(levels=${JSON.stringify(this.levels)})`;
   }
 
   /** Return the number of levels

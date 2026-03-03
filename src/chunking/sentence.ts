@@ -179,7 +179,7 @@ export class SentenceChunker extends BaseChunker {
       includeDelim = "prev",
     } = options;
 
-    const tokenizerInstance = await new ExuluTokenizer();
+    const tokenizerInstance = new ExuluTokenizer();
     await tokenizerInstance.create(tokenizer);
 
     const plainInstance = new SentenceChunker(
@@ -313,7 +313,7 @@ export class SentenceChunker extends BaseChunker {
     const chunkText = sentences.map((sentence) => sentence.text).join("");
     // We calculate the token count here, as sum of the token counts of the sentences
     // does not match the token count of the chunk as a whole for some reason.
-    const tokenCount = await this.tokenizer.countTokens(chunkText);
+    const tokenCount = this.tokenizer.countTokens(chunkText);
 
     return new SentenceChunk({
       text: chunkText,
@@ -438,12 +438,12 @@ export class SentenceChunker extends BaseChunker {
    */
   public toString(): string {
     return (
-      `SentenceChunker(tokenizer=${this.tokenizer}, ` +
+      `SentenceChunker(tokenizer=${JSON.stringify(this.tokenizer)}, ` +
       `chunkSize=${this.chunkSize}, ` +
       `chunkOverlap=${this.chunkOverlap}, ` +
       `minSentencesPerChunk=${this.minSentencesPerChunk}, ` +
       `minCharactersPerSentence=${this.minCharactersPerSentence}, ` +
-      `approximate=${this.approximate}, delim=${this.delim}, ` +
+      `approximate=${this.approximate}, delim=${JSON.stringify(this.delim)}, ` +
       `includeDelim=${this.includeDelim})`
     );
   }
