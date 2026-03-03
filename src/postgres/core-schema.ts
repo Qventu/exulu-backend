@@ -1,5 +1,5 @@
 import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
-import type { ExuluTableDefinition } from "src/exulu/routes.ts";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 
 const agentMessagesSchema: ExuluTableDefinition = {
   type: "agent_messages",

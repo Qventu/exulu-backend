@@ -283,11 +283,9 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     // Only the user themselves, a super admin
     // or an api user can delete files.
     if (user.type !== "api" && !key.includes(`/user_${user.id}/`) && !user.super_admin) {
-      res
-        .status(405)
-        .json({
-          error: "Not allowed to access the files in the folder based on authenticated user.",
-        });
+      res.status(405).json({
+        error: "Not allowed to access the files in the folder based on authenticated user.",
+      });
       return;
     }
 
@@ -342,12 +340,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     console.log("[EXULU] bucket", bucket);
 
     if (!bucket || typeof bucket !== "string" || bucket.trim() === "") {
-      res
-        .status(400)
-        .json({
-          error:
-            "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
-        });
+      res.status(400).json({
+        error:
+          "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
+      });
       return;
     }
 
@@ -423,12 +419,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     let bucket = key.split("/")[0];
 
     if (!bucket || typeof bucket !== "string" || bucket.trim() === "") {
-      res
-        .status(400)
-        .json({
-          error:
-            "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
-        });
+      res.status(400).json({
+        error:
+          "Missing or invalid `bucket` (should be the first part of the key before the first slash).",
+      });
       return;
     }
 
@@ -736,12 +730,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     }
 
     if (typeof key !== "string") {
-      return res
-        .status(400)
-        .json({
-          error:
-            's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-        });
+      return res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
     }
 
     return getSignedUrl(
@@ -766,12 +758,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     const { key } = req.query;
 
     if (typeof key !== "string") {
-      res
-        .status(400)
-        .json({
-          error:
-            's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-        });
+      res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
       return;
     }
 
@@ -825,12 +815,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     const { parts } = req.body;
 
     if (typeof key !== "string") {
-      return res
-        .status(400)
-        .json({
-          error:
-            's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-        });
+      return res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
     }
 
     if (!Array.isArray(parts) || !parts.every(isValidPart)) {
@@ -872,12 +860,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
     const { key } = req.query;
 
     if (typeof key !== "string") {
-      return res
-        .status(400)
-        .json({
-          error:
-            's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
-        });
+      return res.status(400).json({
+        error:
+          's3: the object key must be passed as a query parameter. For example: "?key=abc.jpg"',
+      });
     }
 
     return client.send(

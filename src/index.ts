@@ -1,18 +1,10 @@
+/* 
+This file serves as the export and entry
+point for the npm package @exulu/backend.
+*/
+
 import "dotenv/config";
 import { redisClient } from "./redis/client";
-export {
-  ExuluContext,
-  ExuluReranker,
-  ExuluEmbedder,
-  ExuluAgent,
-  ExuluTool,
-  ExuluEval,
-  type ExuluStorage,
-  type ExuluQueueConfig,
-  type ExuluEvalMetadata,
-  type ExuluEvalTokenMetadata,
-  /* ExuluMcpToolsClient */
-} from "src/exulu/classes";
 export { ExuluApp } from "./exulu/app/index.ts";
 export { authentication as ExuluAuthentication } from "./auth/auth";
 export { queues as ExuluQueues } from "./bullmq/queues";
@@ -22,7 +14,7 @@ import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db";
 import { generateApiKey } from "./auth/generate-key";
 import { create } from "./exulu/otel";
-import type { ExuluContext } from "./exulu/classes";
+import { ExuluContext } from "./exulu/context.ts";
 import CryptoJS from "crypto-js";
 import { postgresClient } from "./postgres/client";
 import { type Variable } from "@EXULU_TYPES/models/variable";

@@ -1,4 +1,4 @@
-import type { ExuluContext } from "src/exulu/classes";
+import type { ExuluContext } from "src/exulu/context";
 import type { ExuluConfig } from "src/exulu/app";
 import type { Item } from "@EXULU_TYPES/models/item";
 

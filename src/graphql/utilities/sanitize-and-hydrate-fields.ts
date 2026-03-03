@@ -1,14 +1,14 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
-import type { ExuluAgent } from "src/exulu/classes";
-import type { ExuluContext } from "src/exulu/classes";
-import type { ExuluReranker } from "src/exulu/classes";
-import type { ExuluTool } from "src/exulu/classes";
+import type { ExuluAgent } from "src/exulu/agent";
+import { getChunksTableName, type ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import type { ExuluTool } from "src/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
 import { createAgenticRetrievalTool } from "src/templates/tools/agentic-retrieval/index.ts";
 import { loadAgent } from "src/utils/load-agent.ts";
 import { checkRecordAccess } from "src/utils/check-record-access.ts";
 import { postgresClient } from "src/postgres/client";
-import { createProjectItemsRetrievalTool, getChunksTableName } from "src/exulu/classes";
+import { createProjectItemsRetrievalTool } from "src/templates/tools/project-retrieval-tool.ts";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 
 const addAgentFields = async (
   args: Record<string, any>,
@@ -192,7 +192,7 @@ export const finalizeRequestedFields = async ({
   contexts: ExuluContext[];
   rerankers: ExuluReranker[];
   tools: ExuluTool[];
-  result: any | [];
+  result: any;
   user: User;
 }) => {
   if (!result) {

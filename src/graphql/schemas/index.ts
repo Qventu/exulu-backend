@@ -1,17 +1,14 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import { mapExuluFieldTypesToGraphqlTypes } from "src/graphql/utilities/map-types";
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from "graphql-type-json";
 import cron from "cron-validator";
-import {
-  ExuluAgent,
-  ExuluEval,
-  ExuluReranker,
-  ExuluTool,
-  type ExuluContext,
-  type ExuluQueueConfig,
-  type ExuluWorkflow,
-} from "src/exulu/classes.ts";
+import type { ExuluReranker } from "src/exulu/reranker";
+import type { ExuluTool } from "src/exulu/tool";
+import type { ExuluContext } from "src/exulu/context";
+import type { ExuluAgent } from "src/exulu/agent";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
+import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "src/utils/sanitize-name.ts";
 import { postgresClient } from "src/postgres/client.ts";
 import { loadAgent, loadAgents } from "src/utils/load-agent.ts";
@@ -36,6 +33,7 @@ import { createQueries } from "src/graphql/resolvers";
 import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition";
 import { getJobsByQueueName } from "../resolvers/job-queues";
 import { createMutations } from "../mutations";
+import type { ExuluEval } from "src/exulu/evals";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -1003,7 +1001,7 @@ type PageInfo {
               );
               attempts++;
               if (attempts >= retries) {
-                reject(error);
+                reject(error instanceof Error ? error : new Error(String(error)));
               }
               await new Promise((resolve) => setTimeout(resolve, 2000));
             }
@@ -1326,7 +1324,7 @@ type PageInfo {
 
         if (context.processor) {
           processor = await new Promise(async (resolve, reject) => {
-            const config = await context.processor?.config;
+            const config = context.processor?.config;
             const queue = await config?.queue;
             resolve({
               name: context.processor!.name,
@@ -1427,7 +1425,7 @@ type PageInfo {
 
     if (data.processor) {
       processor = await new Promise(async (resolve, reject) => {
-        const config = await data.processor?.config;
+        const config = data.processor?.config;
         const queue = await config?.queue;
         resolve({
           name: data.processor!.name,
@@ -1618,7 +1616,7 @@ type PageInfo {
         if (typeof row.tags === "string") {
           try {
             tags = JSON.parse(row.tags);
-          } catch (e) {
+          } catch (error: unknown) {
             // If it's not valid JSON, treat it as a single tag
             tags = [row.tags];
           }

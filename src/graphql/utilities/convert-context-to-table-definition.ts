@@ -1,6 +1,6 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
-import { getTableName } from "src/exulu/classes";
-import { ExuluContext } from "src/exulu/classes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
+import { getTableName } from "src/exulu/context";
+import type { ExuluContext } from "src/exulu/context";
 import { sanitizeName } from "src/utils/sanitize-name";
 import { addCoreFields } from "src/postgres/core-schema";
 

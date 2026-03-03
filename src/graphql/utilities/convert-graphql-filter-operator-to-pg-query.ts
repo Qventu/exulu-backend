@@ -1,4 +1,4 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 
 export const convertGraphqlOperatorToPostgresQuery = (
   query: any,

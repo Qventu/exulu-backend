@@ -1,6 +1,6 @@
 import { ExuluVariables } from "src";
 import { queues as ExuluQueues } from "../../bullmq/queues";
-import { ExuluEval } from "src/exulu/classes.ts";
+import { ExuluEval } from "src/exulu/evals";
 import { z } from "zod";
 
 const llmAsJudgeEval = () => {

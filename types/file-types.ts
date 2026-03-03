@@ -1,0 +1,1 @@
+export type imageTypes = ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp";

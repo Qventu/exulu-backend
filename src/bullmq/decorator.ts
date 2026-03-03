@@ -1,7 +1,7 @@
 import { Queue } from "bullmq";
 import { v4 as uuidv4 } from "uuid";
 import type { UIMessage } from "ai";
-import type { STATISTICS_LABELS } from "src/exulu/classes";
+import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 
 type ExuluJobType = "embedder" | "workflow" | "eval" | "processor";
 

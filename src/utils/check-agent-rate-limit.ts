@@ -1,4 +1,4 @@
-import type { ExuluAgent } from "src/exulu/classes.ts";
+import type { ExuluAgent } from "src/exulu/agent";
 import { redisClient } from "../redis/client.ts";
 
 export const checkAgentRateLimit = async (agent: ExuluAgent) => {

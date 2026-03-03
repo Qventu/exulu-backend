@@ -7,17 +7,15 @@ import {
   Output,
   generateText,
 } from "ai";
-import {
-  ExuluReranker,
-  ExuluTool,
-  sanitizeToolName,
-  type ExuluContext,
-} from "src/exulu/classes.ts";
+import { type ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import { ExuluTool } from "src/exulu/tool";
+import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
 import type { User } from "@EXULU_TYPES/models/user";
 import { postgresClient } from "src/postgres/client";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { preprocessQuery } from "./query-preprocessing";
-import { getChunksTableName, getTableName } from "src/exulu/classes.ts";
+import { getChunksTableName, getTableName } from "src/exulu/context";
 import type { SearchFilters } from "src/graphql/types";
 import type { VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
 import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition";
@@ -52,7 +50,7 @@ interface ToolResult {
 
 // Helper function to retry generateText calls
 async function withRetry<T>(generateFn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
-  let lastError: Error | unknown;
+  let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {

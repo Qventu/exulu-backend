@@ -1,9 +1,9 @@
 import { createAgenticRetrievalTool } from "src/templates/tools/agentic-retrieval/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
-import type { ExuluTool } from "src/exulu/classes.ts";
-import type { ExuluContext } from "src/exulu/classes.ts";
-import type { ExuluReranker } from "src/exulu/classes.ts";
-import type { ExuluAgent } from "src/exulu/classes.ts";
+import type { ExuluTool } from "src/exulu/tool";
+import type { ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import type { ExuluAgent } from "src/exulu/agent";
 import type { User } from "@EXULU_TYPES/models/user.ts";
 import { loadAgent } from "src/utils/load-agent.ts";
 import { checkRecordAccess } from "src/utils/check-record-access.ts";
@@ -24,7 +24,7 @@ export const getEnabledTools = async (
         let hydrated: ExuluTool | null | undefined;
         if (id === "agentic_context_search") {
           return createAgenticRetrievalTool({
-            // This tool is reinstantiated in the convertToolsArrayToObject function, where
+            // This tool is reinstantiated in the convertExuluToolsToAiSdkTools function, where
             // we can access the activated contexts and model that is calling it but we also
             // return it here so we know it was generally enabled as a tool.
             contexts: allContexts,

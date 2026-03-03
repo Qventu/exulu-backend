@@ -1,13 +1,10 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import { exuluBackendAgentFields } from "../utilities/backend-agent-fields";
-import {
-  ExuluAgent,
-  ExuluContext,
-  ExuluReranker,
-  ExuluTool,
-  getChunksTableName,
-  getTableName,
-} from "src/exulu/classes";
+import { getChunksTableName, getTableName } from "src/exulu/context";
+import type { ExuluAgent } from "src/exulu/agent";
+import type { ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import type { ExuluTool } from "src/exulu/tool";
 import { vectorSearch } from "./vector-search";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields";
 import { applyAccessControl } from "../utilities/access-control";

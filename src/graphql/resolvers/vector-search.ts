@@ -4,17 +4,13 @@ import type { SearchFilters } from "../types";
 import { applyAccessControl } from "../utilities/access-control";
 import { applyFilters } from "./apply-filters";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
-import {
-  ExuluContext,
-  getChunksTableName,
-  getTableName,
-  updateStatistic,
-  type STATISTICS_LABELS,
-} from "src/exulu/classes";
+import { ExuluContext, getChunksTableName, getTableName } from "src/exulu/context";
 import { VectorMethodEnum, type VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import { Knex as KnexType } from "knex";
 import { convertContextToTableDefinition } from "../utilities/convert-context-to-table-definition";
 import type { User } from "@EXULU_TYPES/models/user";
+import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
+import { updateStatistic } from "src/exulu/statistics";
 
 export type VectorSearchChunkResult = {
   chunk_content: string;

@@ -4,20 +4,13 @@ import { Job, Worker, type JobState } from "bullmq";
 import { loadAgent } from "src/utils/load-agent.ts";
 import { bullmq } from "src/validators/bullmq.ts";
 import { getEnabledTools } from "src/utils/enabled-tools.ts";
-import {
-  ExuluAgent,
-  ExuluContext,
-  ExuluEval,
-  ExuluReranker,
-  ExuluStorage,
-  ExuluTool,
-  getTableName,
-  sanitizeToolName,
-  updateStatistic,
-  type ExuluQueueConfig,
-  type ExuluWorkflow,
-  type STATISTICS_LABELS,
-} from "./classes";
+import { ExuluStorage } from "src/exulu/storage.ts";
+import type { ExuluAgent } from "src/exulu/agent.ts";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
+import { getTableName, type ExuluContext } from "src/exulu/context.ts";
+import type { ExuluReranker } from "src/exulu/reranker.ts";
+import type { ExuluEval } from "src/exulu/evals.ts";
+import type { ExuluTool } from "src/exulu/tool.ts";
 import { postgresClient } from "../postgres/client";
 import type { BullMqJobData } from "src/bullmq/decorator.ts";
 import { type Tracer } from "@opentelemetry/api";
@@ -32,6 +25,10 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
+import { updateStatistic } from "./statistics.ts";
+import type { ExuluWorkflow } from "@EXULU_TYPES/workflow.ts";
+import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
+import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
 
 let redisConnection: IORedis;
 
@@ -394,7 +391,7 @@ export const createWorkers = async (
                     );
                     attempts++;
                     if (attempts >= retries) {
-                      reject(error);
+                      reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
                     await new Promise((resolve) => setTimeout(resolve, 2000));
                   }
@@ -494,7 +491,7 @@ export const createWorkers = async (
                     );
                     attempts++;
                     if (attempts >= retries) {
-                      reject(error);
+                      reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
                     await new Promise((resolve) => setTimeout(resolve, 2000));
                   }
@@ -1315,7 +1312,7 @@ export const processUiMessagesFlow = async ({
           sendSources: true,
           onError: (error) => {
             console.error("[EXULU] Ui message stream error.", error);
-            reject(error);
+            reject(new Error(error instanceof Error ? error.message : String(error)));
             return `Ui message stream error: ${error instanceof Error ? error.message : String(error)}`;
           },
           onFinish: async ({ messages, isContinuation, responseMessage }) => {
@@ -1385,7 +1382,7 @@ export const processUiMessagesFlow = async ({
           `[EXULU] error generating stream for agent ${agentInstance.name} (${agentInstance.id}).`,
           error,
         );
-        reject(error);
+        reject(new Error(error instanceof Error ? error.message : String(error)));
       }
     });
     index++;

@@ -1,7 +1,7 @@
 import { Queue } from "bullmq";
 import { redisServer } from "./server";
 import { BullMQOtel } from "bullmq-otel";
-import type { ExuluQueueConfig } from "src/exulu/classes";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 
 // Used for workflows and embedders
 class ExuluQueues {

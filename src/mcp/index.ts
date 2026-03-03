@@ -2,14 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import {
-  convertToolsArrayToObject,
-  ExuluAgent,
-  ExuluContext,
-  ExuluReranker,
-  sanitizeToolName,
-  type ExuluTool,
-} from "../exulu/classes.ts";
+import type { ExuluAgent } from "src/exulu/agent";
+import type { ExuluTool } from "src/exulu/tool";
+import type { ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
 import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
 import { requestValidators } from "../validators/requests.ts";
@@ -23,6 +20,7 @@ import type { ExuluConfig } from "../exulu/app/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
+import { convertExuluToolsToAiSdkTools } from "src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 // Create an MCP server
 
 export class ExuluMCP {
@@ -158,7 +156,7 @@ export class ExuluMCP {
 
           const configValues = agentInstance.tools;
 
-          const tools = await convertToolsArrayToObject(
+          const tools = await convertExuluToolsToAiSdkTools(
             [tool],
             [],
             allTools,

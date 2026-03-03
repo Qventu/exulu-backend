@@ -1,13 +1,3 @@
-import {
-  ExuluAgent,
-  ExuluContext,
-  ExuluEval,
-  ExuluReranker,
-  getTableName,
-  type ExuluContextSource,
-  type ExuluQueueConfig,
-  type ExuluTool,
-} from "src/exulu/classes.ts"; /* ExuluMcpToolsClient */
 import { type Express } from "express";
 import { createExpressRoutes, global_queues } from "src/exulu/routes.ts";
 import { createWorkers } from "src/exulu/workers.ts";
@@ -46,6 +36,12 @@ import { ExuluQueues } from "src/index.ts";
 import { todoTools } from "src/templates/tools/todo/todo.ts";
 import { perplexityTools } from "src/templates/tools/perplexity.ts";
 import { isValidPostgresName } from "src/validators/postgres-name.ts";
+import type { ExuluAgent } from "../agent";
+import type { ExuluEval } from "../evals";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
+import type { ExuluReranker } from "../reranker";
+import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
+import type { ExuluTool } from "../tool";
 
 const isDev = process.env.NODE_ENV !== "production";
 const consoleTransport = new winston.transports.Console({
@@ -350,7 +346,7 @@ export class ExuluApp {
 
   public bullmq = {
     workers: {
-      create: async (queues?: string[] | undefined) => {
+      create: async (queues?: string[]) => {
         console.log(`
                     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
                     ██╔════╝╚██╗██╔╝██║   ██║██║      ██║   ██║

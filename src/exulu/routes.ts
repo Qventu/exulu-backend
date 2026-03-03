@@ -1,19 +1,5 @@
 import { type Express, type Request, type Response } from "express";
-import {
-  errorHandler,
-  type ExuluAgent,
-  ExuluContext,
-  type ExuluContextFieldDefinition,
-  type ExuluContextProcessor,
-  ExuluEval,
-  ExuluReranker,
-  type ExuluTool,
-  getChunksTableName,
-  getTableName,
-  saveChat,
-  type STATISTICS_LABELS,
-  updateStatistic,
-} from "./classes.ts";
+import { ExuluAgent, saveChat } from "./agent.ts";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
@@ -49,6 +35,12 @@ import type { Project } from "@EXULU_TYPES/models/project";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import cookieParser from "cookie-parser";
 import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition.ts";
+import type { ExuluTool } from "./tool.ts";
+import { getChunksTableName, getTableName, type ExuluContext } from "./context.ts";
+import type { ExuluEval } from "./evals.ts";
+import type { ExuluReranker } from "./reranker.ts";
+import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
+import { updateStatistic } from "./statistics.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -88,80 +80,6 @@ const {
   promptFavoritesSchema,
   statisticsSchema,
 } = coreSchemas.get();
-
-export type ExuluTableDefinition = {
-  type?:
-    | "test_cases"
-    | "eval_sets"
-    | "eval_runs"
-    | "agent_sessions"
-    | "agent_messages"
-    | "eval_results"
-    | "workflow_templates"
-    | "tracking"
-    | "rbac"
-    | "users"
-    | "variables"
-    | "roles"
-    | "agents"
-    | "items"
-    | "projects"
-    | "project_items"
-    | "platform_configurations"
-    | "job_results"
-    | "prompt_library"
-    | "prompt_favorites"
-    | "embedder_settings";
-  id?: string;
-  name: {
-    plural:
-      | "test_cases"
-      | "eval_sets"
-      | "eval_runs"
-      | "agent_sessions"
-      | "agent_messages"
-      | "eval_results"
-      | "workflow_templates"
-      | "tracking"
-      | "rbac"
-      | "users"
-      | "variables"
-      | "roles"
-      | "agents"
-      | "projects"
-      | "project_items"
-      | "platform_configurations"
-      | "job_results"
-      | "prompt_library"
-      | "prompt_favorites"
-      | "embedder_settings";
-    singular:
-      | "test_case"
-      | "eval_set"
-      | "eval_run"
-      | "agent_session"
-      | "agent_message"
-      | "eval_result"
-      | "workflow_template"
-      | "tracking"
-      | "rbac"
-      | "user"
-      | "variable"
-      | "role"
-      | "agent"
-      | "project"
-      | "project_item"
-      | "platform_configuration"
-      | "job_result"
-      | "prompt_library_item"
-      | "prompt_favorite"
-      | "embedder_setting";
-  };
-  processor?: ExuluContextProcessor;
-  fields: ExuluContextFieldDefinition[];
-  RBAC?: boolean;
-  graphql?: boolean;
-};
 
 export const createExpressRoutes = async (
   app: Express,
@@ -203,7 +121,7 @@ export const createExpressRoutes = async (
   app.use(cookieParser());
 
   // Add exulu-version header to all responses for debugging
-  app.use(async (req: Request, res: Response, next: Function) => {
+  app.use(async (req: Request, res: Response, next: () => void) => {
     const version = await getExuluVersionNumber();
     if (version) {
       res.setHeader("exulu-version", version);
@@ -274,20 +192,6 @@ export const createExpressRoutes = async (
     express.json({ limit: REQUEST_SIZE_LIMIT }),
     expressMiddleware(server, {
       context: async ({ req }) => {
-        /* console.info("[EXULU] Incoming graphql request", {
-                    message: 'Incoming Request',
-                    method: req.method,
-                    path: req.path,
-                    requestId: 'req-' + Date.now(),
-                    ipAddress: req.ip,
-                    userAgent: req.get('User-Agent'),
-                    headers: {
-                        "authorization": req.headers['authorization'],
-                        'exulu-api-key': req.headers['exulu-api-key'],
-                        "origin": req.headers['origin'],
-                        "...": "..."
-                    }
-                }); */
         const authenticationResult = await requestValidators.authenticate(req);
         if (!authenticationResult.user?.id) {
           console.error("[EXULU] Authentication failed", authenticationResult);
@@ -357,8 +261,8 @@ export const createExpressRoutes = async (
 
     const items = await itemsQuery;
 
-    const formattedResults: (any | null)[] = await Promise.all(
-      items.map(async (item, index) => {
+    const formattedResults: any[] = await Promise.all(
+      items.map(async (item) => {
         const chunksTable = getChunksTableName(ctx?.id || "");
         console.log("[EXULU] chunksTable", chunksTable);
         if (!item.item_id) {
@@ -506,7 +410,6 @@ Mood: friendly and intelligent.
       return;
     }
 
-    const image_bytes = Buffer.from(image_base64, "base64");
     const uuid = randomUUID();
     // check if public directory exists
     if (!fs.existsSync("public")) {
@@ -779,7 +682,16 @@ Mood: friendly and intelligent.
           sendSources: true,
           onError: (error) => {
             console.error("[EXULU] chat response error.", error);
-            return errorHandler(error);
+            if (error == null) {
+              return "unknown error";
+            }
+            if (typeof error === "string") {
+              return error;
+            }
+            if (error instanceof Error) {
+              return error.message;
+            }
+            return JSON.stringify(error);
           },
           generateMessageId: createIdGenerator({
             prefix: "msg_",

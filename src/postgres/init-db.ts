@@ -4,8 +4,8 @@ import { coreSchemas } from "./core-schema";
 import { mapType } from "src/utils/map-types";
 import { sanitizeName } from "src/utils/sanitize-name";
 import { encryptString, generateApiKey } from "src/auth/generate-key";
-import type { ExuluTableDefinition } from "src/exulu/routes";
-import type { ExuluContext } from "src/exulu/classes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
+import type { ExuluContext } from "src/exulu/context";
 
 const {
   agentsSchema,

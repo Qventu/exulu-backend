@@ -1,5 +1,5 @@
 import type { SearchFilters } from "../types";
-import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import { convertGraphqlOperatorToPostgresQuery } from "../utilities/convert-graphql-filter-operator-to-pg-query";
 
 export const applyFilters = (

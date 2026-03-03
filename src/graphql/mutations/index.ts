@@ -1,13 +1,10 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
-import {
-  getChunksTableName,
-  getTableName,
-  updateStatistic,
-  type ExuluAgent,
-} from "src/exulu/classes";
-import type { ExuluContext } from "src/exulu/classes";
-import type { ExuluReranker } from "src/exulu/classes";
-import type { ExuluTool } from "src/exulu/classes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
+import { type ExuluAgent } from "src/exulu/agent";
+import type { ExuluContext } from "src/exulu/context";
+import type { ExuluReranker } from "src/exulu/reranker";
+import { getChunksTableName, getTableName } from "src/exulu/context";
+import { updateStatistic } from "src/exulu/statistics";
+import type { ExuluTool } from "src/exulu/tool";
 import type { ExuluConfig } from "src/exulu/app";
 import { contextItemsProcessorHandler } from "../resolvers/utils";
 import { applyAccessControl } from "../utilities/access-control";
@@ -36,7 +33,7 @@ const postprocessDeletion = async ({
   agents: ExuluAgent[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
-  result: any | [];
+  result: any;
 }) => {
   if (!result) {
     return result;

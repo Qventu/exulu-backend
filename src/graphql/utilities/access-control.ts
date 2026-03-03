@@ -1,4 +1,4 @@
-import type { ExuluTableDefinition } from "src/exulu/routes";
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { User } from "@EXULU_TYPES/models/user";
 
 export const applyAccessControl = (

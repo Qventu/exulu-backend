@@ -44,6 +44,8 @@ export default [
       ...tseslint.configs.recommended.rules,
       ...tseslint.configs['recommended-requiring-type-checking'].rules,
       'no-console': 'warn',
+      'no-extra-boolean-cast': 'off',
+      'no-async-promise-executor': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
