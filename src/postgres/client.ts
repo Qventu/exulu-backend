@@ -56,15 +56,6 @@ export async function postgresClient(): Promise<{
 }> {
     if (!db["exulu"]) {
         try {
-            // console.log(`[EXULU] Connecting to ${dbName} database.`)
-            // console.log("[EXULU] POSTGRES_DB_HOST:", process.env.POSTGRES_DB_HOST)
-            // console.log("[EXULU] POSTGRES_DB_PORT:", process.env.POSTGRES_DB_PORT)
-            // console.log("[EXULU] POSTGRES_DB_USER:", process.env.POSTGRES_DB_USER)
-            // console.log("[EXULU] POSTGRES_DB_PASSWORD:", process.env.POSTGRES_DB_PASSWORD)
-            // console.log("[EXULU] POSTGRES_DB_NAME:", dbName)
-            // console.log("[EXULU] POSTGRES_DB_SSL:", process.env.POSTGRES_DB_SSL)
-            // console.log("[EXULU] Database exists checked:", databaseExistsChecked)
-
             // Only check database existence once per application lifecycle
             if (!databaseExistsChecked) {
                 await ensureDatabaseExists();

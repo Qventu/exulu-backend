@@ -38,7 +38,7 @@ export const claudeOpus4Agent = new ExuluAgent({
 
 // Most often used with Claude Code CLI
 export const claudeSonnet4Agent = new ExuluAgent({
-    id: `claude_code_agent`,
+    id: `claude_sonnet_4_agent`,
     name: `CLAUDE-SONNET-4`,
     provider: "anthropic",
     description: `High intelligence and balanced performance, used a lot for agentic coding tasks. Anthropic provides a newer 4.5 model that is more powerful and faster.`,
@@ -67,7 +67,7 @@ export const claudeSonnet4Agent = new ExuluAgent({
 
 // Most often used with Claude Code CLI
 export const claudeSonnet45Agent = new ExuluAgent({
-    id: `claude_code_agent`,
+    id: `claude_sonnet_4_5_agent`,
     name: `CLAUDE-SONNET-4.5`,
     provider: "anthropic",
     description: `Best Anthropic model for complex agents and coding. Highest intelligence across most tasks with exceptional agent and coding capabilities`,

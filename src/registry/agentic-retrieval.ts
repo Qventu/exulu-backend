@@ -193,8 +193,6 @@ function createCustomAgenticRetrievalToolLoopAgent({
             onFinish: (output: any) => void;
         }): AsyncGenerator<any> {
 
-            fs.writeFileSync("reranker.json", JSON.stringify(reranker, null, 2));
-
             let finished = false;
             let maxSteps = 2;
             let currentStep = 0;
@@ -225,8 +223,6 @@ function createCustomAgenticRetrievalToolLoopAgent({
 
                 console.log("[EXULU] Agentic retrieval step", currentStep);
 
-                fs.writeFileSync((currentStep - 1) + "_step_output.json", JSON.stringify(output, null, 2));
-
                 const systemPrompt = `
                             ${baseInstructions}
 
@@ -244,8 +240,6 @@ function createCustomAgenticRetrievalToolLoopAgent({
                             ${customInstructions ? `
                             CUSTOM INSTRUCTIONS: ${customInstructions}` : ""}
                             `
-
-                fs.writeFileSync("system_prompt_" + currentStep + ".txt", systemPrompt);
                 // First generateText call with retry logic
                 let reasoningOutput: Awaited<ReturnType<typeof generateText>>;
                 try {
@@ -338,7 +332,6 @@ function createCustomAgenticRetrievalToolLoopAgent({
                 console.log("[EXULU] Processing tool results for step", currentStep);
                 if (Array.isArray(toolResults)) {
                     chunks = toolResults.map(result => {
-                        fs.writeFileSync(result.toolCallId + "_tool_call_result.json", JSON.stringify(result, null, 2));
                         let chunks: any[] = []
                         if (typeof result.output === "string") {
                             chunks = JSON.parse(result.output);
@@ -359,9 +352,7 @@ function createCustomAgenticRetrievalToolLoopAgent({
 
                     if (reranker) {
                         console.log("[EXULU] Reranking chunks for step, using reranker", reranker.name + "(" + reranker.id + ")", "for step", currentStep, " for " + chunks?.length + " chunks");
-                        fs.writeFileSync("chunks-before-reranking.json", JSON.stringify(chunks, null, 2));
                         chunks = await reranker.run(query, chunks);
-                        fs.writeFileSync("chunks-after-reranking.json", JSON.stringify(chunks, null, 2));
                         console.log("[EXULU] Reranked chunks for step", currentStep, "using reranker", reranker.name + "(" + reranker.id + ")", " resulting in ", chunks?.length + " chunks");
                     }
 

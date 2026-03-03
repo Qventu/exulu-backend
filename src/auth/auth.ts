@@ -15,7 +15,8 @@ export const authentication = async ({
 }): Promise<{ error: boolean, message?: string, code?: number, user?: User }> => {
 
     // Used for communication between "internal" services
-    // such as between the backend and the uppy file uploader.
+    // such as between the backend and the uppy file uploader
+    // in case they run on different networks or environments.
     if (internalkey) {
         if (!process.env.INTERNAL_SECRET) {
             return {
@@ -58,9 +59,8 @@ export const authentication = async ({
 
     if (authtoken) {
         try {
-            // uses the raw encrypted JWE token provided by next-auth via
+            // Uses the raw encrypted JWE token provided by next-auth via
             // a "Bearer {token}" in the authorization header.
-
             if (!authtoken?.email) {
                 return {
                     error: true,
@@ -101,9 +101,7 @@ export const authentication = async ({
         }
     }
     if (apikey) {
-
         const users = await db.from("users").select("*").where("type", "api")
-
         if (!users || users.length === 0) {
             return {
                 error: true,

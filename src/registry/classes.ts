@@ -28,7 +28,7 @@ import { parseOfficeAsync } from 'officeparser';
 import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import type { Project } from "@EXULU_TYPES/models/project";
 import { createAgenticRetrievalTool } from "./agentic-retrieval";
-import fs from "fs";
+
 /**
  * @type {S3Client}
  */
@@ -237,9 +237,6 @@ export const createProjectItemsRetrievalTool = async ({
                 // Run retrieval over the items that are added to
                 // the project.
                 const result = await context.search({
-                    // todo check if it is more performant to use a concatenation of
-                    // the query and keywords, or just the keywords, instead of the 
-                    // query itself.
                     query: query,
                     itemFilters: [{
                         id: {
