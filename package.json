@@ -35,7 +35,10 @@
     "validate": "npm run type-check && npm run lint && npm run test",
     "audit": "npm audit",
     "audit:prod": "npm audit --omit=dev",
-    "audit:fix": "npm audit fix"
+    "audit:fix": "npm audit fix",
+    "cpd": "jscpd src --reporters console",
+    "cpd:report": "jscpd src --reporters console,html",
+    "cpd:view": "serve cpd-report/html -l 3001"
   },
   "keywords": [
     "exulu"
@@ -60,8 +63,10 @@
     "eslint": "^9.20.0",
     "husky": "^9.1.7",
     "jest": "^29.7.0",
+    "jscpd": "^4.0.8",
     "prettier": "^3.4.2",
     "semantic-release": "24.2.9",
+    "serve": "^14.2.6",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "tsup": "^8.5.0",

@@ -1,5 +1,5 @@
 import type { ExuluFieldTypes } from "@EXULU_TYPES/enums/field-types";
-import type { allFileTypes } from "@EXULU_TYPES/models/agent";
+import type { allFileTypes } from "@EXULU_TYPES/file-types";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { ExuluStorage } from "src/exulu/storage.ts";
 import { sanitizeName } from "src/utils/sanitize-name";
