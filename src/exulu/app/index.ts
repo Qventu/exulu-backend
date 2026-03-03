@@ -62,25 +62,16 @@ const consoleTransport = new winston.transports.Console({
 
 // Monkey-patch console to use Winston with metadata support
 const formatArg = (arg: any) =>
-  typeof arg === "object"
-    ? util.inspect(arg, { depth: null, colors: isDev })
-    : String(arg);
+  typeof arg === "object" ? util.inspect(arg, { depth: null, colors: isDev }) : String(arg);
 
-const createLogMethod = (
-  logger: winston.Logger,
-  logLevel: "info" | "warn" | "error" | "debug",
-) => {
+const createLogMethod = (logger: winston.Logger, logLevel: "info" | "warn" | "error" | "debug") => {
   return (...args: any[]) => {
     // Check if last argument is metadata object with id
     const lastArg = args[args.length - 1];
     let metadata: any = undefined;
     let messageArgs = args;
 
-    if (
-      lastArg &&
-      typeof lastArg === "object" &&
-      lastArg.__logMetadata === true
-    ) {
+    if (lastArg && typeof lastArg === "object" && lastArg.__logMetadata === true) {
       metadata = lastArg;
       messageArgs = args.slice(0, -1);
     }
@@ -127,7 +118,6 @@ export type ExuluConfig = {
 };
 
 export class ExuluApp {
-
   private _agents: ExuluAgent[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
@@ -167,9 +157,7 @@ export class ExuluApp {
       ...contexts,
     };
 
-    this._rerankers = [
-      ...(rerankers ?? []),
-    ];
+    this._rerankers = [...(rerankers ?? [])];
 
     this._agents = [
       claudeSonnet4Agent,
@@ -327,13 +315,7 @@ export class ExuluApp {
 
   public embeddings = {
     generate: {
-      one: async ({
-        context: contextId,
-        item: itemId,
-      }: {
-        context: string;
-        item: string;
-      }) => {
+      one: async ({ context: contextId, item: itemId }: { context: string; item: string }) => {
         const { db } = await postgresClient();
         const item = await db
           .from(getTableName(contextId))
@@ -413,9 +395,7 @@ export class ExuluApp {
         // defined, the worker will listen to all queues.
         let filteredQueues = this._queues;
         if (queues) {
-          filteredQueues = filteredQueues.filter((q) =>
-            queues.includes(q.queue.name),
-          );
+          filteredQueues = filteredQueues.filter((q) => queues.includes(q.queue.name));
         }
 
         // Create ContextSource schedulers
@@ -431,18 +411,11 @@ export class ExuluApp {
         }
 
         if (sources.length > 0) {
-          console.log(
-            "[EXULU] Creating ContextSource schedulers for",
-            sources.length,
-            "sources.",
-          );
+          console.log("[EXULU] Creating ContextSource schedulers for", sources.length, "sources.");
           for (const source of sources) {
             const queue = await source.config?.queue;
             if (!queue) {
-              console.warn(
-                "[EXULU] No queue configured for source",
-                source.name,
-              );
+              console.warn("[EXULU] No queue configured for source", source.name);
               continue;
             }
             if (queue && source.config?.schedule) {
@@ -508,9 +481,7 @@ export class ExuluApp {
           tracer = trace.getTracer("exulu", "1.0.0"); // todo link to Exulu version
         }
 
-        const transports = this._config?.logger?.winston?.transports ?? [
-          consoleTransport,
-        ];
+        const transports = this._config?.logger?.winston?.transports ?? [consoleTransport];
 
         const logger = createLogger({
           enableOtel: this._config?.telemetry?.enabled ?? false,

@@ -6,7 +6,7 @@ import { ExuluTokenizer, type TokenizerModelName } from "./tokenizer";
 /**
  * Configuration options for creating a RecursiveChunker instance.
  * All options are optional and have sensible defaults.
- * 
+ *
  * @interface RecursiveChunkerOptions
  * @property {string | Tokenizer} [tokenizer] - The tokenizer to use for text processing. Can be a string identifier (default: "Xenova/gpt2") or a Tokenizer instance.
  * @property {number} [chunkSize] - The maximum number of tokens per chunk. Must be greater than 0. Default: 512.
@@ -52,34 +52,33 @@ export interface RecursiveChunkerOptions {
  */
 export type CallableRecursiveChunker = RecursiveChunker & {
   (text: string, showProgress?: boolean): Promise<RecursiveChunk[]>;
-  (texts: string[], showProgress?: boolean): Promise<(RecursiveChunk[])[]>;
+  (texts: string[], showProgress?: boolean): Promise<RecursiveChunk[][]>;
 };
-
 
 /**
  * Recursively chunk text using a set of rules.
- * 
+ *
  * This class extends the BaseChunker class and implements the chunk method.
  * It provides a flexible way to chunk text based on custom rules, including
  * delimiters, whitespace, and token-based chunking.
- * 
+ *
  * @extends BaseChunker
  * @property {number} chunkSize - The maximum number of tokens per chunk.
  * @property {number} minCharactersPerChunk - The minimum number of characters per chunk.
  * @property {RecursiveRules} rules - The rules that define how text should be recursively chunked.
  * @property {string} sep - The separator string used for internal splitting (usually "✄").
- * 
+ *
  * @method chunk - Recursively chunk a single text into chunks or strings.
  * @method chunkBatch - Recursively chunk a batch of texts.
  * @method toString - Returns a string representation of the RecursiveChunker instance.
  * @method call - Call the chunker with a single string or an array of strings. (see callable signatures)
- * 
+ *
  * @static
  * @method create
  * @memberof RecursiveChunker
  * @param {RecursiveChunkerOptions} [options] - Configuration options for the RecursiveChunker.
  * @returns {Promise<RecursiveChunker>} A Promise that resolves to a RecursiveChunker instance.
- * 
+ *
  * @example
  * const chunker = await RecursiveChunker.create({ chunkSize: 256 });
  * const chunks = await chunker("Some text to chunk");
@@ -99,7 +98,7 @@ export class RecursiveChunker extends BaseChunker {
     tokenizer: ExuluTokenizer,
     chunkSize: number,
     rules: RecursiveRules,
-    minCharactersPerChunk: number
+    minCharactersPerChunk: number,
   ) {
     super(tokenizer);
 
@@ -157,7 +156,9 @@ export class RecursiveChunker extends BaseChunker {
    * For advanced customization, pass a custom RecursiveRules object to the rules option.
    * See {@link RecursiveRules} and {@link RecursiveLevel} for rule structure.
    */
-  public static async create(options: RecursiveChunkerOptions = {}): Promise<CallableRecursiveChunker> {
+  public static async create(
+    options: RecursiveChunkerOptions = {},
+  ): Promise<CallableRecursiveChunker> {
     const {
       tokenizer = "gpt-3.5-turbo" as TokenizerModelName,
       chunkSize = 512,
@@ -172,16 +173,16 @@ export class RecursiveChunker extends BaseChunker {
       tokenizerInstance,
       chunkSize,
       rules,
-      minCharactersPerChunk
+      minCharactersPerChunk,
     );
 
     // Create the callable function wrapper
-    const callableFn = function(
+    const callableFn = function (
       this: CallableRecursiveChunker,
       textOrTexts: string | string[],
-      showProgress?: boolean
+      showProgress?: boolean,
     ) {
-      if (typeof textOrTexts === 'string') {
+      if (typeof textOrTexts === "string") {
         return plainInstance.call(textOrTexts, showProgress);
       } else {
         return plainInstance.call(textOrTexts, showProgress);
@@ -199,10 +200,10 @@ export class RecursiveChunker extends BaseChunker {
 
   /**
    * Estimates the number of tokens in a given text.
-   * 
+   *
    * This method uses a character-to-token ratio (default: 6.5 characters per token) for quick estimation.
    * If the estimated token count exceeds the chunk size, it performs an actual token count.
-   * 
+   *
    * @param {string} text - The text to estimate token count for
    * @returns {Promise<number>} A promise that resolves to the estimated number of tokens
    * @private
@@ -210,19 +211,19 @@ export class RecursiveChunker extends BaseChunker {
   private async _estimateTokenCount(text: string): Promise<number> {
     const estimate = Math.max(1, Math.floor(text.length / this._CHARS_PER_TOKEN));
     if (estimate > this.chunkSize) {
-        return this.chunkSize + 1;
+      return this.chunkSize + 1;
     }
     return this.tokenizer.countTokens(text);
   }
 
   /**
    * Split the text into chunks based on the provided recursive level rules.
-   * 
+   *
    * This method handles three different splitting strategies:
    * 1. Whitespace-based splitting: Splits text on spaces
    * 2. Delimiter-based splitting: Splits text on specified delimiters with options to include delimiters
    * 3. Token-based splitting: Splits text into chunks of maximum token size
-   * 
+   *
    * @param {string} text - The text to be split into chunks
    * @param {RecursiveLevel} recursiveLevel - The rules defining how to split the text
    * @returns {Promise<string[]>} A promise that resolves to an array of text chunks
@@ -235,20 +236,26 @@ export class RecursiveChunker extends BaseChunker {
     } else if (recursiveLevel.delimiters) {
       let t = text;
       if (recursiveLevel.includeDelim === "prev") {
-        for (const delimiter of Array.isArray(recursiveLevel.delimiters) ? recursiveLevel.delimiters : [recursiveLevel.delimiters]) {
+        for (const delimiter of Array.isArray(recursiveLevel.delimiters)
+          ? recursiveLevel.delimiters
+          : [recursiveLevel.delimiters]) {
           t = t.replace(delimiter, delimiter + this.sep);
         }
       } else if (recursiveLevel.includeDelim === "next") {
-        for (const delimiter of Array.isArray(recursiveLevel.delimiters) ? recursiveLevel.delimiters : [recursiveLevel.delimiters]) {
+        for (const delimiter of Array.isArray(recursiveLevel.delimiters)
+          ? recursiveLevel.delimiters
+          : [recursiveLevel.delimiters]) {
           t = t.replace(delimiter, this.sep + delimiter);
         }
       } else {
-        for (const delimiter of Array.isArray(recursiveLevel.delimiters) ? recursiveLevel.delimiters : [recursiveLevel.delimiters]) {
+        for (const delimiter of Array.isArray(recursiveLevel.delimiters)
+          ? recursiveLevel.delimiters
+          : [recursiveLevel.delimiters]) {
           t = t.replace(delimiter, this.sep);
         }
       }
 
-      const splits = t.split(this.sep).filter(split => split !== "");
+      const splits = t.split(this.sep).filter((split) => split !== "");
 
       // Merge short splits
       let current = "";
@@ -288,20 +295,25 @@ export class RecursiveChunker extends BaseChunker {
 
   /**
    * Create a RecursiveChunk object with indices based on the current offset.
-   * 
+   *
    * This method constructs a RecursiveChunk object that contains metadata about the chunk,
    * including the text content, its start and end indices, token count, and the level of recursion.
-   * 
+   *
    * @param {string} text - The text content of the chunk
    * @param {number} tokenCount - The number of tokens in the chunk
    */
-  private _makeChunks(text: string, tokenCount: number, level: number, startOffset: number): RecursiveChunk {
+  private _makeChunks(
+    text: string,
+    tokenCount: number,
+    level: number,
+    startOffset: number,
+  ): RecursiveChunk {
     return new RecursiveChunk({
       text: text,
       startIndex: startOffset,
       endIndex: startOffset + text.length,
       tokenCount: tokenCount,
-      level: level
+      level: level,
     });
   }
 
@@ -311,7 +323,7 @@ export class RecursiveChunker extends BaseChunker {
   private _mergeSplits(
     splits: string[],
     tokenCounts: number[],
-    combineWhitespace: boolean = false
+    combineWhitespace: boolean = false,
   ): [string[], number[]] {
     if (!splits.length || !tokenCounts.length) {
       return [[], []];
@@ -320,12 +332,12 @@ export class RecursiveChunker extends BaseChunker {
     // If the number of splits and token counts does not match, raise an error
     if (splits.length !== tokenCounts.length) {
       throw new Error(
-        `Number of splits ${splits.length} does not match number of token counts ${tokenCounts.length}`
+        `Number of splits ${splits.length} does not match number of token counts ${tokenCounts.length}`,
       );
     }
 
     // If all splits are larger than the chunk size, return them
-    if (tokenCounts.every(count => count > this.chunkSize)) {
+    if (tokenCounts.every((count) => count > this.chunkSize)) {
       return [splits, tokenCounts];
     }
 
@@ -356,11 +368,7 @@ export class RecursiveChunker extends BaseChunker {
       const requiredTokenCount = currentTokenCount + this.chunkSize;
 
       // Find the index to merge at
-      let index = this._bisectLeft(
-        cumulativeTokenCounts,
-        requiredTokenCount,
-        currentIndex
-      ) - 1;
+      let index = this._bisectLeft(cumulativeTokenCounts, requiredTokenCount, currentIndex) - 1;
       index = Math.min(index, splits.length);
 
       // If currentIndex == index, we need to move to the next index
@@ -377,7 +385,7 @@ export class RecursiveChunker extends BaseChunker {
 
       // Adjust token count
       combinedTokenCounts.push(
-        (cumulativeTokenCounts[Math.min(index, splits.length)] ?? 0) - currentTokenCount
+        (cumulativeTokenCounts[Math.min(index, splits.length)] ?? 0) - currentTokenCount,
       );
       currentIndex = index;
     }
@@ -387,7 +395,7 @@ export class RecursiveChunker extends BaseChunker {
 
   /**
    * Binary search to find the leftmost position where value should be inserted to maintain order.
-   * 
+   *
    * @param {number[]} arr - The array to search
    * @param {number} value - The value to insert
    * @param {number} [lo=0] - The starting index for the search
@@ -413,7 +421,7 @@ export class RecursiveChunker extends BaseChunker {
   private async _recursiveChunk(
     text: string,
     level: number = 0,
-    startOffset: number = 0
+    startOffset: number = 0,
   ): Promise<RecursiveChunk[]> {
     if (!text) {
       return [];
@@ -421,14 +429,7 @@ export class RecursiveChunker extends BaseChunker {
 
     if (level >= this.rules.length) {
       const tokenCount = await this._estimateTokenCount(text);
-      return [
-        this._makeChunks(
-            text,
-            tokenCount,
-            level,
-            startOffset
-          )
-      ];
+      return [this._makeChunks(text, tokenCount, level, startOffset)];
     }
 
     const currRule = this.rules.getLevel(level);
@@ -437,7 +438,7 @@ export class RecursiveChunker extends BaseChunker {
     }
 
     const splits = await this._splitText(text, currRule);
-    const tokenCounts = await Promise.all(splits.map(split => this._estimateTokenCount(split)));
+    const tokenCounts = await Promise.all(splits.map((split) => this._estimateTokenCount(split)));
 
     let merged: string[];
     let combinedTokenCounts: number[];
@@ -445,23 +446,13 @@ export class RecursiveChunker extends BaseChunker {
     if (currRule.delimiters === undefined && !currRule.whitespace) {
       [merged, combinedTokenCounts] = [splits, tokenCounts];
     } else if (currRule.delimiters === undefined && currRule.whitespace) {
-      [merged, combinedTokenCounts] = this._mergeSplits(
-        splits,
-        tokenCounts,
-        true
-      );
+      [merged, combinedTokenCounts] = this._mergeSplits(splits, tokenCounts, true);
       // NOTE: This is a hack to fix the reconstruction issue when whitespace is used.
       // When whitespace is there, " ".join only adds space between words, not before the first word.
       // To make it combine back properly, all splits except the first one are prefixed with a space.
-      merged = merged.slice(0, 1).concat(
-        merged.slice(1).map(text => " " + text)
-      );
+      merged = merged.slice(0, 1).concat(merged.slice(1).map((text) => " " + text));
     } else {
-      [merged, combinedTokenCounts] = this._mergeSplits(
-        splits,
-        tokenCounts,
-        false
-      );
+      [merged, combinedTokenCounts] = this._mergeSplits(splits, tokenCounts, false);
     }
 
     // Chunk long merged splits
@@ -471,11 +462,9 @@ export class RecursiveChunker extends BaseChunker {
       const split = merged[i];
       const tokenCount = combinedTokenCounts[i];
       if (tokenCount && tokenCount > this.chunkSize) {
-        chunks.push(...await this._recursiveChunk(split ?? "", level + 1, currentOffset));
+        chunks.push(...(await this._recursiveChunk(split ?? "", level + 1, currentOffset)));
       } else {
-        chunks.push(
-          this._makeChunks(split ?? "", tokenCount ?? 0, level, currentOffset)
-        );
+        chunks.push(this._makeChunks(split ?? "", tokenCount ?? 0, level, currentOffset));
       }
       // Update the offset by the length of the processed split.
       currentOffset += split?.length ?? 0;
@@ -485,10 +474,10 @@ export class RecursiveChunker extends BaseChunker {
 
   /**
    * Recursively chunk text.
-   * 
+   *
    * This method is the main entry point for chunking text using the RecursiveChunker.
    * It takes a single text string and returns an array of RecursiveChunk objects.
-   * 
+   *
    * @param {string} text - The text to be chunked
    * @returns {Promise<RecursiveChunk[]>} A promise that resolves to an array of RecursiveChunk objects
    */
@@ -500,15 +489,17 @@ export class RecursiveChunker extends BaseChunker {
 
   /**
    * Return a string representation of the RecursiveChunker.
-   * 
+   *
    * This method provides a string representation of the RecursiveChunker instance,
    * including its tokenizer, rules, chunk size, minimum characters per chunk, and return type.
-   * 
+   *
    * @returns {string} A string representation of the RecursiveChunker
    */
   public toString(): string {
-    return `RecursiveChunker(tokenizer=${this.tokenizer}, ` +
+    return (
+      `RecursiveChunker(tokenizer=${this.tokenizer}, ` +
       `rules=${this.rules}, chunkSize=${this.chunkSize}, ` +
-      `minCharactersPerChunk=${this.minCharactersPerChunk})`;
+      `minCharactersPerChunk=${this.minCharactersPerChunk})`
+    );
   }
-} 
+}

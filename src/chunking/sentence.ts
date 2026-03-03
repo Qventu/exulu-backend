@@ -31,17 +31,17 @@ export interface SentenceChunkerOptions {
  * Represents a SentenceChunker instance that is also directly callable.
  * This type combines the SentenceChunker class with a function interface,
  * allowing the instance to be called directly like a function.
- * 
+ *
  * When called, it executes the `call` method inherited from BaseChunker,
  * which in turn calls either `chunk` (for single text) or `chunkBatch` (for multiple texts).
- * 
+ *
  * @example
  * const chunker = await SentenceChunker.create();
  * // Single text processing
  * const chunks = await chunker("This is a sample text.");
  * // Batch processing
  * const batchChunks = await chunker(["Text 1", "Text 2"]);
- * 
+ *
  * @type {SentenceChunker & {
  *   (text: string, showProgress?: boolean): Promise<SentenceChunk[]>;
  *   (texts: string[], showProgress?: boolean): Promise<SentenceChunk[][]>;
@@ -52,13 +52,12 @@ export type CallableSentenceChunker = SentenceChunker & {
   (texts: string[], showProgress?: boolean): Promise<SentenceChunk[][]>;
 };
 
-
 /**
  * SentenceChunker is a class that implements the BaseChunker interface.
  * It uses a tokenizer to split text into sentences and then creates chunks of text.
- * 
+ *
  * @extends BaseChunker
- * 
+ *
  * @property {number} chunkSize - Maximum number of tokens per chunk.
  * @property {number} chunkOverlap - Number of tokens to overlap between consecutive chunks.
  * @property {number} minSentencesPerChunk - Minimum number of sentences per chunk.
@@ -66,17 +65,17 @@ export type CallableSentenceChunker = SentenceChunker & {
  * @property {boolean} approximate - Whether to use approximate token counting.
  * @property {string[]} delim - List of sentence delimiters to use for splitting.
  * @property {('prev' | 'next' | null)} includeDelim - Whether to include the delimiter with the previous sentence ('prev'), next sentence ('next'), or exclude it (null).
- * 
+ *
  * @method chunk - Chunk a single text string.
  * @method chunkBatch - Chunk an array of text strings.
  * @method call - (Inherited from BaseChunker) Chunk a single text string or an array of text strings.
  * @method toString - Return a string representation of the SentenceChunker.
- *  
+ *
  * @example
  * const chunker = await SentenceChunker.create();
  * const chunks = await chunker("This is a sample text.");
  * const batchChunks = await chunker(["Text 1", "Text 2"]);
- * 
+ *
  * @see BaseChunker
  */
 export class SentenceChunker extends BaseChunker {
@@ -91,7 +90,7 @@ export class SentenceChunker extends BaseChunker {
 
   /**
    * Private constructor. Use `SentenceChunker.create()` to instantiate.
-   * 
+   *
    * @param {Tokenizer} tokenizer - The tokenizer to use for token counting.
    * @param {number} chunkSize - Maximum number of tokens per chunk.
    * @param {number} chunkOverlap - Number of tokens to overlap between consecutive chunks.
@@ -109,7 +108,7 @@ export class SentenceChunker extends BaseChunker {
     minCharactersPerSentence: number,
     approximate: boolean,
     delim: string[],
-    includeDelim: "prev" | "next" | null
+    includeDelim: "prev" | "next" | null,
   ) {
     super(tokenizer);
 
@@ -135,7 +134,9 @@ export class SentenceChunker extends BaseChunker {
       throw new Error("includeDelim must be 'prev', 'next' or null");
     }
     if (approximate) {
-      console.warn("Approximate has been deprecated and will be removed from next version onwards!");
+      console.warn(
+        "Approximate has been deprecated and will be removed from next version onwards!",
+      );
     }
 
     this.chunkSize = chunkSize;
@@ -150,21 +151,23 @@ export class SentenceChunker extends BaseChunker {
 
   /**
    * Creates and initializes a SentenceChunker instance that is directly callable.
-   * 
+   *
    * This method is a static factory function that returns a Promise resolving to a CallableSentenceChunker instance.
    * The returned instance is a callable function that can be used to chunk text strings or arrays of text strings.
-   * 
+   *
    * @param {SentenceChunkerOptions} [options] - Options for configuring the SentenceChunker.
    * @returns {Promise<CallableSentenceChunker>} A promise that resolves to a callable SentenceChunker instance.
-   * 
+   *
    * @example
    * const chunker = await SentenceChunker.create();
    * const chunks = await chunker("This is a sample text.");
    * const batchChunks = await chunker(["Text 1", "Text 2"]);
-   * 
+   *
    * @see SentenceChunkerOptions
    */
-  public static async create(options: SentenceChunkerOptions = {}): Promise<CallableSentenceChunker> {
+  public static async create(
+    options: SentenceChunkerOptions = {},
+  ): Promise<CallableSentenceChunker> {
     const {
       tokenizer = "gpt-3.5-turbo" as TokenizerModelName,
       chunkSize = 512,
@@ -173,9 +176,8 @@ export class SentenceChunker extends BaseChunker {
       minCharactersPerSentence = 12,
       approximate = false,
       delim = [". ", "! ", "? ", "\n"],
-      includeDelim = "prev"
+      includeDelim = "prev",
     } = options;
-
 
     const tokenizerInstance = await new ExuluTokenizer();
     await tokenizerInstance.create(tokenizer);
@@ -188,16 +190,16 @@ export class SentenceChunker extends BaseChunker {
       minCharactersPerSentence,
       approximate,
       delim,
-      includeDelim
+      includeDelim,
     );
 
     // Create the callable function wrapper
-    const callableFn = function(
+    const callableFn = function (
       this: CallableSentenceChunker,
       textOrTexts: string | string[],
-      showProgress?: boolean
+      showProgress?: boolean,
     ) {
-      if (typeof textOrTexts === 'string') {
+      if (typeof textOrTexts === "string") {
         return plainInstance.call(textOrTexts, showProgress);
       } else {
         return plainInstance.call(textOrTexts, showProgress);
@@ -213,13 +215,13 @@ export class SentenceChunker extends BaseChunker {
     return callableFn as unknown as CallableSentenceChunker;
   }
 
-  // NOTE: The replace + split method is not the best/most efficient way in general to be doing this. It works well in python because python implements .replace and .split in C while the re library is much slower in python. 
+  // NOTE: The replace + split method is not the best/most efficient way in general to be doing this. It works well in python because python implements .replace and .split in C while the re library is much slower in python.
   // NOTE: The new split -> join -> split is so weird, but it works. I don't quite like it however.
   // TODO: Implement a more efficient method for splitting text into sentences.
 
   /**
    * Fast sentence splitting while maintaining accuracy.
-   * 
+   *
    * @param {string} text - The text to split into sentences.
    * @returns {string[]} An array of sentences.
    */
@@ -245,17 +247,17 @@ export class SentenceChunker extends BaseChunker {
     for (const s of splits) {
       // If current is empty, start a new sentence
       if (!current) {
-          current = s;
+        current = s;
       } else {
-          // If the current sentence is already long enough, add it to sentences
-          if (current.length >= this.minCharactersPerSentence) {
-            sentences.push(current);
-            current = s;
-          } else {
-            current += s; // Since s has the spaces in it already, it can be concatenated directly
-          }
+        // If the current sentence is already long enough, add it to sentences
+        if (current.length >= this.minCharactersPerSentence) {
+          sentences.push(current);
+          current = s;
+        } else {
+          current += s; // Since s has the spaces in it already, it can be concatenated directly
         }
       }
+    }
 
     // Add the last sentence if it exists
     if (current) {
@@ -267,7 +269,7 @@ export class SentenceChunker extends BaseChunker {
 
   /**
    * Split text into sentences and calculate token counts for each sentence.
-   * 
+   *
    * @param {string} text - The text to split into sentences.
    * @returns {Promise<Sentence[]>} An array of Sentence objects.
    */
@@ -290,22 +292,25 @@ export class SentenceChunker extends BaseChunker {
     const tokenCounts = await this.tokenizer.countTokensBatch(sentenceTexts);
 
     // Create sentence objects
-    return sentenceTexts.map((sent, i) => new Sentence({
-      text: sent,
-      startIndex: positions[i]!,
-      endIndex: positions[i]! + sent.length,
-      tokenCount: tokenCounts[i]!
-    }));
+    return sentenceTexts.map(
+      (sent, i) =>
+        new Sentence({
+          text: sent,
+          startIndex: positions[i]!,
+          endIndex: positions[i]! + sent.length,
+          tokenCount: tokenCounts[i]!,
+        }),
+    );
   }
 
   /**
    * Create a chunk from a list of sentences.
-   * 
+   *
    * @param {Sentence[]} sentences - The sentences to create a chunk from.
    * @returns {Promise<SentenceChunk>} A promise that resolves to a SentenceChunk object.
    */
   private async _createChunk(sentences: Sentence[]): Promise<SentenceChunk> {
-    const chunkText = sentences.map(sentence => sentence.text).join("");
+    const chunkText = sentences.map((sentence) => sentence.text).join("");
     // We calculate the token count here, as sum of the token counts of the sentences
     // does not match the token count of the chunk as a whole for some reason.
     const tokenCount = await this.tokenizer.countTokens(chunkText);
@@ -315,13 +320,13 @@ export class SentenceChunker extends BaseChunker {
       startIndex: sentences[0]!.startIndex,
       endIndex: sentences[sentences.length - 1]!.endIndex,
       tokenCount: tokenCount,
-      sentences: sentences
+      sentences: sentences,
     });
   }
 
   /**
    * Split text into overlapping chunks based on sentences while respecting token limits.
-   * 
+   *
    * @param {string} text - The text to split into chunks.
    * @returns {Promise<SentenceChunk[]>} A promise that resolves to an array of SentenceChunk objects.
    */
@@ -366,8 +371,8 @@ export class SentenceChunker extends BaseChunker {
         } else {
           console.warn(
             `Minimum sentences per chunk as ${this.minSentencesPerChunk} could not be met for all chunks. ` +
-            `Last chunk of the text will have only ${sentences.length - pos} sentences. ` +
-            "Consider increasing the chunk_size or decreasing the min_sentences_per_chunk."
+              `Last chunk of the text will have only ${sentences.length - pos} sentences. ` +
+              "Consider increasing the chunk_size or decreasing the min_sentences_per_chunk.",
           );
           splitIdx = sentences.length;
         }
@@ -407,7 +412,7 @@ export class SentenceChunker extends BaseChunker {
 
   /**
    * Binary search to find the leftmost position where value should be inserted to maintain order.
-   * 
+   *
    * @param {number[]} arr - The array to search.
    * @param {number} value - The value to search for.
    * @param {number} [lo] - The starting index of the search.
@@ -428,16 +433,18 @@ export class SentenceChunker extends BaseChunker {
 
   /**
    * Return a string representation of the SentenceChunker.
-   * 
+   *
    * @returns {string} A string representation of the SentenceChunker.
    */
   public toString(): string {
-    return `SentenceChunker(tokenizer=${this.tokenizer}, ` +
+    return (
+      `SentenceChunker(tokenizer=${this.tokenizer}, ` +
       `chunkSize=${this.chunkSize}, ` +
       `chunkOverlap=${this.chunkOverlap}, ` +
       `minSentencesPerChunk=${this.minSentencesPerChunk}, ` +
       `minCharactersPerSentence=${this.minCharactersPerSentence}, ` +
       `approximate=${this.approximate}, delim=${this.delim}, ` +
-      `includeDelim=${this.includeDelim})`;
+      `includeDelim=${this.includeDelim})`
+    );
   }
-} 
+}

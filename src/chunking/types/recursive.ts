@@ -1,13 +1,13 @@
-import { Chunk } from './base';
+import { Chunk } from "./base";
 
-/** Type for include delimiter options 
- * 
+/** Type for include delimiter options
+ *
  * @enum {string}
  */
-type IncludeDelim = 'prev' | 'next';
+type IncludeDelim = "prev" | "next";
 
 /** Interface for RecursiveLevel data
- * 
+ *
  * @interface RecursiveLevelData
  * @property {string | string[]} [delimiters] - The delimiters to use for chunking.
  * @property {boolean} [whitespace] - Whether to use whitespace as a delimiter.
@@ -20,7 +20,7 @@ interface RecursiveLevelData {
 }
 
 /** Class to represent recursive chunking rules at a specific level
- * 
+ *
  * @class RecursiveLevel
  * @property {string | string[]} [delimiters] - The delimiters to use for chunking.
  * @property {boolean} [whitespace] - Whether to use whitespace as a delimiter.
@@ -36,43 +36,45 @@ export class RecursiveLevel {
 
   /**
    * Constructs a new RecursiveLevel object.
-   * 
+   *
    * @param {RecursiveLevelData} data - The data to construct the RecursiveLevel from.
    */
   constructor(data: RecursiveLevelData = {}) {
     this.delimiters = data.delimiters;
     this.whitespace = data.whitespace ?? false;
-    this.includeDelim = data.includeDelim ?? 'prev';
+    this.includeDelim = data.includeDelim ?? "prev";
 
     this.validate();
   }
 
   /**
    * Validates the RecursiveLevel object.
-   * 
+   *
    * @private
    */
   private validate(): void {
     if (this.delimiters !== undefined && this.whitespace) {
-      throw new Error('Cannot use whitespace as a delimiter and also specify custom delimiters.');
+      throw new Error("Cannot use whitespace as a delimiter and also specify custom delimiters.");
     }
     if (this.delimiters !== undefined) {
-      if (typeof this.delimiters === 'string' && this.delimiters.length === 0) {
-        throw new Error('Custom delimiters cannot be an empty string.');
+      if (typeof this.delimiters === "string" && this.delimiters.length === 0) {
+        throw new Error("Custom delimiters cannot be an empty string.");
       }
       if (Array.isArray(this.delimiters)) {
-        if (this.delimiters.some(delim => typeof delim !== 'string' || delim.length === 0)) {
-          throw new Error('Custom delimiters cannot be an empty string.');
+        if (this.delimiters.some((delim) => typeof delim !== "string" || delim.length === 0)) {
+          throw new Error("Custom delimiters cannot be an empty string.");
         }
-        if (this.delimiters.includes(' ')) {
-          throw new Error('Custom delimiters cannot be whitespace only. Set whitespace to true instead.');
+        if (this.delimiters.includes(" ")) {
+          throw new Error(
+            "Custom delimiters cannot be whitespace only. Set whitespace to true instead.",
+          );
         }
       }
     }
   }
 
   /** Return a string representation of the RecursiveLevel
-   * 
+   *
    * @returns {string} The string representation of the RecursiveLevel.
    */
   public toString(): string {
@@ -80,7 +82,7 @@ export class RecursiveLevel {
   }
 
   /** Return the RecursiveLevel as a dictionary-like object
-   * 
+   *
    * @returns {RecursiveLevelData} The dictionary-like object.
    */
   public toDict(): RecursiveLevelData {
@@ -92,7 +94,7 @@ export class RecursiveLevel {
   }
 
   /** Create RecursiveLevel object from a dictionary
-   * 
+   *
    * @param {RecursiveLevelData} data - The dictionary-like object.
    * @returns {RecursiveLevel} The RecursiveLevel object.
    */
@@ -102,7 +104,7 @@ export class RecursiveLevel {
 }
 
 /** Interface for RecursiveRules data
- * 
+ *
  * @interface RecursiveRulesData
  * @property {RecursiveLevelData[]} [levels] - The recursive levels.
  */
@@ -111,7 +113,7 @@ interface RecursiveRulesData {
 }
 
 /** Class to represent recursive chunking rules
- * 
+ *
  * @class RecursiveRules
  * @property {RecursiveLevel[]} [levels] - The recursive levels.
  */
@@ -122,24 +124,41 @@ export class RecursiveRules {
   constructor(data: RecursiveRulesData = {}) {
     if (data.levels === undefined) {
       // Default levels
-      const paragraphs = new RecursiveLevel({ delimiters: ['\n\n', '\r\n', '\n', '\r'] });
-      const sentences = new RecursiveLevel({ delimiters: ['. ', '! ', '? '] });
+      const paragraphs = new RecursiveLevel({ delimiters: ["\n\n", "\r\n", "\n", "\r"] });
+      const sentences = new RecursiveLevel({ delimiters: [". ", "! ", "? "] });
       const pauses = new RecursiveLevel({
         delimiters: [
-          '{', '}', '"', '[', ']', '<', '>', '(', ')', ':', ';', ',',
-          '—', '|', '~', '-', '...', '`', "'",
+          "{",
+          "}",
+          '"',
+          "[",
+          "]",
+          "<",
+          ">",
+          "(",
+          ")",
+          ":",
+          ";",
+          ",",
+          "—",
+          "|",
+          "~",
+          "-",
+          "...",
+          "`",
+          "'",
         ],
       });
       const word = new RecursiveLevel({ whitespace: true });
       const token = new RecursiveLevel();
       this.levels = [paragraphs, sentences, pauses, word, token];
     } else {
-      this.levels = data.levels.map(level => new RecursiveLevel(level));
+      this.levels = data.levels.map((level) => new RecursiveLevel(level));
     }
   }
 
   /** Return a string representation of the RecursiveRules
-   * 
+   *
    * @returns {string} The string representation of the RecursiveRules.
    */
   public toString(): string {
@@ -147,7 +166,7 @@ export class RecursiveRules {
   }
 
   /** Return the number of levels
-   * 
+   *
    * @returns {number} The number of levels.
    */
   public get length(): number {
@@ -155,7 +174,7 @@ export class RecursiveRules {
   }
 
   /** Get a level by index
-   * 
+   *
    * @param {number} index - The index of the level.
    * @returns {RecursiveLevel | undefined} The level.
    */
@@ -164,7 +183,7 @@ export class RecursiveRules {
   }
 
   /** Return an iterator over the levels
-   * 
+   *
    * @returns {Iterator<RecursiveLevel>} The iterator over the levels.
    */
   public [Symbol.iterator](): Iterator<RecursiveLevel> {
@@ -172,7 +191,7 @@ export class RecursiveRules {
   }
 
   /** Create a RecursiveRules object from a dictionary
-   * 
+   *
    * @param {RecursiveRulesData} data - The dictionary-like object.
    * @returns {RecursiveRules} The RecursiveRules object.
    */
@@ -181,18 +200,18 @@ export class RecursiveRules {
   }
 
   /** Return the RecursiveRules as a dictionary-like object
-   * 
+   *
    * @returns {RecursiveRulesData} The dictionary-like object.
    */
   public toDict(): RecursiveRulesData {
     return {
-      levels: this.levels.map(level => level.toDict()),
+      levels: this.levels.map((level) => level.toDict()),
     };
   }
 }
 
 /** Interface for RecursiveChunk data
- * 
+ *
  * @interface RecursiveChunkData
  * @property {string} text - The text of the chunk.
  * @property {number} startIndex - The starting index of the chunk.
@@ -210,7 +229,7 @@ interface RecursiveChunkData {
 }
 
 /** Class to represent recursive chunks
- * 
+ *
  * @class RecursiveChunk
  * @property {number} [level] - The level of recursion for the chunk.
  */
@@ -231,7 +250,7 @@ export class RecursiveChunk extends Chunk {
   }
 
   /** Return a string representation of the RecursiveChunk
-   * 
+   *
    * @returns {string} The string representation of the RecursiveChunk.
    */
   public toString(): string {
@@ -239,7 +258,7 @@ export class RecursiveChunk extends Chunk {
   }
 
   /** Return the RecursiveChunk as a dictionary-like object
-   * 
+   *
    * @returns {RecursiveChunkData} The dictionary-like object.
    */
   public toDict(): RecursiveChunkData {
@@ -251,11 +270,11 @@ export class RecursiveChunk extends Chunk {
   }
 
   /** Create a RecursiveChunk object from a dictionary
-   * 
+   *
    * @param {RecursiveChunkData} data - The dictionary-like object.
    * @returns {RecursiveChunk} The RecursiveChunk object.
    */
   public static fromDict(data: RecursiveChunkData): RecursiveChunk {
     return new RecursiveChunk(data);
   }
-} 
+}

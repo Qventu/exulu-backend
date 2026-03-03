@@ -59,9 +59,9 @@ export abstract class BaseChunker {
   public async call(texts: string[], showProgress?: boolean): Promise<Chunk[][]>;
   public async call(
     textOrTexts: string | string[],
-    showProgress: boolean = false
+    showProgress: boolean = false,
   ): Promise<Chunk[] | Chunk[][]> {
-    if (typeof textOrTexts === 'string') {
+    if (typeof textOrTexts === "string") {
       return this.chunk(textOrTexts) as Promise<Chunk[]>;
     } else if (Array.isArray(textOrTexts)) {
       return this.chunkBatch(textOrTexts, showProgress) as Promise<Chunk[][]>;
@@ -82,7 +82,7 @@ export abstract class BaseChunker {
    */
   protected async _sequential_batch_processing(
     texts: string[],
-    showProgress: boolean = false
+    showProgress: boolean = false,
   ): Promise<Chunk[][]> {
     const results: Chunk[][] = [];
     const total = texts.length;
@@ -109,7 +109,7 @@ export abstract class BaseChunker {
    */
   protected async _concurrent_batch_processing(
     texts: string[],
-    showProgress: boolean = false
+    showProgress: boolean = false,
   ): Promise<Chunk[][]> {
     const total = texts.length;
     let completedCount = 0;
@@ -118,19 +118,22 @@ export abstract class BaseChunker {
       if (showProgress && total > 1) {
         completedCount++;
         const progress = Math.round((completedCount / total) * 100);
-        process.stdout.write(`Concurrent processing: Document ${completedCount}/${total} (${progress}%)\r`);
+        process.stdout.write(
+          `Concurrent processing: Document ${completedCount}/${total} (${progress}%)\r`,
+        );
       }
     };
 
-    const chunkPromises = texts.map(text =>
-      this.chunk(text).then(result => {
+    const chunkPromises = texts.map((text) =>
+      this.chunk(text).then((result) => {
         updateProgress();
         return result;
-      })
+      }),
     );
 
     const results = await Promise.all(chunkPromises);
-    if (showProgress && total > 1 && completedCount > 0) { // ensure newline only if progress was shown
+    if (showProgress && total > 1 && completedCount > 0) {
+      // ensure newline only if progress was shown
       process.stdout.write("\n"); // Newline after progress
     }
     return results;
@@ -154,16 +157,13 @@ export abstract class BaseChunker {
    * @param {boolean} [showProgress=true] - Whether to display progress in the console.
    * @returns {Promise<Chunk[][]>} An array of chunked results for each input text.
    */
-  public async chunkBatch(
-    texts: string[],
-    showProgress: boolean = true
-  ): Promise<Chunk[][]> {
+  public async chunkBatch(texts: string[], showProgress: boolean = true): Promise<Chunk[][]> {
     if (texts.length === 0) {
       return [];
     }
     // If only one text, process it directly without batch overhead, progress not shown for single item.
     if (texts.length === 1) {
-      return [await this.chunk(texts[0]!) as Chunk[] ];
+      return [(await this.chunk(texts[0]!)) as Chunk[]];
     }
 
     // For multiple texts, use selected batch processing strategy

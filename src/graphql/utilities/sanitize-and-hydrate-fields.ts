@@ -11,312 +11,297 @@ import { postgresClient } from "src/postgres/client";
 import { createProjectItemsRetrievalTool, getChunksTableName } from "src/exulu/classes";
 
 const addAgentFields = async (
-    args: Record<string, any>,
-    requestedFields: string[],
-    agents: ExuluAgent[],
-    result: any,
-    tools: ExuluTool[],
-    user: User,
-    contexts: ExuluContext[],
-    rerankers: ExuluReranker[],
-  ) => {
-    let backend = agents.find((a) => a.id === result?.backend);
-    if (requestedFields.includes("providerName")) {
-      result.providerName = backend?.providerName || "";
-    }
-  
-    if (requestedFields.includes("modelName")) {
-      result.modelName = backend?.modelName || "";
-    }
-  
-    if (requestedFields.includes("slug")) {
-      result.slug = backend?.slug || "";
-    }
-  
-    if (requestedFields.includes("rateLimit")) {
-      result.rateLimit = backend?.rateLimit || "";
-    }
-  
-    if (requestedFields.includes("tools")) {
-      if (result.tools) {
-        result.tools = await Promise.all(
-          result.tools.map(
-            async (tool: {
-              config: any;
-              id: string;
-              type: "function" | "agent" | "context";
-              category: string;
-            }): Promise<
-              Omit<ExuluTool, "tool" | "execute"> | null | undefined
-            > => {
-              let hydrated: ExuluTool | null | undefined;
-  
-              if (tool.id === "agentic_context_search") {
-                const instance = createAgenticRetrievalTool({
-                  contexts: [],
-                  rerankers: [],
-                  user: user,
-                  role: user.role?.id,
-                  model: undefined
-                });
-                return {
-                  ...instance,
-                  name: instance.name,
-                  description: instance.description,
-                  category: instance.category,
-                  config: tool.config,
-                }
+  args: Record<string, any>,
+  requestedFields: string[],
+  agents: ExuluAgent[],
+  result: any,
+  tools: ExuluTool[],
+  user: User,
+  contexts: ExuluContext[],
+  rerankers: ExuluReranker[],
+) => {
+  let backend = agents.find((a) => a.id === result?.backend);
+  if (requestedFields.includes("providerName")) {
+    result.providerName = backend?.providerName || "";
+  }
+
+  if (requestedFields.includes("modelName")) {
+    result.modelName = backend?.modelName || "";
+  }
+
+  if (requestedFields.includes("slug")) {
+    result.slug = backend?.slug || "";
+  }
+
+  if (requestedFields.includes("rateLimit")) {
+    result.rateLimit = backend?.rateLimit || "";
+  }
+
+  if (requestedFields.includes("tools")) {
+    if (result.tools) {
+      result.tools = await Promise.all(
+        result.tools.map(
+          async (tool: {
+            config: any;
+            id: string;
+            type: "function" | "agent" | "context";
+            category: string;
+          }): Promise<Omit<ExuluTool, "tool" | "execute"> | null | undefined> => {
+            let hydrated: ExuluTool | null | undefined;
+
+            if (tool.id === "agentic_context_search") {
+              const instance = createAgenticRetrievalTool({
+                contexts: [],
+                rerankers: [],
+                user: user,
+                role: user.role?.id,
+                model: undefined,
+              });
+              return {
+                ...instance,
+                name: instance.name,
+                description: instance.description,
+                category: instance.category,
+                config: tool.config,
+              };
+            }
+
+            if (tool.type === "agent") {
+              if (tool.id === result.id) {
+                return null;
               }
-  
-              if (tool.type === "agent") {
-                if (tool.id === result.id) {
-                  return null;
-                }
-                const instance = await loadAgent(tool.id); // for agents used as tools, the tool id === the agent id
-                if (!instance) {
-                  throw new Error(
-                    "Trying to load a tool of type 'agent', but the associated agent with id " +
+              const instance = await loadAgent(tool.id); // for agents used as tools, the tool id === the agent id
+              if (!instance) {
+                throw new Error(
+                  "Trying to load a tool of type 'agent', but the associated agent with id " +
                     tool.id +
                     " was not found in the database.",
-                  );
-                }
-                const backend = agents.find((a) => a.id === instance.backend);
-                if (!backend) {
-                  throw new Error(
-                    "Trying to load a tool of type 'agent', but the associated agent with id " +
+                );
+              }
+              const backend = agents.find((a) => a.id === instance.backend);
+              if (!backend) {
+                throw new Error(
+                  "Trying to load a tool of type 'agent', but the associated agent with id " +
                     tool.id +
                     " does not have a backend set for it.",
-                  );
-                }
-  
-                // if no access do not return it
-                const hasAccessToAgent = await checkRecordAccess(
-                  instance,
-                  "read",
-                  user,
                 );
-  
-                if (!hasAccessToAgent) {
-                  return null;
-                }
-  
-                hydrated = await backend.tool(instance.id, agents, contexts, rerankers);
-              } else {
-                hydrated = tools.find((t) => t.id === tool.id);
               }
-  
-              const hydratedTool = {
-                ...tool,
-                name: hydrated?.name || "",
-                description: hydrated?.description || "",
-                category: tool?.category || "default",
-              };
-  
-              console.log("[EXULU] hydratedTool", hydratedTool);
-              return hydratedTool;
-            },
-          ),
-        );
-  
-        if (args.project) {
-          const projectTool = await createProjectItemsRetrievalTool({
-            projectId: args.project,
-            user: user,
-            role: user.role?.id,
-            contexts: contexts,
-          });
-  
-          if (projectTool) {
-            result.tools.unshift(projectTool);
-          }
-        }
-  
-        result.tools = result.tools.filter((tool) => tool !== null);
-      } else {
-        result.tools = [];
-      }
-    }
-    if (requestedFields.includes("streaming")) {
-      result.streaming = backend?.streaming || false;
-    }
-    if (requestedFields.includes("capabilities")) {
-      result.capabilities = backend?.capabilities || [];
-    }
-    if (requestedFields.includes("maxContextLength")) {
-      result.maxContextLength = backend?.maxContextLength || 0;
-    }
-    if (requestedFields.includes("authenticationInformation")) {
-      result.authenticationInformation = backend?.authenticationInformation || "";
-    }
-    if (requestedFields.includes("provider")) {
-      result.provider = backend?.provider || "";
-    }
-    if (requestedFields.includes("systemInstructions")) {
-      result.systemInstructions = backend?.config?.instructions || undefined;
-    }
-    if (!requestedFields.includes("backend")) {
-      delete result.backend;
-    }
-    if (requestedFields.includes("workflows")) {
-      let enabled = false;
-      let queueName: string | undefined = undefined;
-  
-      if (backend?.workflows) {
-        enabled = backend?.workflows?.enabled || false;
-        if (backend?.workflows?.queue) {
-          const queue = await backend?.workflows?.queue;
-          queueName = queue?.queue.name || undefined;
+
+              // if no access do not return it
+              const hasAccessToAgent = await checkRecordAccess(instance, "read", user);
+
+              if (!hasAccessToAgent) {
+                return null;
+              }
+
+              hydrated = await backend.tool(instance.id, agents, contexts, rerankers);
+            } else {
+              hydrated = tools.find((t) => t.id === tool.id);
+            }
+
+            const hydratedTool = {
+              ...tool,
+              name: hydrated?.name || "",
+              description: hydrated?.description || "",
+              category: tool?.category || "default",
+            };
+
+            console.log("[EXULU] hydratedTool", hydratedTool);
+            return hydratedTool;
+          },
+        ),
+      );
+
+      if (args.project) {
+        const projectTool = await createProjectItemsRetrievalTool({
+          projectId: args.project,
+          user: user,
+          role: user.role?.id,
+          contexts: contexts,
+        });
+
+        if (projectTool) {
+          result.tools.unshift(projectTool);
         }
       }
-      result.workflows = {
-        enabled: enabled,
-        queue: queueName
-          ? {
+
+      result.tools = result.tools.filter((tool) => tool !== null);
+    } else {
+      result.tools = [];
+    }
+  }
+  if (requestedFields.includes("streaming")) {
+    result.streaming = backend?.streaming || false;
+  }
+  if (requestedFields.includes("capabilities")) {
+    result.capabilities = backend?.capabilities || [];
+  }
+  if (requestedFields.includes("maxContextLength")) {
+    result.maxContextLength = backend?.maxContextLength || 0;
+  }
+  if (requestedFields.includes("authenticationInformation")) {
+    result.authenticationInformation = backend?.authenticationInformation || "";
+  }
+  if (requestedFields.includes("provider")) {
+    result.provider = backend?.provider || "";
+  }
+  if (requestedFields.includes("systemInstructions")) {
+    result.systemInstructions = backend?.config?.instructions || undefined;
+  }
+  if (!requestedFields.includes("backend")) {
+    delete result.backend;
+  }
+  if (requestedFields.includes("workflows")) {
+    let enabled = false;
+    let queueName: string | undefined = undefined;
+
+    if (backend?.workflows) {
+      enabled = backend?.workflows?.enabled || false;
+      if (backend?.workflows?.queue) {
+        const queue = await backend?.workflows?.queue;
+        queueName = queue?.queue.name || undefined;
+      }
+    }
+    result.workflows = {
+      enabled: enabled,
+      queue: queueName
+        ? {
             name: queueName,
           }
-          : undefined,
-      };
-    }
-    return result;
-  };
+        : undefined,
+    };
+  }
+  return result;
+};
 
 export const finalizeRequestedFields = async ({
-    args,
-    table,
-    requestedFields,
-    agents,
-    contexts,
-    rerankers,
-    tools,
-    result,
-    user,
-  }: {
-    args: Record<string, any>;
-    table: ExuluTableDefinition;
-    requestedFields: string[];
-    agents: ExuluAgent[];
-    contexts: ExuluContext[];
-    rerankers: ExuluReranker[];
-    tools: ExuluTool[];
-    result: any | [];
-    user: User;
-  }) => {
-    if (!result) {
-      return result;
-    }
-    if (!requestedFields.includes("id")) {
-      delete result.id;
-    }
-    if (Array.isArray(result)) {
-      result = result.map((item) => {
-        return finalizeRequestedFields({
-          args,
-          table,
-          requestedFields,
-          agents,
-          contexts,
-          rerankers,
-          tools,
-          result: item,
-          user: user,
-        });
+  args,
+  table,
+  requestedFields,
+  agents,
+  contexts,
+  rerankers,
+  tools,
+  result,
+  user,
+}: {
+  args: Record<string, any>;
+  table: ExuluTableDefinition;
+  requestedFields: string[];
+  agents: ExuluAgent[];
+  contexts: ExuluContext[];
+  rerankers: ExuluReranker[];
+  tools: ExuluTool[];
+  result: any | [];
+  user: User;
+}) => {
+  if (!result) {
+    return result;
+  }
+  if (!requestedFields.includes("id")) {
+    delete result.id;
+  }
+  if (Array.isArray(result)) {
+    result = result.map((item) => {
+      return finalizeRequestedFields({
+        args,
+        table,
+        requestedFields,
+        agents,
+        contexts,
+        rerankers,
+        tools,
+        result: item,
+        user: user,
       });
-    } else {
-      console.log("[EXULU] table name singular", table.name.singular);
-      console.log("[EXULU] requestedFields", requestedFields);
-      console.log("[EXULU] result", result);
-      if (table.name.singular === "workflow_template") {
-        if (requestedFields.includes("variables")) {
-          const variables: Record<string, any> = [];
-          for (const step of result?.steps_json || []) {
-            if (step.role === "user") {
-              const text = step.parts?.map((part) => part.text)?.join("");
-              const variableNames = [...text.matchAll(/{([^}]+)}/g)].map(
-                (match) => match[1],
-              );
-              console.log("[EXULU] variableNames", variableNames);
-              if (variableNames) {
-                for (const variableName of variableNames) {
-                  variables.push(variableName);
-                  console.log("[EXULU] variableName", variableName);
-                }
+    });
+  } else {
+    console.log("[EXULU] table name singular", table.name.singular);
+    console.log("[EXULU] requestedFields", requestedFields);
+    console.log("[EXULU] result", result);
+    if (table.name.singular === "workflow_template") {
+      if (requestedFields.includes("variables")) {
+        const variables: Record<string, any> = [];
+        for (const step of result?.steps_json || []) {
+          if (step.role === "user") {
+            const text = step.parts?.map((part) => part.text)?.join("");
+            const variableNames = [...text.matchAll(/{([^}]+)}/g)].map((match) => match[1]);
+            console.log("[EXULU] variableNames", variableNames);
+            if (variableNames) {
+              for (const variableName of variableNames) {
+                variables.push(variableName);
+                console.log("[EXULU] variableName", variableName);
               }
             }
           }
-          result.variables = variables;
         }
-        if (!requestedFields.includes("steps_json")) {
-          // We always add this to the fields retrieved from the
-          // database in case the user requests the variables but
-          // not the steps_json, which are needed to identify the
-          // variables. So we remove it again here so the steps_json
-          // are not included in the final payload if they are
-          // not requested.
-          delete result.steps_json;
-        }
+        result.variables = variables;
       }
-      if (table.name.singular === "agent") {
-        result = await addAgentFields(
-          args,
-          requestedFields,
-          agents,
-          result,
-          tools,
-          user,
-          contexts,
-          rerankers,
-        );
-        if (!requestedFields.includes("backend")) {
-          delete result.backend;
-        }
-      }
-      if (table.type === "items") {
-        if (requestedFields.includes("chunks")) {
-          if (!result.id) {
-            result.chunks = [];
-            return result;
-          }
-  
-          const context = contexts.find((context) => context.id === table.id);
-          if (!context) {
-            throw new Error("Context " + table.id + " not found in registry.");
-          }
-  
-          if (!context.embedder) {
-            result.chunks = [];
-            return result;
-          }
-  
-          const { db } = await postgresClient();
-          const query = db
-            .from(getChunksTableName(context.id))
-            .where({ source: result.id })
-            .select(
-              "id",
-              "content",
-              "source",
-              "chunk_index",
-              "createdAt",
-              "updatedAt",
-            );
-  
-          const chunks = await query;
-  
-          result.chunks = chunks.map((chunk: any) => ({
-            chunk_content: chunk.content,
-            chunk_source: chunk.source,
-            chunk_index: chunk.chunk_index,
-            chunk_id: chunk.id,
-            chunk_created_at: chunk.createdAt,
-            chunk_updated_at: chunk.updatedAt,
-            item_updated_at: chunk.item_updated_at,
-            item_created_at: chunk.item_created_at,
-            item_id: chunk.item_id,
-            item_external_id: chunk.item_external_id,
-            item_name: chunk.item_name,
-          }));
-        }
+      if (!requestedFields.includes("steps_json")) {
+        // We always add this to the fields retrieved from the
+        // database in case the user requests the variables but
+        // not the steps_json, which are needed to identify the
+        // variables. So we remove it again here so the steps_json
+        // are not included in the final payload if they are
+        // not requested.
+        delete result.steps_json;
       }
     }
-    return result;
-  };
+    if (table.name.singular === "agent") {
+      result = await addAgentFields(
+        args,
+        requestedFields,
+        agents,
+        result,
+        tools,
+        user,
+        contexts,
+        rerankers,
+      );
+      if (!requestedFields.includes("backend")) {
+        delete result.backend;
+      }
+    }
+    if (table.type === "items") {
+      if (requestedFields.includes("chunks")) {
+        if (!result.id) {
+          result.chunks = [];
+          return result;
+        }
+
+        const context = contexts.find((context) => context.id === table.id);
+        if (!context) {
+          throw new Error("Context " + table.id + " not found in registry.");
+        }
+
+        if (!context.embedder) {
+          result.chunks = [];
+          return result;
+        }
+
+        const { db } = await postgresClient();
+        const query = db
+          .from(getChunksTableName(context.id))
+          .where({ source: result.id })
+          .select("id", "content", "source", "chunk_index", "createdAt", "updatedAt");
+
+        const chunks = await query;
+
+        result.chunks = chunks.map((chunk: any) => ({
+          chunk_content: chunk.content,
+          chunk_source: chunk.source,
+          chunk_index: chunk.chunk_index,
+          chunk_id: chunk.id,
+          chunk_created_at: chunk.createdAt,
+          chunk_updated_at: chunk.updatedAt,
+          item_updated_at: chunk.item_updated_at,
+          item_created_at: chunk.item_created_at,
+          item_id: chunk.item_id,
+          item_external_id: chunk.item_external_id,
+          item_name: chunk.item_name,
+        }));
+      }
+    }
+  }
+  return result;
+};
