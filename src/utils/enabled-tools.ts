@@ -1,12 +1,12 @@
-import { createAgenticRetrievalTool } from "src/templates/tools/agentic-retrieval/index.ts";
+import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
-import type { ExuluTool } from "src/exulu/tool";
-import type { ExuluContext } from "src/exulu/context";
-import type { ExuluReranker } from "src/exulu/reranker";
-import type { ExuluAgent } from "src/exulu/agent";
+import type { ExuluTool } from "@SRC/exulu/tool";
+import type { ExuluContext } from "@SRC/exulu/context";
+import type { ExuluReranker } from "@SRC/exulu/reranker";
+import type { ExuluAgent } from "@SRC/exulu/agent";
 import type { User } from "@EXULU_TYPES/models/user.ts";
-import { loadAgent } from "src/utils/load-agent.ts";
-import { checkRecordAccess } from "src/utils/check-record-access.ts";
+import { loadAgent } from "@SRC/utils/load-agent.ts";
+import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 
 export const getEnabledTools = async (
   agentInstance: Agent,

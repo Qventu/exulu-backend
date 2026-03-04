@@ -1,4 +1,4 @@
-import { requestValidators } from "src/validators/requests";
+import { requestValidators } from "@SRC/validators/requests";
 
 export const validateCreateOrRemoveSuperAdminPermission = async (
   tableNamePlural: string,

@@ -1,10 +1,10 @@
 import type { User } from "@EXULU_TYPES/models/user";
-import type { ExuluContext } from "src/exulu/context";
-import { ExuluTool } from "src/exulu/tool";
+import type { ExuluContext } from "@SRC/exulu/context";
+import { ExuluTool } from "@SRC/exulu/tool";
 import { z } from "zod";
-import { postgresClient } from "src/postgres/client";
+import { postgresClient } from "@SRC/postgres/client";
 import type { Project } from "@EXULU_TYPES/models/project";
-import type { VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 
 export const createProjectItemsRetrievalTool = async ({
   user,

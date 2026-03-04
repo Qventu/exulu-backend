@@ -1,4 +1,4 @@
-import { ExuluTool } from "src/exulu/tool";
+import { ExuluTool } from "@SRC/exulu/tool";
 import z from "zod";
 import Perplexity from "@perplexity-ai/perplexity_ai";
 

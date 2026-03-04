@@ -1,8 +1,8 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
-import { getTableName } from "src/exulu/context";
-import type { ExuluContext } from "src/exulu/context";
-import { sanitizeName } from "src/utils/sanitize-name";
-import { addCoreFields } from "src/postgres/core-schema";
+import { getTableName } from "@SRC/exulu/context";
+import type { ExuluContext } from "@SRC/exulu/context";
+import { sanitizeName } from "@SRC/utils/sanitize-name";
+import { addCoreFields } from "@SRC/postgres/core-schema";
 
 export const convertContextToTableDefinition = (context: ExuluContext): ExuluTableDefinition => {
   const tableName = getTableName(context.id) as any;

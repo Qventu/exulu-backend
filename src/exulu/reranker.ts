@@ -1,4 +1,4 @@
-import type { VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 
 export class ExuluReranker {
   public id: string;

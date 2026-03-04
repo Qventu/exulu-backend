@@ -4,11 +4,11 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { ExuluConfig } from "./app";
 import type { User } from "@EXULU_TYPES/models/user";
-import { loadAgent } from "src/utils/load-agent";
-import { postgresClient } from "src/postgres/client";
+import { loadAgent } from "@SRC/utils/load-agent";
+import { postgresClient } from "@SRC/postgres/client";
 import CryptoJS from "crypto-js";
-import { convertExuluToolsToAiSdkTools } from "src/templates/tools/convert-exulu-tools-to-ai-sdk-tools";
-import { sanitizeName } from "src/utils/sanitize-name";
+import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools";
+import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 
 export class ExuluTool {

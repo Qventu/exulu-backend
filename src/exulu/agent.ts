@@ -19,11 +19,11 @@ import {
   validateUIMessages,
   stepCountIs,
 } from "ai";
-import { generateSlug } from "src/utils/generate-slug";
-import { loadAgent } from "src/utils/load-agent";
-import { checkRecordAccess } from "src/utils/check-record-access";
-import { getEnabledTools } from "src/utils/enabled-tools";
-import { postgresClient } from "src/postgres/client";
+import { generateSlug } from "@SRC/utils/generate-slug";
+import { loadAgent } from "@SRC/utils/load-agent";
+import { checkRecordAccess } from "@SRC/utils/check-record-access";
+import { getEnabledTools } from "@SRC/utils/enabled-tools";
+import { postgresClient } from "@SRC/postgres/client";
 import CryptoJS from "crypto-js";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -31,10 +31,10 @@ import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluReranker } from "./reranker.ts";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
-import { convertExuluToolsToAiSdkTools } from "src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
+import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import { parseOfficeAsync } from "officeparser";
 import type { ExuluConfig } from "./app/index.ts";
-import { createNewMemoryItemTool } from "src/templates/tools/memory-tool.ts";
+import { createNewMemoryItemTool } from "@SRC/templates/tools/memory-tool.ts";
 import type { Request } from "express";
 
 type ExuluAgentWorkflowConfig = {

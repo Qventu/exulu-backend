@@ -1,5 +1,5 @@
-import type { ExuluContext } from "src/exulu/context";
-import type { ExuluConfig } from "src/exulu/app";
+import type { ExuluContext } from "@SRC/exulu/context";
+import type { ExuluConfig } from "@SRC/exulu/app";
 import type { Item } from "@EXULU_TYPES/models/item";
 
 export const getRequestedFields = (info: any): string[] => {

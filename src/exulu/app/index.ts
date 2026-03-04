@@ -1,19 +1,19 @@
 import { type Express } from "express";
-import { createExpressRoutes, global_queues } from "src/exulu/routes.ts";
-import { createWorkers } from "src/exulu/workers.ts";
-import { ExuluMCP } from "src/mcp/index.ts";
+import { createExpressRoutes, global_queues } from "@SRC/exulu/routes.ts";
+import { createWorkers } from "@SRC/exulu/workers.ts";
+import { ExuluMCP } from "@SRC/mcp/index.ts";
 import express from "express";
 import {
   claudeSonnet4Agent,
   claudeOpus4Agent,
   claudeSonnet45Agent,
-} from "src/templates/agents/anthropic/claude";
-import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "src/templates/agents/cerebras";
+} from "@SRC/templates/agents/anthropic/claude";
+import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "@SRC/templates/agents/cerebras";
 import {
   vertexGemini25FlashAgent,
   vertexGemini25ProAgent,
   vertexGemini3ProAgent,
-} from "src/templates/agents/google/vertex";
+} from "@SRC/templates/agents/google/vertex";
 import {
   gpt5MiniAgent,
   gpt5agent,
@@ -24,18 +24,18 @@ import {
   gpt41MiniAgent,
   gpt4oAgent,
   gpt4oMiniAgent,
-} from "src/templates/agents/openai/gpt.ts";
+} from "@SRC/templates/agents/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
-import createLogger from "src/exulu/logger.ts";
-import { postgresClient } from "src/postgres/client.ts";
+import createLogger from "@SRC/exulu/logger.ts";
+import { postgresClient } from "@SRC/postgres/client.ts";
 import winston, { type transport } from "winston";
 import util from "util";
-import { redisServer } from "src/bullmq/server.ts";
-import { getDefaultEvals } from "src/templates/evals/index.ts";
-import { ExuluQueues } from "src/index.ts";
-import { todoTools } from "src/templates/tools/todo/todo.ts";
-import { perplexityTools } from "src/templates/tools/perplexity.ts";
-import { isValidPostgresName } from "src/validators/postgres-name.ts";
+import { redisServer } from "@SRC/bullmq/server.ts";
+import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
+import { ExuluQueues } from "@SRC/index.ts";
+import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
+import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
+import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluAgent } from "../agent";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";

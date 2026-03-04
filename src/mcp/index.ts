@@ -2,17 +2,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { ExuluAgent } from "src/exulu/agent";
-import type { ExuluTool } from "src/exulu/tool";
-import type { ExuluContext } from "src/exulu/context";
-import type { ExuluReranker } from "src/exulu/reranker";
-import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
+import type { ExuluAgent } from "@SRC/exulu/agent";
+import type { ExuluTool } from "@SRC/exulu/tool";
+import type { ExuluContext } from "@SRC/exulu/context";
+import type { ExuluReranker } from "@SRC/exulu/reranker";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
 import { requestValidators } from "../validators/requests.ts";
-import { checkRecordAccess } from "src/utils/check-record-access.ts";
-import { loadAgent } from "src/utils/load-agent.ts";
-import { getEnabledTools } from "src/utils/enabled-tools.ts";
+import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
+import { loadAgent } from "@SRC/utils/load-agent.ts";
+import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
 import CryptoJS from "crypto-js";
@@ -20,7 +20,7 @@ import type { ExuluConfig } from "../exulu/app/index.ts";
 import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
-import { convertExuluToolsToAiSdkTools } from "src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
+import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 // Create an MCP server
 
 export class ExuluMCP {

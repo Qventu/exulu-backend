@@ -1,9 +1,9 @@
 import DESCRIPTION_WRITE from "./todowrite.txt";
 import DESCRIPTION_READ from "./todoread.txt";
 import z from "zod";
-import { ExuluTool } from "src/exulu/tool.ts";
-import { getSession } from "src/exulu/agent.ts";
-import { checkRecordAccess } from "src/utils/check-record-access.ts";
+import { ExuluTool } from "@SRC/exulu/tool.ts";
+import { getSession } from "@SRC/exulu/agent.ts";
+import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { AgentSession } from "@EXULU_TYPES/models/agent-session";
 import { postgresClient } from "../../../postgres/client";
 

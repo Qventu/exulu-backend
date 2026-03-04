@@ -7,20 +7,20 @@ import {
   Output,
   generateText,
 } from "ai";
-import { type ExuluContext } from "src/exulu/context";
-import type { ExuluReranker } from "src/exulu/reranker";
-import { ExuluTool } from "src/exulu/tool";
-import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
+import { type ExuluContext } from "@SRC/exulu/context";
+import type { ExuluReranker } from "@SRC/exulu/reranker";
+import { ExuluTool } from "@SRC/exulu/tool";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { User } from "@EXULU_TYPES/models/user";
-import { postgresClient } from "src/postgres/client";
+import { postgresClient } from "@SRC/postgres/client";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { preprocessQuery } from "./query-preprocessing";
-import { getChunksTableName, getTableName } from "src/exulu/context";
-import type { SearchFilters } from "src/graphql/types";
-import type { VectorSearchChunkResult } from "src/graphql/resolvers/vector-search";
-import { convertContextToTableDefinition } from "src/graphql/utilities/convert-context-to-table-definition";
-import { applyFilters } from "src/graphql/resolvers/apply-filters";
-import { applyAccessControl } from "src/graphql/utilities/access-control";
+import { getChunksTableName, getTableName } from "@SRC/exulu/context";
+import type { SearchFilters } from "@SRC/graphql/types";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
+import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
+import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 /**
  * Agentic Retrieval Tool
  *

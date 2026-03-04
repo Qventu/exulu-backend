@@ -9,6 +9,11 @@ export { ExuluApp } from "./exulu/app/index.ts";
 export { authentication as ExuluAuthentication } from "./auth/auth";
 export { queues as ExuluQueues } from "./bullmq/queues";
 import { RecursiveChunker } from "./chunking/recursive";
+export { ExuluEmbedder } from "./exulu/embedder.ts"
+export { ExuluContext } from "./exulu/context.ts"
+export { ExuluTool } from "./exulu/tool"
+export { ExuluReranker } from "./exulu/reranker"
+export { ExuluEval } from "./exulu/evals"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initDb } from "./postgres/init-db";

@@ -1,4 +1,4 @@
-import { ExuluAgent } from "src/exulu/agent";
+import { ExuluAgent } from "@SRC/exulu/agent";
 import { createOpenAI } from "@ai-sdk/openai";
 
 export const gpt5proAgent = new ExuluAgent({

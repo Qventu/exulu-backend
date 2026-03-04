@@ -44,7 +44,8 @@
     // Path aliases
     "baseUrl": ".",
     "paths": {
-      "@EXULU_TYPES/*": ["./types/*"]
+      "@EXULU_TYPES/*": ["./types/*"],
+      "@SRC/*": ["./src/*"]
     }
   },
   "include": ["src", "../types/**/*.ts"],

@@ -1,4 +1,4 @@
-import type { ExuluContextFieldDefinition } from "src/exulu/context";
+import type { ExuluContextFieldDefinition } from "@SRC/exulu/context";
 import type { ExuluContextProcessor } from "./context-processor";
 
 export type ExuluTableDefinition = {

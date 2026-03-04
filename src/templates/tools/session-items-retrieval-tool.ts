@@ -1,6 +1,6 @@
 import type { User } from "@EXULU_TYPES/models/user";
-import type { ExuluContext } from "src/exulu/context";
-import { ExuluTool } from "src/exulu/tool";
+import type { ExuluContext } from "@SRC/exulu/context";
+import { ExuluTool } from "@SRC/exulu/tool";
 import { z } from "zod";
 
 export const createSessionItemsRetrievalTool = async ({

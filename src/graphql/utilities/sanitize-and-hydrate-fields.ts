@@ -1,13 +1,13 @@
-import type { ExuluAgent } from "src/exulu/agent";
-import { getChunksTableName, type ExuluContext } from "src/exulu/context";
-import type { ExuluReranker } from "src/exulu/reranker";
-import type { ExuluTool } from "src/exulu/tool";
+import type { ExuluAgent } from "@SRC/exulu/agent";
+import { getChunksTableName, type ExuluContext } from "@SRC/exulu/context";
+import type { ExuluReranker } from "@SRC/exulu/reranker";
+import type { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
-import { createAgenticRetrievalTool } from "src/templates/tools/agentic-retrieval/index.ts";
-import { loadAgent } from "src/utils/load-agent.ts";
-import { checkRecordAccess } from "src/utils/check-record-access.ts";
-import { postgresClient } from "src/postgres/client";
-import { createProjectItemsRetrievalTool } from "src/templates/tools/project-retrieval-tool.ts";
+import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
+import { loadAgent } from "@SRC/utils/load-agent.ts";
+import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
+import { postgresClient } from "@SRC/postgres/client";
+import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 
 const addAgentFields = async (

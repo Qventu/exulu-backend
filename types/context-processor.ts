@@ -1,6 +1,6 @@
-import type { ExuluStorage } from "src/exulu/storage";
+import type { ExuluStorage } from "@SRC/exulu/storage";
 import type { Item } from "./models/item";
-import type { ExuluConfig } from "src/exulu/app";
+import type { ExuluConfig } from "@SRC/exulu/app";
 import type { ExuluQueueConfig } from "./queue-config";
 
 export type ExuluContextProcessor = {

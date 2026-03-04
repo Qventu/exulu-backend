@@ -1,6 +1,6 @@
 import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import { postgresClient } from "../postgres/client.ts";
-import { RBACResolver } from "src/graphql/resolvers/rbac-resolver.ts";
+import { RBACResolver } from "@SRC/graphql/resolvers/rbac-resolver.ts";
 
 const loadAgentCache = new Map<
   string,

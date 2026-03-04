@@ -1,18 +1,18 @@
 import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker, type JobState } from "bullmq";
-import { loadAgent } from "src/utils/load-agent.ts";
-import { bullmq } from "src/validators/bullmq.ts";
-import { getEnabledTools } from "src/utils/enabled-tools.ts";
-import { ExuluStorage } from "src/exulu/storage.ts";
-import type { ExuluAgent } from "src/exulu/agent.ts";
+import { loadAgent } from "@SRC/utils/load-agent.ts";
+import { bullmq } from "@SRC/validators/bullmq.ts";
+import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
+import { ExuluStorage } from "@SRC/exulu/storage.ts";
+import type { ExuluAgent } from "@SRC/exulu/agent.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
-import { getTableName, type ExuluContext } from "src/exulu/context.ts";
-import type { ExuluReranker } from "src/exulu/reranker.ts";
-import type { ExuluEval } from "src/exulu/evals.ts";
-import type { ExuluTool } from "src/exulu/tool.ts";
+import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
+import type { ExuluReranker } from "@SRC/exulu/reranker.ts";
+import type { ExuluEval } from "@SRC/exulu/evals.ts";
+import type { ExuluTool } from "@SRC/exulu/tool.ts";
 import { postgresClient } from "../postgres/client";
-import type { BullMqJobData } from "src/bullmq/decorator.ts";
+import type { BullMqJobData } from "@SRC/bullmq/decorator.ts";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./app/index.ts";
 import { v4 as uuidv4 } from "uuid";
@@ -28,7 +28,7 @@ import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
 import { updateStatistic } from "./statistics.ts";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
-import { sanitizeToolName } from "src/utils/sanitize-tool-name.ts";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 
 let redisConnection: IORedis;
 

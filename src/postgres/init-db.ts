@@ -1,11 +1,11 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
 import { coreSchemas } from "./core-schema";
-import { mapType } from "src/utils/map-types";
-import { sanitizeName } from "src/utils/sanitize-name";
-import { encryptString, generateApiKey } from "src/auth/generate-key";
+import { mapType } from "@SRC/utils/map-types";
+import { sanitizeName } from "@SRC/utils/sanitize-name";
+import { encryptString, generateApiKey } from "@SRC/auth/generate-key";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
-import type { ExuluContext } from "src/exulu/context";
+import type { ExuluContext } from "@SRC/exulu/context";
 
 const {
   agentsSchema,

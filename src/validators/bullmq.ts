@@ -1,4 +1,4 @@
-import type { BullMqJobData } from "src/bullmq/decorator.ts";
+import type { BullMqJobData } from "@SRC/bullmq/decorator.ts";
 
 export const bullmq = {
   validate: (id: string | undefined, data: BullMqJobData): void => {
