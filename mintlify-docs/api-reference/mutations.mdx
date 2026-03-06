@@ -1,0 +1,1012 @@
+---
+title: 'Mutations'
+description: 'Complete reference for all GraphQL mutation operations'
+---
+
+## Overview
+
+Mutations modify data in Exulu IMP. All mutations follow consistent patterns and return both the modified resource and optional job IDs for background processing.
+
+## Mutation patterns
+
+Every resource type (core and dynamic) gets these mutation operations:
+
+| Operation | Purpose | Returns job ID |
+|-----------|---------|----------------|
+| `{typePlural}CreateOne` | Create new resource | Sometimes |
+| `{typePlural}CopyOneById` | Duplicate resource | Sometimes |
+| `{typePlural}UpdateOne` | Update by filter | Sometimes |
+| `{typePlural}UpdateOneById` | Update by ID | Sometimes |
+| `{typePlural}RemoveOne` | Delete by filter | No |
+| `{typePlural}RemoveOneById` | Delete by ID | No |
+
+<Info>
+  Mutations return a `job` field when background processing is triggered (e.g., embedding generation, chunk processing).
+</Info>
+
+## Create mutations
+
+### Pattern
+
+```graphql
+{typePlural}CreateOne(
+  input: {type}Input!
+  upsert: Boolean
+): {type}MutationPayload
+
+type {type}MutationPayload {
+  item: {type}!
+  job: String  # Job ID if background processing triggered
+}
+```
+
+### Basic create
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Customer Support Agent"
+      description: "Handles customer inquiries"
+      backend: "anthropic_claude"
+      type: "agent"
+    }
+  ) {
+    item {
+      id
+      name
+      createdAt
+    }
+  }
+}
+```
+
+### With upsert
+
+Upsert creates or updates based on unique constraints:
+
+```graphql
+mutation {
+  variablesCreateOne(
+    input: {
+      name: "openai_api_key"
+      value: "sk-..."
+      encrypted: true
+    }
+    upsert: true
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+### With RBAC
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Private Agent"
+      description: "Only accessible by specific users"
+      backend: "anthropic_claude"
+      type: "agent"
+      RBAC: {
+        users: [
+          { id: "user-123", rights: "write" }
+          { id: "user-456", rights: "read" }
+        ]
+        roles: [
+          { id: "developer", rights: "write" }
+        ]
+      }
+    }
+  ) {
+    item {
+      id
+      name
+      RBAC {
+        type
+        users {
+          id
+          rights
+        }
+      }
+    }
+  }
+}
+```
+
+### With job triggering
+
+For contexts with embedders, creating items triggers chunk generation:
+
+```graphql
+mutation {
+  documentationCreateOne(
+    input: {
+      title: "Getting Started Guide"
+      url: "https://docs.example.com/start"
+      content: "Welcome to our platform..."
+      category: "tutorials"
+    }
+  ) {
+    item {
+      id
+      title
+    }
+    job  # Job ID for chunk generation
+  }
+}
+```
+
+## Copy mutations
+
+Duplicate an existing resource.
+
+### Pattern
+
+```graphql
+{typePlural}CopyOneById(id: ID!): {type}MutationPayload
+```
+
+### Example
+
+```graphql
+mutation {
+  agentsCopyOneById(id: "agent-123") {
+    item {
+      id
+      name  # Will be "Original Name (Copy)"
+      description
+    }
+  }
+}
+```
+
+<Note>
+  Copied resources get "(Copy)" appended to their name and are set to private mode with `created_by` set to the current user.
+</Note>
+
+## Update mutations
+
+### Update by ID pattern
+
+```graphql
+{typePlural}UpdateOneById(
+  id: ID!
+  input: {type}Input!
+): {type}MutationPayload
+```
+
+### Basic update
+
+```graphql
+mutation {
+  agentsUpdateOneById(
+    id: "agent-123"
+    input: {
+      name: "Updated Agent Name"
+      description: "New description"
+    }
+  ) {
+    item {
+      id
+      name
+      description
+      updatedAt
+    }
+  }
+}
+```
+
+### Update with job triggering
+
+For contexts with embedders set to `calculateVectors: "onUpdate"`:
+
+```graphql
+mutation {
+  documentationUpdateOneById(
+    id: "doc-123"
+    input: {
+      content: "Updated documentation content..."
+    }
+  ) {
+    item {
+      id
+      title
+    }
+    job  # Chunk regeneration job ID
+  }
+}
+```
+
+### Update by filter pattern
+
+```graphql
+{typePlural}UpdateOne(
+  where: [Filter{Type}]
+  input: {type}Input!
+): {type}MutationPayload
+```
+
+### Example
+
+```graphql
+mutation {
+  agentsUpdateOne(
+    where: [
+      { name: { eq: "Old Agent Name" } }
+    ]
+    input: {
+      name: "New Agent Name"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+### Update RBAC
+
+```graphql
+mutation {
+  agentsUpdateOneById(
+    id: "agent-123"
+    input: {
+      RBAC: {
+        users: [
+          { id: "user-789", rights: "write" }
+        ]
+        roles: [
+          { id: "admin", rights: "write" }
+        ]
+      }
+    }
+  ) {
+    item {
+      id
+      RBAC {
+        users {
+          id
+          rights
+        }
+        roles {
+          id
+          rights
+        }
+      }
+    }
+  }
+}
+```
+
+## Delete mutations
+
+### Delete by ID pattern
+
+```graphql
+{typePlural}RemoveOneById(id: ID!): {type}
+```
+
+### Example
+
+```graphql
+mutation {
+  agentsRemoveOneById(id: "agent-123") {
+    id
+    name
+  }
+}
+```
+
+<Warning>
+  For contexts with embedders, deleting an item also deletes all associated chunks automatically.
+</Warning>
+
+### Delete by filter pattern
+
+```graphql
+{typePlural}RemoveOne(where: JSON!): {type}
+```
+
+### Example
+
+```graphql
+mutation {
+  agent_sessionsRemoveOne(
+    where: { agent: "agent-123" }
+  ) {
+    id
+    name
+  }
+}
+```
+
+## Context-specific mutations
+
+Contexts with embedders, sources, or processors get additional mutations.
+
+### Generate chunks
+
+Create vector embeddings for context items.
+
+```graphql
+{contextId}GenerateChunks(
+  where: [Filter{Context}]
+  limit: Int
+): {contextId}GenerateChunksReturnPayload
+
+type {contextId}GenerateChunksReturnPayload {
+  message: String!
+  items: Int!
+  jobs: [String!]
+}
+```
+
+**Generate for filtered items:**
+
+```graphql
+mutation {
+  documentationGenerateChunks(
+    where: [{ category: { eq: "tutorials" } }]
+    limit: 50
+  ) {
+    message
+    items  # Number of items processed
+    jobs   # Job IDs
+  }
+}
+```
+
+**Generate for all items:**
+
+```graphql
+mutation {
+  documentationGenerateChunks {
+    message
+    items
+    jobs
+  }
+}
+```
+
+<Note>
+  Generating all chunks requires `super_admin` permission.
+</Note>
+
+### Delete chunks
+
+Remove vector embeddings while keeping items.
+
+```graphql
+{contextId}DeleteChunks(
+  where: [Filter{Context}]
+  limit: Int
+): {contextId}DeleteChunksReturnPayload
+
+type {contextId}DeleteChunksReturnPayload {
+  message: String!
+  items: Int!
+  jobs: [String!]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationDeleteChunks(
+    where: [{ category: { eq: "deprecated" } }]
+  ) {
+    message
+    items
+  }
+}
+```
+
+### Execute source
+
+Manually trigger a context source to fetch data.
+
+```graphql
+{contextId}ExecuteSource(
+  source: ID!
+  inputs: JSON!
+): {contextId}ExecuteSourceReturnPayload
+
+type {contextId}ExecuteSourceReturnPayload {
+  message: String!
+  jobs: [String!]
+  items: [String!]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationExecuteSource(
+    source: "github_docs_sync"
+    inputs: {
+      repository: "myorg/myrepo"
+      branch: "main"
+      path: "/docs"
+    }
+  ) {
+    message
+    items  # Created item IDs
+    jobs   # Job IDs if queued
+  }
+}
+```
+
+<Note>
+  Requires `super_admin` permission.
+</Note>
+
+### Process item
+
+Execute a context processor on a single item.
+
+```graphql
+{contextId}ProcessItem(
+  item: ID!
+): {contextId}ProcessItemFieldReturnPayload
+
+type {contextId}ProcessItemFieldReturnPayload {
+  message: String!
+  results: [String]
+  jobs: [String]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationProcessItem(item: "doc-123") {
+    message
+    results
+    jobs
+  }
+}
+```
+
+### Process items (batch)
+
+Execute processor on multiple items.
+
+```graphql
+{contextId}ProcessItems(
+  limit: Int
+  filters: [Filter{Context}]
+  sort: SortBy
+): {contextId}ProcessItemFieldReturnPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationProcessItems(
+    limit: 10
+    filters: [{ category: { eq: "api" } }]
+  ) {
+    message
+    results
+    jobs
+  }
+}
+```
+
+<Note>
+  Processing mutations require `super_admin` permission.
+</Note>
+
+## Workflow mutations
+
+### Run workflow
+
+Execute a workflow template with variables.
+
+```graphql
+mutation {
+  runWorkflow(
+    id: "workflow-123"
+    variables: {
+      customerName: "John Doe"
+      orderId: "12345"
+      priority: "high"
+    }
+  ) {
+    result   # Last message from workflow
+    job      # Job ID if queued
+    metadata # Execution metadata (tokens, duration)
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "runWorkflow": {
+      "result": {
+        "role": "assistant",
+        "content": "Order #12345 has been processed for John Doe."
+      },
+      "job": "job-abc-123",
+      "metadata": {
+        "tokens": {
+          "totalTokens": 1234,
+          "inputTokens": 234,
+          "outputTokens": 1000
+        },
+        "duration": 2345
+      }
+    }
+  }
+}
+```
+
+### Schedule workflow
+
+Create a cron-based workflow schedule.
+
+```graphql
+mutation {
+  upsertWorkflowSchedule(
+    workflow: "workflow-123"
+    schedule: "0 9 * * *"  # Daily at 9 AM
+  ) {
+    status
+    job
+  }
+}
+```
+
+**Cron schedule examples:**
+
+- `0 9 * * *` - Daily at 9:00 AM
+- `*/15 * * * *` - Every 15 minutes
+- `0 0 * * 0` - Weekly on Sunday at midnight
+- `0 0 1 * *` - Monthly on the 1st at midnight
+
+### Delete workflow schedule
+
+```graphql
+mutation {
+  deleteWorkflowSchedule(workflow: "workflow-123") {
+    status
+  }
+}
+```
+
+## Evaluation mutations
+
+### Run evaluation
+
+Execute an evaluation set on an agent.
+
+```graphql
+mutation {
+  runEval(
+    id: "eval-run-123"
+    test_case_ids: ["test-1", "test-2", "test-3"]
+  ) {
+    jobs   # Job IDs for each test case
+    count  # Number of jobs created
+  }
+}
+```
+
+**Run all test cases in eval set:**
+
+```graphql
+mutation {
+  runEval(id: "eval-run-123") {
+    jobs
+    count
+  }
+}
+```
+
+<Note>
+  Evaluations are always run as background jobs using BullMQ.
+</Note>
+
+## Queue management mutations
+
+### Pause queue
+
+```graphql
+mutation {
+  pauseQueue(queue: eval_runs) {
+    success
+  }
+}
+```
+
+### Resume queue
+
+```graphql
+mutation {
+  resumeQueue(queue: eval_runs) {
+    success
+  }
+}
+```
+
+### Drain queue
+
+Remove all waiting/delayed jobs from queue.
+
+```graphql
+mutation {
+  drainQueue(queue: eval_runs) {
+    success
+  }
+}
+```
+
+<Warning>
+  Draining a queue removes jobs that haven't started yet. Active jobs continue running.
+</Warning>
+
+### Delete job
+
+Remove a specific job from queue.
+
+```graphql
+mutation {
+  deleteJob(
+    queue: eval_runs
+    id: "job-abc-123"
+  ) {
+    success
+  }
+}
+```
+
+## User management mutations
+
+### Create user
+
+```graphql
+mutation {
+  usersCreateOne(
+    input: {
+      name: "John Doe"
+      email: "john@example.com"
+      password: "secure-password"
+      role: "role-id-123"
+      type: "user"
+    }
+  ) {
+    item {
+      id
+      name
+      email
+      role
+    }
+  }
+}
+```
+
+<Warning>
+  Creating users requires `super_admin` permission. Passwords are automatically hashed with bcrypt.
+</Warning>
+
+### Create API user
+
+```graphql
+mutation {
+  usersCreateOne(
+    input: {
+      email: "api@example.com"
+      type: "api"
+      apikey: "sk_abc123def456.../production-api-key"
+      role: "api-role-id"
+    }
+  ) {
+    item {
+      id
+      email
+      type
+    }
+  }
+}
+```
+
+<Note>
+  API keys must be generated using [`ExuluDatabase.api.key.generate()`](/core/exulu-database#api-key-generation) and are stored as bcrypt hashes.
+</Note>
+
+### Update user role
+
+```graphql
+mutation {
+  usersUpdateOneById(
+    id: "user-123"
+    input: {
+      role: "new-role-id"
+    }
+  ) {
+    item {
+      id
+      name
+      role
+    }
+  }
+}
+```
+
+### Grant super admin
+
+```graphql
+mutation {
+  usersUpdateOneById(
+    id: "user-123"
+    input: {
+      super_admin: true
+    }
+  ) {
+    item {
+      id
+      name
+      super_admin
+    }
+  }
+}
+```
+
+<Warning>
+  Granting or revoking `super_admin` requires existing `super_admin` permission.
+</Warning>
+
+## Role management mutations
+
+### Create role
+
+```graphql
+mutation {
+  rolesCreateOne(
+    input: {
+      name: "Developer"
+      agents: "write"
+      evals: "write"
+      workflows: "read"
+      variables: "read"
+      users: "read"
+      api: "read"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+**Permission levels:**
+- `"read"` - Can view resources
+- `"write"` - Can view and modify resources
+
+### Update role permissions
+
+```graphql
+mutation {
+  rolesUpdateOneById(
+    id: "role-123"
+    input: {
+      agents: "write"
+      workflows: "write"
+    }
+  ) {
+    item {
+      id
+      name
+      agents
+      workflows
+    }
+  }
+}
+```
+
+## Advanced mutation patterns
+
+### Mutation with variables
+
+```graphql
+mutation CreateAgent(
+  $name: String!
+  $description: String
+  $backend: String!
+) {
+  agentsCreateOne(
+    input: {
+      name: $name
+      description: $description
+      backend: $backend
+      type: "agent"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+**Variables:**
+
+```json
+{
+  "name": "Support Agent",
+  "description": "Handles customer support",
+  "backend": "anthropic_claude"
+}
+```
+
+### Multiple mutations in one request
+
+```graphql
+mutation {
+  agent1: agentsCreateOne(
+    input: {
+      name: "Agent 1"
+      backend: "openai"
+      type: "agent"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+
+  agent2: agentsCreateOne(
+    input: {
+      name: "Agent 2"
+      backend: "anthropic"
+      type: "agent"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+### Mutation with fragment
+
+```graphql
+fragment AgentResult on agent {
+  id
+  name
+  description
+  provider
+  modelName
+  createdAt
+}
+
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "New Agent"
+      backend: "anthropic"
+      type: "agent"
+    }
+  ) {
+    item {
+      ...AgentResult
+    }
+  }
+}
+```
+
+## Error handling
+
+### Validation errors
+
+```json
+{
+  "errors": [
+    {
+      "message": "Field 'name' is required",
+      "path": ["agentsCreateOne"]
+    }
+  ]
+}
+```
+
+### Permission errors
+
+```json
+{
+  "errors": [
+    {
+      "message": "Insufficient permissions to edit this record",
+      "path": ["agentsUpdateOneById"]
+    }
+  ]
+}
+```
+
+### Not found errors
+
+```json
+{
+  "errors": [
+    {
+      "message": "Record not found",
+      "path": ["agentsUpdateOneById"]
+    }
+  ]
+}
+```
+
+### RBAC errors
+
+```json
+{
+  "errors": [
+    {
+      "message": "Only the creator can edit this private record",
+      "path": ["agentsUpdateOneById"]
+    }
+  ]
+}
+```
+
+## Transaction handling
+
+<Note>
+  GraphQL mutations in Exulu IMP are not wrapped in database transactions by default. If you need transactional behavior, implement it at the application level.
+</Note>
+
+## Best practices
+
+<Tip>
+  **Check job status** - When mutations return a `job` field, use the `jobs` query to monitor background processing status
+</Tip>
+
+<Note>
+  **Handle RBAC carefully** - When updating RBAC, provide the complete desired state. Partial updates replace existing permissions.
+</Note>
+
+<Warning>
+  **Never expose API keys** - API keys and passwords are write-only. They're hashed and cannot be retrieved.
+</Warning>
+
+<Info>
+  **Use upsert for idempotency** - When you need idempotent operations, use `upsert: true` with unique constraints
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Queries" icon="magnifying-glass" href="/api-reference/queries">
+    Learn about query operations
+  </Card>
+  <Card title="Core types" icon="database" href="/api-reference/core-types">
+    Explore predefined types
+  </Card>
+  <Card title="Dynamic types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Learn about context types
+  </Card>
+  <Card title="Introduction" icon="book" href="/api-reference/introduction">
+    Back to API overview
+  </Card>
+</CardGroup>

@@ -1,0 +1,699 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluVariables"
+---
+
+## ExuluVariables object
+
+ExuluVariables is exported as a utility object:
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Access the get method
+const value = await ExuluVariables.get("variable_name");
+```
+
+## Methods
+
+### get()
+
+Retrieves and decrypts a variable value from the database.
+
+```typescript
+async get(name: string): Promise<string>
+```
+
+<ParamField path="name" type="string" required>
+  The unique name of the variable to retrieve
+</ParamField>
+
+<ResponseField name="return" type="Promise<string>">
+  The decrypted variable value
+</ResponseField>
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Retrieve a variable
+const apiKey = await ExuluVariables.get("openai_api_key");
+
+console.log(apiKey); // "sk-proj-..."
+```
+
+**Behavior:**
+1. Queries the `variables` table for the specified `name`
+2. Throws an error if the variable is not found
+3. If `encrypted: true`, decrypts the value using AES with `NEXTAUTH_SECRET`
+4. Returns the decrypted (or plain) value
+
+**Error handling:**
+
+```typescript
+try {
+  const apiKey = await ExuluVariables.get("my_variable");
+  console.log("Retrieved:", apiKey);
+} catch (error) {
+  console.error("Error:", error.message);
+  // Error: Variable my_variable not found.
+}
+```
+
+**Throws:**
+- Error if variable name doesn't exist
+- Error if database connection fails
+- Error if decryption fails (wrong `NEXTAUTH_SECRET`)
+
+## Variable type
+
+Variables in the database follow this structure:
+
+```typescript
+interface Variable {
+  name: string;         // Primary key, unique identifier
+  value: string;        // Encrypted or plain text value
+  encrypted: boolean;   // Whether value is encrypted
+  created_at?: Date;    // When variable was created
+  updated_at?: Date;    // When variable was last updated
+}
+```
+
+<ResponseField name="name" type="string">
+  Unique variable identifier
+</ResponseField>
+
+<ResponseField name="value" type="string">
+  The variable value (encrypted if `encrypted: true`)
+</ResponseField>
+
+<ResponseField name="encrypted" type="boolean">
+  Whether the value is encrypted at rest
+</ResponseField>
+
+<ResponseField name="created_at" type="Date">
+  Timestamp when created
+</ResponseField>
+
+<ResponseField name="updated_at" type="Date">
+  Timestamp when last updated
+</ResponseField>
+
+## Usage examples
+
+### Basic retrieval
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getApiKey() {
+  const apiKey = await ExuluVariables.get("openai_api_key");
+  return apiKey;
+}
+
+const key = await getApiKey();
+console.log(key); // "sk-proj-..."
+```
+
+### With error handling
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getVariableWithFallback(name: string, fallback: string) {
+  try {
+    return await ExuluVariables.get(name);
+  } catch (error) {
+    console.warn(`Variable ${name} not found, using fallback`);
+    return fallback;
+  }
+}
+
+// Use with fallback
+const apiKey = await getVariableWithFallback(
+  "openai_api_key",
+  process.env.OPENAI_API_KEY || ""
+);
+```
+
+### Retrieving multiple variables
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getVariables(names: string[]) {
+  const values = await Promise.all(
+    names.map((name) => ExuluVariables.get(name))
+  );
+
+  return Object.fromEntries(
+    names.map((name, i) => [name, values[i]])
+  );
+}
+
+// Retrieve multiple
+const vars = await getVariables([
+  "openai_api_key",
+  "anthropic_api_key",
+  "google_api_key"
+]);
+
+console.log(vars.openai_api_key);    // "sk-..."
+console.log(vars.anthropic_api_key); // "sk-ant-..."
+console.log(vars.google_api_key);    // "AIza..."
+```
+
+### With ExuluAgent
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+// Retrieve API key
+const openaiKey = await ExuluVariables.get("openai_api_key");
+
+// Use in agent
+const agent = new ExuluAgent({
+  id: "assistant",
+  name: "AI Assistant",
+  type: "agent",
+  description: "General AI assistant",
+  provider: "openai",
+  authenticationInformation: openaiKey, // Use retrieved variable
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey: apiKey || openaiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful assistant."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Generate response
+const response = await agent.generateSync({
+  prompt: "Hello!",
+  agentInstance: await loadAgent("assistant"),
+  statistics: { label: "assistant", trigger: "api" }
+});
+```
+
+### With ExuluEmbedder
+
+```typescript
+import { ExuluEmbedder, ExuluVariables } from "@exulu/backend";
+
+// Retrieve API key
+const openaiKey = await ExuluVariables.get("openai_api_key");
+
+// Create embedder
+const embedder = new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  authenticationInformation: openaiKey // Use retrieved variable
+});
+
+// Generate embeddings
+const embeddings = await embedder.generate([
+  "First text to embed",
+  "Second text to embed"
+]);
+```
+
+### With ExuluTool
+
+```typescript
+import { ExuluTool, ExuluVariables } from "@exulu/backend";
+import { z } from "zod";
+
+// Create tool with variable reference
+const githubTool = new ExuluTool({
+  id: "github_search",
+  name: "search_github",
+  description: "Searches GitHub repositories",
+  type: "function",
+  inputSchema: z.object({
+    query: z.string()
+  }),
+  config: [
+    {
+      name: "github_token",
+      type: "variable",
+      value: "github_api_token" // Variable name
+    }
+  ],
+  execute: async ({ query }, config) => {
+    // Retrieve variable inside execute
+    const token = await ExuluVariables.get("github_api_token");
+
+    const response = await fetch(
+      `https://api.github.com/search/repositories?q=${query}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Accept": "application/vnd.github+json"
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    return {
+      result: JSON.stringify(
+        data.items.slice(0, 5).map((item: any) => ({
+          name: item.full_name,
+          description: item.description,
+          stars: item.stargazers_count,
+          url: item.html_url
+        }))
+      )
+    };
+  }
+});
+```
+
+### Environment-aware retrieval
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getEnvironmentVariable(baseName: string) {
+  const env = process.env.NODE_ENV || "dev";
+  const variableName = `${env}_${baseName}`;
+
+  return await ExuluVariables.get(variableName);
+}
+
+// In development: retrieves "dev_openai_api_key"
+// In production: retrieves "prod_openai_api_key"
+const apiKey = await getEnvironmentVariable("openai_api_key");
+```
+
+### Tenant-specific retrieval
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getTenantVariable(tenantId: string, variableName: string) {
+  const fullName = `tenant_${tenantId}_${variableName}`;
+  return await ExuluVariables.get(fullName);
+}
+
+// Retrieve tenant-specific API key
+const tenantApiKey = await getTenantVariable("acme_corp", "openai_api_key");
+// Retrieves "tenant_acme_corp_openai_api_key"
+
+// Use with tenant agent
+const tenantAgent = new ExuluAgent({
+  id: `agent_${tenantId}`,
+  name: `Agent for ${tenantId}`,
+  type: "agent",
+  description: "Tenant-specific agent",
+  provider: "openai",
+  authenticationInformation: tenantApiKey,
+  config: { /* ... */ },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+```
+
+### Caching variables
+
+For performance, cache frequently accessed variables:
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+class VariableCache {
+  private cache = new Map<string, { value: string; expires: number }>();
+  private ttl: number;
+
+  constructor(ttlSeconds: number = 300) {
+    this.ttl = ttlSeconds * 1000;
+  }
+
+  async get(name: string): Promise<string> {
+    const cached = this.cache.get(name);
+
+    if (cached && cached.expires > Date.now()) {
+      return cached.value;
+    }
+
+    const value = await ExuluVariables.get(name);
+
+    this.cache.set(name, {
+      value,
+      expires: Date.now() + this.ttl
+    });
+
+    return value;
+  }
+
+  invalidate(name: string) {
+    this.cache.delete(name);
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+// Use cache
+const cache = new VariableCache(300); // 5 minute TTL
+
+const apiKey = await cache.get("openai_api_key"); // Fetches from DB
+const apiKey2 = await cache.get("openai_api_key"); // Returns cached value
+```
+
+### Validating variables on startup
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+const REQUIRED_VARIABLES = [
+  "openai_api_key",
+  "anthropic_api_key",
+  "database_url",
+  "redis_url"
+];
+
+async function validateRequiredVariables() {
+  const missing: string[] = [];
+
+  for (const name of REQUIRED_VARIABLES) {
+    try {
+      await ExuluVariables.get(name);
+      console.log(`✓ ${name}`);
+    } catch (error) {
+      console.error(`✗ ${name}`);
+      missing.push(name);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required variables: ${missing.join(", ")}\n` +
+      `Please add them to the database via UI or SQL.`
+    );
+  }
+
+  console.log("All required variables present.");
+}
+
+// Run on application startup
+validateRequiredVariables()
+  .then(() => console.log("Starting application..."))
+  .catch((error) => {
+    console.error("Startup failed:", error.message);
+    process.exit(1);
+  });
+```
+
+### Dynamic configuration
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+async function getDynamicConfig() {
+  const config = {
+    llm: {
+      provider: await ExuluVariables.get("llm_provider").catch(() => "openai"),
+      apiKey: await ExuluVariables.get("llm_api_key"),
+      model: await ExuluVariables.get("llm_model").catch(() => "gpt-4o")
+    },
+    embeddings: {
+      provider: await ExuluVariables.get("embeddings_provider").catch(() => "openai"),
+      apiKey: await ExuluVariables.get("embeddings_api_key"),
+      model: await ExuluVariables.get("embeddings_model").catch(() => "text-embedding-3-small")
+    },
+    features: {
+      analytics: await ExuluVariables.get("feature_analytics").catch(() => "false") === "true",
+      rateLimit: parseInt(await ExuluVariables.get("rate_limit_per_minute").catch(() => "100"))
+    }
+  };
+
+  return config;
+}
+
+// Use dynamic config
+const config = await getDynamicConfig();
+
+const agent = new ExuluAgent({
+  id: "dynamic_agent",
+  name: "Dynamic Agent",
+  type: "agent",
+  provider: config.llm.provider,
+  authenticationInformation: config.llm.apiKey,
+  config: {
+    name: config.llm.model,
+    // ...
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+```
+
+### Secret rotation helper
+
+```typescript
+import { ExuluVariables, postgresClient } from "@exulu/backend";
+import CryptoJS from "crypto-js";
+
+async function rotateSecret(variableName: string, newValue: string) {
+  const { db } = await postgresClient();
+
+  // Verify old value works
+  try {
+    const oldValue = await ExuluVariables.get(variableName);
+    console.log("Current value retrieved successfully");
+  } catch (error) {
+    throw new Error(`Cannot retrieve current value: ${error.message}`);
+  }
+
+  // Encrypt new value
+  const encrypted = CryptoJS.AES.encrypt(
+    newValue,
+    process.env.NEXTAUTH_SECRET
+  ).toString();
+
+  // Update variable
+  await db("variables")
+    .where({ name: variableName })
+    .update({
+      value: encrypted,
+      updated_at: new Date()
+    });
+
+  // Verify new value
+  const updated = await ExuluVariables.get(variableName);
+
+  if (updated !== newValue) {
+    throw new Error("Verification failed after rotation");
+  }
+
+  console.log(`✓ Secret rotated successfully: ${variableName}`);
+}
+
+// Rotate API key
+await rotateSecret("openai_api_key", "sk-proj-NEW_KEY_HERE");
+```
+
+### Listing variables
+
+```typescript
+import { postgresClient } from "@exulu/backend";
+
+async function listVariables() {
+  const { db } = await postgresClient();
+
+  const variables = await db
+    .from("variables")
+    .select("name", "encrypted", "created_at", "updated_at")
+    .orderBy("name");
+
+  console.log("Variables:");
+  for (const v of variables) {
+    console.log(`  ${v.name} (encrypted: ${v.encrypted})`);
+  }
+
+  return variables;
+}
+
+await listVariables();
+// Variables:
+//   anthropic_api_key (encrypted: true)
+//   app_name (encrypted: false)
+//   app_version (encrypted: false)
+//   openai_api_key (encrypted: true)
+```
+
+## Integration patterns
+
+### Factory function with variables
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+async function createAgentWithVariables(
+  id: string,
+  provider: string,
+  variableName: string
+) {
+  const apiKey = await ExuluVariables.get(variableName);
+
+  return new ExuluAgent({
+    id,
+    name: `Agent ${id}`,
+    type: "agent",
+    description: "Agent with variable-based auth",
+    provider,
+    authenticationInformation: apiKey,
+    config: {
+      name: "gpt-4o",
+      model: {
+        create: ({ apiKey: key }) => createOpenAI({ apiKey: key || apiKey })("gpt-4o")
+      },
+      instructions: "You are a helpful assistant."
+    },
+    capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+  });
+}
+
+// Create agents
+const agent1 = await createAgentWithVariables("agent1", "openai", "openai_api_key");
+const agent2 = await createAgentWithVariables("agent2", "anthropic", "anthropic_api_key");
+```
+
+### Middleware for API authentication
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+import express from "express";
+
+const app = express();
+
+// Middleware to inject API keys
+app.use(async (req, res, next) => {
+  try {
+    req.apiKeys = {
+      openai: await ExuluVariables.get("openai_api_key"),
+      anthropic: await ExuluVariables.get("anthropic_api_key"),
+      google: await ExuluVariables.get("google_api_key")
+    };
+    next();
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load API keys" });
+  }
+});
+
+// Use in routes
+app.post("/api/generate", async (req, res) => {
+  const { provider } = req.body;
+
+  const agent = new ExuluAgent({
+    id: "api_agent",
+    provider,
+    authenticationInformation: req.apiKeys[provider],
+    // ...
+  });
+
+  const response = await agent.generateSync({
+    prompt: req.body.prompt,
+    agentInstance: await loadAgent("api_agent"),
+    statistics: { label: "api", trigger: "http" }
+  });
+
+  res.json({ response });
+});
+```
+
+## Best practices
+
+<Tip>
+  **Cache variables**: For frequently accessed variables, implement caching to reduce database queries.
+</Tip>
+
+<Note>
+  **Handle errors gracefully**: Always wrap `ExuluVariables.get()` in try/catch to handle missing variables.
+</Note>
+
+<Warning>
+  **Don't expose values**: Never return variable values through public APIs or logs. Only use them internally.
+</Warning>
+
+<Info>
+  **Validate on startup**: Check that all required variables exist before starting your application.
+</Info>
+
+## Error reference
+
+### Variable not found
+
+```typescript
+// Error: Variable my_variable not found.
+```
+
+**Cause**: Variable doesn't exist in database
+
+**Solution**: Create the variable:
+
+```sql
+INSERT INTO variables (name, value, encrypted)
+VALUES ('my_variable', 'value', true);
+```
+
+### Decryption error
+
+```typescript
+// Error: Malformed UTF-8 data
+```
+
+**Cause**: Wrong `NEXTAUTH_SECRET` or corrupted encrypted value
+
+**Solution**: Re-encrypt with correct secret or verify `NEXTAUTH_SECRET` is correct
+
+### Database connection error
+
+```typescript
+// Error: Connection refused / timeout
+```
+
+**Cause**: Database not accessible
+
+**Solution**: Check database connection settings and ensure database is running
+
+## Type definitions
+
+```typescript
+// Variable database record
+interface Variable {
+  name: string;
+  value: string;
+  encrypted: boolean;
+  created_at?: Date;
+  updated_at?: Date;
+}
+
+// ExuluVariables utility
+interface ExuluVariables {
+  get(name: string): Promise<string>;
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration guide" icon="gear" href="/core/exulu-variables/configuration">
+    Learn about setup and management
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-variables/introduction">
+    Understand variable concepts
+  </Card>
+  <Card title="ExuluAgent" icon="robot" href="/core/exulu-agent/introduction">
+    Use variables with agents
+  </Card>
+  <Card title="ExuluTool" icon="wrench" href="/core/exulu-tool/introduction">
+    Use variables with tools
+  </Card>
+</CardGroup>

@@ -1,0 +1,690 @@
+---
+title: "Configuration"
+description: "Complete guide to configuring ExuluAgent for AI-powered task execution"
+---
+
+## Constructor parameters
+
+The ExuluAgent constructor accepts a configuration object with the following parameters:
+
+```typescript
+const agent = new ExuluAgent({
+  id: string,
+  name: string,
+  type: "agent",
+  description: string,
+  provider: string,
+  config?: ExuluAgentConfig,
+  capabilities?: Capabilities,
+  maxContextLength?: number,
+  authenticationInformation?: string,
+  queue?: ExuluQueueConfig,
+  workflows?: WorkflowConfig,
+  rateLimit?: RateLimiterRule
+});
+```
+
+## Required parameters
+
+### id
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the agent. Must start with a letter or underscore, contain only alphanumeric characters and underscores, 5-80 characters long.
+</ParamField>
+
+```typescript
+id: "customer_support_agent"
+```
+
+<Warning>
+  The ID should not change after creation as it's used for database references and routing.
+</Warning>
+
+### name
+
+<ParamField path="name" type="string" required>
+  Human-readable name displayed in UI and logs
+</ParamField>
+
+```typescript
+name: "Customer Support Agent"
+```
+
+### type
+
+<ParamField path="type" type="'agent'" required>
+  Must be set to `"agent"`
+</ParamField>
+
+```typescript
+type: "agent"
+```
+
+### description
+
+<ParamField path="description" type="string" required>
+  Description of what the agent does. Used when the agent is called as a tool by other agents.
+</ParamField>
+
+```typescript
+description: "Handles customer support inquiries and provides product information"
+```
+
+### provider
+
+<ParamField path="provider" type="string" required>
+  LLM provider name (e.g., "openai", "anthropic", "google")
+</ParamField>
+
+```typescript
+provider: "openai"
+```
+
+## Optional parameters
+
+### config
+
+<ParamField path="config" type="ExuluAgentConfig">
+  Configuration object containing model details and instructions
+</ParamField>
+
+```typescript
+config: {
+  name: "gpt-4o",
+  model: {
+    create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+  },
+  instructions: "You are a helpful assistant..."
+}
+```
+
+#### Config properties
+
+<ParamField path="config.name" type="string">
+  Model name (e.g., "gpt-4o", "claude-opus-4")
+</ParamField>
+
+<ParamField path="config.model" type="ModelFactory">
+  Factory function that creates a LanguageModel instance from the AI SDK
+</ParamField>
+
+```typescript
+model: {
+  create: ({ apiKey }: { apiKey?: string }) => LanguageModel
+}
+```
+
+<ParamField path="config.instructions" type="string">
+  System instructions that define the agent's behavior, personality, and capabilities
+</ParamField>
+
+```typescript
+instructions: `You are a customer support agent for Acme Corp.
+
+Guidelines:
+- Be friendly and professional
+- Answer questions clearly and concisely
+- Escalate complex technical issues to engineering
+- Always verify customer identity for account changes
+
+Company information:
+- Founded in 2020
+- 10,000+ customers worldwide
+- 24/7 support available`
+```
+
+<Tip>
+  Instructions are critical for agent performance. Include guidelines, examples, company information, and edge cases to handle.
+</Tip>
+
+### capabilities
+
+<ParamField path="capabilities" type="Capabilities">
+  Define what types of input the agent can process
+</ParamField>
+
+```typescript
+capabilities: {
+  text: boolean,
+  images: imageTypes[],
+  files: fileTypes[],
+  audio: audioTypes[],
+  video: videoTypes[]
+}
+```
+
+#### Capability types
+
+```typescript
+type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
+type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' |
+                 '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
+type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
+type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
+```
+
+**Example:**
+
+```typescript
+capabilities: {
+  text: true,
+  images: [".png", ".jpg", ".jpeg"],
+  files: [".pdf", ".docx", ".txt"],
+  audio: [],
+  video: []
+}
+```
+
+### maxContextLength
+
+<ParamField path="maxContextLength" type="number">
+  Maximum number of tokens in the conversation context
+</ParamField>
+
+```typescript
+maxContextLength: 128000 // GPT-4o context window
+```
+
+### authenticationInformation
+
+<ParamField path="authenticationInformation" type="string">
+  Authentication details for API access
+</ParamField>
+
+```typescript
+authenticationInformation: "Use OPENAI_API_KEY environment variable"
+```
+
+### queue
+
+<ParamField path="queue" type="ExuluQueueConfig">
+  Queue configuration for background job processing
+</ParamField>
+
+```typescript
+queue: await ExuluQueues.register("agent_queue")
+```
+
+### workflows
+
+<ParamField path="workflows" type="WorkflowConfig">
+  Enable background workflow processing
+</ParamField>
+
+```typescript
+workflows: {
+  enabled: true,
+  queue: await ExuluQueues.register("workflows")
+}
+```
+
+### rateLimit
+
+<ParamField path="rateLimit" type="RateLimiterRule">
+  Rate limiting configuration for API access
+</ParamField>
+
+```typescript
+rateLimit: {
+  points: 100,      // Number of requests
+  duration: 60,     // Time window in seconds
+  blockDuration: 60 // Block duration after exceeding limit
+}
+```
+
+## Configuration examples
+
+### OpenAI agent
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const gpt4Agent = new ExuluAgent({
+  id: "gpt4_assistant",
+  name: "GPT-4 Assistant",
+  type: "agent",
+  description: "General-purpose AI assistant powered by GPT-4",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({
+        apiKey: apiKey || process.env.OPENAI_API_KEY
+      })("gpt-4o")
+    },
+    instructions: `You are a helpful AI assistant. Answer questions clearly,
+    concisely, and accurately. If you don't know something, say so.`
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: []
+  },
+  maxContextLength: 128000
+});
+```
+
+### Anthropic Claude agent
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const claudeAgent = new ExuluAgent({
+  id: "claude_opus_4",
+  name: "Claude Opus 4",
+  type: "agent",
+  description: "Advanced reasoning agent powered by Claude Opus 4",
+  provider: "anthropic",
+  config: {
+    name: "claude-opus-4-20250514",
+    model: {
+      create: ({ apiKey }) => createAnthropic({
+        apiKey: apiKey || process.env.ANTHROPIC_API_KEY
+      })("claude-opus-4-20250514")
+    },
+    instructions: `You are Claude, an AI assistant created by Anthropic.
+    You are thoughtful, nuanced, and detailed in your responses.`
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  },
+  maxContextLength: 200000
+});
+```
+
+### Google Gemini agent
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+const geminiAgent = new ExuluAgent({
+  id: "gemini_2_5_pro",
+  name: "Gemini 2.5 Pro",
+  type: "agent",
+  description: "Multi-modal AI agent powered by Google Gemini",
+  provider: "google",
+  config: {
+    name: "gemini-2.5-pro",
+    model: {
+      create: ({ apiKey }) => createGoogleGenerativeAI({
+        apiKey: apiKey || process.env.GOOGLE_API_KEY
+      })("gemini-2.5-pro")
+    },
+    instructions: "You are Gemini, Google's most capable AI model."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [".mp3", ".wav"],
+    video: [".mp4"]
+  },
+  maxContextLength: 1000000
+});
+```
+
+### Specialist agent with memory
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const supportAgent = new ExuluAgent({
+  id: "support_specialist",
+  name: "Support Specialist",
+  type: "agent",
+  description: "Customer support agent with memory of past interactions",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+    },
+    instructions: `You are a customer support specialist for Acme Corp.
+
+    Guidelines:
+    - Always be friendly, patient, and professional
+    - Use past conversation history to provide personalized help
+    - Verify customer identity before sharing account information
+    - Escalate billing issues to the finance team
+    - Document all interactions in the memory system
+
+    Product knowledge:
+    - Acme Pro: $99/month, includes all features
+    - Acme Basic: $29/month, limited to 100 projects
+    - All plans include 24/7 support`,
+    memory: "customer_interactions" // Context ID for memory
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  },
+  maxContextLength: 128000
+});
+```
+
+<Note>
+  When `memory` is configured, the agent automatically searches relevant past interactions before responding and can create new memory items.
+</Note>
+
+### Agent with workflows
+
+```typescript
+import { ExuluAgent, ExuluQueues } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const asyncAgent = new ExuluAgent({
+  id: "async_processor",
+  name: "Async Processor",
+  type: "agent",
+  description: "Processes long-running tasks in the background",
+  provider: "openai",
+  config: {
+    name: "gpt-4o-mini",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o-mini")
+    },
+    instructions: "Process tasks efficiently and report results."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: []
+  },
+  workflows: {
+    enabled: true,
+    queue: await ExuluQueues.register("async_agent_queue")
+  },
+  queue: await ExuluQueues.register("agent_tasks")
+});
+```
+
+### Data extraction agent
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const extractorAgent = new ExuluAgent({
+  id: "data_extractor",
+  name: "Data Extractor",
+  type: "agent",
+  description: "Extracts structured data from unstructured text",
+  provider: "openai",
+  config: {
+    name: "gpt-4o-mini",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o-mini")
+    },
+    instructions: `You extract structured data from text.
+    Be precise and only include information that is explicitly stated.
+    If information is missing, use null values.`
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [".pdf", ".docx", ".txt", ".json"],
+    audio: [],
+    video: []
+  },
+  maxContextLength: 16000
+});
+
+// Use with outputSchema
+const result = await extractorAgent.generateSync({
+  prompt: "Extract contact info from this email",
+  outputSchema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+    phone: z.string().optional(),
+    company: z.string().optional()
+  })
+});
+```
+
+### Rate-limited agent
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const publicAgent = new ExuluAgent({
+  id: "public_assistant",
+  name: "Public Assistant",
+  type: "agent",
+  description: "Publicly accessible AI assistant with rate limiting",
+  provider: "openai",
+  config: {
+    name: "gpt-4o-mini",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o-mini")
+    },
+    instructions: "You are a helpful assistant for public users."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  },
+  rateLimit: {
+    points: 20,        // 20 requests
+    duration: 3600,    // Per hour
+    blockDuration: 3600 // Block for 1 hour if exceeded
+  }
+});
+```
+
+## Using default agents
+
+Exulu IMP provides pre-configured agents for all major providers:
+
+```typescript
+import { ExuluDefaultAgents } from "@exulu/backend";
+
+// OpenAI agents
+const gpt4o = ExuluDefaultAgents.GPT_4O;
+const gpt5 = ExuluDefaultAgents.GPT_5;
+const o1 = ExuluDefaultAgents.O1;
+
+// Anthropic agents
+const claudeOpus = ExuluDefaultAgents.CLAUDE_OPUS_4;
+const claudeSonnet = ExuluDefaultAgents.CLAUDE_SONNET_4_5;
+
+// Google agents
+const geminiFlash = ExuluDefaultAgents.GEMINI_2_5_FLASH;
+const geminiPro = ExuluDefaultAgents.GEMINI_2_5_PRO;
+
+// Other providers
+const llama = ExuluDefaultAgents.LLAMA_3_3;
+const deepseek = ExuluDefaultAgents.DEEPSEEK_R1;
+
+// Register with app
+const app = new ExuluApp();
+await app.create({
+  agents: {
+    gpt4o,
+    claude: claudeOpus,
+    gemini: geminiPro
+  },
+  config: { /* ... */ }
+});
+```
+
+## Agent instructions best practices
+
+<AccordionGroup>
+  <Accordion title="Define clear role and purpose">
+    Start with who the agent is and what it does:
+
+    ```typescript
+    instructions: `You are a financial advisor AI assistant specializing in
+    personal finance and investment strategy for retail investors.
+
+    Your purpose is to:
+    - Provide educational information about investing
+    - Help users understand financial concepts
+    - Suggest strategies based on risk tolerance
+    - NOT provide specific investment advice or recommendations`
+    ```
+  </Accordion>
+
+  <Accordion title="Set behavioral guidelines">
+    Define how the agent should behave:
+
+    ```typescript
+    instructions: `Guidelines:
+    - Be friendly, patient, and professional
+    - Ask clarifying questions when requests are ambiguous
+    - Admit when you don't know something
+    - Never make up information
+    - Cite sources when providing factual information
+    - Break down complex topics into simple explanations`
+    ```
+  </Accordion>
+
+  <Accordion title="Provide domain knowledge">
+    Include relevant facts and context:
+
+    ```typescript
+    instructions: `Company information:
+    - Founded: 2020
+    - Products: SaaS platform for team collaboration
+    - Pricing: Basic ($29/mo), Pro ($99/mo), Enterprise (custom)
+    - Support: 24/7 live chat, email, phone for Pro+
+    - Headquarters: San Francisco, CA
+    - Customers: 10,000+ companies in 50 countries`
+    ```
+  </Accordion>
+
+  <Accordion title="Handle edge cases">
+    Define behavior for special situations:
+
+    ```typescript
+    instructions: `Edge cases:
+    - If user asks for personal information, decline politely
+    - If user is angry or frustrated, remain calm and empathetic
+    - If technical issue requires engineering, create a support ticket
+    - If billing question, redirect to finance team
+    - If medical/legal advice, disclaimer that you're not qualified`
+    ```
+  </Accordion>
+
+  <Accordion title="Use examples">
+    Show desired behavior with examples:
+
+    ```typescript
+    instructions: `Example interactions:
+
+    User: "How do I reset my password?"
+    You: "I can help with that! You can reset your password by clicking
+    'Forgot Password' on the login page. You'll receive an email with
+    reset instructions within a few minutes. Is there anything specific
+    you're having trouble with?"
+
+    User: "Why is my account not working?"
+    You: "I'm sorry to hear you're having trouble. To help diagnose the
+    issue, could you tell me: 1) What error message are you seeing?
+    2) When did this start? 3) What were you trying to do?"`
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Memory configuration
+
+When configuring agent memory, create a dedicated ExuluContext:
+
+```typescript
+import { ExuluContext, ExuluAgent, ExuluEmbedder } from "@exulu/backend";
+
+// Create memory context
+const memoryContext = new ExuluContext({
+  id: "agent_memory",
+  name: "Agent Memory",
+  description: "Stores agent conversation history and learnings",
+  active: true,
+  fields: [
+    {
+      name: "interaction",
+      type: "longtext",
+      required: true
+    },
+    {
+      name: "user_id",
+      type: "text",
+      index: true
+    },
+    {
+      name: "topic",
+      type: "text",
+      index: true
+    }
+  ],
+  embedder: myEmbedder,
+  sources: [],
+  configuration: {
+    calculateVectors: "onInsert",
+    maxRetrievalResults: 10
+  }
+});
+
+// Configure agent to use memory
+const agent = new ExuluAgent({
+  id: "assistant_with_memory",
+  name: "Assistant with Memory",
+  type: "agent",
+  description: "AI assistant with long-term memory",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You are an assistant with memory of past conversations.",
+    memory: "agent_memory" // Reference the context ID
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+```
+
+## Environment variables
+
+Agents typically require API keys from environment variables:
+
+```bash
+# OpenAI
+OPENAI_API_KEY=sk-...
+
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Google
+GOOGLE_API_KEY=...
+
+# Security (required for encrypted variables)
+NEXTAUTH_SECRET=your-secret-key
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/core/exulu-agent/api-reference">
+    Explore methods and properties
+  </Card>
+  <Card title="ExuluTool" icon="wrench" href="/core/exulu-tool/introduction">
+    Learn about agent tools
+  </Card>
+</CardGroup>

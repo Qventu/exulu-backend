@@ -1,0 +1,106 @@
+---
+title: 'Evaluations'
+description: 'GraphQL types for testing and evaluating agent performance'
+---
+
+## test_cases
+
+Test cases for evaluating agent performance.
+
+```graphql
+type test_cases {
+  id: ID!
+  name: String!
+  description: String
+  inputs: JSON!                           # UIMessage[]
+  expected_output: String!
+  expected_tools: JSON                    # string[]
+  expected_knowledge_sources: JSON        # string[]
+  expected_agent_tools: JSON              # string[]
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  test_casesCreateOne(
+    input: {
+      name: "Weather Query"
+      description: "User asks about weather"
+      inputs: [
+        { role: "user", content: "What's the weather like?" }
+      ]
+      expected_output: "Based on current data, it's 68°F and sunny."
+      expected_tools: ["get_weather"]
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+## eval_sets
+
+Collections of test cases for batch evaluation.
+
+```graphql
+type eval_sets {
+  id: ID!
+  name: String!
+  description: String
+  test_case_ids: JSON       # string[]
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+## eval_runs
+
+Evaluation execution records.
+
+```graphql
+type eval_runs {
+  id: ID!
+  name: String!
+  description: String
+  agent_id: ID!
+  test_case_ids: JSON           # string[]
+  eval_functions: JSON          # string[]
+  config: JSON
+  scoring_method: String
+  pass_threshold: Float
+  timeout_in_seconds: Int
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+## Evaluation Workflow
+
+1. Create **test_cases** with expected inputs and outputs
+2. Group test cases into **eval_sets** for organized testing
+3. Run **eval_runs** to evaluate agent performance
+4. Review results and iterate on agent improvements
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agents being evaluated
+  </Card>
+  <Card title="Job Types" icon="gears" href="/api-reference/core-types/job-types">
+    Background eval execution
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

@@ -1,0 +1,315 @@
+---
+title: "Default Agents"
+description: "Learn how to create and configure your first AI agent in Exulu IMP"
+---
+
+## Introduction
+
+This guide walks you through creating and configuring your first AI agent in the Exulu Intelligence Management Platform. You'll learn how to set up a basic agent, configure its backend, add API credentials, and control access.
+
+<iframe
+  width="100%"
+  height="400"
+  src="https://share.descript.com/embed/fXOIXyxLTlg"
+  title="Setting Up Your First Agent"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowfullscreen
+></iframe>
+
+## Prerequisites
+
+Before creating an agent, ensure you have:
+
+- A running Exulu IMP instance (see [Getting Started](/getting-started))
+- Admin rights (required to create agents)
+- An API key for your chosen LLM provider (e.g., Anthropic, OpenAI, Google Vertex AI)
+- Logged into the dashboard at `http://localhost:3000`
+
+<Warning>You must have admin rights to create and manage agents. Contact your system administrator if you don't have the necessary permissions.</Warning>
+
+## Step 1: Navigate to Agents
+
+After logging into your Exulu IMP dashboard:
+
+1. Look at the left-side navigation panel
+2. Click on **Agents** in the menu
+3. Click the **Create New Agent** button
+
+You'll be taken to the agent creation form.
+
+## Step 2: Configure Basic Information
+
+Start by providing basic details about your agent:
+
+### Agent Name
+Give your agent a descriptive name. For example:
+- "General Support Agent"
+- "Code Review Assistant"
+- "Customer Service Bot"
+
+### Description
+Add a brief description of what the agent does. This helps other users understand the agent's purpose.
+
+<Tip>Choose a clear, descriptive name that reflects the agent's intended use case. This makes it easier for users to find the right agent.</Tip>
+
+### Category
+Select or create a category to organize your agents. Common categories include:
+- Support
+- Development
+- Sales
+- Research
+
+## Step 3: Select an Agent Backend
+
+The **backend** refers to the underlying `ExuluAgent` class instance configured in code. This defines which language model and provider your agent uses.
+
+### Understanding Backends
+
+Agent backends are created by developers and represent specific language model configurations. Each backend includes:
+- **Provider** - The AI service provider (Anthropic, OpenAI, Google, Azure, etc.)
+- **Model** - The specific language model (Claude Sonnet 4.5, GPT-4o, etc.)
+- **Configuration** - Custom settings for the model
+
+### Default Backends
+
+Exulu IMP includes several pre-configured backends out of the box:
+
+| Provider | Model | Use Case |
+|----------|-------|----------|
+| Anthropic | Claude Sonnet 4.5 | General purpose, coding, analysis |
+| OpenAI | GPT-4o | Conversational AI, general tasks |
+| OpenAI | o1 | Advanced reasoning tasks |
+| Google | Gemini Pro | Multimodal tasks |
+| Azure | Azure OpenAI models | Enterprise deployments |
+
+Select the backend that best matches your use case. For this example, we'll use **Anthropic Claude Sonnet 4.5**.
+
+<Info>Custom backends can be created in code by developers. See the [ExuluAgent Configuration](/core/exulu-agent/configuration) guide for details.</Info>
+
+### Additional Options
+
+- **Image Generation**: Toggle this on if you want the agent to generate images (requires appropriate backend support)
+- **Multimodal Support**: Some backends support image inputs automatically
+
+## Step 4: Set System Instructions (Optional)
+
+System instructions provide global guidance to your agent that applies across all user sessions.
+
+### What to Include
+
+System instructions can define:
+- The agent's role and persona
+- Response style and tone
+- General guidelines for tool usage
+- Domain-specific knowledge or constraints
+- Output formatting preferences
+
+### Example System Instructions
+
+```text
+You are a helpful customer support agent for Acme Corporation.
+Always be polite, professional, and concise in your responses.
+When users ask about account issues, use the account lookup tool
+before providing information. If you cannot help, escalate to
+a human agent.
+```
+
+<Tip>Keep system instructions general. User-specific customizations can be added at the session level.</Tip>
+
+You can leave this empty for now and add it later as needed.
+
+## Step 5: Configure API Key
+
+Most LLM providers require an API key for authentication. Exulu IMP stores these securely using encrypted variables.
+
+### Creating an API Key Variable
+
+If you haven't already created a variable for your API key:
+
+1. Navigate to **Variables** in the left sidebar
+2. Click **Add Variable**
+3. Configure the variable:
+   - **Name**: Give it a descriptive name like `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
+   - **Value**: Paste your API key from the provider
+   - **Encrypt**: **IMPORTANT - Check this box**
+
+4. Click **Save**
+
+<Warning>Always enable encryption for API keys. The system will reject unencrypted API keys for security reasons.</Warning>
+
+### Assigning the API Key to Your Agent
+
+Back in the agent configuration:
+
+1. Find the **API Key** dropdown
+2. Select the variable you just created
+3. The agent will now use this key when making API calls
+
+<Info>
+  You can obtain API keys from your provider's dashboard:
+
+  Anthropic: [console.anthropic.com](https://console.anthropic.com)
+
+  OpenAI: [platform.openai.com](https://platform.openai.com)
+
+  Google: [console.cloud.google.com](https://console.cloud.google.com)
+</Info>
+
+## Step 6: Activate the Agent
+
+Before users can interact with your agent:
+
+1. Toggle the **Active** switch to ON
+2. Click **Save** to create the agent
+
+Your agent is now live and ready for testing!
+
+<Check>Your agent has been created and activated successfully!</Check>
+
+## Step 7: Test Your Agent
+
+Let's verify the agent works correctly:
+
+1. Navigate to **Chat** in the left sidebar
+2. Click **Start New Session**
+3. Select your newly created agent from the dropdown
+4. Type a test message like "Good morning" or "Hello, how can you help me?"
+5. The agent should respond appropriately
+
+If you receive a response, congratulations - your agent is working!
+
+<Tip>This is a basic agent without tools or context. Continue to the next guides to learn about adding tools and knowledge bases.</Tip>
+
+## Step 8: Configure Access Control
+
+Control who can use your agent with granular access settings.
+
+### Access Control Options
+
+Navigate to the **Access Control** tab on the agent editing page. You have several options:
+
+#### 1. Private
+- Only you can see and use this agent
+- Best for personal testing or development
+
+#### 2. Specific Users
+- Share with selected individual users
+- Good for team collaboration or beta testing
+
+#### 3. Specific Roles
+- Share with users who have certain roles (e.g., "Customer Support", "Engineering")
+- Ideal for department-specific agents
+
+#### 4. Public
+- Available to all users in your organization
+- Best for widely-used general-purpose agents
+
+#### 5. Project-Scoped
+- Share within specific projects
+- Useful for project-specific workflows
+
+### Setting Access Control
+
+1. Select your preferred access level
+2. If using **Specific Users** or **Specific Roles**, choose from the available options
+3. Click **Save** to apply the settings
+
+<Info>Access control can be changed at any time. Start with private access during testing, then expand as needed.</Info>
+
+## Next Steps
+
+Now that you have a basic agent running, you can enhance it with:
+
+### Add Tools
+Give your agent capabilities like web search, code execution, or database queries:
+- [ExuluTool Introduction](/core/exulu-tool/introduction)
+- [Tool Configuration](/core/exulu-tool/configuration)
+
+### Add Knowledge Bases
+Provide domain-specific context through vector databases:
+- [ExuluContext Introduction](/core/exulu-context/introduction)
+- [Context Configuration](/core/exulu-context/configuration)
+
+### Create Workflows
+Automate recurring tasks with scheduled workflows:
+- [ExuluApp Introduction](/core/exulu-app/introduction)
+
+### Advanced Agent Configuration
+Customize behavior, prompts, and advanced settings:
+- [ExuluAgent Configuration](/core/exulu-agent/configuration)
+- [Agent API Reference](/core/exulu-agent/api-reference)
+
+## Troubleshooting
+
+### Agent Won't Respond
+
+If your agent doesn't respond or throws errors:
+
+- **Check API Key**: Verify the variable is encrypted and contains a valid key
+- **Check Provider Status**: Ensure the LLM provider's API is operational
+- **Check Logs**: Look at backend logs for error messages
+- **Verify Activation**: Ensure the agent is toggled to "Active"
+
+### "Permission Denied" Errors
+
+If you can't create agents:
+- Verify you have admin rights in your user profile
+- Contact your system administrator for permission elevation
+
+### API Key Not Appearing in Dropdown
+
+If your API key variable doesn't show up:
+- Ensure you saved the variable
+- Refresh the agent configuration page
+- Verify the variable is properly encrypted
+
+### Agent Selection Not Available in Chat
+
+If you don't see your agent in chat:
+- Check access control settings
+- Ensure the agent is activated
+- Verify you have permission to use the agent
+
+## Best Practices
+
+### Naming Conventions
+- Use descriptive, clear names
+- Include the model type if you have multiple similar agents
+- Example: "Support Agent (Claude 4.5)" vs "Support Agent (GPT-4)"
+
+### System Instructions
+- Keep instructions concise and focused
+- Test different instruction sets to find what works best
+- Version your instructions and track changes
+
+### API Key Management
+- Never share API keys
+- Use separate keys for development and production
+- Rotate keys periodically for security
+- Monitor usage to avoid unexpected charges
+
+### Access Control Strategy
+- Start with private access during development
+- Gradually expand to specific users for testing
+- Only make public after thorough testing
+- Regularly review who has access
+
+### Testing
+- Test with a variety of prompts
+- Include edge cases and error scenarios
+- Verify behavior matches expectations
+- Get feedback from actual users before wider rollout
+
+## Summary
+
+You've successfully created your first AI agent in Exulu IMP! You learned how to:
+
+- Navigate to the agent creation interface
+- Configure basic agent information
+- Select an appropriate backend (LLM provider and model)
+- Securely store and assign API keys
+- Activate and test your agent
+- Configure access control settings
+
+Your agent is now ready to use, but this is just the beginning. Explore tools, knowledge bases, and workflows to create truly powerful AI assistants tailored to your specific needs.

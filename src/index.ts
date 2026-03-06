@@ -6,7 +6,7 @@ point for the npm package @exulu/backend.
 import "dotenv/config";
 import { redisClient } from "./redis/client";
 export { ExuluApp } from "./exulu/app/index.ts";
-export { authentication as ExuluAuthentication } from "./auth/auth";
+import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "./bullmq/queues";
 import { RecursiveChunker } from "./chunking/recursive";
 export { ExuluEmbedder } from "./exulu/embedder.ts"
@@ -96,101 +96,9 @@ export const ExuluVariables = {
   },
 };
 
-export const ExuluUtils = {
-  batch: async ({
-    fn,
-    size,
-    inputs,
-    delay,
-    retries,
-  }: {
-    fn: (data: any) => Promise<any>;
-    size: number;
-    inputs: any[];
-    delay: number;
-    retries: {
-      max: number;
-      delays: number[];
-    };
-  }): Promise<any[]> => {
-    if (!size) {
-      size = 10;
-    }
-    if (!inputs) {
-      throw new Error("Inputs are required.");
-    }
-    if (!delay) {
-      delay = 0;
-    }
-    let results: any[] = [];
-    let lastBatchTime = 0;
-
-    for (let start = 0; start < inputs.length; start += size) {
-      const currentTime = Date.now();
-      const timeSinceLastBatch = currentTime - lastBatchTime;
-      if (timeSinceLastBatch < delay * 1000) {
-        console.log("[EXULU] Utils function, waiting for", delay - timeSinceLastBatch, "seconds");
-        await new Promise((resolve) => setTimeout(resolve, delay * 1000 - timeSinceLastBatch));
-      }
-      lastBatchTime = Date.now();
-      console.log(
-        `[EXULU] Utils function, processing batch ${start / size + 1} of ${Math.ceil(inputs.length / size)} (${Math.min(start + 1, inputs.length)}-${Math.min(start + size, inputs.length)} of ${inputs.length})`,
-      );
-      const end = start + size > inputs.length ? inputs.length : start + size;
-
-      const slicedResults = await Promise.all(
-        inputs.slice(start, end).map((data) => {
-          if (retries?.max) {
-            return ExuluUtils.retry({
-              fn: async () => {
-                return await fn(data);
-              },
-              retries: retries.max,
-              delays: retries.delays,
-            });
-          } else {
-            return fn(data);
-          }
-        }),
-      );
-
-      results = [...results, ...slicedResults];
-    }
-    return results;
-  },
-  retry: async ({
-    fn,
-    retries,
-    delays,
-  }: {
-    fn: () => Promise<any>;
-    retries?: number;
-    delays?: number[];
-  }) => {
-    if (!retries) {
-      retries = 3;
-    }
-    if (!delays) {
-      delays = [1000, 5000, 10000];
-    }
-    for (let i = 0; i < retries; i++) {
-      try {
-        return await fn();
-      } catch (error) {
-        console.error(`[EXULU] Util function, retry attempt ${i + 1} failed:`, error);
-        if (i >= retries - 1) {
-          throw error;
-        }
-        if (!delays[i]) {
-          delays[i] = delays[delays.length - 1] || 10000; // default to the last provided delay or 10 seconds
-        }
-        const delay = delays && delays[i] ? delays[i] : 10000;
-        console.log(`[EXULU] Util function, retrying in ${delay! / 1000} seconds...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  },
-};
+export const ExuluAuthentication = {
+  authenticate: authentication,
+}
 
 export const ExuluOtel = {
   create: ({
@@ -219,8 +127,11 @@ export {
   type JOB_STATUS as EXULU_JOB_STATUS,
 } from "@EXULU_TYPES/enums/jobs";
 
-export const db = {
+export const ExuluDatabase = {
   init: async ({ contexts }: { contexts: ExuluContext[] }) => {
+    await initDb({ contexts });
+  },
+  update: async ({ contexts }: { contexts: ExuluContext[] }) => {
     await initDb({ contexts });
   },
   api: {

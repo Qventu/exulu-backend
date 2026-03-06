@@ -1,0 +1,481 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluApp"
+---
+
+## Constructor
+
+```typescript
+const app = new ExuluApp();
+```
+
+Creates a new ExuluApp instance. The constructor takes no parameters. You must call `create()` to initialize the app.
+
+## Methods
+
+### create()
+
+Initializes the ExuluApp with all components and returns the initialized instance.
+
+```typescript
+async create(options: CreateOptions): Promise<ExuluApp>
+```
+
+<ParamField path="options.contexts" type="Record<string, ExuluContext>">
+  Object mapping context IDs to ExuluContext instances
+</ParamField>
+
+<ParamField path="options.config" type="ExuluConfig" required>
+  Configuration object for the app
+</ParamField>
+
+<ParamField path="options.agents" type="ExuluAgent[]">
+  Array of custom agents to register in addition to default agents
+</ParamField>
+
+<ParamField path="options.tools" type="ExuluTool[]">
+  Array of custom tools to register in addition to default tools
+</ParamField>
+
+<ParamField path="options.evals" type="ExuluEval[]">
+  Array of custom evaluations to register in addition to default evaluations
+</ParamField>
+
+<ParamField path="options.rerankers" type="ExuluReranker[]">
+  Array of reranker instances for improving search results
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluApp>">
+  Returns the initialized ExuluApp instance
+</ResponseField>
+
+```typescript
+const app = new ExuluApp();
+await app.create({
+  contexts: {
+    docs: myDocsContext
+  },
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+    telemetry: { enabled: false }
+  },
+  agents: [myCustomAgent],
+  tools: [myCustomTool]
+});
+```
+
+<Warning>
+  All context, agent, tool, and reranker IDs must be valid PostgreSQL identifiers: start with a letter or underscore, contain only letters, digits, or underscores, be 5-80 characters long.
+</Warning>
+
+### express.init()
+
+Initializes and returns the Express application with all routes configured.
+
+```typescript
+async express.init(): Promise<Express>
+```
+
+<ResponseField name="return" type="Promise<Express>">
+  Returns the Express app instance ready to listen on a port
+</ResponseField>
+
+```typescript
+const expressApp = await app.express.init();
+expressApp.listen(3000, () => {
+  console.log("Server running on port 3000");
+});
+```
+
+<Note>
+  This method must be called before accessing `app.expressApp`. It configures all GraphQL and REST routes, initializes logging, and optionally starts the MCP server.
+</Note>
+
+### tool()
+
+Retrieves a registered tool by its ID.
+
+```typescript
+tool(id: string): ExuluTool | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the tool
+</ParamField>
+
+<ResponseField name="return" type="ExuluTool | undefined">
+  Returns the tool if found, otherwise undefined
+</ResponseField>
+
+```typescript
+const perplexityTool = app.tool("perplexity_search");
+if (perplexityTool) {
+  console.log(perplexityTool.name);
+}
+```
+
+### tools()
+
+Returns all registered tools including default tools, custom tools, and context-generated tools.
+
+```typescript
+tools(): ExuluTool[]
+```
+
+<ResponseField name="return" type="ExuluTool[]">
+  Array of all registered tools
+</ResponseField>
+
+```typescript
+const allTools = app.tools();
+console.log(`Registered ${allTools.length} tools`);
+```
+
+### context()
+
+Retrieves a registered context by its ID.
+
+```typescript
+context(id: string): ExuluContext | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the context
+</ParamField>
+
+<ResponseField name="return" type="ExuluContext | undefined">
+  Returns the context if found, otherwise undefined
+</ResponseField>
+
+```typescript
+const docsContext = app.context("documentation");
+if (docsContext) {
+  console.log(docsContext.name);
+}
+```
+
+### agent()
+
+Retrieves a registered agent by its ID.
+
+```typescript
+agent(id: string): ExuluAgent | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The unique identifier of the agent
+</ParamField>
+
+<ResponseField name="return" type="ExuluAgent | undefined">
+  Returns the agent if found, otherwise undefined
+</ResponseField>
+
+```typescript
+const claudeAgent = app.agent("claude_sonnet_45");
+if (claudeAgent) {
+  console.log(claudeAgent.name);
+}
+```
+
+### embeddings.generate.one()
+
+Generates embeddings for a single item in a context.
+
+```typescript
+async embeddings.generate.one(options: GenerateOneOptions): Promise<any>
+```
+
+<ParamField path="options.context" type="string" required>
+  The context ID
+</ParamField>
+
+<ParamField path="options.item" type="string" required>
+  The item ID within the context
+</ParamField>
+
+<ResponseField name="return" type="Promise<any>">
+  Returns the embedding generation result
+</ResponseField>
+
+```typescript
+await app.embeddings.generate.one({
+  context: "documentation",
+  item: "doc_123"
+});
+```
+
+<Info>
+  This method retrieves the item from the database, generates its embeddings using the context's configured embedder, and stores them in the vector database.
+</Info>
+
+### embeddings.generate.all()
+
+Generates embeddings for all items in a context.
+
+```typescript
+async embeddings.generate.all(options: GenerateAllOptions): Promise<any>
+```
+
+<ParamField path="options.context" type="string" required>
+  The context ID
+</ParamField>
+
+<ResponseField name="return" type="Promise<any>">
+  Returns the embedding generation result for all items
+</ResponseField>
+
+```typescript
+await app.embeddings.generate.all({
+  context: "documentation"
+});
+```
+
+<Warning>
+  This method processes all items in the context and can be resource-intensive for large datasets. Consider using background workers for production workloads.
+</Warning>
+
+### bullmq.workers.create()
+
+Creates and starts BullMQ workers for processing background jobs.
+
+```typescript
+async bullmq.workers.create(queues?: string[]): Promise<any>
+```
+
+<ParamField path="queues" type="string[]">
+  Optional array of queue names to listen to. If not provided, workers listen to all registered queues.
+</ParamField>
+
+<ResponseField name="return" type="Promise<any>">
+  Returns worker instances
+</ResponseField>
+
+```typescript
+// Start workers for all queues
+await app.bullmq.workers.create();
+
+// Start workers for specific queues only
+await app.bullmq.workers.create(["embeddings", "agent_requests"]);
+```
+
+<Note>
+  Workers automatically set up schedulers for context sources with configured schedules. This enables periodic data synchronization.
+</Note>
+
+## Properties
+
+### expressApp
+
+Returns the initialized Express application instance.
+
+```typescript
+public get expressApp(): Express
+```
+
+<ResponseField name="return" type="Express">
+  The Express app instance
+</ResponseField>
+
+```typescript
+const app = await exuluApp.express.init();
+const server = exuluApp.expressApp.listen(3000);
+```
+
+<Warning>
+  Throws an error if `express.init()` has not been called yet.
+</Warning>
+
+### contexts
+
+Returns all registered contexts as an array.
+
+```typescript
+public get contexts(): ExuluContext[]
+```
+
+<ResponseField name="return" type="ExuluContext[]">
+  Array of all registered contexts
+</ResponseField>
+
+```typescript
+const contexts = app.contexts;
+console.log(`Registered ${contexts.length} contexts`);
+```
+
+### agents
+
+Returns all registered agents including default and custom agents.
+
+```typescript
+public get agents(): ExuluAgent[]
+```
+
+<ResponseField name="return" type="ExuluAgent[]">
+  Array of all registered agents
+</ResponseField>
+
+```typescript
+const agents = app.agents;
+agents.forEach(agent => {
+  console.log(`${agent.name} (${agent.id})`);
+});
+```
+
+## TypeScript types
+
+### ExuluConfig
+
+```typescript
+type ExuluConfig = {
+  telemetry?: {
+    enabled: boolean;
+  };
+  logger?: {
+    winston: {
+      transports: winston.transport[];
+    };
+  };
+  workers: {
+    enabled: boolean;
+    logger?: {
+      winston: {
+        transports: winston.transport[];
+      };
+    };
+    telemetry?: {
+      enabled: boolean;
+    };
+  };
+  MCP: {
+    enabled: boolean;
+  };
+  fileUploads?: {
+    s3region: string;
+    s3key: string;
+    s3secret: string;
+    s3Bucket: string;
+    s3endpoint?: string;
+    s3prefix?: string;
+  };
+  privacy?: {
+    systemPromptPersonalization?: boolean;
+  };
+};
+```
+
+### CreateOptions
+
+```typescript
+type CreateOptions = {
+  contexts?: Record<string, ExuluContext>;
+  config: ExuluConfig;
+  agents?: ExuluAgent[];
+  tools?: ExuluTool[];
+  evals?: ExuluEval[];
+  rerankers?: ExuluReranker[];
+};
+```
+
+## Usage examples
+
+### Basic server setup
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+await app.create({
+  config: {
+    workers: { enabled: false },
+    MCP: { enabled: false },
+    telemetry: { enabled: false }
+  }
+});
+
+const expressApp = await app.express.init();
+expressApp.listen(3000);
+```
+
+### Server with workers
+
+```typescript
+// server.ts
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+await app.create({
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: true },
+    telemetry: { enabled: true }
+  }
+});
+
+const expressApp = await app.express.init();
+expressApp.listen(3000);
+
+// workers.ts (separate process)
+import { app } from "./server";
+await app.bullmq.workers.create();
+```
+
+### With custom components
+
+```typescript
+import {
+  ExuluApp,
+  ExuluContext,
+  ExuluAgent,
+  ExuluTool
+} from "@exulu/backend";
+
+const customContext = new ExuluContext({
+  id: "my_context",
+  name: "My Context",
+  // ... context configuration
+});
+
+const customAgent = new ExuluAgent({
+  id: "my_agent",
+  name: "My Agent",
+  // ... agent configuration
+});
+
+const customTool = new ExuluTool({
+  id: "my_tool",
+  name: "My Tool",
+  // ... tool configuration
+});
+
+const app = new ExuluApp();
+await app.create({
+  contexts: {
+    my_context: customContext
+  },
+  agents: [customAgent],
+  tools: [customTool],
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+    telemetry: { enabled: false }
+  }
+});
+```
+
+### Accessing registered components
+
+```typescript
+// Get specific components
+const agent = app.agent("claude_sonnet_45");
+const context = app.context("documentation");
+const tool = app.tool("perplexity_search");
+
+// List all components
+console.log("Agents:", app.agents.map(a => a.name));
+console.log("Contexts:", app.contexts.map(c => c.name));
+console.log("Tools:", app.tools().map(t => t.name));
+
+// Generate embeddings
+await app.embeddings.generate.all({ context: "documentation" });
+```

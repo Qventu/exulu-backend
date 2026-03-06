@@ -13,7 +13,7 @@ import { applyAccessControl } from "@SRC/graphql/utilities/access-control.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from "@as-integrations/express5";
 import { coreSchemas } from "../postgres/core-schema.ts";
-import { createUppyRoutes } from "../uppy/index.ts";
+import { createUppyRoutes, uploadFile } from "../uppy/index.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -411,14 +411,13 @@ Mood: friendly and intelligent.
     }
 
     const uuid = randomUUID();
-    // check if public directory exists
-    if (!fs.existsSync("public")) {
-      fs.mkdirSync("public");
-    }
-    // update the agent with the image
+    const image_url = await uploadFile(Buffer.from(image_base64, "base64"), `${uuid}.png`, config, {
+      contentType: "image/png",
+    }, authenticationResult.user?.id, "agents");
+
     res.status(200).json({
       message: "Image generated successfully.",
-      image: `${process.env.BACKEND}/${uuid}.png`,
+      image: image_url,
     });
   });
 

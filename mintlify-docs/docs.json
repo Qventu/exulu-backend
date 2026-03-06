@@ -1,0 +1,243 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "Exulu IMP",
+  "banner": {
+    "content": "🚀 1.47.0 is live! [Learn more](/changelog#1-47-0)"
+  },
+  "colors": {
+    "primary": "#8B5CF6",
+    "light": "#A78BFA",
+    "dark": "#7C3AED"
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "favicon": "/favicon.svg",
+  "customCss": [
+    "/styles.css"
+  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Home",
+        "icon": "house",
+        "pages": [
+          "index"
+        ]
+      },
+      {
+        "tab": "Documentation",
+        "icon": "book",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "backend/introduction",
+              {
+                "group": "Guides",
+                "pages": [
+                  "getting-started",
+                  "guides/first-agent",
+                  "guides/custom-agent"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Core classes",
+            "pages": [
+              {
+                "group": "ExuluApp",
+                "pages": [
+                  "core/exulu-app/introduction",
+                  "core/exulu-app/configuration",
+                  "core/exulu-app/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluAgent",
+                "pages": [
+                  "core/exulu-agent/introduction",
+                  "core/exulu-agent/configuration",
+                  "core/exulu-agent/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluContext",
+                "pages": [
+                  "core/exulu-context/introduction",
+                  "core/exulu-context/configuration",
+                  "core/exulu-context/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluTool",
+                "pages": [
+                  "core/exulu-tool/introduction",
+                  "core/exulu-tool/configuration",
+                  "core/exulu-tool/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluReranker",
+                "pages": [
+                  "core/exulu-reranker/introduction",
+                  "core/exulu-reranker/configuration",
+                  "core/exulu-reranker/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluQueues",
+                "pages": [
+                  "core/exulu-queues/introduction",
+                  "core/exulu-queues/configuration",
+                  "core/exulu-queues/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluChunkers",
+                "pages": [
+                  "core/exulu-chunkers/introduction",
+                  "core/exulu-chunkers/configuration",
+                  "core/exulu-chunkers/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluVariables",
+                "pages": [
+                  "core/exulu-variables/introduction",
+                  "core/exulu-variables/configuration",
+                  "core/exulu-variables/api-reference"
+                ]
+              },
+              {
+                "group": "ExuluEval",
+                "pages": [
+                  "core/exulu-eval/introduction",
+                  "core/exulu-eval/configuration",
+                  "core/exulu-eval/api-reference"
+                ]
+              },
+              "core/exulu-default-agents",
+              "core/exulu-otel",
+              "core/exulu-authentication",
+              "core/exulu-database"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "frontend/introduction"
+            ]
+          },
+          {
+            "group": "GraphQL API",
+            "pages": [
+              "api-reference/introduction",
+              "api-reference/queries",
+              "api-reference/mutations"
+            ]
+          },
+          {
+            "group": "Core Types",
+            "pages": [
+              "api-reference/core-types/overview",
+              "api-reference/dynamic-types",
+              "api-reference/core-types/agent-types",
+              "api-reference/core-types/session-types",
+              "api-reference/core-types/user-management",
+              "api-reference/core-types/evaluation-types",
+              "api-reference/core-types/workflow-types",
+              "api-reference/core-types/configuration-types",
+              "api-reference/core-types/prompt-types",
+              "api-reference/core-types/analytics-types",
+              "api-reference/core-types/job-types",
+              "api-reference/core-types/rbac-types"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "icon": "list-check",
+        "pages": [
+          "changelog"
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Exulu Backend",
+          "href": "https://github.com/Qventu/exulu-backend",
+          "icon": "github"
+        },
+        {
+          "anchor": "Npm Backend",
+          "href": "https://www.npmjs.com/package/@exulu/backend",
+          "icon": "npm"
+        },
+        {
+          "anchor": "Exulu Frontend",
+          "href": "https://github.com/Qventu/exulu-frontend",
+          "icon": "github"
+        },
+        {
+          "anchor": "Npm Frontend",
+          "href": "https://www.npmjs.com/package/@exulu/frontend",
+          "icon": "npm"
+        },
+        {
+          "anchor": "Example Project",
+          "href": "https://github.com/Qventu/exulu-example",
+          "icon": "github"
+        },
+        {
+          "anchor": "Npm CLI",
+          "href": "https://www.npmjs.com/package/@exulu/cli",
+          "icon": "npm"
+        },
+        {
+          "anchor": "Exulu CLI",
+          "href": "https://github.com/Qventu/exulu-cli",
+          "icon": "github"
+        },
+        {
+          "anchor": "Exulu Website",
+          "href": "https://exulu.com",
+          "icon": "globe"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/Qventu/exulu-backend"
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "linkedin": "https://www.linkedin.com/company/exulu"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+---
+title: "Overview"
+description: "The main application class for initializing and managing your Exulu IMP instance"
+---
+
+## Overview
+
+`ExuluApp` is the central class for the Exulu Intelligence Management Platform (IMP). It orchestrates all components of your AI agent infrastructure, including agents, contexts, tools, evaluations, and background workers.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Agent management" icon="robot">
+    Register and manage AI agents from multiple providers (OpenAI, Anthropic, Google, Cerebras)
+  </Card>
+  <Card title="Context system" icon="database">
+    Configure semantic search contexts with vector embeddings
+  </Card>
+  <Card title="Background workers" icon="gear">
+    Process long-running tasks with BullMQ workers
+  </Card>
+  <Card title="Express integration" icon="server">
+    Built-in API server with GraphQL and REST endpoints
+  </Card>
+</CardGroup>
+
+## Installation
+
+```bash
+npm install @exulu/backend
+```
+
+## Quick start
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+// Create and configure the app
+const app = new ExuluApp();
+await app.create({
+  config: {
+    telemetry: { enabled: false },
+    workers: { enabled: true },
+    MCP: { enabled: false }
+  }
+});
+
+// Initialize Express server
+const expressApp = await app.express.init();
+expressApp.listen(3000, () => {
+  console.log("Exulu IMP running on port 3000");
+});
+```
+
+## Architecture
+
+The ExuluApp follows a factory pattern where you instantiate the class and then call the async `create()` method to initialize all components:
+
+```typescript
+const app = new ExuluApp();
+const initializedApp = await app.create({
+  contexts: { /* your contexts */ },
+  agents: [ /* custom agents */ ],
+  tools: [ /* custom tools */ ],
+  evals: [ /* custom evaluations */ ],
+  rerankers: [ /* custom rerankers */ ],
+  config: { /* configuration */ }
+});
+```
+
+## Core concepts
+
+<AccordionGroup>
+  <Accordion title="Agents">
+    AI agents are the execution units that process requests. Exulu IMP includes default agents for major providers:
+    - Anthropic (Claude Opus 4, Sonnet 4, Sonnet 4.5)
+    - OpenAI (GPT-5, GPT-4.1, GPT-4o series)
+    - Google (Vertex Gemini 2.5 Flash, Pro, 3 Pro)
+    - Cerebras (Llama 3.3, GPT-OSS)
+
+    You can add custom agents by passing them to the `agents` array.
+  </Accordion>
+
+  <Accordion title="Contexts">
+    Contexts are semantic search indices that allow agents to query relevant information. Each context:
+    - Has an associated vector database table
+    - Defines embeddings generation logic
+    - Can include multiple data sources
+    - Automatically exposes a tool for agents to use
+  </Accordion>
+
+  <Accordion title="Tools">
+    Tools extend agent capabilities by providing functions they can call. Default tools include:
+    - Todo management tools
+    - Perplexity search tools
+    - Context query tools (auto-generated from contexts)
+  </Accordion>
+
+  <Accordion title="Workers">
+    BullMQ workers process background jobs:
+    - Agent request execution
+    - Embeddings generation
+    - Evaluation runs
+    - Scheduled context source updates
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-app/configuration">
+    Learn about all configuration options
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-app/api-reference">
+    Explore methods and properties
+  </Card>
+</CardGroup>

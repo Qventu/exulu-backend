@@ -1,0 +1,88 @@
+---
+title: 'Workflows'
+description: 'GraphQL types for multi-step agent workflows'
+---
+
+## workflow_templates
+
+Workflow definitions with agent execution steps.
+
+```graphql
+type workflow_templates {
+  id: ID!
+  name: String!
+  description: String
+  agent: ID!
+  steps_json: JSON
+  variables: [String]     # Extracted from steps_json
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  workflow_templateById(id: "workflow-123") {
+    id
+    name
+    agent
+    variables
+  }
+}
+```
+
+## Workflow Execution
+
+Workflows are executed through mutations with variable substitution:
+
+```graphql
+mutation {
+  runWorkflow(
+    id: "workflow-123"
+    variables: {
+      customerName: "John Doe"
+      orderId: "12345"
+    }
+  ) {
+    result
+    job
+    metadata
+  }
+}
+```
+
+## Workflow Scheduling
+
+Workflows can be scheduled with cron expressions:
+
+```graphql
+mutation {
+  upsertWorkflowSchedule(
+    workflow: "workflow-123"
+    schedule: "0 9 * * *"  # Daily at 9 AM
+  ) {
+    status
+    job
+  }
+}
+```
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agents executing workflows
+  </Card>
+  <Card title="Job Types" icon="gears" href="/api-reference/core-types/job-types">
+    Background workflow execution
+  </Card>
+  <Card title="Configuration" icon="gear" href="/api-reference/core-types/configuration-types">
+    Workflow variables
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

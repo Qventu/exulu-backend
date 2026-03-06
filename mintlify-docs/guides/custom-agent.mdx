@@ -1,0 +1,608 @@
+---
+title: "Custom Agents"
+description: "Learn how to create custom agent backends by defining ExuluAgent classes in TypeScript"
+---
+
+## Introduction
+
+This guide shows you how to create custom agent backends by defining ExuluAgent classes in code. You'll learn about the agent structure, configuration options, provider setup, and how to integrate your custom agents into the Exulu IMP.
+
+<iframe
+  width="100%"
+  height="400"
+  src="https://share.descript.com/embed/1sPSgMBDqfN"
+  title="Creating a Custom ExuluAgent in Code"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowfullscreen
+></iframe>
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- A working Exulu IMP development environment (see [Getting Started](/getting-started))
+- TypeScript and Node.js knowledge
+- An API key for your chosen LLM provider
+- The example repository cloned locally
+
+## Understanding Backends vs Agent Instances
+
+An important concept to understand:
+
+**Backend (ExuluAgent class)**: The code-level definition of a language model + provider combination. This is what you create in TypeScript.
+
+**Agent Instance**: A UI-level configuration that uses a backend. Multiple agent instances can share the same backend with different system instructions, tools, and settings.
+
+**Example**: You might create one `Claude Sonnet 4.5` backend in code, then create multiple agent instances in the UI like "Customer Service Agent", "Financial Analysis Agent", and "Coding Assistant" - all using the same backend but with different configurations.
+
+## Project Structure
+
+There's no required structure for organizing your agents, but we recommend this pattern:
+
+```
+src/
+├── agents/
+│   ├── index.ts          # Central export file
+│   ├── claude-sonnet.ts  # Individual agent files
+│   ├── gpt4o.ts
+│   └── gemini.ts
+├── contexts/             # Knowledge base definitions
+├── tools/                # Tool definitions
+├── embedders/            # Embedding model definitions
+└── exulu.ts              # Main ExuluApp configuration
+```
+
+This structure provides a clean separation of concerns and makes it easy to manage multiple agents.
+
+## Step 1: Create an Agent File
+
+Navigate to your agents folder and create a new TypeScript file for your agent:
+
+```bash
+# In your project root
+cd src/agents
+touch claude-sonnet.ts
+```
+
+## Step 2: Define the ExuluAgent Class
+
+Open your new file and create an ExuluAgent instance. Here's a complete example:
+
+```typescript
+import { ExuluAgent } from '@exulu/backend';
+import { anthropic } from '@ai-sdk/anthropic';
+
+export const claudeSonnetAgent = new ExuluAgent({
+  // Unique identifier - never change this after creation
+  id: 'claude_sonnet_4_5',
+
+  // Display name (can be changed anytime)
+  name: 'Claude Sonnet 4.5',
+
+  // Provider name
+  provider: 'Anthropic',
+
+  // Description shown in UI
+  description: 'Advanced reasoning model powered by Anthropic Claude Sonnet 4.5',
+
+  // Agent type
+  type: 'agent', // 'agent' or 'flow'
+
+  // Supported capabilities and file types
+  capabilities: {
+    image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    file: ['pdf', 'txt', 'csv'],
+  },
+
+  // Model configuration
+  config: {
+    name: 'Anthropic Claude Sonnet 4.5',
+
+    // Optional: code-level custom instructions
+    customInstructions: '',
+
+    // Model factory function
+    model: (apiKey: string) => {
+      return anthropic(apiKey).languageModel('claude-sonnet-4-5-20250929');
+    },
+  },
+});
+```
+
+### Understanding the Properties
+
+#### `id` (Required, Immutable)
+
+A unique string identifier for your agent backend.
+
+**Important**: This ID is stored in the database and must never change after creation. Use descriptive names with underscores.
+
+```typescript
+// Good IDs
+id: 'claude_sonnet_4_5'
+id: 'gpt_4o_mini'
+id: 'gemini_pro_experimental'
+
+// Bad IDs
+id: 'agent1' // Not descriptive
+id: 'claude-sonnet' // Use underscores, not hyphens
+```
+
+#### `name` (Required, Mutable)
+
+The display name shown in the UI. This can be changed anytime without breaking anything.
+
+```typescript
+name: 'Claude Sonnet 4.5' // User-friendly name
+```
+
+#### `provider` (Required)
+
+The name of the LLM provider.
+
+```typescript
+provider: 'Anthropic' // or 'OpenAI', 'Google', 'Azure', etc.
+```
+
+#### `description` (Optional)
+
+A brief description of what the agent does or what it's optimized for.
+
+```typescript
+description: 'Advanced reasoning model with strong coding and analysis capabilities'
+```
+
+#### `type` (Required)
+
+The agent type. Currently supports:
+
+- `'agent'`: Standard conversational agent
+- `'flow'`: Workflow agent (covered in another guide)
+
+#### `capabilities` (Optional)
+
+Defines which file types and modalities the model supports. This ensures only compatible files are sent to the agent.
+
+```typescript
+capabilities: {
+  image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+  file: ['pdf', 'txt', 'csv', 'json', 'md'],
+  audio: ['mp3', 'wav'], // If supported
+  video: ['mp4', 'mov'], // If supported
+}
+```
+
+The IDE will provide TypeScript autocomplete for valid file extensions.
+
+#### `config.model` (Required)
+
+A factory function that receives an API key and returns a configured language model instance.
+
+```typescript
+model: (apiKey: string) => {
+  return anthropic(apiKey).languageModel('claude-sonnet-4-5-20250929');
+}
+```
+
+## Step 3: Understanding the AI SDK
+
+Exulu uses the Vercel AI SDK under the hood, which provides a unified interface for multiple LLM providers.
+
+### Supported Providers
+
+The AI SDK supports many providers out of the box. Here are some popular ones:
+
+**Major Providers**
+- OpenAI
+- Anthropic
+- Google (Generative AI & Vertex AI)
+- Azure OpenAI
+- Amazon Bedrock
+
+**Alternative Providers**
+- Groq
+- Together AI
+- Mistral
+- Cohere
+- Fireworks
+- DeepSeek
+- Cerebras
+- Perplexity
+
+**Local/Self-hosted**
+- Ollama
+- VLLM
+- Any OpenAI-compatible endpoint
+
+For the full list, visit the [AI SDK providers documentation](https://sdk.vercel.ai/providers).
+
+### Switching Providers
+
+You can easily switch providers by changing the import and model configuration:
+
+**OpenAI Example**
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+
+export const gpt4oAgent = new ExuluAgent({
+  id: 'gpt_4o',
+  name: 'GPT-4o',
+  provider: 'OpenAI',
+  description: 'OpenAI GPT-4o with vision and advanced reasoning',
+  type: 'agent',
+  capabilities: {
+    image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    file: ['pdf', 'txt', 'csv'],
+  },
+  config: {
+    name: 'GPT-4o',
+    model: (apiKey: string) => {
+      return openai(apiKey).languageModel('gpt-4o');
+    },
+  },
+});
+```
+
+**Google Gemini Example**
+
+```typescript
+import { google } from '@ai-sdk/google';
+
+export const geminiAgent = new ExuluAgent({
+  id: 'gemini_2_0_flash',
+  name: 'Gemini 2.0 Flash',
+  provider: 'Google',
+  description: 'Google Gemini 2.0 Flash with multimodal capabilities',
+  type: 'agent',
+  capabilities: {
+    image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    file: ['pdf', 'txt'],
+    video: ['mp4'],
+  },
+  config: {
+    name: 'Gemini 2.0 Flash',
+    model: (apiKey: string) => {
+      return google(apiKey).languageModel('gemini-2.0-flash-exp');
+    },
+  },
+});
+```
+
+**Ollama (Local Models) Example**
+
+```typescript
+import { ollama } from 'ollama-ai-provider';
+
+export const llamaAgent = new ExuluAgent({
+  id: 'llama_3_70b',
+  name: 'Llama 3 70B (Local)',
+  provider: 'Ollama',
+  description: 'Self-hosted Llama 3 70B model',
+  type: 'agent',
+  config: {
+    name: 'Llama 3 70B',
+    model: (apiKey: string) => {
+      // Ollama typically doesn't need an API key
+      return ollama('llama3:70b');
+    },
+  },
+});
+```
+
+**OpenAI-Compatible Endpoint Example**
+
+```typescript
+import { openai } from '@ai-sdk/openai';
+
+export const customAgent = new ExuluAgent({
+  id: 'custom_vllm_model',
+  name: 'Custom VLLM Model',
+  provider: 'Custom',
+  description: 'Self-hosted model via VLLM',
+  type: 'agent',
+  config: {
+    name: 'Custom Model',
+    model: (apiKey: string) => {
+      return openai(apiKey, {
+        baseURL: 'https://your-vllm-endpoint.com/v1',
+      }).languageModel('your-model-identifier');
+    },
+  },
+});
+```
+
+## Step 4: Custom Instructions (Three Layers)
+
+Exulu supports three layers of custom instructions, allowing flexibility at different levels:
+
+### Layer 1: Code-Level Instructions (Global)
+
+Defined in the agent class and applied to all instances of this backend.
+
+```typescript
+config: {
+  name: 'Claude Sonnet 4.5',
+  customInstructions: 'You are a helpful assistant. Always be concise and accurate.',
+  model: (apiKey: string) => anthropic(apiKey).languageModel('claude-sonnet-4-5-20250929'),
+}
+```
+
+### Layer 2: Agent Instance Instructions (Admin-Configured)
+
+Set in the UI when creating an agent instance. Admins can add specific instructions for each agent instance.
+
+### Layer 3: User Session Instructions (User-Configured)
+
+Individual users can add their own instructions for their sessions with the agent.
+
+**Instruction Priority**: Layer 3 (User) > Layer 2 (Instance) > Layer 1 (Code)
+
+All layers are combined when the agent processes a request.
+
+## Step 5: Export Your Agent
+
+Add your agent to the `agents/index.ts` file:
+
+```typescript
+// src/agents/index.ts
+export { claudeSonnetAgent } from './claude-sonnet';
+export { gpt4oAgent } from './gpt4o';
+export { geminiAgent } from './gemini';
+```
+
+This creates a central place to import all your agents.
+
+## Step 6: Add to ExuluApp
+
+Import and register your agents in your main ExuluApp configuration:
+
+```typescript
+// src/exulu.ts
+import { ExuluApp } from '@exulu/backend';
+import { claudeSonnetAgent, gpt4oAgent, geminiAgent } from './agents';
+
+export const exuluApp = new ExuluApp({
+  config: {
+    // Your app configuration
+  },
+  agents: [
+    claudeSonnetAgent,
+    gpt4oAgent,
+    geminiAgent,
+    // Add as many agents as you need
+  ],
+  contexts: [],
+  tools: [],
+});
+```
+
+When you save this file, the development server will automatically restart and your agents will be available.
+
+## Step 7: Create an Agent Instance in the UI
+
+Now that your backend is registered, create an agent instance through the UI:
+
+1. Navigate to `http://localhost:3000` and log in
+2. Go to **Agents** in the sidebar
+3. Click **Create New Agent**
+4. Select your backend from the dropdown (e.g., "Claude Sonnet 4.5")
+5. Give it a name (e.g., "Financial Analysis Agent")
+6. Add a description
+7. Set a category
+8. Configure an API key (see next section)
+9. Toggle **Active** to ON
+10. Click **Save**
+
+## Step 8: Configure the API Key
+
+Before your agent can make API calls, you need to add an encrypted API key:
+
+1. Navigate to **Variables** in the sidebar
+2. Click **Add Variable**
+3. Enter a name (e.g., `ANTHROPIC_API_KEY`)
+4. Paste your API key
+5. **Enable "Encrypt this variable"** (required for security)
+6. Click **Save**
+
+Now go back to your agent configuration and select this variable from the API Key dropdown.
+
+<Warning>
+  Always encrypt API key variables. The system will reject unencrypted API keys for security reasons.
+</Warning>
+
+## Step 9: Test Your Agent
+
+Test your newly created agent:
+
+1. Navigate to **Chat** in the sidebar
+2. Click **Start New Session**
+3. Select your agent from the dropdown
+4. Send a test message
+5. You should see a streaming response from your agent
+
+<Check>Your custom agent backend is now live and working!</Check>
+
+## Advanced Configuration
+
+### Multiple Agents with Same Backend
+
+You can create multiple agent instances using the same backend:
+
+```typescript
+// In UI, create multiple instances:
+// 1. "Customer Support Agent" using claude_sonnet_4_5
+// 2. "Code Review Assistant" using claude_sonnet_4_5
+// 3. "Financial Analyst" using claude_sonnet_4_5
+
+// Each instance can have different:
+// - System instructions
+// - Tools
+// - Access control
+// - Categories
+```
+
+### Model-Specific Settings
+
+Some providers support additional configuration:
+
+```typescript
+model: (apiKey: string) => {
+  return anthropic(apiKey, {
+    // Optional: custom headers
+    headers: {
+      'anthropic-beta': 'max-tokens-3-5-sonnet-2024-07-15',
+    },
+  }).languageModel('claude-sonnet-4-5-20250929', {
+    // Model-specific settings
+    maxTokens: 4096,
+  });
+}
+```
+
+### TypeScript Autocomplete
+
+The ExuluAgent class is fully typed. Use your IDE's autocomplete to explore available options:
+
+```typescript
+const agent = new ExuluAgent({
+  // Press Ctrl+Space to see all available options
+  id: 'my_agent',
+  // TypeScript will show you required vs optional fields
+});
+```
+
+## Next Steps
+
+Now that you have a custom agent backend, enhance it further:
+
+### Add Tools
+
+Give your agent capabilities beyond conversation.
+
+See the [ExuluTool guides](/core/exulu-tool/introduction)
+
+### Add Context
+
+Provide domain-specific knowledge through vector databases.
+
+See the [ExuluContext guides](/core/exulu-context/introduction)
+
+### Create Workflows
+
+Build automated workflows using your agents.
+
+See the [ExuluApp guides](/core/exulu-app/introduction)
+
+### API Integration
+
+Interact with your agents programmatically via GraphQL.
+
+See the [API Reference](/api-reference/introduction)
+
+## Troubleshooting
+
+### "Agent backend not showing in UI"
+
+Make sure you have added the agent to the ExuluApp agents array and restarted the development server.
+
+Check the server logs for any errors during startup.
+
+### "Module not found" errors
+
+Ensure you have installed the required AI SDK provider package:
+
+```bash
+npm install @ai-sdk/anthropic  # For Anthropic
+npm install @ai-sdk/openai     # For OpenAI
+npm install @ai-sdk/google     # For Google
+```
+
+### "Invalid API key" errors
+
+Verify that the API key variable is encrypted and contains a valid key.
+
+Check that you have selected the correct variable in the agent configuration.
+
+### TypeScript errors
+
+Make sure you have the latest version of the Exulu backend package and that your `tsconfig.json` is properly configured.
+
+### Agent responds but output is incorrect
+
+Check the custom instructions at all three layers. They might be conflicting or poorly defined.
+
+Review the model's capabilities to ensure you're not requesting unsupported features.
+
+## Best Practices
+
+### Naming Conventions
+
+**For agent IDs:**
+- Use underscores, not hyphens
+- Include the model version
+- Be descriptive
+- Never change after creation
+
+**For display names:**
+- User-friendly and clear
+- Include provider and model info
+- Can be changed anytime
+
+### API Key Management
+
+**Separate keys for development and production.**
+
+Use different variables for different environments.
+
+**Monitor usage and costs.**
+
+Set up billing alerts with your provider.
+
+**Rotate keys periodically.**
+
+Update the encrypted variables in the system.
+
+### Code Organization
+
+**One agent per file.**
+
+Makes it easier to maintain and test.
+
+**Group related agents.**
+
+For example, all Anthropic models in one folder.
+
+**Document your agents.**
+
+Add comments explaining the use case and configuration.
+
+### Testing
+
+**Test locally first.**
+
+Verify the agent works in development before deploying.
+
+**Use test API keys.**
+
+Many providers offer test keys with limited quotas.
+
+**Check capabilities.**
+
+Ensure file type restrictions match the model's actual capabilities.
+
+## Summary
+
+You've learned how to create custom agent backends in code by defining ExuluAgent classes. You now understand:
+
+- The difference between backends and agent instances
+- How to structure your agent code
+- All ExuluAgent configuration options
+- How to use the AI SDK with multiple providers
+- The three layers of custom instructions
+- How to register agents with ExuluApp
+- How to create agent instances in the UI
+- Best practices for agent development
+
+Your custom agents can now be used to create multiple specialized agent instances through the UI, each with their own configuration, tools, and access controls.

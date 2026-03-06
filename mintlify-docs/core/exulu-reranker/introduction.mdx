@@ -1,0 +1,516 @@
+---
+title: "Overview"
+description: "Improve search result relevance by reordering chunks with specialized reranking models"
+---
+
+## Overview
+
+`ExuluReranker` is a component that improves search result quality by reordering chunks based on relevance to the user's query. After initial vector or hybrid search retrieves candidate results, a reranker applies more sophisticated relevance scoring to surface the most useful chunks at the top.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Post-search refinement" icon="arrow-up-arrow-down">
+    Reorder search results after initial retrieval for better relevance
+  </Card>
+  <Card title="Model-agnostic" icon="wand-magic-sparkles">
+    Use any reranking API (Cohere, Voyage AI, custom models)
+  </Card>
+  <Card title="Simple integration" icon="plug">
+    Drop-in enhancement for ExuluContext search
+  </Card>
+  <Card title="Flexible scoring" icon="sliders">
+    Custom reranking logic or third-party services
+  </Card>
+</CardGroup>
+
+## What is a reranker?
+
+A reranker is a specialized model or algorithm that:
+
+1. **Receives initial search results** from vector or hybrid search
+2. **Analyzes query-document pairs** to compute refined relevance scores
+3. **Reorders the results** to surface the most relevant chunks first
+4. **Returns the reordered chunks** to the application
+
+Rerankers typically use cross-attention mechanisms or more sophisticated language models than embedding models, providing better relevance at the cost of higher latency. This makes them ideal for post-processing search results.
+
+## Why use reranking?
+
+<AccordionGroup>
+  <Accordion title="Better relevance">
+    Reranking models analyze the relationship between query and document more deeply than embedding similarity, leading to more accurate results.
+  </Accordion>
+
+  <Accordion title="Two-stage retrieval">
+    Fast vector search retrieves candidates, then slower but more accurate reranking refines the top results. This balances speed and quality.
+  </Accordion>
+
+  <Accordion title="Domain-specific ranking">
+    Custom rerankers can implement business logic, user preferences, or domain-specific relevance criteria.
+  </Accordion>
+
+  <Accordion title="Handle semantic nuances">
+    Rerankers can better understand negations, comparisons, and complex queries that embedding models might miss.
+  </Accordion>
+</AccordionGroup>
+
+## Quick start
+
+```typescript
+import { ExuluReranker } from "@exulu/backend";
+
+// Create a reranker using Cohere
+const cohereReranker = new ExuluReranker({
+  id: "cohere_reranker",
+  name: "Cohere Rerank",
+  description: "Reranks search results using Cohere's rerank-english-v3.0 model",
+  execute: async ({ query, chunks }) => {
+    const response = await fetch("https://api.cohere.com/v1/rerank", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.COHERE_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "rerank-english-v3.0",
+        query: query,
+        documents: chunks.map(chunk => chunk.chunk_content),
+        top_n: 10,
+        return_documents: false
+      })
+    });
+
+    const data = await response.json();
+
+    // Reorder chunks based on Cohere's ranking
+    return data.results
+      .sort((a, b) => b.relevance_score - a.relevance_score)
+      .map(result => chunks[result.index]);
+  }
+});
+
+// Use with ExuluContext
+const docsContext = new ExuluContext({
+  id: "documentation",
+  name: "Documentation",
+  description: "Product docs",
+  active: true,
+  fields: [/* ... */],
+  sources: [],
+  resultReranker: async (results) => {
+    return cohereReranker.run(
+      results[0]?.query || "",
+      results
+    );
+  }
+});
+```
+
+## Architecture
+
+### Integration with ExuluContext
+
+Rerankers integrate with ExuluContext through the `resultReranker` configuration:
+
+```typescript
+const context = new ExuluContext({
+  // ... other config
+  resultReranker: async (chunks) => {
+    // Access the query from the first chunk's context
+    const query = chunks[0]?.context?.query || "";
+
+    // Apply reranking
+    return reranker.run(query, chunks);
+  }
+});
+```
+
+When a search is performed:
+1. Vector/hybrid search retrieves initial candidates
+2. `resultReranker` is called with the chunks
+3. Reranker reorders the chunks
+4. Reordered results are returned to the agent/user
+
+### Chunk structure
+
+Rerankers work with `VectorSearchChunkResult` objects:
+
+```typescript
+type VectorSearchChunkResult = {
+  chunk_content: string;           // The text content
+  chunk_index: number;             // Position in original document
+  chunk_id: string;                // Unique chunk ID
+  chunk_source: string;            // Source item ID
+  chunk_metadata: Record<string, string>;
+  chunk_created_at: string;
+  chunk_updated_at: string;
+  item_id: string;                 // Parent item ID
+  item_external_id: string;
+  item_name: string;               // Parent item name
+  item_updated_at: string;
+  item_created_at: string;
+  chunk_cosine_distance?: number;  // Similarity score
+  chunk_fts_rank?: number;         // Keyword score
+  chunk_hybrid_score?: number;     // Combined score
+  context?: {
+    name: string;
+    id: string;
+  };
+};
+```
+
+## Common reranking strategies
+
+<Tabs>
+  <Tab title="API-based reranking">
+    Use third-party reranking APIs like Cohere, Voyage AI, or Jina AI:
+
+    ```typescript
+    const apiReranker = new ExuluReranker({
+      id: "cohere_rerank",
+      name: "Cohere Reranker",
+      description: "Uses Cohere rerank API",
+      execute: async ({ query, chunks }) => {
+        const response = await fetch("https://api.cohere.com/v1/rerank", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "rerank-english-v3.0",
+            query,
+            documents: chunks.map(c => c.chunk_content),
+            top_n: chunks.length
+          })
+        });
+
+        const data = await response.json();
+        return data.results.map(r => chunks[r.index]);
+      }
+    });
+    ```
+  </Tab>
+
+  <Tab title="Custom scoring">
+    Implement custom business logic:
+
+    ```typescript
+    const customReranker = new ExuluReranker({
+      id: "custom_scorer",
+      name: "Custom Scorer",
+      description: "Custom relevance scoring with business rules",
+      execute: async ({ query, chunks }) => {
+        // Score each chunk
+        const scored = chunks.map(chunk => ({
+          chunk,
+          score: computeCustomScore(query, chunk)
+        }));
+
+        // Sort by score descending
+        scored.sort((a, b) => b.score - a.score);
+
+        return scored.map(s => s.chunk);
+      }
+    });
+
+    function computeCustomScore(query: string, chunk: VectorSearchChunkResult): number {
+      let score = chunk.chunk_hybrid_score || 0;
+
+      // Boost recent content
+      const age = Date.now() - new Date(chunk.chunk_updated_at).getTime();
+      const daysSinceUpdate = age / (1000 * 60 * 60 * 24);
+      score += Math.max(0, 1 - daysSinceUpdate / 365);
+
+      // Boost specific categories
+      if (chunk.chunk_metadata.category === "tutorial") {
+        score *= 1.2;
+      }
+
+      // Penalize very short chunks
+      if (chunk.chunk_content.length < 100) {
+        score *= 0.7;
+      }
+
+      return score;
+    }
+    ```
+  </Tab>
+
+  <Tab title="LLM-based reranking">
+    Use an LLM to judge relevance:
+
+    ```typescript
+    const llmReranker = new ExuluReranker({
+      id: "llm_rerank",
+      name: "LLM Reranker",
+      description: "Uses GPT-4 to score relevance",
+      execute: async ({ query, chunks }) => {
+        // Score chunks in parallel
+        const scoredPromises = chunks.map(async (chunk) => {
+          const prompt = `On a scale of 0-10, how relevant is this passage to the query?
+
+Query: "${query}"
+
+Passage: "${chunk.chunk_content}"
+
+Respond with only a number.`;
+
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0
+          });
+
+          const score = parseFloat(response.choices[0].message.content);
+
+          return { chunk, score };
+        });
+
+        const scored = await Promise.all(scoredPromises);
+        scored.sort((a, b) => b.score - a.score);
+
+        return scored.map(s => s.chunk);
+      }
+    });
+    ```
+
+    <Warning>
+      LLM-based reranking can be expensive and slow. Use for small result sets or where quality is critical.
+    </Warning>
+  </Tab>
+
+  <Tab title="Hybrid approach">
+    Combine multiple signals:
+
+    ```typescript
+    const hybridReranker = new ExuluReranker({
+      id: "hybrid_rerank",
+      name: "Hybrid Reranker",
+      description: "Combines API reranking with custom scoring",
+      execute: async ({ query, chunks }) => {
+        // Step 1: Get API reranking scores
+        const apiResponse = await fetch("https://api.cohere.com/v1/rerank", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "rerank-english-v3.0",
+            query,
+            documents: chunks.map(c => c.chunk_content)
+          })
+        });
+
+        const apiData = await apiResponse.json();
+
+        // Step 2: Combine with custom business logic
+        const scored = chunks.map((chunk, idx) => {
+          const apiScore = apiData.results.find(r => r.index === idx)?.relevance_score || 0;
+          const customScore = computeCustomScore(chunk);
+
+          return {
+            chunk,
+            score: (apiScore * 0.7) + (customScore * 0.3) // Weighted combination
+          };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        return scored.map(s => s.chunk);
+      }
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Usage patterns
+
+### With ExuluContext
+
+The most common pattern is integrating with ExuluContext:
+
+```typescript
+import { ExuluContext, ExuluReranker } from "@exulu/backend";
+
+// Create reranker
+const reranker = new ExuluReranker({
+  id: "my_reranker",
+  name: "My Reranker",
+  description: "Custom reranking logic",
+  execute: async ({ query, chunks }) => {
+    // Your reranking logic
+    return reorderedChunks;
+  }
+});
+
+// Use with context
+const context = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  // ... other config
+  resultReranker: async (chunks) => {
+    const query = chunks[0]?.context?.query || "";
+    return reranker.run(query, chunks);
+  }
+});
+```
+
+### Standalone usage
+
+You can also use rerankers independently:
+
+```typescript
+const chunks = await context.search({
+  query: "How do I authenticate?",
+  method: "hybridSearch",
+  // ... other params
+});
+
+const rerankedChunks = await reranker.run(
+  "How do I authenticate?",
+  chunks.chunks
+);
+
+console.log(rerankedChunks[0].chunk_content); // Most relevant result
+```
+
+### Conditional reranking
+
+Apply reranking only when needed:
+
+```typescript
+resultReranker: async (chunks) => {
+  // Only rerank if we have enough results
+  if (chunks.length < 3) {
+    return chunks;
+  }
+
+  // Only rerank if scores are similar (ambiguous results)
+  const scores = chunks
+    .map(c => c.chunk_hybrid_score || 0)
+    .filter(s => s > 0);
+
+  if (scores.length === 0) return chunks;
+
+  const avgScore = scores.reduce((a, b) => a + b) / scores.length;
+  const variance = scores.reduce((sum, score) => sum + Math.pow(score - avgScore, 2), 0) / scores.length;
+
+  // Low variance means clear ranking, skip reranking
+  if (variance < 0.01) {
+    return chunks;
+  }
+
+  // High variance, apply reranking
+  const query = chunks[0]?.context?.query || "";
+  return reranker.run(query, chunks);
+}
+```
+
+## Popular reranking services
+
+<CardGroup cols={2}>
+  <Card title="Cohere Rerank" icon="bolt" href="https://cohere.com/rerank">
+    High-quality reranking with multilingual support
+  </Card>
+  <Card title="Voyage AI" icon="ship" href="https://www.voyageai.com/">
+    Domain-specific reranking models
+  </Card>
+  <Card title="Jina AI" icon="cube" href="https://jina.ai/reranker/">
+    Open-source and API-based reranking
+  </Card>
+  <Card title="Custom models" icon="brain">
+    Self-hosted models like cross-encoders or custom LLM scoring
+  </Card>
+</CardGroup>
+
+## Best practices
+
+<Tip>
+  **Rerank the right amount**: Reranking is slower than initial retrieval. Retrieve more candidates (e.g., 50-100) with fast vector search, then rerank the top 10-20.
+</Tip>
+
+<Note>
+  **Preserve metadata**: Ensure your reranker returns chunks with all their original metadata intact. Only change the order, not the content.
+</Note>
+
+<Warning>
+  **Watch latency**: Reranking adds latency to search. Test with production query volumes and consider caching or async reranking for non-critical queries.
+</Warning>
+
+<Info>
+  **Measure impact**: A/B test your reranker to ensure it improves relevance. Track metrics like click-through rate or user satisfaction.
+</Info>
+
+## Performance considerations
+
+<AccordionGroup>
+  <Accordion title="Batch reranking">
+    Some APIs support batch reranking for better throughput:
+
+    ```typescript
+    execute: async ({ query, chunks }) => {
+      // Send all documents at once
+      const response = await cohereClient.rerank({
+        model: "rerank-english-v3.0",
+        query,
+        documents: chunks.map(c => c.chunk_content),
+        top_n: 20 // Limit results
+      });
+
+      return response.results.map(r => chunks[r.index]);
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Caching">
+    Cache reranking results for repeated queries:
+
+    ```typescript
+    const cache = new Map();
+
+    execute: async ({ query, chunks }) => {
+      const cacheKey = `${query}:${chunks.map(c => c.chunk_id).join(",")}`;
+
+      if (cache.has(cacheKey)) {
+        return cache.get(cacheKey);
+      }
+
+      const reranked = await performReranking(query, chunks);
+      cache.set(cacheKey, reranked);
+
+      return reranked;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Parallel processing">
+    For custom scoring, process chunks in parallel:
+
+    ```typescript
+    execute: async ({ query, chunks }) => {
+      const scored = await Promise.all(
+        chunks.map(async (chunk) => ({
+          chunk,
+          score: await computeScore(query, chunk)
+        }))
+      );
+
+      scored.sort((a, b) => b.score - a.score);
+      return scored.map(s => s.chunk);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-reranker/configuration">
+    Learn about configuration options
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-reranker/api-reference">
+    Explore methods and properties
+  </Card>
+</CardGroup>

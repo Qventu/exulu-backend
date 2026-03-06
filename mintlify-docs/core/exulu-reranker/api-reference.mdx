@@ -1,0 +1,630 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluReranker"
+---
+
+## Constructor
+
+```typescript
+const reranker = new ExuluReranker(options: ExuluRerankerOptions);
+```
+
+Creates a new ExuluReranker instance. See the [configuration guide](/core/exulu-reranker/configuration) for all available options.
+
+## Methods
+
+### run()
+
+Executes the reranker to reorder search result chunks based on relevance to the query.
+
+```typescript
+async run(
+  query: string,
+  chunks: VectorSearchChunkResult[]
+): Promise<VectorSearchChunkResult[]>
+```
+
+<ParamField path="query" type="string" required>
+  The user's search query that the chunks should be ranked against
+</ParamField>
+
+<ParamField path="chunks" type="VectorSearchChunkResult[]" required>
+  Array of search result chunks to rerank
+</ParamField>
+
+<ResponseField name="return" type="Promise<VectorSearchChunkResult[]>">
+  Reordered array of chunks, typically sorted by relevance (most relevant first)
+</ResponseField>
+
+```typescript
+const reranker = new ExuluReranker({
+  id: "cohere_rerank",
+  name: "Cohere Reranker",
+  description: "Uses Cohere's rerank API",
+  execute: async ({ query, chunks }) => {
+    // Reranking logic
+    return reorderedChunks;
+  }
+});
+
+// Get initial search results
+const searchResults = await context.search({
+  query: "How do I authenticate users?",
+  method: "hybridSearch",
+  limit: 20,
+  // ...
+});
+
+// Rerank the results
+const rerankedChunks = await reranker.run(
+  "How do I authenticate users?",
+  searchResults.chunks
+);
+
+console.log(rerankedChunks[0].chunk_content); // Most relevant chunk
+```
+
+<Note>
+  The `run()` method is a convenience wrapper that calls the `execute()` function with the proper parameter structure.
+</Note>
+
+## Properties
+
+### id
+
+<ResponseField name="id" type="string">
+  Unique identifier for the reranker
+</ResponseField>
+
+```typescript
+console.log(reranker.id); // "cohere_rerank_v3"
+```
+
+### name
+
+<ResponseField name="name" type="string">
+  Human-readable name for the reranker
+</ResponseField>
+
+```typescript
+console.log(reranker.name); // "Cohere Rerank English v3"
+```
+
+### description
+
+<ResponseField name="description" type="string">
+  Description of what the reranker does
+</ResponseField>
+
+```typescript
+console.log(reranker.description);
+// "Reranks search results using Cohere's rerank-english-v3.0 model"
+```
+
+### execute
+
+<ResponseField name="execute" type="ExecuteFunction">
+  The function that implements the reranking logic
+</ResponseField>
+
+```typescript
+// The execute function has this signature
+type ExecuteFunction = (params: {
+  query: string;
+  chunks: VectorSearchChunkResult[];
+}) => Promise<VectorSearchChunkResult[]>;
+
+// Access it directly
+const result = await reranker.execute({
+  query: "test query",
+  chunks: chunks
+});
+```
+
+<Info>
+  While you can call `execute()` directly, it's recommended to use the `run()` method for better readability.
+</Info>
+
+## Type definitions
+
+```typescript
+// Reranker constructor options
+type ExuluRerankerOptions = {
+  id: string;
+  name: string;
+  description: string;
+  execute: ExecuteFunction;
+};
+
+// Execute function type
+type ExecuteFunction = (params: {
+  query: string;
+  chunks: VectorSearchChunkResult[];
+}) => Promise<VectorSearchChunkResult[]>;
+
+// Chunk result type
+type VectorSearchChunkResult = {
+  chunk_content: string;
+  chunk_index: number;
+  chunk_id: string;
+  chunk_source: string;
+  chunk_metadata: Record<string, string>;
+  chunk_created_at: string;
+  chunk_updated_at: string;
+  item_id: string;
+  item_external_id: string;
+  item_name: string;
+  item_updated_at: string;
+  item_created_at: string;
+  chunk_cosine_distance?: number;
+  chunk_fts_rank?: number;
+  chunk_hybrid_score?: number;
+  context?: {
+    name: string;
+    id: string;
+  };
+};
+```
+
+## Usage examples
+
+### Basic usage
+
+```typescript
+import { ExuluReranker } from "@exulu/backend";
+
+const reranker = new ExuluReranker({
+  id: "simple_reranker",
+  name: "Simple Reranker",
+  description: "Reranks by chunk length",
+  execute: async ({ query, chunks }) => {
+    // Sort by content length (example)
+    return chunks.sort((a, b) =>
+      b.chunk_content.length - a.chunk_content.length
+    );
+  }
+});
+
+const reranked = await reranker.run(query, chunks);
+```
+
+### With Cohere API
+
+```typescript
+const cohereReranker = new ExuluReranker({
+  id: "cohere_rerank",
+  name: "Cohere Reranker",
+  description: "Uses Cohere rerank-english-v3.0",
+  execute: async ({ query, chunks }) => {
+    const response = await fetch("https://api.cohere.com/v1/rerank", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.COHERE_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "rerank-english-v3.0",
+        query: query,
+        documents: chunks.map(c => c.chunk_content),
+        top_n: 20
+      })
+    });
+
+    const data = await response.json();
+
+    return data.results
+      .sort((a, b) => b.relevance_score - a.relevance_score)
+      .map(result => chunks[result.index]);
+  }
+});
+
+// Use it
+const results = await context.search({
+  query: "authentication",
+  method: "hybridSearch",
+  limit: 50
+});
+
+const reranked = await cohereReranker.run(
+  "authentication",
+  results.chunks
+);
+```
+
+### With ExuluContext integration
+
+```typescript
+import { ExuluContext, ExuluReranker } from "@exulu/backend";
+
+// Create reranker
+const reranker = new ExuluReranker({
+  id: "my_reranker",
+  name: "My Reranker",
+  description: "Custom reranking logic",
+  execute: async ({ query, chunks }) => {
+    // Your reranking implementation
+    return reorderedChunks;
+  }
+});
+
+// Use with context
+const context = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product documentation",
+  active: true,
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true }
+  ],
+  sources: [],
+  embedder: myEmbedder,
+  resultReranker: async (chunks) => {
+    // Extract query from first chunk's context
+    const query = chunks[0]?.context?.query || "";
+
+    // Run reranker
+    return reranker.run(query, chunks);
+  }
+});
+
+// Now all searches through this context will be reranked
+const results = await context.search({
+  query: "How do I configure logging?",
+  method: "hybridSearch",
+  limit: 10
+});
+
+// results.chunks are already reranked
+```
+
+### Custom scoring reranker
+
+```typescript
+const customReranker = new ExuluReranker({
+  id: "custom_scorer",
+  name: "Custom Scorer",
+  description: "Reranks with custom business logic",
+  execute: async ({ query, chunks }) => {
+    // Compute custom score for each chunk
+    const scored = chunks.map(chunk => {
+      let score = chunk.chunk_hybrid_score || 0;
+
+      // Boost recent content
+      const daysSinceUpdate = (Date.now() - new Date(chunk.chunk_updated_at).getTime()) / (1000 * 60 * 60 * 24);
+      score += Math.max(0, 1 - daysSinceUpdate / 365);
+
+      // Boost certain categories
+      if (chunk.chunk_metadata.category === "tutorial") {
+        score *= 1.5;
+      }
+
+      // Boost exact keyword matches
+      const queryLower = query.toLowerCase();
+      const contentLower = chunk.chunk_content.toLowerCase();
+      if (contentLower.includes(queryLower)) {
+        score *= 1.2;
+      }
+
+      return { chunk, score };
+    });
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score);
+
+    return scored.map(s => s.chunk);
+  }
+});
+
+// Use it
+const reranked = await customReranker.run(
+  "authentication setup",
+  searchResults.chunks
+);
+```
+
+### Error-resilient reranker
+
+```typescript
+const resilientReranker = new ExuluReranker({
+  id: "resilient",
+  name: "Resilient Reranker",
+  description: "Falls back to original order on errors",
+  execute: async ({ query, chunks }) => {
+    try {
+      // Attempt reranking
+      const response = await fetch(RERANK_API_URL, {
+        method: "POST",
+        headers: { /* ... */ },
+        body: JSON.stringify({
+          query,
+          documents: chunks.map(c => c.chunk_content)
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.results.map(r => chunks[r.index]);
+
+    } catch (error) {
+      console.error("Reranking failed, using original order:", error);
+
+      // Return original order as fallback
+      return chunks;
+    }
+  }
+});
+```
+
+### Caching reranker
+
+```typescript
+import crypto from "crypto";
+
+const cache = new Map<string, VectorSearchChunkResult[]>();
+
+const cachedReranker = new ExuluReranker({
+  id: "cached",
+  name: "Cached Reranker",
+  description: "Caches reranking results",
+  execute: async ({ query, chunks }) => {
+    // Create cache key
+    const chunkIds = chunks.map(c => c.chunk_id).sort().join(",");
+    const cacheKey = crypto
+      .createHash("md5")
+      .update(`${query}:${chunkIds}`)
+      .digest("hex");
+
+    // Check cache
+    if (cache.has(cacheKey)) {
+      console.log("Cache hit");
+      return cache.get(cacheKey)!;
+    }
+
+    // Perform reranking
+    const reranked = await performReranking(query, chunks);
+
+    // Store in cache
+    cache.set(cacheKey, reranked);
+
+    return reranked;
+  }
+});
+```
+
+### Hybrid reranker (API + custom)
+
+```typescript
+const hybridReranker = new ExuluReranker({
+  id: "hybrid",
+  name: "Hybrid Reranker",
+  description: "Combines API reranking with custom scoring",
+  execute: async ({ query, chunks }) => {
+    // Get API scores
+    const apiResponse = await fetch(RERANK_API_URL, {
+      method: "POST",
+      headers: { /* ... */ },
+      body: JSON.stringify({
+        query,
+        documents: chunks.map(c => c.chunk_content)
+      })
+    });
+
+    const apiData = await apiResponse.json();
+
+    // Combine with custom scoring
+    const scored = chunks.map((chunk, idx) => {
+      // API relevance score (0-1)
+      const apiScore = apiData.results.find(r => r.index === idx)?.relevance_score || 0;
+
+      // Custom score (0-1)
+      const recency = Math.max(0, 1 - (Date.now() - new Date(chunk.chunk_updated_at).getTime()) / (365 * 24 * 60 * 60 * 1000));
+      const categoryBoost = chunk.chunk_metadata.priority === "high" ? 0.2 : 0;
+      const customScore = Math.min(1, recency + categoryBoost);
+
+      // Weighted combination: 70% API, 30% custom
+      const finalScore = (apiScore * 0.7) + (customScore * 0.3);
+
+      return { chunk, score: finalScore };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.chunk);
+  }
+});
+```
+
+### LLM-based reranker
+
+```typescript
+import OpenAI from "openai";
+
+const openai = new OpenAI();
+
+const llmReranker = new ExuluReranker({
+  id: "llm_rerank",
+  name: "LLM Reranker",
+  description: "Uses GPT-4 to judge relevance",
+  execute: async ({ query, chunks }) => {
+    // Limit to top 10 for cost control
+    const topChunks = chunks.slice(0, 10);
+
+    // Score in parallel
+    const scored = await Promise.all(
+      topChunks.map(async (chunk) => {
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [{
+            role: "user",
+            content: `On a scale of 0-10, how relevant is this passage to the query?
+
+Query: "${query}"
+
+Passage: "${chunk.chunk_content}"
+
+Respond with only a number.`
+          }],
+          temperature: 0,
+          max_tokens: 5
+        });
+
+        const score = parseFloat(response.choices[0].message.content || "0");
+
+        return { chunk, score };
+      })
+    );
+
+    scored.sort((a, b) => b.score - a.score);
+
+    return [
+      ...scored.map(s => s.chunk),
+      ...chunks.slice(10) // Append remaining chunks
+    ];
+  }
+});
+```
+
+### Accessing reranker properties
+
+```typescript
+const reranker = new ExuluReranker({
+  id: "example",
+  name: "Example Reranker",
+  description: "For demonstration",
+  execute: async ({ query, chunks }) => chunks
+});
+
+// Access properties
+console.log(reranker.id);          // "example"
+console.log(reranker.name);        // "Example Reranker"
+console.log(reranker.description); // "For demonstration"
+
+// Call execute directly
+const result = await reranker.execute({
+  query: "test",
+  chunks: myChunks
+});
+
+// Or use run() for cleaner API
+const result2 = await reranker.run("test", myChunks);
+```
+
+## Comparison: run() vs execute()
+
+Both methods do the same thing, but `run()` provides a cleaner API:
+
+```typescript
+// Using execute() - verbose
+const result = await reranker.execute({
+  query: "test query",
+  chunks: myChunks
+});
+
+// Using run() - cleaner
+const result = await reranker.run("test query", myChunks);
+```
+
+<Tip>
+  Use `run()` for external calls and `execute()` when you need to pass the function as a callback.
+</Tip>
+
+## Integration patterns
+
+### Direct usage
+
+```typescript
+// Get search results
+const results = await context.search({
+  query: "authentication",
+  method: "hybridSearch",
+  limit: 50
+});
+
+// Apply reranking
+const reranked = await reranker.run(
+  "authentication",
+  results.chunks
+);
+
+// Use top results
+const topResults = reranked.slice(0, 10);
+```
+
+### As context configuration
+
+```typescript
+const context = new ExuluContext({
+  // ... other config
+  resultReranker: async (chunks) => {
+    const query = chunks[0]?.context?.query || "";
+    return reranker.run(query, chunks);
+  }
+});
+
+// Reranking happens automatically
+const results = await context.search({
+  query: "authentication",
+  method: "hybridSearch"
+});
+// results.chunks are already reranked
+```
+
+### Conditional reranking
+
+```typescript
+const context = new ExuluContext({
+  // ... other config
+  resultReranker: async (chunks) => {
+    // Only rerank if we have enough results
+    if (chunks.length < 5) {
+      return chunks;
+    }
+
+    // Only rerank if scores are close (ambiguous ranking)
+    const scores = chunks.map(c => c.chunk_hybrid_score || 0);
+    const maxScore = Math.max(...scores);
+    const minScore = Math.min(...scores);
+
+    if (maxScore - minScore > 0.3) {
+      // Clear winner, skip reranking
+      return chunks;
+    }
+
+    // Ambiguous results, apply reranking
+    const query = chunks[0]?.context?.query || "";
+    return reranker.run(query, chunks);
+  }
+});
+```
+
+## Best practices
+
+<Tip>
+  **Always preserve chunk objects**: Return the exact same chunk objects in a new order. Don't create new objects or modify existing ones.
+</Tip>
+
+<Note>
+  **Handle errors gracefully**: Always return the original chunk order if reranking fails. Don't throw errors.
+</Note>
+
+<Warning>
+  **Watch latency**: Reranking adds latency. For high-traffic applications, consider caching or limiting the number of chunks to rerank.
+</Warning>
+
+<Info>
+  **Monitor costs**: API-based reranking has costs. Track usage and consider caching for repeated queries.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration guide" icon="gear" href="/core/exulu-reranker/configuration">
+    Learn about configuration options
+  </Card>
+  <Card title="ExuluContext" icon="database" href="/core/exulu-context/introduction">
+    Learn about search contexts
+  </Card>
+</CardGroup>

@@ -1,0 +1,894 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluAgent"
+---
+
+## Constructor
+
+```typescript
+const agent = new ExuluAgent(options: ExuluAgentParams);
+```
+
+Creates a new ExuluAgent instance. See the [configuration guide](/core/exulu-agent/configuration) for all available options.
+
+## Methods
+
+### generateSync()
+
+Generates a synchronous (non-streaming) response from the agent.
+
+```typescript
+async generateSync({
+  prompt,
+  user,
+  session,
+  inputMessages,
+  currentTools,
+  allExuluTools,
+  statistics,
+  toolConfigs,
+  providerapikey,
+  contexts,
+  rerankers,
+  exuluConfig,
+  outputSchema,
+  agentInstance,
+  instructions,
+  req
+}: GenerateSyncOptions): Promise<string | object>
+```
+
+<ParamField path="prompt" type="string">
+  The user's prompt or question (mutually exclusive with `inputMessages`)
+</ParamField>
+
+<ParamField path="inputMessages" type="UIMessage[]">
+  Array of conversation messages (mutually exclusive with `prompt`)
+</ParamField>
+
+<ParamField path="user" type="User">
+  User object for access control and personalization
+</ParamField>
+
+<ParamField path="session" type="string">
+  Session ID to load previous conversation history
+</ParamField>
+
+<ParamField path="currentTools" type="ExuluTool[]">
+  Tools available to the agent during this execution
+</ParamField>
+
+<ParamField path="allExuluTools" type="ExuluTool[]">
+  Complete list of all available tools (for nested tool calling)
+</ParamField>
+
+<ParamField path="statistics" type="ExuluStatisticParams">
+  Statistics tracking configuration with `label` and `trigger`
+</ParamField>
+
+<ParamField path="toolConfigs" type="ExuluAgentToolConfig[]">
+  Tool-specific configuration overrides
+</ParamField>
+
+<ParamField path="providerapikey" type="string">
+  API key for the LLM provider (overrides default)
+</ParamField>
+
+<ParamField path="contexts" type="ExuluContext[]">
+  Available contexts for semantic search
+</ParamField>
+
+<ParamField path="rerankers" type="ExuluReranker[]">
+  Available rerankers for search optimization
+</ParamField>
+
+<ParamField path="exuluConfig" type="ExuluConfig">
+  ExuluApp configuration object
+</ParamField>
+
+<ParamField path="outputSchema" type="z.ZodType">
+  Zod schema for structured output generation
+</ParamField>
+
+<ParamField path="agentInstance" type="Agent">
+  Agent database record with configuration
+</ParamField>
+
+<ParamField path="instructions" type="string">
+  Override default instructions for this execution
+</ParamField>
+
+<ParamField path="req" type="Request">
+  Express request object for context
+</ParamField>
+
+<ResponseField name="return" type="Promise<string | object>">
+  Generated text response, or structured object if `outputSchema` is provided
+</ResponseField>
+
+```typescript
+// Simple text generation
+const response = await agent.generateSync({
+  prompt: "What is the capital of France?",
+  agentInstance: agentData,
+  currentTools: [],
+  statistics: {
+    label: "assistant",
+    trigger: "api"
+  }
+});
+
+console.log(response); // "The capital of France is Paris."
+
+// With tools
+const response = await agent.generateSync({
+  prompt: "Search our docs for authentication information",
+  agentInstance: agentData,
+  currentTools: [documentSearchTool, databaseTool],
+  contexts: [docsContext],
+  statistics: {
+    label: "assistant",
+    trigger: "api"
+  }
+});
+
+// Structured output
+const data = await agent.generateSync({
+  prompt: "Extract contact information from this email",
+  outputSchema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+    phone: z.string().optional()
+  }),
+  agentInstance: agentData,
+  statistics: {
+    label: "extractor",
+    trigger: "api"
+  }
+});
+
+console.log(data.name);  // Type-safe access
+console.log(data.email);
+```
+
+<Info>
+  Use `generateSync()` for API endpoints, background jobs, or when you need the complete response before proceeding.
+</Info>
+
+### generateStream()
+
+Generates a streaming response from the agent for real-time output.
+
+```typescript
+async generateStream({
+  user,
+  session,
+  agentInstance,
+  message,
+  previousMessages,
+  currentTools,
+  approvedTools,
+  allExuluTools,
+  toolConfigs,
+  providerapikey,
+  contexts,
+  rerankers,
+  exuluConfig,
+  instructions,
+  req
+}: GenerateStreamOptions): Promise<{
+  stream: ReturnType<typeof streamText>;
+  originalMessages: UIMessage[];
+  previousMessages: UIMessage[];
+}>
+```
+
+<ParamField path="message" type="UIMessage" required>
+  The new user message to process
+</ParamField>
+
+<ParamField path="session" type="string">
+  Session ID to load and continue conversation history
+</ParamField>
+
+<ParamField path="user" type="User">
+  User object for access control
+</ParamField>
+
+<ParamField path="agentInstance" type="Agent">
+  Agent database record with configuration
+</ParamField>
+
+<ParamField path="previousMessages" type="UIMessage[]">
+  Previous messages to include in context
+</ParamField>
+
+<ParamField path="currentTools" type="ExuluTool[]">
+  Tools available to the agent
+</ParamField>
+
+<ParamField path="approvedTools" type="string[]">
+  Tool IDs that have been pre-approved for execution
+</ParamField>
+
+<ParamField path="allExuluTools" type="ExuluTool[]">
+  Complete list of all tools
+</ParamField>
+
+<ParamField path="toolConfigs" type="ExuluAgentToolConfig[]">
+  Tool configuration overrides
+</ParamField>
+
+<ParamField path="providerapikey" type="string">
+  API key override
+</ParamField>
+
+<ParamField path="contexts" type="ExuluContext[]">
+  Available contexts
+</ParamField>
+
+<ParamField path="rerankers" type="ExuluReranker[]">
+  Available rerankers
+</ParamField>
+
+<ParamField path="exuluConfig" type="ExuluConfig">
+  App configuration
+</ParamField>
+
+<ParamField path="instructions" type="string">
+  Override instructions
+</ParamField>
+
+<ParamField path="req" type="Request">
+  Express request object
+</ParamField>
+
+<ResponseField name="stream" type="StreamTextResult">
+  AI SDK stream object with text chunks and tool calls
+</ResponseField>
+
+<ResponseField name="originalMessages" type="UIMessage[]">
+  All messages including the new one
+</ResponseField>
+
+<ResponseField name="previousMessages" type="UIMessage[]">
+  Messages from before this request
+</ResponseField>
+
+```typescript
+// Stream a response
+const { stream, originalMessages } = await agent.generateStream({
+  message: {
+    id: "msg-123",
+    role: "user",
+    parts: [{ type: "text", text: "Tell me about your services" }]
+  },
+  session: sessionId,
+  user: currentUser,
+  agentInstance: agentData,
+  currentTools: tools,
+  contexts: contexts,
+  exuluConfig: config
+});
+
+// Consume the stream
+for await (const chunk of stream.textStream) {
+  process.stdout.write(chunk);
+}
+
+// Or use with Express
+app.post("/chat", async (req, res) => {
+  const { stream } = await agent.generateStream({
+    message: req.body.message,
+    session: req.body.session,
+    user: req.user,
+    agentInstance: agentData,
+    currentTools: tools
+  });
+
+  return stream.toDataStreamResponse();
+});
+```
+
+<Note>
+  Use `generateStream()` for interactive chat applications where you want to display responses progressively.
+</Note>
+
+### tool()
+
+Exports the agent as a tool that other agents can call.
+
+```typescript
+async tool(
+  instance: string,
+  agents: ExuluAgent[],
+  contexts: ExuluContext[],
+  rerankers: ExuluReranker[]
+): Promise<ExuluTool | null>
+```
+
+<ParamField path="instance" type="string" required>
+  Agent ID to load from the database
+</ParamField>
+
+<ParamField path="agents" type="ExuluAgent[]" required>
+  Array of all available agents
+</ParamField>
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  Array of all available contexts
+</ParamField>
+
+<ParamField path="rerankers" type="ExuluReranker[]" required>
+  Array of all available rerankers
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluTool | null>">
+  Tool instance that wraps the agent, or null if agent not found
+</ResponseField>
+
+```typescript
+// Create specialist agent
+const sqlAgent = new ExuluAgent({
+  id: "sql_specialist",
+  name: "SQL Specialist",
+  type: "agent",
+  description: "Expert at writing SQL queries",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You are an expert SQL developer."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Export as tool
+const sqlTool = await sqlAgent.tool(
+  "sql_specialist",
+  [sqlAgent],
+  contexts,
+  rerankers
+);
+
+// Main agent can use it
+const mainAgent = new ExuluAgent({
+  id: "assistant",
+  name: "Assistant",
+  // ... config
+});
+
+const response = await mainAgent.generateSync({
+  prompt: "Write a query to find top customers",
+  currentTools: [sqlTool], // Delegates to SQL specialist
+  // ... other params
+});
+```
+
+<Tip>
+  Use agent-as-tool for multi-agent workflows where specialized agents handle specific tasks.
+</Tip>
+
+## Properties
+
+### id
+
+<ResponseField name="id" type="string">
+  Unique agent identifier
+</ResponseField>
+
+```typescript
+console.log(agent.id); // "customer_support_agent"
+```
+
+### name
+
+<ResponseField name="name" type="string">
+  Human-readable agent name
+</ResponseField>
+
+```typescript
+console.log(agent.name); // "Customer Support Agent"
+```
+
+### provider
+
+<ResponseField name="provider" type="string">
+  LLM provider name
+</ResponseField>
+
+```typescript
+console.log(agent.provider); // "openai"
+```
+
+### providerName
+
+<ResponseField name="providerName" type="string" getter>
+  Computed provider name (empty string if no model configured)
+</ResponseField>
+
+```typescript
+console.log(agent.providerName); // "openai"
+```
+
+### modelName
+
+<ResponseField name="modelName" type="string" getter>
+  Computed model name from config
+</ResponseField>
+
+```typescript
+console.log(agent.modelName); // "gpt-4o"
+```
+
+### description
+
+<ResponseField name="description" type="string">
+  Agent description
+</ResponseField>
+
+```typescript
+console.log(agent.description); // "Handles customer support inquiries"
+```
+
+### type
+
+<ResponseField name="type" type="'agent'">
+  Always `"agent"`
+</ResponseField>
+
+```typescript
+console.log(agent.type); // "agent"
+```
+
+### slug
+
+<ResponseField name="slug" type="string">
+  URL-friendly slug for the agent
+</ResponseField>
+
+```typescript
+console.log(agent.slug); // "/agents/customer-support-agent/run"
+```
+
+### capabilities
+
+<ResponseField name="capabilities" type="Capabilities">
+  Supported input types
+</ResponseField>
+
+```typescript
+console.log(agent.capabilities);
+// {
+//   text: true,
+//   images: [".png", ".jpg"],
+//   files: [".pdf", ".txt"],
+//   audio: [],
+//   video: []
+// }
+```
+
+### config
+
+<ResponseField name="config" type="ExuluAgentConfig | undefined">
+  Agent configuration including model and instructions
+</ResponseField>
+
+```typescript
+console.log(agent.config?.name); // "gpt-4o"
+console.log(agent.config?.instructions); // "You are a helpful assistant..."
+```
+
+### model
+
+<ResponseField name="model" type="ModelFactory | undefined">
+  Model factory function
+</ResponseField>
+
+```typescript
+const languageModel = agent.model?.create({ apiKey: "..." });
+```
+
+### maxContextLength
+
+<ResponseField name="maxContextLength" type="number | undefined">
+  Maximum context window size in tokens
+</ResponseField>
+
+```typescript
+console.log(agent.maxContextLength); // 128000
+```
+
+### workflows
+
+<ResponseField name="workflows" type="WorkflowConfig | undefined">
+  Workflow configuration
+</ResponseField>
+
+```typescript
+console.log(agent.workflows?.enabled); // true
+```
+
+### queue
+
+<ResponseField name="queue" type="ExuluQueueConfig | undefined">
+  Queue configuration
+</ResponseField>
+
+```typescript
+console.log(agent.queue?.name); // "agent_tasks"
+```
+
+### rateLimit
+
+<ResponseField name="rateLimit" type="RateLimiterRule | undefined">
+  Rate limiting configuration
+</ResponseField>
+
+```typescript
+console.log(agent.rateLimit?.points); // 100
+```
+
+## Usage examples
+
+### Basic text generation
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const agent = new ExuluAgent({
+  id: "assistant",
+  name: "Assistant",
+  type: "agent",
+  description: "General AI assistant",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+
+const response = await agent.generateSync({
+  prompt: "Explain quantum computing in simple terms",
+  agentInstance: await loadAgent("assistant"),
+  statistics: { label: "assistant", trigger: "api" }
+});
+
+console.log(response);
+```
+
+### Streaming chat
+
+```typescript
+const { stream } = await agent.generateStream({
+  message: {
+    id: "msg-123",
+    role: "user",
+    parts: [{ type: "text", text: "Write a poem about AI" }]
+  },
+  session: "session-abc",
+  user: currentUser,
+  agentInstance: agentData,
+  currentTools: []
+});
+
+// Stream to console
+for await (const chunk of stream.textStream) {
+  process.stdout.write(chunk);
+}
+```
+
+### With tools
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+// Define a tool
+const weatherTool = new ExuluTool({
+  id: "weather",
+  name: "get_weather",
+  description: "Gets weather for a location",
+  type: "function",
+  inputSchema: z.object({
+    location: z.string()
+  }),
+  config: [],
+  execute: async ({ location }) => {
+    const weather = await fetchWeather(location);
+    return { result: JSON.stringify(weather) };
+  }
+});
+
+// Use with agent
+const response = await agent.generateSync({
+  prompt: "What's the weather in Paris?",
+  agentInstance: agentData,
+  currentTools: [weatherTool],
+  statistics: { label: "assistant", trigger: "api" }
+});
+```
+
+### Structured output
+
+```typescript
+import { z } from "zod";
+
+const ContactSchema = z.object({
+  name: z.string(),
+  email: z.string().email(),
+  phone: z.string().optional(),
+  company: z.string().optional(),
+  role: z.string().optional()
+});
+
+const contacts = await agent.generateSync({
+  prompt: `Extract all contact information from this email:
+
+  Hi, I'm John Smith from Acme Corp. You can reach me at
+  john@acme.com or call me at 555-1234. I'm the CTO.`,
+  outputSchema: ContactSchema,
+  agentInstance: agentData,
+  statistics: { label: "extractor", trigger: "api" }
+});
+
+console.log(contacts.name);    // "John Smith"
+console.log(contacts.email);   // "john@acme.com"
+console.log(contacts.company); // "Acme Corp"
+console.log(contacts.role);    // "CTO"
+```
+
+### With conversation history
+
+```typescript
+// First message
+const { stream: stream1 } = await agent.generateStream({
+  message: {
+    id: "msg-1",
+    role: "user",
+    parts: [{ type: "text", text: "My name is Alice" }]
+  },
+  session: "session-123",
+  user: currentUser,
+  agentInstance: agentData,
+  currentTools: []
+});
+
+await stream1.toTextStreamResponse(); // Wait for completion
+
+// Second message - agent remembers context
+const { stream: stream2 } = await agent.generateStream({
+  message: {
+    id: "msg-2",
+    role: "user",
+    parts: [{ type: "text", text: "What's my name?" }]
+  },
+  session: "session-123", // Same session
+  user: currentUser,
+  agentInstance: agentData,
+  currentTools: []
+});
+
+// Agent responds: "Your name is Alice."
+```
+
+### With memory
+
+```typescript
+// Configure agent with memory
+const agent = new ExuluAgent({
+  id: "memory_agent",
+  name: "Agent with Memory",
+  type: "agent",
+  description: "Agent that remembers past interactions",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You are an assistant with memory.",
+    memory: "agent_memory_context" // Context ID
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Agent automatically searches memory before responding
+const response = await agent.generateSync({
+  prompt: "What did we discuss about the project last week?",
+  agentInstance: agentData,
+  contexts: [memoryContext], // Include memory context
+  statistics: { label: "memory_agent", trigger: "api" }
+});
+
+// Agent can also create new memories via the auto-generated tool
+```
+
+### Multi-agent workflow
+
+```typescript
+// Create specialist agents
+const researchAgent = new ExuluAgent({
+  id: "researcher",
+  name: "Research Specialist",
+  type: "agent",
+  description: "Conducts research and gathers information",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You are a research specialist. Gather comprehensive information."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+const writerAgent = new ExuluAgent({
+  id: "writer",
+  name: "Content Writer",
+  type: "agent",
+  description: "Writes content based on research",
+  provider: "anthropic",
+  config: {
+    name: "claude-opus-4",
+    model: { /* ... */ },
+    instructions: "You are a skilled writer. Create engaging, well-structured content."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Coordinator agent that delegates
+const coordinatorAgent = new ExuluAgent({
+  id: "coordinator",
+  name: "Coordinator",
+  type: "agent",
+  description: "Coordinates workflow between specialists",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You coordinate work between specialists."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Export specialists as tools
+const researchTool = await researchAgent.tool("researcher", [researchAgent], [], []);
+const writerTool = await writerAgent.tool("writer", [writerAgent], [], []);
+
+// Coordinator uses them
+const article = await coordinatorAgent.generateSync({
+  prompt: "Create an article about quantum computing",
+  currentTools: [researchTool, writerTool],
+  agentInstance: await loadAgent("coordinator"),
+  statistics: { label: "coordinator", trigger: "api" }
+});
+```
+
+### Processing files
+
+```typescript
+const documentAgent = new ExuluAgent({
+  id: "doc_processor",
+  name: "Document Processor",
+  type: "agent",
+  description: "Processes and analyzes documents",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "Analyze documents and extract key information."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+
+// Files are automatically converted to text
+const { stream } = await documentAgent.generateStream({
+  message: {
+    id: "msg-1",
+    role: "user",
+    parts: [
+      { type: "text", text: "Summarize this document" },
+      {
+        type: "file",
+        mediaType: "application/pdf",
+        url: "https://example.com/document.pdf",
+        filename: "document.pdf"
+      }
+    ]
+  },
+  session: sessionId,
+  user: currentUser,
+  agentInstance: agentData,
+  currentTools: []
+});
+```
+
+## Type definitions
+
+```typescript
+// Agent constructor parameters
+interface ExuluAgentParams {
+  id: string;
+  name: string;
+  type: "agent";
+  description: string;
+  config?: ExuluAgentConfig;
+  queue?: ExuluQueueConfig;
+  maxContextLength?: number;
+  authenticationInformation?: string;
+  provider: string;
+  workflows?: {
+    enabled: boolean;
+    queue?: Promise<ExuluQueueConfig>;
+  };
+  capabilities?: {
+    text: boolean;
+    images: imageTypes[];
+    files: fileTypes[];
+    audio: audioTypes[];
+    video: videoTypes[];
+  };
+  rateLimit?: RateLimiterRule;
+}
+
+// Agent configuration
+interface ExuluAgentConfig {
+  name: string;
+  model?: {
+    create: ({ apiKey }: { apiKey?: string }) => LanguageModel;
+  };
+  instructions?: string;
+  memory?: string;
+}
+
+// Capabilities types
+type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
+type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' |
+                 '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
+type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
+type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
+```
+
+## Best practices
+
+<Tip>
+  **Test with different prompts**: Agent behavior can vary significantly with different phrasings. Test edge cases and refine instructions.
+</Tip>
+
+<Note>
+  **Monitor token usage**: Track input/output tokens to optimize costs and prevent context window overflow.
+</Note>
+
+<Warning>
+  **Validate structured outputs**: Even with schemas, validate critical data before using it in production systems.
+</Warning>
+
+<Info>
+  **Tool selection**: Provide only necessary tools. Too many tools can confuse the agent and increase latency.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration guide" icon="gear" href="/core/exulu-agent/configuration">
+    Learn about configuration options
+  </Card>
+  <Card title="ExuluTool" icon="wrench" href="/core/exulu-tool/introduction">
+    Learn about agent tools
+  </Card>
+</CardGroup>

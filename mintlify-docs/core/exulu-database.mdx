@@ -1,0 +1,811 @@
+---
+title: "ExuluDatabase"
+description: "Database initialization and management utilities for Exulu IMP"
+---
+
+## Overview
+
+`ExuluDatabase` provides utilities for initializing and managing the Exulu IMP database schema. It handles core table creation, context-specific tables (items and chunks), default user setup, and API key generation.
+
+## What is ExuluDatabase?
+
+ExuluDatabase offers essential database management functions:
+
+- **Schema initialization**: Creates all core Exulu IMP tables
+- **Schema updates**: Adds missing fields to existing tables
+- **Context tables**: Creates items and chunks tables for ExuluContext instances
+- **Default setup**: Creates admin user, roles, and default API key
+- **API key generation**: Generates secure API keys for programmatic access
+
+<CardGroup cols={3}>
+  <Card title="Initialize schema" icon="database">
+    Create all core database tables
+  </Card>
+  <Card title="Context tables" icon="table">
+    Setup items/chunks tables for contexts
+  </Card>
+  <Card title="Generate API keys" icon="key">
+    Create secure API keys for users
+  </Card>
+</CardGroup>
+
+## Quick start
+
+```typescript
+import { ExuluDatabase, ExuluContext } from "@exulu/backend";
+
+// Define your contexts
+const contexts = [
+  new ExuluContext({
+    id: "documentation",
+    name: "Documentation",
+    description: "Product documentation",
+    // ... context configuration
+  })
+];
+
+// Initialize database
+await ExuluDatabase.init({ contexts });
+
+// Generate API key
+const { key } = await ExuluDatabase.api.key.generate(
+  "production-api",
+  "api@example.com"
+);
+
+console.log(`API Key: ${key}`);
+```
+
+## Methods
+
+### init()
+
+Initializes the Exulu IMP database schema and creates context-specific tables.
+
+```typescript
+await ExuluDatabase.init({
+  contexts: ExuluContext[]
+}): Promise<void>
+```
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  Array of ExuluContext instances for which to create items/chunks tables
+</ParamField>
+
+**What it does:**
+
+1. **Creates core tables**:
+   - `users` - User accounts (NextAuth compatible)
+   - `roles` - Role-based access control
+   - `agents` - Agent configurations
+   - `agent_sessions` - Conversation sessions
+   - `agent_messages` - Chat messages
+   - `test_cases` - Evaluation test cases
+   - `eval_sets` - Evaluation sets
+   - `eval_runs` - Evaluation run results
+   - `statistics` - Usage statistics
+   - `variables` - Encrypted variable storage
+   - `workflow_templates` - Workflow definitions
+   - `projects` - Project organization
+   - `job_results` - Background job results
+   - `prompt_library` - Saved prompts
+   - `embedder_settings` - Embedder configurations
+   - `prompt_favorites` - Favorited prompts
+   - `platform_configurations` - Platform settings
+   - `rbac` - Role-based access control
+   - `accounts` - NextAuth account linking
+   - `verification_token` - NextAuth token verification
+
+2. **Creates default roles**:
+   - `admin` - Full write access to all resources
+   - `default` - Read access with write access to agents
+
+3. **Creates default admin user**:
+   - Email: `admin@exulu.com`
+   - Password: `admin`
+   - Super admin privileges
+
+4. **Generates default API key**:
+   - Name: `exulu`
+   - Email: `api@exulu.com`
+   - Admin role
+
+5. **Creates context tables**:
+   - Items table for each context (for document storage)
+   - Chunks table for each context with embedder (for vector search)
+
+**Example:**
+
+```typescript
+import { ExuluDatabase, ExuluContext, ExuluEmbedder } from "@exulu/backend";
+
+const embedder = new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embedder",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  authenticationInformation: process.env.OPENAI_API_KEY
+});
+
+const contexts = [
+  new ExuluContext({
+    id: "docs",
+    name: "Documentation",
+    description: "Product documentation",
+    embedder,
+    tableName: "docs_items"
+  }),
+  new ExuluContext({
+    id: "support",
+    name: "Support Tickets",
+    description: "Customer support conversations",
+    tableName: "support_items"
+  })
+];
+
+// Initialize database with contexts
+await ExuluDatabase.init({ contexts });
+
+// Console output:
+// [EXULU] Checking Exulu IMP database status.
+// [EXULU] Creating agents table.
+// [EXULU] Creating users table.
+// [EXULU] Creating roles table.
+// ...
+// [EXULU] Creating default admin role.
+// [EXULU] Creating default admin user.
+// [EXULU] Creating default api user.
+// [EXULU] items table does not exist, creating it.
+// [EXULU] chunks table does not exist, creating it.
+// [EXULU] Database initialized.
+// [EXULU] Default api key: sk_abc123def456.../exulu
+// [EXULU] Default password if using password auth: admin
+// [EXULU] Default email if using password auth: admin@exulu.com
+```
+
+**When to use:**
+
+- First time setting up Exulu IMP
+- Adding new ExuluContext instances that need database tables
+- Resetting database to default state
+
+<Note>
+  Running `init()` multiple times is safe - it only creates tables and fields that don't exist. Existing data is preserved.
+</Note>
+
+### update()
+
+Alias for `init()`. Updates the database schema by adding missing tables and fields.
+
+```typescript
+await ExuluDatabase.update({
+  contexts: ExuluContext[]
+}): Promise<void>
+```
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  Array of ExuluContext instances to update
+</ParamField>
+
+**Example:**
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+// Add a new context to existing database
+const newContext = new ExuluContext({
+  id: "new_context",
+  name: "New Context",
+  description: "New knowledge base"
+});
+
+await ExuluDatabase.update({ contexts: [newContext] });
+```
+
+**Use cases:**
+
+- Adding new ExuluContext instances to an existing installation
+- Migrating to new Exulu IMP versions with schema changes
+- Ensuring database schema is up to date
+
+<Tip>
+  Use `update()` when adding new contexts to an existing database. It's the same as `init()` but semantically clearer.
+</Tip>
+
+### api.key.generate()
+
+Generates a secure API key for a user.
+
+```typescript
+await ExuluDatabase.api.key.generate(
+  name: string,
+  email: string
+): Promise<{ key: string }>
+```
+
+<ParamField path="name" type="string" required>
+  Human-readable name for the API key (used as identifier)
+</ParamField>
+
+<ParamField path="email" type="string" required>
+  Email address for the API user
+</ParamField>
+
+<ResponseField name="key" type="string">
+  Generated API key in format: `sk_{random_string}/{sanitized_name}`
+
+  **Warning:** This is the only time the plain-text key is available. Store it securely.
+</ResponseField>
+
+**Example:**
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+// Generate API key for production environment
+const { key } = await ExuluDatabase.api.key.generate(
+  "Production API",
+  "api-prod@example.com"
+);
+
+console.log(`API Key: ${key}`);
+// Output: API Key: sk_abc123def456_xyz789/production_api
+
+// Store this key securely - it cannot be retrieved later
+process.env.EXULU_API_KEY = key;
+```
+
+**How it works:**
+
+1. Generates random key: `sk_{random}_{random}`
+2. Hashes the key using bcrypt (12 salt rounds)
+3. Sanitizes the name (lowercase, underscores)
+4. Stores hashed key with postfix: `{bcrypt_hash}/{sanitized_name}`
+5. Creates API user with admin role
+6. Returns plain-text key (only time it's accessible)
+
+**Key format:**
+
+- **Prefix**: `sk_` (secret key)
+- **Random strings**: Two random alphanumeric segments
+- **Postfix**: `/{sanitized_name}` (lowercase, underscores)
+
+**Example key:** `sk_9x7h3j2k5l8_4m6n1p9q8r/production_api`
+
+**Security:**
+
+<Warning>
+  The plain-text API key is only returned once. Store it securely. The database stores only the bcrypt hash, making the key unrecoverable if lost.
+</Warning>
+
+## Usage patterns
+
+### First-time setup
+
+```typescript
+import { ExuluDatabase, ExuluContext, ExuluEmbedder } from "@exulu/backend";
+
+async function setupExulu() {
+  // Configure embedder
+  const embedder = new ExuluEmbedder({
+    id: "embedder",
+    name: "Text Embedder",
+    provider: "openai",
+    model: "text-embedding-3-small",
+    vectorDimensions: 1536,
+    authenticationInformation: process.env.OPENAI_API_KEY
+  });
+
+  // Define contexts
+  const contexts = [
+    new ExuluContext({
+      id: "docs",
+      name: "Documentation",
+      description: "Product documentation",
+      embedder,
+      tableName: "docs_items"
+    }),
+    new ExuluContext({
+      id: "knowledge",
+      name: "Knowledge Base",
+      description: "Company knowledge base",
+      embedder,
+      tableName: "knowledge_items"
+    })
+  ];
+
+  // Initialize database
+  await ExuluDatabase.init({ contexts });
+
+  console.log("Exulu IMP database initialized successfully!");
+}
+
+setupExulu().catch(console.error);
+```
+
+### Adding new context
+
+```typescript
+import { ExuluDatabase, ExuluContext } from "@exulu/backend";
+
+async function addNewContext() {
+  const newContext = new ExuluContext({
+    id: "support",
+    name: "Support Tickets",
+    description: "Customer support conversations",
+    tableName: "support_items"
+  });
+
+  // Update database with new context
+  await ExuluDatabase.update({ contexts: [newContext] });
+
+  console.log("New context added successfully!");
+}
+```
+
+### Generating API keys for team members
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+async function provisionTeamApiKeys() {
+  const team = [
+    { name: "Frontend API", email: "api-frontend@example.com" },
+    { name: "Backend Service", email: "api-backend@example.com" },
+    { name: "Mobile App", email: "api-mobile@example.com" }
+  ];
+
+  const apiKeys = [];
+
+  for (const member of team) {
+    const { key } = await ExuluDatabase.api.key.generate(
+      member.name,
+      member.email
+    );
+
+    apiKeys.push({
+      name: member.name,
+      email: member.email,
+      key
+    });
+
+    console.log(`Generated API key for ${member.name}`);
+  }
+
+  // Save keys to secure location
+  console.log("API Keys:", JSON.stringify(apiKeys, null, 2));
+
+  // IMPORTANT: Store these keys securely (e.g., in a secrets manager)
+  // They cannot be retrieved later
+}
+```
+
+### Integration with ExuluApp
+
+```typescript
+import { ExuluApp, ExuluDatabase, ExuluContext } from "@exulu/backend";
+
+async function setupApplication() {
+  // Define contexts
+  const documentationContext = new ExuluContext({
+    id: "docs",
+    name: "Documentation",
+    description: "Product documentation",
+    tableName: "docs_items"
+  });
+
+  // Initialize database
+  await ExuluDatabase.init({ contexts: [documentationContext] });
+
+  // Create ExuluApp
+  const app = new ExuluApp();
+  await app.create({
+    config: {
+      express: {
+        enabled: true,
+        port: 3000
+      }
+    },
+    contexts: {
+      docs: documentationContext
+    },
+    agents: {}
+  });
+
+  console.log("Application ready!");
+}
+```
+
+### CI/CD database setup
+
+```typescript
+import { ExuluDatabase, ExuluContext } from "@exulu/backend";
+
+async function ciDatabaseSetup() {
+  console.log("Setting up test database...");
+
+  const contexts = [
+    new ExuluContext({
+      id: "test_context",
+      name: "Test Context",
+      description: "Testing context",
+      tableName: "test_items"
+    })
+  ];
+
+  try {
+    await ExuluDatabase.init({ contexts });
+
+    // Generate test API key
+    const { key } = await ExuluDatabase.api.key.generate(
+      "CI Test Key",
+      "ci@test.com"
+    );
+
+    // Export for test suite
+    process.env.TEST_API_KEY = key;
+
+    console.log("Test database ready!");
+  } catch (error) {
+    console.error("Database setup failed:", error);
+    process.exit(1);
+  }
+}
+
+if (process.env.CI) {
+  ciDatabaseSetup();
+}
+```
+
+## Database schema
+
+### Core tables structure
+
+All core tables include:
+- `id` (UUID) - Primary key
+- `createdAt` (timestamp) - Creation timestamp
+- `updatedAt` (timestamp) - Last update timestamp
+
+### Users table
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW(),
+  name VARCHAR(255),
+  password VARCHAR(255),
+  email VARCHAR(255),
+  "emailVerified" TIMESTAMP,
+  image TEXT,
+  type VARCHAR(10), -- 'api' or 'user'
+  apikey TEXT, -- Format: {bcrypt_hash}/{key_name}
+  role UUID, -- Foreign key to roles table
+  super_admin BOOLEAN
+);
+```
+
+### Roles table
+
+```sql
+CREATE TABLE roles (
+  id UUID PRIMARY KEY,
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW(),
+  name VARCHAR(255),
+  agents VARCHAR(10), -- 'read' or 'write'
+  evals VARCHAR(10),
+  workflows VARCHAR(10),
+  variables VARCHAR(10),
+  users VARCHAR(10),
+  api VARCHAR(10)
+);
+```
+
+### Context tables
+
+**Items table** (created for each ExuluContext):
+
+```sql
+CREATE TABLE {context.tableName} (
+  id UUID PRIMARY KEY,
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW(),
+  -- Additional fields from context schema
+);
+```
+
+**Chunks table** (created for contexts with embedders):
+
+```sql
+CREATE TABLE {context.tableName}_chunks (
+  id UUID PRIMARY KEY,
+  "createdAt" TIMESTAMP DEFAULT NOW(),
+  "updatedAt" TIMESTAMP DEFAULT NOW(),
+  item_id UUID, -- Foreign key to items table
+  content TEXT,
+  embedding VECTOR({dimensions}), -- pgvector extension
+  metadata JSONB
+);
+```
+
+## Default credentials
+
+After running `ExuluDatabase.init()`, the following default credentials are created:
+
+<AccordionGroup>
+  <Accordion title="Default admin user">
+    **Email:** `admin@exulu.com`
+    **Password:** `admin`
+    **Role:** admin (full write access)
+    **Super admin:** Yes
+
+    <Warning>
+      Change the default password immediately in production environments.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Default API key">
+    **Name:** `exulu`
+    **Email:** `api@exulu.com`
+    **Role:** admin (full write access)
+    **Format:** `sk_{random}_{random}/exulu`
+
+    The key is printed to console during initialization:
+    ```
+    [EXULU] Default api key: sk_abc123def456.../exulu
+    ```
+
+    <Warning>
+      Save this key securely. It cannot be retrieved later.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="Default roles">
+    **Admin role:**
+    - agents: write
+    - evals: write
+    - workflows: write
+    - variables: write
+    - users: write
+    - api: write
+
+    **Default role:**
+    - agents: write
+    - evals: read
+    - workflows: read
+    - variables: read
+    - users: read
+    - api: read
+  </Accordion>
+</AccordionGroup>
+
+## Environment variables
+
+ExuluDatabase uses these environment variables:
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string
+
+  **Format:** `postgresql://user:password@host:port/database`
+
+  **Example:** `postgresql://exulu:password@localhost:5432/exulu_db`
+</ParamField>
+
+<ParamField path="NEXTAUTH_SECRET" type="string" required>
+  Secret key for NextAuth session encryption
+
+  **Used for:** Password hashing, session tokens, encrypted variables
+
+  **Generate:** `openssl rand -base64 32`
+</ParamField>
+
+## Error handling
+
+```typescript
+import { ExuluDatabase, ExuluContext } from "@exulu/backend";
+
+async function safeInit() {
+  try {
+    const contexts = [
+      new ExuluContext({
+        id: "docs",
+        name: "Documentation",
+        description: "Docs",
+        tableName: "docs_items"
+      })
+    ];
+
+    await ExuluDatabase.init({ contexts });
+    console.log("Database initialized successfully!");
+  } catch (error) {
+    if (error.code === "ECONNREFUSED") {
+      console.error("Cannot connect to database. Is PostgreSQL running?");
+    } else if (error.code === "42P07") {
+      console.error("Table already exists. Use update() instead of init().");
+    } else {
+      console.error("Database initialization failed:", error.message);
+    }
+    throw error;
+  }
+}
+```
+
+**Common errors:**
+
+- `ECONNREFUSED` - Database connection failed
+- `42P07` - Table already exists
+- `3D000` - Database does not exist
+- `28P01` - Authentication failed
+
+## Migration from previous versions
+
+If upgrading from an older version of Exulu IMP:
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+async function migrate() {
+  // Run update to add missing tables/fields
+  await ExuluDatabase.update({ contexts });
+
+  console.log("Database migrated to latest schema!");
+}
+```
+
+**What `update()` does:**
+
+1. Checks for missing tables and creates them
+2. Checks for missing fields in existing tables
+3. Adds missing fields without affecting existing data
+4. Creates new context tables if needed
+
+<Note>
+  Database migrations are non-destructive. Existing data is preserved.
+</Note>
+
+## Best practices
+
+<Tip>
+  **Run init() on startup**: Initialize the database on application startup to ensure schema is up to date.
+</Tip>
+
+<Note>
+  **Context management**: Always pass all ExuluContext instances to `init()` or `update()` to ensure all tables exist.
+</Note>
+
+<Warning>
+  **Secure API keys**: Store generated API keys in a secrets manager. They cannot be retrieved from the database.
+</Warning>
+
+<Info>
+  **Default credentials**: Change default admin password and API key in production environments.
+</Info>
+
+## Integration with other Exulu components
+
+### With ExuluContext
+
+```typescript
+const context = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product docs",
+  tableName: "docs_items"
+});
+
+// Initialize creates the items table
+await ExuluDatabase.init({ contexts: [context] });
+
+// Now you can use the context
+await context.addItem({
+  content: "Product documentation...",
+  metadata: { source: "docs.example.com" }
+});
+```
+
+### With ExuluAuthentication
+
+```typescript
+import { ExuluDatabase, ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+// Generate API key
+const { key } = await ExuluDatabase.api.key.generate(
+  "Service API",
+  "service@example.com"
+);
+
+// Use API key for authentication
+const { db } = await postgresClient();
+const result = await ExuluAuthentication.authenticate({
+  apikey: key,
+  db
+});
+
+console.log(`Authenticated as: ${result.user?.email}`);
+```
+
+### With ExuluVariables
+
+```typescript
+import { ExuluDatabase, ExuluVariables, postgresClient } from "@exulu/backend";
+
+// Initialize database (creates variables table)
+await ExuluDatabase.init({ contexts: [] });
+
+// Store encrypted variable
+const { db } = await postgresClient();
+await db.from("variables").insert({
+  name: "openai_api_key",
+  value: encryptedValue,
+  encrypted: true
+});
+
+// Retrieve variable
+const apiKey = await ExuluVariables.get("openai_api_key");
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database connection fails">
+    **Error:** `ECONNREFUSED` or `ETIMEDOUT`
+
+    **Solutions:**
+    1. Verify PostgreSQL is running: `pg_isready`
+    2. Check `DATABASE_URL` environment variable
+    3. Verify network connectivity to database host
+    4. Check firewall rules allow PostgreSQL port (default: 5432)
+  </Accordion>
+
+  <Accordion title="Tables already exist">
+    **Error:** `table "users" already exists`
+
+    **Solutions:**
+    - Use `update()` instead of `init()` for existing databases
+    - `init()` is safe to run multiple times (checks existence first)
+    - If seeing this error, there may be a race condition (multiple processes initializing simultaneously)
+  </Accordion>
+
+  <Accordion title="Missing pgvector extension">
+    **Error:** `type "vector" does not exist`
+
+    **Solutions:**
+    1. Install pgvector extension in PostgreSQL
+    2. Enable extension in your database:
+       ```sql
+       CREATE EXTENSION IF NOT EXISTS vector;
+       ```
+    3. Verify installation: `SELECT * FROM pg_extension WHERE extname = 'vector';`
+  </Accordion>
+
+  <Accordion title="Permission denied">
+    **Error:** `permission denied for schema public`
+
+    **Solutions:**
+    1. Grant necessary permissions:
+       ```sql
+       GRANT ALL ON SCHEMA public TO your_user;
+       GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO your_user;
+       ```
+    2. Use a database user with CREATE TABLE privileges
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluContext" icon="database" href="/core/exulu-context/introduction">
+    Create knowledge bases with context-specific tables
+  </Card>
+  <Card title="ExuluAuthentication" icon="shield" href="/core/exulu-authentication">
+    Use generated API keys for authentication
+  </Card>
+  <Card title="ExuluVariables" icon="key" href="/core/exulu-variables/introduction">
+    Store encrypted configuration variables
+  </Card>
+  <Card title="ExuluApp" icon="box" href="/core/exulu-app/introduction">
+    Build applications with initialized database
+  </Card>
+</CardGroup>

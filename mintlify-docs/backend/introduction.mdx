@@ -1,0 +1,218 @@
+---
+title: "Introduction"
+description: "Fully featured platform as a service stack for creating and managing AI agents with semantic search, background workers, and multi-provider support"
+---
+
+## What is Exulu IMP?
+
+Exulu IMP (Intelligence Management Platform) is a fully featured PaaS framework for building production-ready multi- or single-agent applications. It provides the infrastructure you need to manage agents, semantic search contexts, background job processing, and tool integrations.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multi-provider agents" icon="users">
+    Support for 60+ providers through Vercel AI SDK, plus flexible integration with custom LLM providers via vLLM or Ollama
+  </Card>
+  <Card title="Semantic search" icon="scan-search">
+    Vector-powered context system for RAG implementations with pgvector. Out-of-the-box generation of tooling for semantic search and agentic search for agents
+  </Card>
+  <Card title="Background workers" icon="biceps-flexed">
+    BullMQ-based job queue for long-running tasks and scheduled operations
+  </Card>
+  <Card title="Express API" icon="server">
+    Ready-to-use GraphQL and REST APIs with authentication and file uploads
+  </Card>
+</CardGroup>
+
+## Quick start
+
+Get started by cloning the example repository or installing the package:
+
+```bash
+# Option 1: Clone the example project (recommended)
+git clone https://github.com/Qventu/exulu-example
+
+# Option 2: Install the NPM package
+npm install @exulu/backend
+```
+
+Create your first Exulu IMP instance using the factory pattern:
+
+```typescript
+import { ExuluApp, ExuluAgent } from "@exulu/backend";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+let instance: ExuluApp | null = null;
+
+export const exulu = async (): Promise<ExuluApp> => {
+  if (instance) {
+    return instance;
+  }
+
+  instance = new ExuluApp();
+  instance = await instance.create({
+    config: {
+      workers: { enabled: true },
+      MCP: { enabled: false },
+      telemetry: { enabled: false }
+    },
+    contexts: [],
+    rerankers: [],
+    tools: [],
+    agents: [
+      new ExuluAgent({
+        id: "assistant",
+        name: "Assistant",
+        provider: "anthropic",
+        description: "A helpful AI assistant",
+        type: "agent",
+        capabilities: {
+          text: true,
+          images: [".png", ".jpg", ".jpeg", ".webp"],
+          files: [".pdf", ".docx"],
+          audio: [],
+          video: []
+        },
+        maxContextLength: 200000,
+        config: {
+          name: "Assistant",
+          instructions: "You are a helpful assistant.",
+          model: {
+            create: ({ apiKey }) => {
+              const anthropic = createAnthropic({ apiKey });
+              return anthropic.languageModel("claude-sonnet-4-5");
+            }
+          }
+        }
+      })
+    ]
+  });
+
+  const expressApp = await instance.express.init();
+  expressApp.listen(3000);
+
+  return instance;
+};
+```
+
+<Card
+  title="Full quickstart guide"
+  icon="rocket"
+  href="/quickstart"
+  horizontal
+>
+  Follow the complete setup guide with database initialization and configuration
+</Card>
+
+## Core concepts
+
+<CardGroup cols={2}>
+  <Card
+    title="ExuluApp"
+    icon="cube"
+    href="/core/exulu-app/introduction"
+  >
+    The main application class that orchestrates all components
+  </Card>
+  <Card
+    title="Contexts"
+    icon="database"
+    href="/core/exulu-context/introduction"
+  >
+    Semantic search indices with vector embeddings for RAG
+  </Card>
+  <Card
+    title="Agents"
+    icon="robot"
+    href="/core/exulu-agent/introduction"
+  >
+    AI agents that process requests and use tools
+  </Card>
+  <Card
+    title="Tools"
+    icon="wrench"
+    href="/core/exulu-tool/introduction"
+  >
+    Functions that extend agent capabilities
+  </Card>
+</CardGroup>
+
+## Architecture
+
+Exulu IMP follows a modular architecture:
+
+1. **ExuluApp** - Central orchestrator that manages all components
+2. **Contexts** - Semantic search indices with automatic tool generation
+3. **Agents** - LLM-powered execution units with tool calling
+4. **Workers** - Background job processors for async operations
+5. **Express API** - GraphQL and REST endpoints for client access
+
+<Note>
+  The platform is designed to be deployed as an npm package in your Node.js application, giving you full control over hosting and customization.
+</Note>
+
+## Use cases
+
+<AccordionGroup>
+  <Accordion title="RAG applications">
+    Build retrieval-augmented generation systems with semantic search contexts. Ingest documents, generate embeddings, and let agents query relevant information automatically.
+  </Accordion>
+
+  <Accordion title="Multi-agent systems">
+    Create complex workflows with multiple specialized agents. Each agent can have different capabilities, tools, and LLM providers.
+  </Accordion>
+
+  <Accordion title="Background processing">
+    Offload long-running tasks like embeddings generation, document processing, and scheduled data sync to BullMQ workers.
+  </Accordion>
+
+  <Accordion title="Tool-augmented AI">
+    Extend agent capabilities with custom tools for API calls, database queries, file operations, and external service integrations.
+  </Accordion>
+</AccordionGroup>
+
+## What's included
+
+When you install `@exulu/backend`, you get:
+
+- **Default agents** for GPT-5, GPT-4.1, GPT-4o, Claude Opus 4, Claude Sonnet 4/4.5, Gemini 2.5, Llama 3.3, and more
+- **Built-in tools** for todo management and web search
+- **Database utilities** for PostgreSQL and vector storage
+- **Authentication** with NextAuth integration
+- **Job queues** with Redis and BullMQ
+- **Logging** with Winston
+- **Telemetry** with OpenTelemetry
+- **Type definitions** for TypeScript
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Set up your first Exulu IMP instance
+  </Card>
+  <Card
+    title="ExuluApp reference"
+    icon="cube"
+    href="/core/exulu-app/introduction"
+  >
+    Learn about the main application class
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/core/exulu-app/configuration"
+  >
+    Configure logging, workers, and integrations
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api-reference/introduction"
+  >
+    Explore the GraphQL and REST APIs
+  </Card>
+</CardGroup>

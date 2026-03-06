@@ -1,0 +1,95 @@
+---
+title: 'Analytics'
+description: 'GraphQL types for usage statistics and reporting'
+---
+
+## statistics
+
+Usage statistics and analytics.
+
+```graphql
+type statistics {
+  id: ID!
+  name: String!
+  label: String!
+  type: String!
+  trigger: String!
+  count: Int!
+  user: ID
+  role: ID
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## Aggregate Statistics
+
+Query aggregate statistics with grouping:
+
+```graphql
+query {
+  statisticsStatistics(
+    groupBy: "label"
+    filters: [
+      { type: { eq: "agent_run" } }
+    ]
+    limit: 10
+  ) {
+    group
+    count
+  }
+}
+```
+
+## Common Statistics Types
+
+- **agent_run** - Agent execution count
+- **api_call** - API request count
+- **workflow_execution** - Workflow run count
+- **eval_run** - Evaluation execution count
+- **context_search** - Vector search count
+
+## Usage Analytics
+
+Statistics track usage across:
+
+- **Per user** - Track individual user activity
+- **Per role** - Aggregate by role
+- **Per resource** - Track specific agents, workflows, etc.
+- **Time-based** - Query by date ranges
+
+## Example: Agent Usage Report
+
+```graphql
+query {
+  statisticsStatistics(
+    groupBy: "label"
+    filters: [
+      {
+        type: { eq: "agent_run" }
+        createdAt: { gte: "2025-01-01T00:00:00Z" }
+      }
+    ]
+  ) {
+    group  # Agent name
+    count  # Number of executions
+  }
+}
+```
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    User and role statistics
+  </Card>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent usage tracking
+  </Card>
+  <Card title="Workflow Types" icon="workflow" href="/api-reference/core-types/workflow-types">
+    Workflow execution stats
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>
