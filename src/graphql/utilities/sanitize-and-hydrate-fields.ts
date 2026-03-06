@@ -3,12 +3,12 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
 import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
-import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluProvider } from "@SRC/exulu/provider";
+import { exuluApp } from "@SRC/exulu/app/singleton";
 
 const addProviderFields = async (
   args: Record<string, any>,
@@ -71,7 +71,7 @@ const addProviderFields = async (
               if (tool.id === result.id) {
                 return null;
               }
-              const instance = await loadAgent(tool.id); // for agents used as tools, the tool id === the agent id
+              const instance = await exuluApp.get().agent(tool.id); // for agents used as tools, the tool id === the agent id
               if (!instance) {
                 throw new Error(
                   "Trying to load a tool of type 'agent', but the associated agent with id " +
@@ -202,6 +202,7 @@ export const finalizeRequestedFields = async ({
   if (!requestedFields.includes("id")) {
     delete result.id;
   }
+  // todo figure out how to deal with code defined agents in the graphql api
   if (Array.isArray(result)) {
     result = result.map((item) => {
       return finalizeRequestedFields({

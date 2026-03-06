@@ -42,17 +42,28 @@ import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluReranker } from "../reranker";
 import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
 import type { ExuluTool } from "../tool";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
+import { exuluApp } from "./singleton";
+import { RBACResolver } from "@SRC/graphql/resolvers/rbac-resolver.ts";
+
+const loadAgentCache = new Map<
+  string,
+  {
+    agent: ExuluAgent;
+    expiresAt: Date;
+  }
+>();
 
 const isDev = process.env.NODE_ENV !== "production";
 const consoleTransport = new winston.transports.Console({
   format: isDev
     ? winston.format.combine(
-        winston.format.colorize(),
-        winston.format.timestamp({ format: "HH:mm:ss" }),
-        winston.format.printf(({ timestamp, level, message }) => {
-          return `${timestamp as string} [${level as string}] ${message as string}`;
-        }),
-      )
+      winston.format.colorize(),
+      winston.format.timestamp({ format: "HH:mm:ss" }),
+      winston.format.printf(({ timestamp, level, message }) => {
+        return `${timestamp as string} [${level as string}] ${message as string}`;
+      }),
+    )
     : winston.format.json(),
 });
 
@@ -115,6 +126,7 @@ export type ExuluConfig = {
 
 export class ExuluApp {
   private _providers: ExuluProvider[] = [];
+  private _agents: ExuluAgent[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
   private _queues: ExuluQueueConfig[] = [];
@@ -123,7 +135,7 @@ export class ExuluApp {
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
 
-  constructor() {}
+  constructor() { }
 
   // Factory function so we can async
   // initialize the MCP server if needed.
@@ -131,6 +143,7 @@ export class ExuluApp {
     contexts,
     providers,
     config,
+    agents,
     tools,
     evals,
     rerankers,
@@ -138,6 +151,7 @@ export class ExuluApp {
     // mcps
     contexts?: Record<string, ExuluContext>;
     config: ExuluConfig;
+    agents?: ExuluAgent[];
     providers?: ExuluProvider[];
     rerankers?: ExuluReranker[];
     evals?: ExuluEval[];
@@ -154,6 +168,8 @@ export class ExuluApp {
     };
 
     this._rerankers = [...(rerankers ?? [])];
+
+    this._agents = [...(agents ?? [])];
 
     this._providers = [
       claudeSonnet4Provider,
@@ -209,33 +225,33 @@ export class ExuluApp {
       id: string;
       type: "context" | "agent" | "tool" | "reranker";
     }[] = [
-      ...Object.keys(this._contexts || {}).map((x) => ({
-        name: this._contexts?.[x]?.name ?? "",
-        id: this._contexts?.[x]?.id ?? "",
-        type: "context" as const,
-      })),
-      ...this._providers.map((provider) => ({
-        name: provider.name ?? "",
-        id: provider.id ?? "",
-        type: "agent" as const,
-      })),
-      ...this._tools.map((tool) => ({
-        name: tool.name ?? "",
-        id: tool.id ?? "",
-        type: "tool" as const,
-      })),
-      ...this._rerankers.map((reranker) => ({
-        name: reranker.name ?? "",
-        id: reranker.id ?? "",
-        type: "reranker" as const,
-      })),
-    ];
+        ...Object.keys(this._contexts || {}).map((x) => ({
+          name: this._contexts?.[x]?.name ?? "",
+          id: this._contexts?.[x]?.id ?? "",
+          type: "context" as const,
+        })),
+        ...this._providers.map((provider) => ({
+          name: provider.name ?? "",
+          id: provider.id ?? "",
+          type: "agent" as const,
+        })),
+        ...this._tools.map((tool) => ({
+          name: tool.name ?? "",
+          id: tool.id ?? "",
+          type: "tool" as const,
+        })),
+        ...this._rerankers.map((reranker) => ({
+          name: reranker.name ?? "",
+          id: reranker.id ?? "",
+          type: "reranker" as const,
+        })),
+      ];
 
     // Integrate validation into the create method
     const invalid = checks.filter((x) => !isValidPostgresName(x?.id ?? ""));
     if (invalid.length > 0) {
       console.error(
-        `%c[EXULU] Invalid ID found for a context, tool, reranker or agent: ${invalid.map((x) => x.id).join(", ")}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`,
+        `%c[EXULU] Invalid ID found for a context, tool, reranker or provider: ${invalid.map((x) => x.id).join(", ")}. An ID must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or underscores and be a max length of 80 characters and at least 5 characters long.`,
         "color: orange; font-weight: bold; \n \n",
       );
       throw new Error(
@@ -262,6 +278,12 @@ export class ExuluApp {
 
     this._queues = [...new Set(queueSet.values())] as any;
     console.log("[EXULU] App initialized.");
+
+    // Set the instance in the singleton
+    // so we can access it from anywhere 
+    // in the code without having to pass 
+    // it around.
+    exuluApp.set(this);
     return this;
   };
 
@@ -291,6 +313,102 @@ export class ExuluApp {
 
   public tools(): ExuluTool[] {
     return this._tools;
+  }
+
+  public async agent(id: string): Promise<ExuluAgent | undefined> {
+    let agentInstance: ExuluAgent | undefined;
+    const cachedAgent = loadAgentCache.get(id);
+    if (cachedAgent && cachedAgent.expiresAt > new Date()) {
+      return cachedAgent.agent;
+    }
+
+    // First check if the agent is defined as code
+    // and provided to the ExuluApp constructor.
+    if (this._agents.length > 0) {
+      agentInstance = this._agents.find((x) => x.id === id);
+      if (agentInstance) {
+        if (!agentInstance.RBAC) {
+          // Set default RBAC for agents that are defined
+          // as code in the ExuluApp constructor to public.
+          agentInstance.RBAC = {
+            type: "public",
+            users: [],
+            roles: [],
+          }
+          agentInstance.rights_mode = "public";
+        }
+        agentInstance.source = "code";
+        loadAgentCache.set(id, {
+          agent: agentInstance,
+          expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
+        });
+        return agentInstance;
+      }
+    }
+
+    // If not, check if the agent is defined in the database.
+    const { db } = await postgresClient();
+    agentInstance = await db
+      .from("agents")
+      .where({
+        id,
+      })
+      .first();
+
+    if (!agentInstance) {
+      throw new Error("Agent instance not found.");
+    }
+
+    const agentRbac = await RBACResolver(
+      db,
+      "agent",
+      agentInstance.id,
+      agentInstance.rights_mode || "private",
+    );
+    agentInstance.RBAC = agentRbac;
+
+    if (!agentInstance) {
+      throw new Error("Agent instance not found.");
+    }
+    loadAgentCache.set(id, {
+      agent: agentInstance,
+      expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
+    });
+    return agentInstance;
+  }
+
+  public async agents(): Promise<ExuluAgent[]> {
+    const { db } = await postgresClient();
+    let agents = await db.from("agents");
+    for (const agent of agents) {
+      const agentRbac = await RBACResolver(db, "agent", agent.id, agent.rights_mode || "private");
+      agent.RBAC = agentRbac;
+      loadAgentCache.set(agent.id, {
+        agent: agent,
+        expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
+      });
+    }
+    if (this._agents.length > 0) {
+      agents = [
+        ...this._agents.map((agent) => {
+          if (!agent.RBAC) {
+            // Set default RBAC for agents that are defined
+            // as code in the ExuluApp constructor to public.
+            agent.RBAC = {
+              type: "public",
+              users: [],
+              roles: [],
+            }
+            agent.rights_mode = "public";
+          }
+          agent.source = "code";
+          return agent;
+        }),
+        ...agents
+      ];
+    }
+
+    return agents;
   }
 
   public context(id: string): ExuluContext | undefined {

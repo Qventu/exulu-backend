@@ -1,7 +1,6 @@
 import IORedis from "ioredis";
 import { redisServer } from "../bullmq/server";
 import { Job, Worker, type JobState } from "bullmq";
-import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
@@ -29,6 +28,7 @@ import type { ExuluWorkflow } from "@EXULU_TYPES/workflow.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { ExuluProvider } from "./provider.ts";
+import { exuluApp } from "./app/singleton.ts";
 
 let redisConnection: IORedis;
 
@@ -934,7 +934,7 @@ export const validateWorkflowPayload = async (
     throw new Error(`Workflow ${data.workflow} not found in the database.`);
   }
 
-  const agent = await loadAgent(workflow.agent);
+  const agent = await exuluApp.get().agent(workflow.agent);
 
   if (!agent) {
     throw new Error(`Agent ${workflow.agent} not found in the database.`);
@@ -1005,7 +1005,7 @@ const validateEvalPayload = async (
     throw new Error(`Eval run ${data.eval_run_id} not found in the database.`);
   }
 
-  const agent = await loadAgent(evalRun.agent_id);
+  const agent = await exuluApp.get().agent(evalRun.agent_id);
 
   if (!agent) {
     throw new Error(`Agent ${evalRun.agent_id} not found in the database.`);

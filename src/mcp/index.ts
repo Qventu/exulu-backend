@@ -11,7 +11,6 @@ import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
 import { requestValidators } from "../validators/requests.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
-import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
@@ -21,6 +20,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
+import { exuluApp } from "@SRC/exulu/app/singleton.ts";
 // Create an MCP server
 
 export class ExuluMCP {
@@ -384,7 +384,7 @@ export class ExuluMCP {
         return;
       }
 
-      const agent = await loadAgent(req.params.agent);
+      const agent = await exuluApp.get().agent(req.params.agent);
 
       if (!agent) {
         console.error("[EXULU] Agent not found.", req.params.agent);

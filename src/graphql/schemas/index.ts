@@ -11,7 +11,6 @@ import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
 import { postgresClient } from "@SRC/postgres/client.ts";
-import { loadAgent, loadAgents } from "@SRC/utils/load-agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
@@ -34,6 +33,7 @@ import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-
 import { getJobsByQueueName } from "../resolvers/job-queues";
 import { createMutations } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
+import { exuluApp } from "@SRC/exulu/app/singleton";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -605,7 +605,7 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agent = await loadAgent(workflowTemplate.agent);
+    const agent = await exuluApp.get().agent(workflowTemplate.agent);
     if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
@@ -710,7 +710,7 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agent = await loadAgent(workflowTemplate.agent);
+    const agent = await exuluApp.get().agent(workflowTemplate.agent);
     if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
@@ -780,7 +780,7 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agent = await loadAgent(workflowTemplate.agent);
+    const agent = await exuluApp.get().agent(workflowTemplate.agent);
     if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
@@ -878,7 +878,7 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agent = await loadAgent(workflowTemplate.agent);
+    const agent = await exuluApp.get().agent(workflowTemplate.agent);
     if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
@@ -1107,7 +1107,7 @@ type PageInfo {
     }
 
     // Load the agent instance to validate it exists
-    const agent = await loadAgent(evalRun.agent_id);
+    const agent = await exuluApp.get().agent(evalRun.agent_id);
     if (!agent) {
       throw new Error("Agent instance not found for eval run.");
     }
@@ -1519,7 +1519,7 @@ type PageInfo {
 
     // Get all active agents and add them as tools
     // so agents can call other agents as tools.
-    const instances = await loadAgents();
+    const instances = await exuluApp.get().agents();
     let agentTools = await Promise.all(
       instances.map(async (agent: ExuluAgent) => {
         const provider: ExuluProvider | undefined = providers.find((a) => a.id === agent.provider);

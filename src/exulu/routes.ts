@@ -22,7 +22,6 @@ import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./app/index.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
-import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import Anthropic from "@anthropic-ai/sdk";
@@ -41,6 +40,7 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
+import { exuluApp } from "./app/singleton.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -519,7 +519,7 @@ Mood: friendly and intelligent.
       // todo allow setting agent instance specific configurations that overwrite the global ones
       // todo display rate limit message in the chat UI
 
-      const agent = await loadAgent(instance);
+      const agent = await exuluApp.get().agent(instance);
 
       const requestValidationResult = requestValidators.agents(req);
 

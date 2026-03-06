@@ -9,7 +9,7 @@ import CryptoJS from "crypto-js";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { LanguageModel, Tool } from "ai";
-import type { Agent, allFileTypes } from "@EXULU_TYPES/models/agent";
+import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
 import { createAgenticRetrievalTool } from "./agentic-retrieval";
@@ -137,7 +137,7 @@ export const convertExuluToolsToAiSdkTools = async (
   project?: string,
   items?: string[],
   model?: LanguageModel,
-  agentInstance?: Agent,
+  agent?: ExuluAgent,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -178,7 +178,7 @@ export const convertExuluToolsToAiSdkTools = async (
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
   if (contexts?.length && model) {
     const agenticSearchTool = createAgenticRetrievalTool({
-      contexts: contexts.filter((context) => context.id !== agentInstance?.memory), // dont include the agents memory in the agentic search tool!
+      contexts: contexts.filter((context) => context.id !== agent?.memory), // dont include the agents memory in the agentic search tool!
       rerankers: rerankers || [],
       user: user,
       role: user?.role?.id,

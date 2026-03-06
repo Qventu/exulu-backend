@@ -34,7 +34,6 @@
     "noUncheckedIndexedAccess": true,
     "noPropertyAccessFromIndexSignature": false,
     "strictPropertyInitialization": false,
-    "noRedundantTypeConstituents": false,
 
     // Quality of life
     "skipLibCheck": true,

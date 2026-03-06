@@ -4,9 +4,9 @@ import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { User } from "@EXULU_TYPES/models/user.ts";
-import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider";
+import { exuluApp } from "@SRC/exulu/app/singleton";
 
 export const getEnabledTools = async (
   agent: ExuluAgent,
@@ -39,15 +39,15 @@ export const getEnabledTools = async (
             return null;
           }
           // The target agent instance, not the agentInstance that is calling the tool
-          const instance = await loadAgent(id); // for agents used as tools, the tool id === the agent id
-          if (!instance) {
+          const agentAsTool = await exuluApp.get().agent(id); // for agents used as tools, the tool id === the agent id
+          if (!agentAsTool) {
             throw new Error(
               "Trying to load a tool of type 'agent', but the associated agent with id " +
                 id +
                 " was not found in the database.",
             );
           }
-          const provider = providers.find((a) => a.id === instance.provider);
+          const provider = providers.find((a) => a.id === agentAsTool.provider);
           if (!provider) {
             throw new Error(
               "Trying to load a tool of type 'agent', but the associated agent with id " +
@@ -57,13 +57,13 @@ export const getEnabledTools = async (
           }
 
           // if no access do not return it
-          const hasAccessToAgent = await checkRecordAccess(instance, "read", user);
+          const hasAccessToAgent = await checkRecordAccess(agentAsTool, "read", user);
 
           if (!hasAccessToAgent) {
             return null;
           }
 
-          hydrated = await provider.tool(instance.id, providers, allContexts, allRerankers || []);
+          hydrated = await provider.tool(agentAsTool.id, providers, allContexts, allRerankers || []);
         } else {
           hydrated = allExuluTools.find((t) => t.id === id);
         }

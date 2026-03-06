@@ -5,6 +5,7 @@ export interface ExuluAgent {
     modelName?: string;
     providerName?: string;
     provider: string;
+    source: "code" | "database";
     memory?: string;
     welcomemessage?: string;
     type: "agent";

@@ -20,7 +20,6 @@ import {
   stepCountIs,
 } from "ai";
 import { generateSlug } from "@SRC/utils/generate-slug";
-import { loadAgent } from "@SRC/utils/load-agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import { getEnabledTools } from "@SRC/utils/enabled-tools";
 import { postgresClient } from "@SRC/postgres/client";
@@ -36,6 +35,7 @@ import { parseOfficeAsync } from "officeparser";
 import type { ExuluConfig } from "./app/index.ts";
 import { createNewMemoryItemTool } from "@SRC/templates/tools/memory-tool.ts";
 import type { Request } from "express";
+import { exuluApp } from "./app/singleton.ts";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -150,7 +150,7 @@ export class ExuluProvider {
     rerankers: ExuluReranker[],
   ): Promise<ExuluTool | null> => {
 
-    const agent = await loadAgent(instance);
+    const agent = await exuluApp.get().agent(instance);
 
     if (!agent) {
       return null;
