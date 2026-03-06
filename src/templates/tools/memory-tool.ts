@@ -1,9 +1,9 @@
-import type { Agent } from "@EXULU_TYPES/models/agent";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { z, ZodSchema } from "zod";
 
-export const createNewMemoryItemTool = (agent: Agent, context: ExuluContext): ExuluTool => {
+export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext): ExuluTool => {
   const fields: Record<string, ZodSchema> = {
     name: z.string().describe("The name of the item to create"),
     description: z.string().describe("The description of the item to create"),

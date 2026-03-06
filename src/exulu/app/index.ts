@@ -4,27 +4,27 @@ import { createWorkers } from "@SRC/exulu/workers.ts";
 import { ExuluMCP } from "@SRC/mcp/index.ts";
 import express from "express";
 import {
-  claudeSonnet4Agent,
-  claudeOpus4Agent,
-  claudeSonnet45Agent,
-} from "@SRC/templates/agents/anthropic/claude";
-import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "@SRC/templates/agents/cerebras";
+  claudeSonnet4Provider,
+  claudeOpus4Provider,
+  claudeSonnet45Provider,
+} from "@SRC/templates/providers/anthropic/claude";
+import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "@SRC/templates/providers/cerebras";
 import {
-  vertexGemini25FlashAgent,
-  vertexGemini25ProAgent,
-  vertexGemini3ProAgent,
-} from "@SRC/templates/agents/google/vertex";
+  vertexGemini25FlashProvider,
+  vertexGemini25ProProvider,
+  vertexGemini3ProProvider,
+} from "@SRC/templates/providers/google/vertex";
 import {
-  gpt5MiniAgent,
-  gpt5agent,
-  gpt5proAgent,
-  gpt5CodexAgent,
-  gpt5NanoAgent,
-  gpt41Agent,
-  gpt41MiniAgent,
-  gpt4oAgent,
-  gpt4oMiniAgent,
-} from "@SRC/templates/agents/openai/gpt.ts";
+  gpt5MiniProvider,
+  gpt5Provider,
+  gpt5proProvider,
+  gpt5CodexProvider,
+  gpt5NanoProvider,
+  gpt41Provider,
+  gpt41MiniProvider,
+  gpt4oProvider,
+  gpt4oMiniProvider,
+} from "@SRC/templates/providers/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "@SRC/exulu/logger.ts";
 import { postgresClient } from "@SRC/postgres/client.ts";
@@ -36,7 +36,7 @@ import { ExuluQueues } from "@SRC/index.ts";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
-import type { ExuluAgent } from "../agent";
+import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluReranker } from "../reranker";
@@ -114,7 +114,7 @@ export type ExuluConfig = {
 };
 
 export class ExuluApp {
-  private _agents: ExuluAgent[] = [];
+  private _providers: ExuluProvider[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
   private _queues: ExuluQueueConfig[] = [];
@@ -129,7 +129,7 @@ export class ExuluApp {
   // initialize the MCP server if needed.
   create = async ({
     contexts,
-    agents,
+    providers,
     config,
     tools,
     evals,
@@ -138,7 +138,7 @@ export class ExuluApp {
     // mcps
     contexts?: Record<string, ExuluContext>;
     config: ExuluConfig;
-    agents?: ExuluAgent[];
+    providers?: ExuluProvider[];
     rerankers?: ExuluReranker[];
     evals?: ExuluEval[];
     tools?: ExuluTool[];
@@ -155,26 +155,26 @@ export class ExuluApp {
 
     this._rerankers = [...(rerankers ?? [])];
 
-    this._agents = [
-      claudeSonnet4Agent,
-      claudeOpus4Agent,
-      gptOss120bAgent,
-      llama38bAgent,
-      llama3370bAgent,
-      vertexGemini25FlashAgent,
-      vertexGemini25ProAgent,
-      vertexGemini3ProAgent,
-      claudeSonnet45Agent,
-      gpt5MiniAgent,
-      gpt5agent,
-      gpt5proAgent,
-      gpt5CodexAgent,
-      gpt5NanoAgent,
-      gpt41Agent,
-      gpt41MiniAgent,
-      gpt4oAgent,
-      gpt4oMiniAgent,
-      ...(agents ?? []),
+    this._providers = [
+      claudeSonnet4Provider,
+      claudeOpus4Provider,
+      gptOss120bProvider,
+      llama38bProvider,
+      llama3370bProvider,
+      vertexGemini25FlashProvider,
+      vertexGemini25ProProvider,
+      vertexGemini3ProProvider,
+      claudeSonnet45Provider,
+      gpt5MiniProvider,
+      gpt5Provider,
+      gpt5proProvider,
+      gpt5CodexProvider,
+      gpt5NanoProvider,
+      gpt41Provider,
+      gpt41MiniProvider,
+      gpt4oProvider,
+      gpt4oMiniProvider,
+      ...(providers ?? []),
     ];
     this._config = config;
 
@@ -198,7 +198,7 @@ export class ExuluApp {
       ...(Object.values(contexts || {})
         .map((context) => context.tool())
         .filter(Boolean) as ExuluTool[]),
-      // Because agents are stored in the database,  we add those as tools
+      // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.
       // ...mcpTools
@@ -214,9 +214,9 @@ export class ExuluApp {
         id: this._contexts?.[x]?.id ?? "",
         type: "context" as const,
       })),
-      ...this._agents.map((agent) => ({
-        name: agent.name ?? "",
-        id: agent.id ?? "",
+      ...this._providers.map((provider) => ({
+        name: provider.name ?? "",
+        id: provider.id ?? "",
         type: "agent" as const,
       })),
       ...this._tools.map((tool) => ({
@@ -297,16 +297,16 @@ export class ExuluApp {
     return Object.values(this._contexts ?? {}).find((x) => x.id === id);
   }
 
-  public agent(id: string): ExuluAgent | undefined {
-    return this._agents.find((x) => x.id === id);
+  public provider(id: string): ExuluProvider | undefined {
+    return this._providers.find((x) => x.id === id);
   }
 
   public get contexts(): ExuluContext[] {
     return Object.values(this._contexts ?? {});
   }
 
-  public get agents(): ExuluAgent[] {
-    return this._agents;
+  public get providers(): ExuluProvider[] {
+    return this._providers;
   }
 
   public embeddings = {
@@ -450,7 +450,7 @@ export class ExuluApp {
         }
 
         return await createWorkers(
-          this._agents,
+          this._providers,
           filteredQueues,
           this._config,
           Object.values(this._contexts ?? {}),
@@ -498,7 +498,7 @@ export class ExuluApp {
 
         await createExpressRoutes(
           app,
-          this._agents,
+          this._providers,
           this._tools,
           Object.values(this._contexts ?? {}),
           this._config,
@@ -513,7 +513,7 @@ export class ExuluApp {
           await mcp.create({
             express: app,
             allTools: this._tools,
-            allAgents: this._agents,
+            allProviders: this._providers,
             allContexts: Object.values(this._contexts ?? {}),
             allRerankers: this._rerankers,
             config: this._config,

@@ -1,26 +1,26 @@
 import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
-import type { Agent } from "@EXULU_TYPES/models/agent.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
-import type { ExuluAgent } from "@SRC/exulu/agent";
 import type { User } from "@EXULU_TYPES/models/user.ts";
 import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
+import type { ExuluProvider } from "@SRC/exulu/provider";
 
 export const getEnabledTools = async (
-  agentInstance: Agent,
+  agent: ExuluAgent,
   allExuluTools: ExuluTool[],
   allContexts: ExuluContext[],
   allRerankers: ExuluReranker[] | undefined,
   disabledTools: string[] = [],
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   user?: User,
 ) => {
   let enabledTools: ExuluTool[] = [];
-  if (agentInstance.tools) {
+  if (agent.tools) {
     const results = await Promise.all(
-      agentInstance.tools.map(async ({ id, type }) => {
+      agent.tools.map(async ({ id, type }) => {
         let hydrated: ExuluTool | null | undefined;
         if (id === "agentic_context_search") {
           return createAgenticRetrievalTool({
@@ -35,7 +35,7 @@ export const getEnabledTools = async (
           });
         }
         if (type === "agent") {
-          if (id === agentInstance.id) {
+          if (id === agent.id) {
             return null;
           }
           // The target agent instance, not the agentInstance that is calling the tool
@@ -47,12 +47,12 @@ export const getEnabledTools = async (
                 " was not found in the database.",
             );
           }
-          const backend = agents.find((a) => a.id === instance.backend);
-          if (!backend) {
+          const provider = providers.find((a) => a.id === instance.provider);
+          if (!provider) {
             throw new Error(
               "Trying to load a tool of type 'agent', but the associated agent with id " +
                 id +
-                " does not have a backend set for it.",
+                " does not have a provider set for it.",
             );
           }
 
@@ -63,7 +63,7 @@ export const getEnabledTools = async (
             return null;
           }
 
-          hydrated = await backend.tool(instance.id, agents, allContexts, allRerankers || []);
+          hydrated = await provider.tool(instance.id, providers, allContexts, allRerankers || []);
         } else {
           hydrated = allExuluTools.find((t) => t.id === id);
         }

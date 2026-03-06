@@ -1,11 +1,11 @@
-import type { Agent } from "@EXULU_TYPES/models/agent.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { postgresClient } from "../postgres/client.ts";
 import { RBACResolver } from "@SRC/graphql/resolvers/rbac-resolver.ts";
 
 const loadAgentCache = new Map<
   string,
   {
-    agent: Agent;
+    agent: ExuluAgent;
     expiresAt: Date;
   }
 >();
@@ -24,13 +24,13 @@ export const loadAgents = async () => {
   return agents;
 };
 
-export const loadAgent = async (id: string): Promise<Agent> => {
+export const loadAgent = async (id: string): Promise<ExuluAgent> => {
   const cachedAgent = loadAgentCache.get(id);
   if (cachedAgent && cachedAgent.expiresAt > new Date()) {
     return cachedAgent.agent;
   }
   const { db } = await postgresClient();
-  const agentInstance: Agent = await db
+  const agentInstance: ExuluAgent = await db
     .from("agents")
     .where({
       id,

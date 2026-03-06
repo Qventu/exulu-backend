@@ -5,7 +5,7 @@ import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
-import type { ExuluAgent } from "@SRC/exulu/agent.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
 import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
 import type { ExuluReranker } from "@SRC/exulu/reranker.ts";
@@ -18,7 +18,6 @@ import type { ExuluConfig } from "./app/index.ts";
 import { v4 as uuidv4 } from "uuid";
 import { type UIMessage } from "ai";
 import CryptoJS from "crypto-js";
-import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
@@ -29,6 +28,7 @@ import { updateStatistic } from "./statistics.ts";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
+import type { ExuluProvider } from "./provider.ts";
 
 let redisConnection: IORedis;
 
@@ -68,7 +68,7 @@ const installGlobalErrorHandlers = () => {
 };
 
 export const createWorkers = async (
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   queues: ExuluQueueConfig[],
   config: ExuluConfig,
   contexts: ExuluContext[],
@@ -345,16 +345,16 @@ export const createWorkers = async (
               });
 
               const {
-                agentInstance,
-                backend: agentBackend,
+                agent,
+                provider,
                 user,
                 messages: inputMessages,
-              } = await validateWorkflowPayload(data, agents);
+              } = await validateWorkflowPayload(data, providers);
 
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent backend and then create a job with type "agent"
+              // todo allow setting queue on agent provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {
@@ -371,9 +371,9 @@ export const createWorkers = async (
                 while (attempts < retries) {
                   try {
                     const messages = await processUiMessagesFlow({
-                      agents,
-                      agentInstance,
-                      agentBackend,
+                      providers,
+                      agent,
+                      provider,
                       inputMessages,
                       contexts,
                       rerankers,
@@ -386,14 +386,14 @@ export const createWorkers = async (
                     break;
                   } catch (error: unknown) {
                     console.error(
-                      `[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`,
+                      `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
                       error instanceof Error ? error.message : String(error),
                     );
                     attempts++;
                     if (attempts >= retries) {
                       reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
-                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
                   }
                 }
               });
@@ -444,18 +444,18 @@ export const createWorkers = async (
               }
 
               const {
-                agentInstance,
-                backend: agentBackend,
+                agent,
+                provider,
                 user,
                 evalRun,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, agents);
+              } = await validateEvalPayload(data, providers);
 
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent backend and then create a job with type "agent"
+              // todo allow setting queue on agent Provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {
@@ -472,9 +472,9 @@ export const createWorkers = async (
                 while (attempts < retries) {
                   try {
                     const messages = await processUiMessagesFlow({
-                      agents,
-                      agentInstance,
-                      agentBackend,
+                      providers,
+                      agent,
+                      provider,
                       inputMessages,
                       contexts,
                       rerankers,
@@ -486,14 +486,14 @@ export const createWorkers = async (
                     break;
                   } catch (error: unknown) {
                     console.error(
-                      `[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`,
+                      `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
                       error instanceof Error ? error.message : String(error),
                     );
                     attempts++;
                     if (attempts >= retries) {
                       reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
-                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
                   }
                 }
               });
@@ -581,8 +581,8 @@ export const createWorkers = async (
                   // and use the result immediately below.
                 } else {
                   result = await evalMethod.run(
-                    agentInstance,
-                    agentBackend,
+                    agent,
+                    provider,
                     testCase,
                     messages,
                     evalFunction.config || {},
@@ -675,11 +675,11 @@ export const createWorkers = async (
 
               const {
                 evalRun,
-                agentInstance,
-                backend,
+                agent,
+                provider,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, agents);
+              } = await validateEvalPayload(data, providers);
 
               const evalFunctions: {
                 id: string;
@@ -699,8 +699,8 @@ export const createWorkers = async (
                 }
 
                 result = await evalMethod.run(
-                  agentInstance,
-                  backend,
+                  agent,
+                  provider,
                   testCase,
                   inputMessages,
                   evalFunction.config || {},
@@ -905,10 +905,10 @@ export const createWorkers = async (
 
 export const validateWorkflowPayload = async (
   data: BullMqJobData,
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
 ): Promise<{
-  agentInstance: Agent;
-  backend: ExuluAgent;
+  agent: ExuluAgent;
+  provider: ExuluProvider;
   user: User;
   workflow: ExuluWorkflow;
   variables: Record<string, any>;
@@ -934,16 +934,16 @@ export const validateWorkflowPayload = async (
     throw new Error(`Workflow ${data.workflow} not found in the database.`);
   }
 
-  const agentInstance = await loadAgent(workflow.agent);
+  const agent = await loadAgent(workflow.agent);
 
-  if (!agentInstance) {
+  if (!agent) {
     throw new Error(`Agent ${workflow.agent} not found in the database.`);
   }
 
-  const backend = agents.find((a) => a.id === agentInstance.backend);
+  const provider = providers.find((a) => a.id === agent.provider);
 
-  if (!backend) {
-    throw new Error(`Backend ${agentInstance.backend} not found in the database.`);
+  if (!provider) {
+    throw new Error(`Provider ${agent.provider} not found in the database.`);
   }
 
   const user = await db.from("users").where({ id: data.user }).first();
@@ -953,8 +953,8 @@ export const validateWorkflowPayload = async (
   }
 
   return {
-    agentInstance,
-    backend,
+    agent,
+    provider,
     user,
     workflow,
     variables: data.inputs,
@@ -964,10 +964,10 @@ export const validateWorkflowPayload = async (
 
 const validateEvalPayload = async (
   data: BullMqJobData,
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
 ): Promise<{
-  agentInstance: Agent;
-  backend: ExuluAgent;
+  agent: ExuluAgent;
+  provider: ExuluProvider;
   user: User;
   testCase: TestCase;
   evalRun: EvalRun;
@@ -1005,16 +1005,16 @@ const validateEvalPayload = async (
     throw new Error(`Eval run ${data.eval_run_id} not found in the database.`);
   }
 
-  const agentInstance = await loadAgent(evalRun.agent_id);
+  const agent = await loadAgent(evalRun.agent_id);
 
-  if (!agentInstance) {
+  if (!agent) {
     throw new Error(`Agent ${evalRun.agent_id} not found in the database.`);
   }
 
-  const backend = agents.find((a) => a.id === agentInstance.backend);
+  const provider = providers.find((a) => a.id === agent.provider);
 
-  if (!backend) {
-    throw new Error(`Backend ${agentInstance.backend} not found in the database.`);
+  if (!provider) {
+    throw new Error(`Provider ${agent.provider} not found in the database.`);
   }
 
   const user = await db.from("users").where({ id: data.user }).first();
@@ -1030,8 +1030,8 @@ const validateEvalPayload = async (
   }
 
   return {
-    agentInstance,
-    backend,
+    agent,
+    provider,
     user,
     testCase,
     evalRun,
@@ -1056,7 +1056,7 @@ const pollJobResult = async ({
 
     const job = await Job.fromId(queue.queue, jobId);
     if (!job) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
       continue;
     }
 
@@ -1089,15 +1089,15 @@ const pollJobResult = async ({
       break;
     }
     // Wait for 2 seconds before polling again
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
   }
   return result;
 };
 
 export const processUiMessagesFlow = async ({
-  agents,
-  agentInstance,
-  agentBackend,
+  providers,
+  agent,
+  provider,
   inputMessages,
   contexts,
   rerankers,
@@ -1106,9 +1106,9 @@ export const processUiMessagesFlow = async ({
   config,
   variables,
 }: {
-  agents: ExuluAgent[];
-  agentInstance: Agent;
-  agentBackend: ExuluAgent;
+  providers: ExuluProvider[];
+  agent: ExuluAgent;
+  provider: ExuluProvider;
   inputMessages: UIMessage[];
   contexts: ExuluContext[];
   rerankers: ExuluReranker[];
@@ -1135,17 +1135,17 @@ export const processUiMessagesFlow = async ({
   // If queue is not defined, execute the eval function directly
   console.log(
     "[EXULU] agent tools",
-    agentInstance.tools?.map((x) => x.name + " (" + x.id + ")"),
+    agent.tools?.map((x) => x.name + " (" + x.id + ")"),
   );
 
   const disabledTools = [];
   let enabledTools: ExuluTool[] = await getEnabledTools(
-    agentInstance,
+    agent,
     tools,
     contexts,
     rerankers,
     disabledTools,
-    agents,
+    providers,
     user,
   );
 
@@ -1155,7 +1155,7 @@ export const processUiMessagesFlow = async ({
   );
 
   // Get the variable name from user's anthropic_token field
-  const variableName = agentInstance.providerapikey;
+  const variableName = agent.providerapikey;
 
   // Look up the variable from the variables table
   const { db } = await postgresClient();
@@ -1166,7 +1166,7 @@ export const processUiMessagesFlow = async ({
     const variable = await db.from("variables").where({ name: variableName }).first();
     if (!variable) {
       throw new Error(
-        `Provider API key variable not found for agent ${agentInstance.name} (${agentInstance.id}).`,
+        `Provider API key variable not found for agent ${agent.name} (${agent.id}).`,
       );
     }
 
@@ -1175,7 +1175,7 @@ export const processUiMessagesFlow = async ({
 
     if (!variable.encrypted) {
       throw new Error(
-        `Provider API key variable not encrypted for agent ${agentInstance.name} (${agentInstance.id}), for security reasons you are only allowed to use encrypted variables for provider API keys.`,
+        `Provider API key variable not encrypted for agent ${agent.name} (${agent.id}), for security reasons you are only allowed to use encrypted variables for provider API keys.`,
       );
     }
 
@@ -1255,7 +1255,7 @@ export const processUiMessagesFlow = async ({
     }
 
     const statistics = {
-      label: agentInstance.name,
+      label: agent.name,
       trigger: "agent" as STATISTICS_LABELS,
     };
 
@@ -1275,20 +1275,20 @@ export const processUiMessagesFlow = async ({
       const startTime = Date.now();
 
       try {
-        const result = await agentBackend.generateStream({
+        const result = await provider.generateStream({
           contexts,
           rerankers,
-          agentInstance: agentInstance,
+          agent: agent,
           user,
           approvedTools: tools.map((tool) => "tool-" + sanitizeToolName(tool.name)),
-          instructions: agentInstance.instructions,
+          instructions: agent.instructions,
           session: undefined,
           previousMessages: messageHistory.messages,
           message: currentMessage,
           currentTools: enabledTools,
           allExuluTools: tools,
           providerapikey,
-          toolConfigs: agentInstance.tools,
+          toolConfigs: agent.tools,
           exuluConfig: config,
         });
 
@@ -1315,7 +1315,7 @@ export const processUiMessagesFlow = async ({
             reject(new Error(error instanceof Error ? error.message : String(error)));
             return `Ui message stream error: ${error instanceof Error ? error.message : String(error)}`;
           },
-          onFinish: async ({ messages, isContinuation, responseMessage }) => {
+          onFinish: async ({ messages }) => {
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Stream finished with messages:", messages);
             console.log("[EXULU] Stream metadata", metadata);
@@ -1379,7 +1379,7 @@ export const processUiMessagesFlow = async ({
         }
       } catch (error: unknown) {
         console.error(
-          `[EXULU] error generating stream for agent ${agentInstance.name} (${agentInstance.id}).`,
+          `[EXULU] error generating stream for agent ${agent.name} (${agent.id}).`,
           error,
         );
         reject(new Error(error instanceof Error ? error.message : String(error)));

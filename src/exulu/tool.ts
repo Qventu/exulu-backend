@@ -78,7 +78,7 @@ export class ExuluTool {
   }
 
   public execute = async ({
-    agent,
+    agent: agentId,
     config,
     user,
     inputs,
@@ -93,7 +93,7 @@ export class ExuluTool {
     items?: string[];
   }) => {
     console.log("[EXULU] Calling tool execute directly", {
-      agent,
+      agentId,
       config,
       user,
       inputs,
@@ -101,15 +101,15 @@ export class ExuluTool {
       items,
     });
 
-    const agentInstance = await loadAgent(agent);
-    if (!agentInstance) {
+    const agent = await loadAgent(agentId);
+    if (!agent) {
       throw new Error("Agent not found.");
     }
 
     const { db } = await postgresClient();
 
     let providerapikey: string | undefined;
-    const variableName = agentInstance.providerapikey;
+    const variableName = agent.providerapikey;
 
     if (variableName) {
       console.log("[EXULU] provider api key variable name", variableName);
@@ -118,9 +118,9 @@ export class ExuluTool {
       if (!variable) {
         throw new Error(
           "Provider API key variable not found for " +
-            agentInstance.name +
+          agent.name +
             " (" +
-            agentInstance.id +
+            agent.id +
             ").",
         );
       }
@@ -144,7 +144,7 @@ export class ExuluTool {
       [this],
       [],
       [],
-      agentInstance.tools,
+      agent.tools,
       providerapikey,
       undefined,
       undefined,
@@ -155,7 +155,7 @@ export class ExuluTool {
       project,
       items,
       undefined,
-      agentInstance,
+      agent,
     );
 
     const tool = tools[sanitizeName(this.name)] || tools[this.name] || tools[this.id];

@@ -154,24 +154,7 @@ export const requestValidators = {
         message: "Missing body.",
       };
     }
-
-    /* Not explicitly required if the agent is public:  if (!req.headers['user']) {
-            return {
-                error: true,
-                code: 400,
-                message: 'Missing "user" property in headers.'
-            };
-        } */
-
-    /* Not explicitly required if the agent is public: if (!req.headers['session']) {
-            return {
-                error: true,
-                code: 400,
-                message: 'Missing "session" property in headers.'
-            };
-        } */
-
-    // chat inputs
+    
     if (!req.body.message && !req.body.messages) {
       return {
         error: true,

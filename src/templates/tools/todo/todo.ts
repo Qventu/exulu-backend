@@ -2,10 +2,10 @@ import DESCRIPTION_WRITE from "./todowrite.txt";
 import DESCRIPTION_READ from "./todoread.txt";
 import z from "zod";
 import { ExuluTool } from "@SRC/exulu/tool.ts";
-import { getSession } from "@SRC/exulu/agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { AgentSession } from "@EXULU_TYPES/models/agent-session";
 import { postgresClient } from "../../../postgres/client";
+import { getSession } from "@SRC/exulu/provider";
 
 const TodoSchema = z.object({
   content: z.string().describe("Brief description of the task"),

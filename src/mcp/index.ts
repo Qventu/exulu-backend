@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { ExuluAgent } from "@SRC/exulu/agent";
+import type { ExuluProvider } from "@SRC/exulu/provider";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
@@ -17,10 +17,10 @@ import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
 import CryptoJS from "crypto-js";
 import type { ExuluConfig } from "../exulu/app/index.ts";
-import type { Agent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 // Create an MCP server
 
 export class ExuluMCP {
@@ -33,69 +33,69 @@ export class ExuluMCP {
   > = {};
   private transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 
-  constructor() {}
+  constructor() { }
 
   private configure = async ({
     user,
-    agentInstance,
+    agent,
     allTools,
-    allAgents,
+    allProviders,
     allContexts,
     allRerankers,
     config,
   }: {
-    agentInstance: Agent;
+    agent: ExuluAgent;
     user: User;
     tracer?: Tracer;
     allTools: ExuluTool[];
-    allAgents: ExuluAgent[];
+    allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
     allRerankers: ExuluReranker[];
     config: ExuluConfig;
   }): Promise<McpServer> => {
-    let server = this.server[agentInstance.id];
+    let server = this.server[agent.id];
 
     if (!server) {
       console.log("[EXULU] Creating MCP server.");
       server = {
         mcp: new McpServer({
-          name: "exulu-mcp-server-" + agentInstance.name + "(" + agentInstance.id + ")",
+          name: "exulu-mcp-server-" + agent.name + "(" + agent.id + ")",
           version: "1.0.0",
         }),
         tools: {},
       };
-      this.server[agentInstance.id] = server;
+      this.server[agent.id] = server;
     }
 
     const disabledTools = [];
     let enabledTools: ExuluTool[] = await getEnabledTools(
-      agentInstance,
+      agent,
       allTools,
       allContexts,
       allRerankers,
       disabledTools,
-      allAgents,
+      allProviders,
       user,
     );
 
-    const backend = allAgents.find((a) => a.id === agentInstance.backend);
+    const provider = allProviders.find((a) => a.id === agent.provider);
 
-    if (!backend) {
+    if (!provider) {
       throw new Error(
-        "Agent backend not found for agent " + agentInstance.name + " (" + agentInstance.id + ").",
+        "Agent provider not found for agent " + agent.name + " (" + agent.id + ").",
       );
     }
 
     // Add the agent itself as a tool so MCP clients can also call the
     // agent directly, instead of just its tools.
-    const agentTool = await backend.tool(agentInstance.id, allAgents, allContexts, allRerankers);
+    const agentTool = await provider.tool(agent.id, allProviders, allContexts, allRerankers);
 
     if (agentTool) {
       enabledTools = [...enabledTools, agentTool];
     }
 
     // Get the variable name from user's anthropic_token field
-    const variableName = agentInstance.providerapikey;
+    const variableName = agent.providerapikey;
 
     const { db } = await postgresClient();
 
@@ -108,10 +108,10 @@ export class ExuluMCP {
       if (!variable) {
         throw new Error(
           "Provider API key variable not found for " +
-            agentInstance.name +
-            " (" +
-            agentInstance.id +
-            ").",
+          agent.name +
+          " (" +
+          agent.id +
+          ").",
         );
       }
 
@@ -154,7 +154,7 @@ export class ExuluMCP {
           console.log("[EXULU] MCP tool inputs", inputs);
           console.log("[EXULU] MCP tool args", args);
 
-          const configValues = agentInstance.tools;
+          const configValues = agent.tools;
 
           const tools = await convertExuluToolsToAiSdkTools(
             [tool],
@@ -214,7 +214,7 @@ export class ExuluMCP {
           },
         },
         async ({ inputs }, args): Promise<any> => {
-          console.log("[EXULU] Getting list of prompt templates for agent", agentInstance.id);
+          console.log("[EXULU] Getting list of prompt templates for agent", agent.id);
 
           const { db } = await postgresClient();
 
@@ -222,7 +222,7 @@ export class ExuluMCP {
           const prompts = await db
             .from("prompt_library")
             .select("id", "name", "description")
-            .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agentInstance.id)])
+            .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agent.id)])
             .orderBy("updatedAt", "desc");
 
           console.log("[EXULU] Found", prompts.length, "prompt templates");
@@ -302,7 +302,7 @@ export class ExuluMCP {
             .from("prompt_library")
             .select("id")
             .where({ id: inputs.id })
-            .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agentInstance.id)])
+            .whereRaw("assigned_agents @> ?::jsonb", [JSON.stringify(agent.id)])
             .first();
 
           console.log("[EXULU] Prompt template found:", prompt.name);
@@ -353,14 +353,14 @@ export class ExuluMCP {
   create = async ({
     express,
     allTools,
-    allAgents,
+    allProviders,
     allContexts,
     allRerankers,
     config,
   }: {
     express: Express;
     allTools: ExuluTool[];
-    allAgents: ExuluAgent[];
+    allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
     allRerankers: ExuluReranker[];
     config: ExuluConfig;
@@ -384,9 +384,9 @@ export class ExuluMCP {
         return;
       }
 
-      const agentInstance = await loadAgent(req.params.agent);
+      const agent = await loadAgent(req.params.agent);
 
-      if (!agentInstance) {
+      if (!agent) {
         console.error("[EXULU] Agent not found.", req.params.agent);
         res.status(404).json({
           error: "Agent not found",
@@ -404,7 +404,7 @@ export class ExuluMCP {
 
       const user = authenticationResult.user;
 
-      const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
+      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
 
       if (!hasAccessToAgent) {
         res.status(401).json({
@@ -414,10 +414,10 @@ export class ExuluMCP {
       }
 
       const server = await this.configure({
-        agentInstance,
+        agent,
         user,
         allTools,
-        allAgents,
+        allProviders,
         allContexts,
         allRerankers,
         config,

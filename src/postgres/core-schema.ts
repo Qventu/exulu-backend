@@ -200,7 +200,7 @@ const agentsSchema: ExuluTableDefinition = {
       type: "text",
     },
     {
-      name: "backend",
+      name: "provider",
       type: "text",
     },
     {

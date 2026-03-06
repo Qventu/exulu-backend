@@ -1,8 +1,8 @@
-import { ExuluAgent } from "@SRC/exulu/agent";
 import { createOpenAI } from "@ai-sdk/openai";
+import { ExuluProvider } from "@SRC/exulu/provider";
 
-export const gpt5proAgent = new ExuluAgent({
-  id: `default_gpt_5_pro_agent`,
+export const gpt5proProvider = new ExuluProvider({
+  id: `default_gpt_5_pro_provider`,
   provider: "openai",
   name: `GPT-5-PRO`,
   description: `
@@ -41,8 +41,8 @@ export const gpt5proAgent = new ExuluAgent({
   },
 });
 
-export const gpt5CodexAgent = new ExuluAgent({
-  id: `default_gpt_5_codex_agent`,
+export const gpt5CodexProvider = new ExuluProvider({
+  id: `default_gpt_5_codex_provider`,
   provider: "openai",
   name: `GPT-5-CODEX`,
   description: `GPT-5-Codex is a version of GPT-5 optimized for agentic coding tasks in Codex or similar environments. It's available in the Responses API only and the underlying model snapshot will be regularly updated. If you want to learn more about prompting GPT-5-Codex, refer to the OpenAI dedicated guide.`,
@@ -69,9 +69,9 @@ export const gpt5CodexAgent = new ExuluAgent({
   },
 });
 
-export const gpt5MiniAgent = new ExuluAgent({
-  id: `default_gpt_5_mini_agent`,
-  provider: "openai",
+export const gpt5MiniProvider = new ExuluProvider({
+  id: `default_gpt_5_mini_provider`,
+  provider: "openai"  ,
   name: `GPT-5-MINI`,
   description: `GPT-5 mini is a faster, more cost-efficient version of GPT-5. It's great for well-defined tasks and precise prompts.`,
   type: "agent",
@@ -104,8 +104,8 @@ export const gpt5MiniAgent = new ExuluAgent({
   },
 });
 
-export const gpt5agent = new ExuluAgent({
-  id: `default_gpt_5_agent`,
+export const gpt5Provider = new ExuluProvider({
+  id: `default_gpt_5_provider`,
   provider: "openai",
   name: `GPT-5`,
   description: `GPT-5 is the flagship model for coding, reasoning, and agentic tasks across domains.`,
@@ -139,8 +139,8 @@ export const gpt5agent = new ExuluAgent({
   },
 });
 
-export const gpt5NanoAgent = new ExuluAgent({
-  id: `default_gpt_5_nano_agent`,
+export const gpt5NanoProvider = new ExuluProvider({
+  id: `default_gpt_5_nano_provider`,
   provider: "openai",
   name: `GPT-5-NANO`,
   description: `GPT-5 Nano is the fastest, cheapest version of GPT-5. It's great for summarization and classification tasks. .`,
@@ -167,8 +167,8 @@ export const gpt5NanoAgent = new ExuluAgent({
   },
 });
 
-export const gpt41Agent = new ExuluAgent({
-  id: `default_gpt_4_1_agent`,
+export const gpt41Provider = new ExuluProvider({
+  id: `default_gpt_4_1_provider`,
   provider: "openai",
   name: `GPT-4.1`,
   description: `GPT-4.1 excels at instruction following and tool calling, with broad knowledge across domains. It features a 1M token context window, and low latency without a reasoning step. Note that we recommend starting with GPT-5 for complex tasks`,
@@ -195,8 +195,8 @@ export const gpt41Agent = new ExuluAgent({
   },
 });
 
-export const gpt41MiniAgent = new ExuluAgent({
-  id: `default_gpt_4_1_mini_agent`,
+export const gpt41MiniProvider = new ExuluProvider({
+  id: `default_gpt_4_1_mini_provider`,
   provider: "openai",
   name: `GPT-4.1-MINI`,
   description: `GPT-4.1 mini excels at instruction following and tool calling. It features a 1M token context window, and low latency without a reasoning step.`,
@@ -223,8 +223,8 @@ export const gpt41MiniAgent = new ExuluAgent({
   },
 });
 
-export const gpt4oAgent = new ExuluAgent({
-  id: `default_gpt_4o_agent`,
+export const gpt4oProvider = new ExuluProvider({
+  id: `default_gpt_4o_provider`,
   provider: "openai",
   name: `GPT-4O`,
   description: `Basic agent gpt 4o agent you can use to chat with.`,
@@ -251,8 +251,8 @@ export const gpt4oAgent = new ExuluAgent({
   },
 });
 
-export const gpt4oMiniAgent = new ExuluAgent({
-  id: `default_gpt_4o_mini_agent`,
+export const gpt4oMiniProvider = new ExuluProvider({
+  id: `default_gpt_4o_mini_provider`,
   provider: "openai",
   name: `GPT-4O-MINI`,
   description: `GPT-4o mini (“o” for “omni”) is a fast, affordable small model for focused tasks. It accepts both text and image inputs, and produces text outputs (including Structured Outputs). It is ideal for fine-tuning, and model outputs from a larger model like GPT-4o can be distilled to GPT-4o-mini to produce similar results at lower cost and latency.`,

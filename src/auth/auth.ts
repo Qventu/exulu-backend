@@ -14,7 +14,7 @@ export const authentication = async ({
   db: Knex;
 }): Promise<{ error: boolean; message?: string; code?: number; user?: User }> => {
   // Used for communication between "internal" services
-  // such as between the backend and the uppy file uploader
+  // such as between the exulu app and the uppy file uploader
   // in case they run on different networks or environments.
   if (internalkey) {
     if (!process.env.INTERNAL_SECRET) {

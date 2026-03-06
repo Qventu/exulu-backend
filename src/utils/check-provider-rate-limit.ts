@@ -1,13 +1,13 @@
-import type { ExuluAgent } from "@SRC/exulu/agent";
 import { redisClient } from "../redis/client.ts";
+import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 
-export const checkAgentRateLimit = async (agent: ExuluAgent) => {
-  if (agent.rateLimit) {
-    console.log("[EXULU] rate limiting agent.", agent.rateLimit);
-    const limit = await agentRateLimiter(
-      agent.rateLimit.name || agent.id,
-      agent.rateLimit.rate_limit.time,
-      agent.rateLimit.rate_limit.limit,
+export const checkProviderRateLimit = async (provider: ExuluProvider) => {
+  if (provider.rateLimit) {
+    console.log("[EXULU] rate limiting provider.", provider.rateLimit);
+    const limit = await providerRateLimiter(
+      provider.rateLimit.name || provider.id,
+      provider.rateLimit.rate_limit.time,
+      provider.rateLimit.rate_limit.limit,
       1,
     );
 
@@ -17,7 +17,7 @@ export const checkAgentRateLimit = async (agent: ExuluAgent) => {
   }
 };
 
-const agentRateLimiter = async (
+const providerRateLimiter = async (
   key: string,
   windowSeconds: number,
   limit: number,

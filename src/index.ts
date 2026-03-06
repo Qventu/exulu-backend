@@ -1,6 +1,6 @@
 /* 
 This file serves as the export and entry
-point for the npm package @exulu/backend.
+point for the npm package.
 */
 
 import "dotenv/config";
@@ -24,27 +24,27 @@ import CryptoJS from "crypto-js";
 import { postgresClient } from "./postgres/client";
 import { type Variable } from "@EXULU_TYPES/models/variable";
 import {
-  gpt5MiniAgent,
-  gpt5agent,
-  gpt5proAgent,
-  gpt5CodexAgent,
-  gpt5NanoAgent,
-  gpt41Agent,
-  gpt41MiniAgent,
-  gpt4oAgent,
-  gpt4oMiniAgent,
-} from "./templates/agents/openai/gpt";
+  gpt5MiniProvider,
+  gpt5Provider,
+  gpt5proProvider,
+  gpt5CodexProvider,
+  gpt5NanoProvider,
+  gpt41Provider,
+  gpt41MiniProvider,
+  gpt4oProvider,
+  gpt4oMiniProvider,
+} from "./templates/providers/openai/gpt";
 import {
-  claudeSonnet4Agent,
-  claudeOpus4Agent,
-  claudeSonnet45Agent,
-} from "./templates/agents/anthropic/claude";
+  claudeSonnet4Provider,
+  claudeOpus4Provider,
+  claudeSonnet45Provider,
+} from "./templates/providers/anthropic/claude";
 import {
-  vertexGemini25FlashAgent,
-  vertexGemini3ProAgent,
-  vertexGemini25ProAgent,
-} from "./templates/agents/google/vertex";
-import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from "./templates/agents/cerebras";
+  vertexGemini25FlashProvider,
+  vertexGemini3ProProvider,
+  vertexGemini25ProProvider,
+} from "./templates/providers/google/vertex";
+import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
 import type { Item } from "@EXULU_TYPES/models/item";
 export type { Item as ExuluItem };
 
@@ -52,32 +52,32 @@ export const ExuluJobs = {
   redis: redisClient,
 };
 
-export const ExuluDefaultAgents = {
+export const ExuluDefaultProviders = {
   anthropic: {
-    opus4: claudeOpus4Agent,
-    sonnet4: claudeSonnet4Agent,
-    sonnet45: claudeSonnet45Agent,
+    opus4: claudeOpus4Provider,
+    sonnet4: claudeSonnet4Provider,
+    sonnet45: claudeSonnet45Provider,
   },
   cerebras: {
-    gptOss120b: gptOss120bAgent,
-    llama38b: llama38bAgent,
-    llama3370b: llama3370bAgent,
+    gptOss120b: gptOss120bProvider,
+    llama38b: llama38bProvider,
+    llama3370b: llama3370bProvider,
   },
   google: {
-    vertexGemini25Flash: vertexGemini25FlashAgent,
-    vertexGemini25Pro: vertexGemini25ProAgent,
-    vertexGemini3Pro: vertexGemini3ProAgent,
+    vertexGemini25Flash: vertexGemini25FlashProvider,
+    vertexGemini25Pro: vertexGemini25ProProvider,
+    vertexGemini3Pro: vertexGemini3ProProvider,
   },
   openai: {
-    gpt5Mini: gpt5MiniAgent,
-    gpt5: gpt5agent,
-    gpt5pro: gpt5proAgent,
-    gpt5Codex: gpt5CodexAgent,
-    gpt5Nano: gpt5NanoAgent,
-    gpt41: gpt41Agent,
-    gpt41Mini: gpt41MiniAgent,
-    gpt4o: gpt4oAgent,
-    gpt4oMini: gpt4oMiniAgent,
+    gpt5Mini: gpt5MiniProvider,
+    gpt5: gpt5Provider,
+    gpt5pro: gpt5proProvider,
+    gpt5Codex: gpt5CodexProvider,
+    gpt5Nano: gpt5NanoProvider,
+    gpt41: gpt41Provider,
+    gpt41Mini: gpt41MiniProvider,
+    gpt4o: gpt4oProvider,
+    gpt4oMini: gpt4oMiniProvider,
   },
 };
 

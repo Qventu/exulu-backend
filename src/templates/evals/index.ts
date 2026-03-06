@@ -9,10 +9,10 @@ const llmAsJudgeEval = () => {
       id: "llm_as_judge",
       name: "LLM as Judge",
       description: "Evaluate the output of the LLM as a judge.",
-      execute: async ({ agent, backend, messages, testCase, config }) => {
+      execute: async ({ agent, provider, messages, testCase, config }) => {
         console.log("[EXULU] running llm as judge eval", {
           agent,
-          backend,
+          provider,
           messages,
           testCase,
           config,
@@ -59,8 +59,8 @@ const llmAsJudgeEval = () => {
 
         console.log("[EXULU] prompt", prompt);
 
-        const response = await backend.generateSync({
-          agentInstance: agent,
+        const response = await provider.generateSync({
+          agent: agent,
           contexts: [],
           rerankers: [],
           prompt,

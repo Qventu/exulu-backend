@@ -6,14 +6,14 @@ import cron from "cron-validator";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluAgent } from "@SRC/exulu/agent";
+import type { ExuluProvider } from "@SRC/exulu/provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
 import { postgresClient } from "@SRC/postgres/client.ts";
 import { loadAgent, loadAgents } from "@SRC/utils/load-agent.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
-import type { Agent } from "@EXULU_TYPES/models/agent";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
 import type { Queue } from "bullmq";
@@ -219,7 +219,7 @@ function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string 
 export function createSDL(
   tables: ExuluTableDefinition[],
   contexts: ExuluContext[],
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   tools: ExuluTool[],
   config: ExuluConfig,
   evals: ExuluEval[],
@@ -240,7 +240,7 @@ export function createSDL(
 
   // Adding fields to SDL that are not defined via
   // ExuluContext instances but added in the
-  // backend at createItemsTable().
+  // provider at createItemsTable().
   tables.forEach((table) => {
     if (!table.fields.some((field) => field.name === "createdAt")) {
       table.fields.push({
@@ -462,10 +462,10 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-    Object.assign(resolvers.Query, createQueries(table, agents, tools, contexts, rerankers));
+    Object.assign(resolvers.Query, createQueries(table, providers, tools, contexts, rerankers));
     Object.assign(
       resolvers.Mutation,
-      createMutations(table, agents, contexts, rerankers, tools, config),
+      createMutations(table, providers, contexts, rerankers, tools, config),
     );
 
     // Add RBAC resolver if enabled
@@ -560,10 +560,10 @@ type PageInfo {
   resolvers.Query["providers"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     return {
-      items: agents.map((agent) => {
+      items: providers.map((provider) => {
         const object = {};
         requestedFields.forEach((field) => {
-          object[field] = agent[field];
+          object[field] = provider[field];
         });
         return object;
       }),
@@ -605,28 +605,28 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agentInstance = await loadAgent(workflowTemplate.agent);
-    if (!agentInstance) {
+    const agent = await loadAgent(workflowTemplate.agent);
+    if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const agentBackend = agents.find((agent) => agent.id === agentInstance.backend);
+    const provider = providers.find((provider) => provider.id === agent.provider);
 
-    if (!agentBackend) {
+    if (!provider) {
       throw new Error(
-        "Agent backend: " +
-        agentInstance.backend +
+        "Agent provider: " +
+        agent.provider +
         " not found for agent instance " +
-        agentInstance.id +
+        agent.id +
         ".",
       );
     }
 
     let queue: ExuluQueueConfig | undefined;
 
-    if (agentBackend?.workflows?.queue) {
-      queue = await agentBackend.workflows.queue;
-      const scheduler = await queue.queue?.getJobScheduler(args.workflow + "-workflow-schedule");
+    if (provider?.workflows?.queue) {
+      queue = await provider.workflows.queue;
+      const scheduler = await queue!.queue?.getJobScheduler(args.workflow + "-workflow-schedule");
       if (scheduler) {
         return {
           id: scheduler.id,
@@ -710,28 +710,28 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agentInstance = await loadAgent(workflowTemplate.agent);
-    if (!agentInstance) {
+    const agent = await loadAgent(workflowTemplate.agent);
+    if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const agentBackend = agents.find((agent) => agent.id === agentInstance.backend);
+    const provider = providers.find((provider) => provider.id === agent.provider);
 
-    if (!agentBackend) {
+    if (!provider) {
       throw new Error(
-        "Agent backend: " +
-        agentInstance.backend +
+        "Agent provider: " +
+        agent.provider +
         " not found for agent instance " +
-        agentInstance.id +
+        agent.id +
         ".",
       );
     }
 
     let queue: ExuluQueueConfig | undefined;
 
-    if (agentBackend?.workflows?.queue) {
-      queue = await agentBackend.workflows.queue;
-      await queue.queue?.removeJobScheduler(args.workflow + "-workflow-schedule");
+    if (provider?.workflows?.queue) {
+      queue = await provider.workflows.queue;
+      await queue!.queue?.removeJobScheduler(args.workflow + "-workflow-schedule");
       return {
         status: "deleted",
       };
@@ -780,27 +780,27 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agentInstance = await loadAgent(workflowTemplate.agent);
-    if (!agentInstance) {
+    const agent = await loadAgent(workflowTemplate.agent);
+    if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const agentBackend = agents.find((agent) => agent.id === agentInstance.backend);
+    const provider = providers.find((provider) => provider.id === agent.provider);
 
-    if (!agentBackend) {
+    if (!provider) {
       throw new Error(
-        "Agent backend: " +
-        agentInstance.backend +
+        "Provider: " +
+        agent.provider +
         " not found for agent instance " +
-        agentInstance.id +
+        agent.id +
         ".",
       );
     }
 
     let queue: ExuluQueueConfig | undefined;
 
-    if (agentBackend?.workflows?.queue) {
-      queue = await agentBackend.workflows.queue;
+    if (provider?.workflows?.queue) {
+      queue = await provider.workflows.queue;
     }
 
     const jobData: BullMqJobData = {
@@ -816,8 +816,8 @@ type PageInfo {
 
     if (!queue) {
       throw new Error(
-        "Queue not found for agent backend: " +
-        agentBackend?.id +
+        "Queue not found for provider: " +
+        provider?.id +
         " for workflow template: " +
         workflow_template_id,
       );
@@ -878,26 +878,26 @@ type PageInfo {
     // If any are missing, throw an error
 
     // Load the agent instance to validate it exists
-    const agentInstance = await loadAgent(workflowTemplate.agent);
-    if (!agentInstance) {
+    const agent = await loadAgent(workflowTemplate.agent);
+    if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const agentBackend = agents.find((agent) => agent.id === agentInstance.backend);
+    const provider = providers.find((provider) => provider.id === agent.provider);
 
-    if (!agentBackend) {
+    if (!provider) {
       throw new Error(
-        "Agent backend: " +
-        agentInstance.backend +
+        "Agent provider: " +
+        agent.provider +
         " not found for agent instance " +
-        agentInstance.id +
+        agent.id +
         ".",
       );
     }
 
     let queue: ExuluQueueConfig | undefined;
-    if (agentBackend?.workflows?.queue) {
-      queue = await agentBackend.workflows.queue;
+    if (provider?.workflows?.queue) {
+      queue = await provider.workflows.queue;
     }
 
     const jobData: BullMqJobData = {
@@ -954,16 +954,16 @@ type PageInfo {
 
       try {
         const {
-          agentInstance,
-          backend: agentBackend,
+          agent,
+          provider,
           user,
           messages: inputMessages,
-        } = await validateWorkflowPayload(jobData, agents);
+        } = await validateWorkflowPayload(jobData, providers);
 
         const retries = 3;
         let attempts = 0;
 
-        // todo allow setting queue on agent backend and then create a job with type "agent"
+        // todo allow setting queue on agent provider and then create a job with type "agent"
         const promise = new Promise<{
           messages: UIMessage[];
           metadata: {
@@ -980,9 +980,9 @@ type PageInfo {
           while (attempts < retries) {
             try {
               const messages = await processUiMessagesFlow({
-                agents,
-                agentInstance,
-                agentBackend,
+                providers,
+                agent,
+                provider,
                 inputMessages,
                 contexts,
                 rerankers,
@@ -995,7 +995,7 @@ type PageInfo {
               break;
             } catch (error: unknown) {
               console.error(
-                `[EXULU] error processing UI messages flow for agent ${agentInstance.name} (${agentInstance.id}).`,
+                `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
                 jobData.label,
                 {
                   error: error instanceof Error ? error.message : String(error),
@@ -1005,7 +1005,7 @@ type PageInfo {
               if (attempts >= retries) {
                 reject(error instanceof Error ? error : new Error(String(error)));
               }
-              await new Promise((resolve) => setTimeout(resolve, 2000));
+              await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
             }
           }
         });
@@ -1107,8 +1107,8 @@ type PageInfo {
     }
 
     // Load the agent instance to validate it exists
-    const agentInstance = await loadAgent(evalRun.agent_id);
-    if (!agentInstance) {
+    const agent = await loadAgent(evalRun.agent_id);
+    if (!agent) {
       throw new Error("Agent instance not found for eval run.");
     }
 
@@ -1521,12 +1521,12 @@ type PageInfo {
     // so agents can call other agents as tools.
     const instances = await loadAgents();
     let agentTools = await Promise.all(
-      instances.map(async (instance: Agent) => {
-        const backend: ExuluAgent | undefined = agents.find((a) => a.id === instance.backend);
-        if (!backend) {
+      instances.map(async (agent: ExuluAgent) => {
+        const provider: ExuluProvider | undefined = providers.find((a) => a.id === agent.provider);
+        if (!provider) {
           return null;
         }
-        return await backend.tool(instance.id, agents, contexts, rerankers);
+        return await provider.tool(agent.id, providers, contexts, rerankers);
       }),
     );
 

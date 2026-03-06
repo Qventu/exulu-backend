@@ -1,8 +1,8 @@
-import { ExuluAgent } from "@SRC/exulu/agent";
+import { ExuluProvider } from "@SRC/exulu/provider";
 import { createCerebras } from "@ai-sdk/cerebras";
 
-export const gptOss120bAgent = new ExuluAgent({
-  id: `default_gpt_oss_120b_agent`,
+export const gptOss120bProvider = new ExuluProvider({
+  id: `default_gpt_oss_120b_provider`,
   name: `GPT-OSS-120B`,
   provider: "custom",
   description: `Custom GPT-OSS-120B model. High intelligence and capability. Moderately Fast.`,
@@ -38,8 +38,8 @@ export const gptOss120bAgent = new ExuluAgent({
   },
 });
 
-export const llama38bAgent = new ExuluAgent({
-  id: `default_llama_38b_agent`,
+export const llama38bProvider = new ExuluProvider({
+  id: `default_llama_38b_provider`,
   name: `LLAMA-38B`,
   provider: "custom",
   description: `Custom LLAMA-38B model. High intelligence and capability. Moderately Fast.`,
@@ -75,8 +75,8 @@ export const llama38bAgent = new ExuluAgent({
   },
 });
 
-export const llama3370bAgent = new ExuluAgent({
-  id: `default_llama_3370b_agent`,
+export const llama3370bProvider = new ExuluProvider({
+  id: `default_llama_3370b_provider`,
   name: `LLAMA-3.3-70B`,
   provider: "custom",
   description: `Custom LLAMA-3.3-70B model. High intelligence and capability. Moderately Fast.`,

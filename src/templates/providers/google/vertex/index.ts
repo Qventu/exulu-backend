@@ -1,4 +1,4 @@
-import { ExuluAgent } from "@SRC/exulu/agent";
+import { ExuluProvider } from "@SRC/exulu/provider";
 import { createVertex } from "@ai-sdk/google-vertex";
 
 const vertexAuthenticationInformation = `
@@ -36,8 +36,8 @@ Vertex uses **Google Auth**. To authenticate, follow these steps:
 \`\`\`
 `;
 
-export const vertexGemini25FlashAgent = new ExuluAgent({
-  id: `default_vertex_gemini_2_5_flash_agent`,
+export const vertexGemini25FlashProvider = new ExuluProvider({
+  id: `default_vertex_gemini_2_5_flash_provider`,
   name: `GEMINI-2.5-FLASH`,
   provider: "vertex",
   description: `Google Vertex Gemini 2.5 Flash model. Very high intelligence and capability. Moderately Fast.`,
@@ -83,8 +83,8 @@ export const vertexGemini25FlashAgent = new ExuluAgent({
   },
 });
 
-export const vertexGemini25ProAgent = new ExuluAgent({
-  id: `default_vertex_gemini_2_5_pro_agent`,
+export const vertexGemini25ProProvider = new ExuluProvider({
+  id: `default_vertex_gemini_2_5_pro_provider`,
   name: `GEMINI-2.5-PRO`,
   provider: "vertex",
   description: `Google Vertex Gemini 2.5 Pro model. Very high intelligence and capability. Moderately Fast.`,
@@ -130,8 +130,8 @@ export const vertexGemini25ProAgent = new ExuluAgent({
   },
 });
 
-export const vertexGemini20FlashAgent = new ExuluAgent({
-  id: `default_vertex_gemini_2_0_flash_agent`,
+export const vertexGemini20FlashProvider = new ExuluProvider({
+  id: `default_vertex_gemini_2_0_flash_provider`,
   name: `GEMINI-2.0-FLASH`,
   provider: "vertex",
   description: `Google Vertex Gemini 2.0 Flash model. High intelligence and capability. Moderately Fast.`,
@@ -177,8 +177,8 @@ export const vertexGemini20FlashAgent = new ExuluAgent({
   },
 });
 
-export const vertexGemini3ProAgent = new ExuluAgent({
-  id: `default_vertex_gemini_3_pro_agent`,
+export const vertexGemini3ProProvider = new ExuluProvider({
+  id: `default_vertex_gemini_3_pro_provider`,
   name: `GEMINI-3-PRO`,
   provider: "vertex",
   description: `Google Vertex Gemini 3 Pro model. Very high intelligence and capability. Moderately Fast.`,

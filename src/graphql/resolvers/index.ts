@@ -1,7 +1,6 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
-import { exuluBackendAgentFields } from "../utilities/backend-agent-fields";
+import { exuluProviderFields } from "../utilities/provider-fields";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
-import type { ExuluAgent } from "@SRC/exulu/agent";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
@@ -13,6 +12,7 @@ import { Knex as KnexType } from "knex";
 import type { User } from "@EXULU_TYPES/models/user";
 import { applySorting } from "./apply-sorting";
 import { applyFilters } from "./apply-filters";
+import type { ExuluProvider } from "@SRC/exulu/provider";
 
 export const itemsPaginationRequest = async ({
   db,
@@ -53,6 +53,7 @@ export const itemsPaginationRequest = async ({
   countQuery = applyAccessControl(table, countQuery, user);
 
   // Get total count
+  // eslint-disable-next-line @typescript-eslint/await-thenable
   const countResult = await countQuery.count("* as count");
   const itemCount = Number(countResult[0]?.count || 0);
   const pageCount = Math.ceil(itemCount / limit);
@@ -72,6 +73,7 @@ export const itemsPaginationRequest = async ({
 
   dataQuery = dataQuery.select(fields ? fields : "*").limit(limit);
 
+  // eslint-disable-next-line @typescript-eslint/await-thenable
   let items = await dataQuery;
 
   return {
@@ -86,11 +88,11 @@ export const itemsPaginationRequest = async ({
   };
 };
 
-const removeAgentFields = (requestedFields: string[]) => {
-  const filtered = requestedFields.filter((field) => !exuluBackendAgentFields.includes(field));
-  // Always add the backend field as we need it to get specific fields
+const removeProviderFields = (requestedFields: string[]) => {
+  const filtered = requestedFields.filter((field) => !exuluProviderFields.includes(field));
+  // Always add the provider field as we need it to get specific fields
   // we sanitize this out again in the finalizeRequestedFields step.
-  filtered.push("backend");
+  filtered.push("provider");
   return filtered;
 };
 
@@ -99,7 +101,7 @@ export const sanitizeRequestedFields = (
   requestedFields: string[],
 ): string[] => {
   if (table.name.singular === "agent") {
-    requestedFields = removeAgentFields(requestedFields);
+    requestedFields = removeProviderFields(requestedFields);
   }
   if (table.name.singular === "workflow_template") {
     requestedFields.push("steps_json");
@@ -120,7 +122,7 @@ export const sanitizeRequestedFields = (
 
 export function createQueries(
   table: ExuluTableDefinition,
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[],
   rerankers: ExuluReranker[],
@@ -139,7 +141,7 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,
@@ -158,7 +160,7 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,
@@ -180,7 +182,7 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,
@@ -209,7 +211,7 @@ export function createQueries(
           args,
           table,
           requestedFields,
-          agents,
+          providers,
           contexts,
           rerankers,
           tools,

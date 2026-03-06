@@ -1,4 +1,4 @@
-import type { ExuluAgentConfig } from "@EXULU_TYPES/agent-config.ts";
+import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
 import type { audioTypes } from "@EXULU_TYPES/models/agent";
@@ -27,7 +27,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import CryptoJS from "crypto-js";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
-import type { Agent } from "@EXULU_TYPES/models/agent.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluReranker } from "./reranker.ts";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
@@ -37,22 +37,22 @@ import type { ExuluConfig } from "./app/index.ts";
 import { createNewMemoryItemTool } from "@SRC/templates/tools/memory-tool.ts";
 import type { Request } from "express";
 
-type ExuluAgentWorkflowConfig = {
+export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
   queue?: Promise<ExuluQueueConfig>;
 };
 
-interface ExuluAgentParams {
+interface ExuluProviderParams {
   id: string;
   name: string;
   type: "agent";
   description: string;
-  config?: ExuluAgentConfig | undefined;
+  config?: ExuluProviderConfig | undefined;
   queue?: ExuluQueueConfig;
   maxContextLength?: number;
   authenticationInformation?: string;
   provider: string;
-  workflows?: ExuluAgentWorkflowConfig;
+  workflows?: ExuluProviderWorkflowConfig;
   capabilities?: {
     text: boolean;
     images: imageTypes[];
@@ -64,7 +64,7 @@ interface ExuluAgentParams {
   rateLimit?: RateLimiterRule;
 }
 
-export class ExuluAgent {
+export class ExuluProvider {
   // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or
   // underscores and be a max length of 80 characters and at least 5 characters long.
   // The ID is used for storing references to agents so it is important it does not change.
@@ -77,10 +77,10 @@ export class ExuluAgent {
   public streaming: boolean = false;
   public authenticationInformation?: string;
   public maxContextLength?: number;
-  public workflows?: ExuluAgentWorkflowConfig;
+  public workflows?: ExuluProviderWorkflowConfig;
   public queue?: ExuluQueueConfig;
   public rateLimit?: RateLimiterRule;
-  public config?: ExuluAgentConfig | undefined;
+  public config?: ExuluProviderConfig | undefined;
   public model?: {
     create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel;
   };
@@ -105,7 +105,7 @@ export class ExuluAgent {
     queue,
     authenticationInformation,
     workflows,
-  }: ExuluAgentParams) {
+  }: ExuluProviderParams) {
     this.id = id;
     this.name = name;
     this.workflows = workflows;
@@ -125,10 +125,6 @@ export class ExuluAgent {
       video: [],
     };
     this.slug = `/agents/${generateSlug(this.name)}/run`;
-
-    // If it is a custom agent,it is only
-    // used as a config object, but the actual
-    // inference is done by outside of Exulu.
     this.model = this.config?.model;
   }
 
@@ -149,19 +145,20 @@ export class ExuluAgent {
   // Exports the agent as a tool that can be used by another agent
   public tool = async (
     instance: string,
-    agents: ExuluAgent[],
+    providers: ExuluProvider[],
     contexts: ExuluContext[],
     rerankers: ExuluReranker[],
   ): Promise<ExuluTool | null> => {
-    const agentInstance = await loadAgent(instance);
 
-    if (!agentInstance) {
+    const agent = await loadAgent(instance);
+
+    if (!agent) {
       return null;
     }
 
     return new ExuluTool({
-      id: agentInstance.id,
-      name: `${agentInstance.name}`,
+      id: agent.id,
+      name: `${agent.name}`,
       type: "agent",
       category: "agents",
       inputSchema: z.object({
@@ -172,27 +169,27 @@ export class ExuluAgent {
           .string()
           .describe("A summary of relevant context / information from the current session"),
       }),
-      description: `This tool calls an AI agent named: ${agentInstance.name}. The agent does the following: ${agentInstance.description}.`,
+      description: `This tool calls an AI agent named: ${agent.name}. The agent does the following: ${agent.description}.`,
       config: [],
       execute: async ({ prompt, information, user, allExuluTools }: any) => {
-        const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
+        const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
 
         if (!hasAccessToAgent) {
           throw new Error("You don't have access to this agent.");
         }
 
         let enabledTools: ExuluTool[] = await getEnabledTools(
-          agentInstance,
+          agent,
           allExuluTools,
           contexts,
           rerankers,
           [],
-          agents,
+          providers,
           user,
         );
 
         // Get the variable name from user's anthropic_token field
-        const variableName = agentInstance.providerapikey;
+        const variableName = agent.providerapikey;
 
         let providerapikey: string | undefined;
 
@@ -203,10 +200,10 @@ export class ExuluAgent {
           if (!variable) {
             throw new Error(
               "Provider API key variable not found for agent: " +
-                agentInstance.name +
-                " (" +
-                agentInstance.id +
-                ") being called as a tool.",
+              agent.name +
+              " (" +
+              agent.id +
+              ") being called as a tool.",
             );
           }
 
@@ -216,10 +213,10 @@ export class ExuluAgent {
           if (!variable.encrypted) {
             throw new Error(
               "Provider API key variable not encrypted for agent: " +
-                agentInstance.name +
-                " (" +
-                agentInstance.id +
-                ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.",
+              agent.name +
+              " (" +
+              agent.id +
+              ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.",
             );
           }
 
@@ -230,32 +227,32 @@ export class ExuluAgent {
         }
         console.log(
           "[EXULU] Enabled tools for agent '" +
-            agentInstance.name +
-            " (" +
-            agentInstance.id +
-            ")" +
-            " that is being called as a tool",
+          agent.name +
+          " (" +
+          agent.id +
+          ")" +
+          " that is being called as a tool",
           enabledTools.map((x) => x.name + " (" + x.id + ")"),
         );
         console.log(
-          "[EXULU] Prompt for agent '" + agentInstance.name + "' that is being called as a tool",
+          "[EXULU] Prompt for agent '" + agent.name + "' that is being called as a tool",
           prompt.slice(0, 100) + "...",
         );
         console.log(
           "[EXULU] Instructions for agent '" +
-            agentInstance.name +
-            "' that is being called as a tool",
-          agentInstance.instructions?.slice(0, 100) + "...",
+          agent.name +
+          "' that is being called as a tool",
+          agent.instructions?.slice(0, 100) + "...",
         );
 
         // todo cant use outputSchema when calling an agent as a tool for now, maybe look into
         // enabling this in the future by adding a "outputSchema" field to the inputSchema of this
         // tool definition so agents can dynamically define a desired output schema.
         const response = await this.generateSync({
-          agentInstance: agentInstance,
+          agent: agent,
           contexts: contexts,
           rerankers: rerankers,
-          instructions: agentInstance.instructions,
+          instructions: agent.instructions,
           prompt:
             "The user has asked the following question: " +
             prompt +
@@ -266,14 +263,14 @@ export class ExuluAgent {
           currentTools: enabledTools,
           allExuluTools: allExuluTools,
           statistics: {
-            label: agentInstance.name,
+            label: agent.name,
             trigger: "tool",
           },
         });
 
         await updateStatistic({
           name: "count",
-          label: agentInstance.name,
+          label: agent.name,
           type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
           trigger: "tool",
           count: 1,
@@ -303,14 +300,14 @@ export class ExuluAgent {
     rerankers,
     exuluConfig,
     outputSchema,
-    agentInstance,
+    agent,
     instructions,
   }: {
     prompt?: string;
     user?: User;
     req?: Request;
     session?: string;
-    agentInstance?: Agent;
+    agent?: ExuluAgent;
     inputMessages?: UIMessage[];
     currentTools?: ExuluTool[];
     allExuluTools?: ExuluTool[];
@@ -394,15 +391,17 @@ export class ExuluAgent {
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
     let memoryContext = "";
-    if (agentInstance?.memory && contexts?.length && query) {
-      const context = contexts.find((context) => context.id === agentInstance?.memory);
+    if (agent?.memory && contexts?.length && query) {
+
+      const context = contexts.find((context) => context.id === agent?.memory);
       if (!context) {
         throw new Error(
           "Context was set for agent memory but not found in the contexts: " +
-            agentInstance?.memory +
-            " please double check with a developer to see if the context was removed from code.",
+          agent?.memory +
+          " please double check with a developer to see if the context was removed from code.",
         );
       }
+
       const result = await context?.search({
         query: query,
         itemFilters: [],
@@ -425,7 +424,7 @@ export class ExuluAgent {
                   ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
       }
 
-      const createNewMemoryTool = createNewMemoryItemTool(agentInstance, context);
+      const createNewMemoryTool = createNewMemoryItemTool(agent, context);
       if (createNewMemoryTool) {
         if (!currentTools) {
           currentTools = [];
@@ -556,7 +555,7 @@ export class ExuluAgent {
             project,
             sessionItems,
             model,
-            agentInstance,
+            agent,
           ),
           stopWhen: [stepCountIs(5)],
         });
@@ -578,25 +577,25 @@ export class ExuluAgent {
           }),
           ...(inputTokens
             ? [
-                updateStatistic({
-                  name: "inputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: inputTokens,
-                }),
-              ]
+              updateStatistic({
+                name: "inputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: inputTokens,
+              }),
+            ]
             : []),
           ...(outputTokens
             ? [
-                updateStatistic({
-                  name: "outputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: outputTokens,
-                }),
-              ]
+              updateStatistic({
+                name: "outputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: outputTokens,
+              }),
+            ]
             : []),
         ]);
       }
@@ -630,7 +629,7 @@ export class ExuluAgent {
           project,
           sessionItems,
           model,
-          agentInstance,
+          agent,
         ),
         stopWhen: [stepCountIs(5)],
       });
@@ -648,27 +647,27 @@ export class ExuluAgent {
           }),
           ...(totalUsage?.inputTokens
             ? [
-                updateStatistic({
-                  name: "inputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: totalUsage?.inputTokens,
-                  user: user?.id,
-                  role: user?.role?.id,
-                }),
-              ]
+              updateStatistic({
+                name: "inputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: totalUsage?.inputTokens,
+                user: user?.id,
+                role: user?.role?.id,
+              }),
+            ]
             : []),
           ...(totalUsage?.outputTokens
             ? [
-                updateStatistic({
-                  name: "outputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: totalUsage?.outputTokens,
-                }),
-              ]
+              updateStatistic({
+                name: "outputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: totalUsage?.outputTokens,
+              }),
+            ]
             : []),
         ]);
       }
@@ -774,7 +773,7 @@ export class ExuluAgent {
   generateStream = async ({
     user,
     session,
-    agentInstance,
+    agent,
     message,
     previousMessages,
     currentTools,
@@ -790,7 +789,7 @@ export class ExuluAgent {
   }: {
     user?: User;
     session?: string;
-    agentInstance?: Agent;
+    agent?: ExuluAgent;
     message?: UIMessage;
     previousMessages?: UIMessage[];
     currentTools?: ExuluTool[];
@@ -858,13 +857,13 @@ export class ExuluAgent {
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
     let memoryContext = "";
-    if (agentInstance?.memory && contexts?.length && query) {
-      const context = contexts.find((context) => context.id === agentInstance?.memory);
+    if (agent?.memory && contexts?.length && query) {
+      const context = contexts.find((context) => context.id === agent?.memory);
       if (!context) {
         throw new Error(
           "Context was set for agent memory but not found in the contexts: " +
-            agentInstance?.memory +
-            " please double check with a developer to see if the context was removed from code.",
+          agent?.memory +
+          " please double check with a developer to see if the context was removed from code.",
         );
       }
       const result = await context?.search({
@@ -889,7 +888,7 @@ export class ExuluAgent {
                   ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
       }
 
-      const createNewMemoryTool = createNewMemoryItemTool(agentInstance, context);
+      const createNewMemoryTool = createNewMemoryItemTool(agent, context);
       if (createNewMemoryTool) {
         if (!currentTools) {
           currentTools = [];
@@ -1016,7 +1015,7 @@ export class ExuluAgent {
         project,
         sessionItems,
         model,
-        agentInstance,
+        agent,
       ),
       onError: (error) => {
         console.error("[EXULU] chat stream error.", error);
@@ -1050,11 +1049,11 @@ const getAgentMessages = async ({
   const { db } = await postgresClient();
   console.log(
     "[EXULU] getting agent messages for session: " +
-      session +
-      " and user: " +
-      user +
-      " and page: " +
-      page,
+    session +
+    " and user: " +
+    user +
+    " and page: " +
+    page,
   );
   const query = db
     .from("agent_messages")

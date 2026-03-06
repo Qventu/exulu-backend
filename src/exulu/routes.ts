@@ -1,5 +1,4 @@
 import { type Express, type Request, type Response } from "express";
-import { ExuluAgent, saveChat } from "./agent.ts";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
@@ -22,7 +21,6 @@ import fs from "fs";
 import { randomUUID } from "node:crypto";
 import { type Tracer } from "@opentelemetry/api";
 import type { ExuluConfig } from "./app/index.ts";
-import { checkAgentRateLimit } from "@SRC/utils/check-agent-rate-limit.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { loadAgent } from "@SRC/utils/load-agent.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
@@ -32,7 +30,6 @@ import { CLAUDE_MESSAGES } from "../utils/claude-messages.ts";
 import type { Queue } from "bullmq";
 import { createIdGenerator, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
-import type { Agent } from "@EXULU_TYPES/models/agent.ts";
 import cookieParser from "cookie-parser";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition.ts";
 import type { ExuluTool } from "./tool.ts";
@@ -41,6 +38,9 @@ import type { ExuluEval } from "./evals.ts";
 import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
+import { ExuluProvider, saveChat } from "./provider.ts";
+import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -83,7 +83,7 @@ const {
 
 export const createExpressRoutes = async (
   app: Express,
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[] | undefined,
   config: ExuluConfig,
@@ -162,7 +162,7 @@ export const createExpressRoutes = async (
       rbacSchema(),
     ],
     contexts ?? [],
-    agents,
+    providers,
     tools,
     config,
     evals,
@@ -413,7 +413,7 @@ Mood: friendly and intelligent.
     const uuid = randomUUID();
     const image_url = await uploadFile(Buffer.from(image_base64, "base64"), `${uuid}.png`, config, {
       contentType: "image/png",
-    }, authenticationResult.user?.id, "agents");
+    }, authenticationResult.user?.id, undefined, true);
 
     res.status(200).json({
       message: "Image generated successfully.",
@@ -482,8 +482,8 @@ Mood: friendly and intelligent.
     });
   });
 
-  agents.forEach((agent) => {
-    const slug = agent.slug as string;
+  providers.forEach((provider) => {
+    const slug = provider.slug as string;
     if (!slug) return;
 
     app.post(slug + "/:instance", async (req: Request, res: Response) => {
@@ -499,7 +499,7 @@ Mood: friendly and intelligent.
         session: (req.headers["session"] as string) || null,
       };
 
-      await checkAgentRateLimit(agent);
+      await checkProviderRateLimit(provider);
 
       const instance = req.params.instance;
       if (!instance) {
@@ -514,12 +514,12 @@ Mood: friendly and intelligent.
       // For agents we dont use bullmq jobs, instead we use a rate limiter to
       // allow responses in real time while managing availability of infrastructure
       // or provider limits.
-      // todo add "configuration" object to backend agent, and allow setting agent instance
+      // todo add "configuration" object to provider, and allow setting agent instance
       // specific configurations that overwrite the global ones.
       // todo allow setting agent instance specific configurations that overwrite the global ones
       // todo display rate limit message in the chat UI
 
-      const agentInstance = await loadAgent(instance);
+      const agent = await loadAgent(instance);
 
       const requestValidationResult = requestValidators.agents(req);
 
@@ -530,9 +530,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      console.log("[EXULU] agentInstance.rights_mode", agentInstance.rights_mode);
+      console.log("[EXULU] agent.rights_mode", agent.rights_mode);
       const authenticationResult = await requestValidators.authenticate(req);
-      if (!authenticationResult.user?.id && agentInstance.rights_mode !== "public") {
+      if (!authenticationResult.user?.id && agent.rights_mode !== "public") {
         res
           .status(authenticationResult.code || 500)
           .json({ detail: `${authenticationResult.message}` });
@@ -541,7 +541,7 @@ Mood: friendly and intelligent.
 
       const user = authenticationResult.user;
 
-      const hasAccessToAgent = await checkRecordAccess(agentInstance, "read", user);
+      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
 
       if (!hasAccessToAgent) {
         res.status(401).json({
@@ -569,22 +569,22 @@ Mood: friendly and intelligent.
 
       console.log(
         "[EXULU] agent tools",
-        agentInstance.tools?.map((x) => x.name + " (" + x.id + ")"),
+        agent.tools?.map((x) => x.name + " (" + x.id + ")"),
       );
 
       const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
       let enabledTools: ExuluTool[] = await getEnabledTools(
-        agentInstance,
+        agent,
         tools,
         contexts || [],
         rerankers || [],
         disabledTools,
-        agents,
+        providers,
         user,
       );
 
       let providerapikey: string | undefined;
-      const variableName = agentInstance.providerapikey;
+      const variableName = agent.providerapikey;
 
       if (variableName) {
         console.log("[EXULU] provider api key variable name", variableName);
@@ -594,9 +594,9 @@ Mood: friendly and intelligent.
           res.status(400).json({
             message:
               "Provider API key variable not found for " +
-              agentInstance.name +
+              agent.name +
               " (" +
-              agentInstance.id +
+              agent.id +
               ").",
           });
           return;
@@ -641,12 +641,12 @@ Mood: friendly and intelligent.
             : req.body.approvedTools
           : [];
 
-        const result = await agent.generateStream({
+        const result = await provider.generateStream({
           contexts: contexts,
           rerankers: rerankers || [],
-          agentInstance: agentInstance,
+          agent: agent,
           user,
-          instructions: agentInstance.instructions,
+          instructions: agent.instructions,
           session: headers.session as string,
           message,
           previousMessages,
@@ -654,7 +654,7 @@ Mood: friendly and intelligent.
           approvedTools: approvedTools,
           allExuluTools: tools,
           providerapikey,
-          toolConfigs: agentInstance.tools,
+          toolConfigs: agent.tools,
           exuluConfig: config,
           req: req,
         });
@@ -760,20 +760,20 @@ Mood: friendly and intelligent.
 
         return;
       } else {
-        const response = await agent.generateSync({
+        const response = await provider.generateSync({
           contexts: contexts,
           rerankers: rerankers || [],
-          agentInstance: agentInstance,
+          agent: agent,
           user,
           req: req,
-          instructions: agentInstance.instructions,
+          instructions: agent.instructions,
           session: headers.session as string,
           inputMessages: [req.body.message],
           currentTools: enabledTools,
           allExuluTools: tools,
           providerapikey,
           exuluConfig: config,
-          toolConfigs: agentInstance.tools,
+          toolConfigs: agent.tools,
           statistics: {
             label: agent.name,
             trigger: "agent",
@@ -840,7 +840,7 @@ Mood: friendly and intelligent.
         agentQuery.select("*");
         agentQuery = applyAccessControl(agentsSchema(), agentQuery, authenticationResult.user);
         agentQuery.where({ id: req.params.agent });
-        const agent: Agent | undefined = await agentQuery.first();
+        const agent: ExuluAgent | undefined = await agentQuery.first();
 
         if (!agent) {
           const arrayBuffer = createCustomAnthropicStreamingMessage(`
@@ -964,7 +964,7 @@ Mood: friendly and intelligent.
           contexts || [],
           rerankers || [],
           disabledTools,
-          agents,
+          providers,
           user,
         );
 

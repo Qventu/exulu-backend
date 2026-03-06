@@ -1,5 +1,4 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
-import { type ExuluAgent } from "@SRC/exulu/agent";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
@@ -19,18 +18,19 @@ import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-field
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../resolvers/rbac-update.ts";
+import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 
 const postprocessDeletion = async ({
   table,
   requestedFields,
-  agents,
+  providers,
   contexts,
   tools,
   result,
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  agents: ExuluAgent[];
+  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -43,7 +43,7 @@ const postprocessDeletion = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result: item,
@@ -107,7 +107,7 @@ const postprocessDeletion = async ({
 const postprocessUpdate = async ({
   table,
   requestedFields,
-  agents,
+  providers,
   contexts,
   tools,
   result,
@@ -117,7 +117,7 @@ const postprocessUpdate = async ({
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  agents: ExuluAgent[];
+  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -136,7 +136,7 @@ const postprocessUpdate = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result: item,
@@ -207,7 +207,7 @@ const postprocessUpdate = async ({
 
 export function createMutations(
   table: ExuluTableDefinition,
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   contexts: ExuluContext[],
   rerankers: ExuluReranker[],
   tools: ExuluTool[],
@@ -400,7 +400,7 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          agents,
+          providers,
           contexts,
           rerankers,
           tools,
@@ -480,7 +480,7 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result: results[0],
@@ -494,7 +494,7 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          agents,
+          providers,
           contexts,
           rerankers,
           tools,
@@ -581,7 +581,7 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result,
@@ -594,7 +594,7 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          agents,
+          providers,
           contexts,
           rerankers,
           tools,
@@ -671,7 +671,7 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result,
@@ -684,7 +684,7 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          agents,
+          providers,
           contexts,
           rerankers,
           tools,
@@ -735,7 +735,7 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result,
@@ -744,7 +744,7 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,
@@ -781,7 +781,7 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         tools,
         result,
@@ -790,7 +790,7 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,

@@ -1,20 +1,17 @@
-export interface Agent {
+import type { ExuluProviderWorkflowConfig } from "@SRC/exulu/provider";
+
+export interface ExuluAgent {
     id: string;
     modelName?: string;
     providerName?: string;
-    backend: string;
+    provider: string;
     memory?: string;
     welcomemessage?: string;
     type: "agent";
     name: string;
     image?: string;
     providerapikey?: string;
-    workflows?: {
-        enabled: boolean;
-        queue?: {
-            name: string;
-        };
-    };
+    workflows?: ExuluProviderWorkflowConfig;
     firewall?: {
         enabled: boolean;
         scanners?: {
@@ -51,7 +48,7 @@ export interface Agent {
         video: videoTypes[];
     }
     // New RBAC fields
-    rights_mode?: 'private' | 'users' | 'roles' | 'public' /* | 'projects' */;
+    rights_mode?: 'private' | 'users' | 'roles' | 'public'
     created_by?: string | number;
     RBAC?: {
         type?: string;

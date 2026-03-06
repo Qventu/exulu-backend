@@ -1,8 +1,8 @@
-import { ExuluAgent } from "@SRC/exulu/agent";
+import { ExuluProvider } from "@SRC/exulu/provider";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
-export const claudeOpus4Agent = new ExuluAgent({
-  id: `default_claude_4_opus_agent`,
+export const claudeOpus4Provider = new ExuluProvider({
+  id: `default_claude_4_opus_provider`,
   name: `CLAUDE-OPUS-4`,
   provider: "anthropic",
   description: `Previous Anthropic flagship model. Very high intelligence and capability. Moderately Fast.`,
@@ -37,8 +37,8 @@ export const claudeOpus4Agent = new ExuluAgent({
 });
 
 // Most often used with Claude Code CLI
-export const claudeSonnet4Agent = new ExuluAgent({
-  id: `claude_sonnet_4_agent`,
+export const claudeSonnet4Provider = new ExuluProvider({
+  id: `claude_sonnet_4_provider`,
   name: `CLAUDE-SONNET-4`,
   provider: "anthropic",
   description: `High intelligence and balanced performance, used a lot for agentic coding tasks. Anthropic provides a newer 4.5 model that is more powerful and faster.`,
@@ -66,8 +66,8 @@ export const claudeSonnet4Agent = new ExuluAgent({
 });
 
 // Most often used with Claude Code CLI
-export const claudeSonnet45Agent = new ExuluAgent({
-  id: `claude_sonnet_4_5_agent`,
+export const claudeSonnet45Provider = new ExuluProvider({
+  id: `claude_sonnet_4_5_provider`,
   name: `CLAUDE-SONNET-4.5`,
   provider: "anthropic",
   description: `Best Anthropic model for complex agents and coding. Highest intelligence across most tasks with exceptional agent and coding capabilities`,

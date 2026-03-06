@@ -1,4 +1,4 @@
-export const exuluBackendAgentFields = [
+export const exuluProviderFields = [
   "providerName",
   "modelName",
   "slug",

@@ -1,4 +1,3 @@
-import type { ExuluAgent } from "@SRC/exulu/agent";
 import { getChunksTableName, type ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
@@ -9,32 +8,33 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
+import type { ExuluProvider } from "@SRC/exulu/provider";
 
-const addAgentFields = async (
+const addProviderFields = async (
   args: Record<string, any>,
   requestedFields: string[],
-  agents: ExuluAgent[],
+  providers: ExuluProvider[],
   result: any,
   tools: ExuluTool[],
   user: User,
   contexts: ExuluContext[],
   rerankers: ExuluReranker[],
 ) => {
-  let backend = agents.find((a) => a.id === result?.backend);
+  let provider = providers.find((a) => a.id === result?.provider);
   if (requestedFields.includes("providerName")) {
-    result.providerName = backend?.providerName || "";
+    result.providerName = provider?.providerName || "";
   }
 
   if (requestedFields.includes("modelName")) {
-    result.modelName = backend?.modelName || "";
+    result.modelName = provider?.modelName || "";
   }
 
   if (requestedFields.includes("slug")) {
-    result.slug = backend?.slug || "";
+    result.slug = provider?.slug || "";
   }
 
   if (requestedFields.includes("rateLimit")) {
-    result.rateLimit = backend?.rateLimit || "";
+    result.rateLimit = provider?.rateLimit || "";
   }
 
   if (requestedFields.includes("tools")) {
@@ -46,6 +46,7 @@ const addAgentFields = async (
             id: string;
             type: "function" | "agent" | "context";
             category: string;
+            // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
           }): Promise<Omit<ExuluTool, "tool" | "execute"> | null | undefined> => {
             let hydrated: ExuluTool | null | undefined;
 
@@ -78,12 +79,12 @@ const addAgentFields = async (
                     " was not found in the database.",
                 );
               }
-              const backend = agents.find((a) => a.id === instance.backend);
-              if (!backend) {
+              const provider = providers.find((a) => a.id === instance.provider);
+              if (!provider) {
                 throw new Error(
                   "Trying to load a tool of type 'agent', but the associated agent with id " +
                     tool.id +
-                    " does not have a backend set for it.",
+                    " does not have a provider set for it.",
                 );
               }
 
@@ -94,7 +95,7 @@ const addAgentFields = async (
                 return null;
               }
 
-              hydrated = await backend.tool(instance.id, agents, contexts, rerankers);
+              hydrated = await provider.tool(instance.id, providers, contexts, rerankers);
             } else {
               hydrated = tools.find((t) => t.id === tool.id);
             }
@@ -131,34 +132,34 @@ const addAgentFields = async (
     }
   }
   if (requestedFields.includes("streaming")) {
-    result.streaming = backend?.streaming || false;
+    result.streaming = provider?.streaming || false;
   }
   if (requestedFields.includes("capabilities")) {
-    result.capabilities = backend?.capabilities || [];
+    result.capabilities = provider?.capabilities || [];
   }
   if (requestedFields.includes("maxContextLength")) {
-    result.maxContextLength = backend?.maxContextLength || 0;
+    result.maxContextLength = provider?.maxContextLength || 0;
   }
   if (requestedFields.includes("authenticationInformation")) {
-    result.authenticationInformation = backend?.authenticationInformation || "";
+    result.authenticationInformation = provider?.authenticationInformation || "";
   }
   if (requestedFields.includes("provider")) {
-    result.provider = backend?.provider || "";
+    result.provider = provider?.provider || "";
   }
   if (requestedFields.includes("systemInstructions")) {
-    result.systemInstructions = backend?.config?.instructions || undefined;
+    result.systemInstructions = provider?.config?.instructions || undefined;
   }
-  if (!requestedFields.includes("backend")) {
-    delete result.backend;
+  if (!requestedFields.includes("provider")) {
+    delete result.provider;
   }
   if (requestedFields.includes("workflows")) {
     let enabled = false;
     let queueName: string | undefined = undefined;
 
-    if (backend?.workflows) {
-      enabled = backend?.workflows?.enabled || false;
-      if (backend?.workflows?.queue) {
-        const queue = await backend?.workflows?.queue;
+    if (provider?.workflows) {
+      enabled = provider?.workflows?.enabled || false;
+      if (provider?.workflows?.queue) {
+        const queue = await provider?.workflows?.queue;
         queueName = queue?.queue.name || undefined;
       }
     }
@@ -178,7 +179,7 @@ export const finalizeRequestedFields = async ({
   args,
   table,
   requestedFields,
-  agents,
+  providers,
   contexts,
   rerankers,
   tools,
@@ -188,7 +189,7 @@ export const finalizeRequestedFields = async ({
   args: Record<string, any>;
   table: ExuluTableDefinition;
   requestedFields: string[];
-  agents: ExuluAgent[];
+  providers: ExuluProvider[];
   contexts: ExuluContext[];
   rerankers: ExuluReranker[];
   tools: ExuluTool[];
@@ -207,7 +208,7 @@ export const finalizeRequestedFields = async ({
         args,
         table,
         requestedFields,
-        agents,
+        providers,
         contexts,
         rerankers,
         tools,
@@ -248,18 +249,18 @@ export const finalizeRequestedFields = async ({
       }
     }
     if (table.name.singular === "agent") {
-      result = await addAgentFields(
+      result = await addProviderFields(
         args,
         requestedFields,
-        agents,
+        providers,
         result,
         tools,
         user,
         contexts,
         rerankers,
       );
-      if (!requestedFields.includes("backend")) {
-        delete result.backend;
+      if (!requestedFields.includes("provider")) {
+        delete result.provider;
       }
     }
     if (table.type === "items") {
