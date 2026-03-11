@@ -3,7 +3,101 @@ title: "Changelog"
 description: "Product updates and release notes for Exulu IMP"
 ---
 
-<Update label="March 2026">
+<Update label="March 2026 - Enterprise Edition">
+  **Release Date:** March 11, 2026
+
+  This release introduces a major architectural change with the separation of Community and Enterprise Edition features, along with a powerful new document processing system.
+
+  ### Versions
+  - **Backend NPM package:** 1.48.0
+
+  <Info>This release includes breaking changes if you were using enterprise features. Please review the migration guide for Enterprise Edition.</Info>
+
+  ## What's New
+
+  ### Enterprise Edition Separation
+  We've established a clear separation between Community Edition (CE) and Enterprise Edition (EE) features:
+
+  - **EE Directory Structure:** All enterprise features now organized in dedicated `ee/` directory
+  - **License-based Entitlements:** New entitlements system with license checking for premium features
+  - **Feature Differentiation:** Clear documentation of CE vs EE feature sets
+  - **Moved to EE:** Agentic retrieval, BullMQ queues, RBAC, workers, and tokenizer are now enterprise features
+
+  ### Advanced Document Processing System
+  Powerful new document processing pipeline with VLM-powered validation:
+
+  - **Multi-format Support:** Process PDF, DOCX, DOC, TXT, and MD files
+  - **Python-based PDF Processor:** Uses MIT-licensed Docling library for accurate extraction
+  - **VLM Validation:** Vision Language Model validates and corrects OCR results
+  - **Smart Chunking:** Page-aware markdown chunking with heading hierarchy preservation
+  - **Table Extraction:** Automatic table detection and normalization in markdown format
+  - **Hybrid Chunking:** Combines semantic understanding with token-based splitting
+  - **Standalone Executable:** Build script creates portable PDF processor executable
+
+  ### Code Architecture Improvements
+  Significant refactoring for better maintainability and clarity:
+
+  - **Provider-Agent Separation:** Clear distinction between `ExuluProvider` (LLM configuration) and `ExuluAgent` (provider + tools + contexts)
+  - **Code-defined Agents:** Support for defining agents in code, not just via database/API/UI
+  - **Refactored Load Logic:** Agent loading logic moved into ExuluApp as methods
+  - **Shared Utilities:** Extracted `withRetry` utility for reusable retry logic across codebase
+  - **Consolidated Schemas:** Updated GraphQL resolvers and schemas for better organization
+
+  ## Documentation Updates
+
+  - **CE vs EE Comparison:** New pages documenting feature differences
+  - **Partners Program:** Documentation for licensing and partnerships
+  - **Enhanced API Reference:** Expanded with EE features
+  - **Migration Guides:** Clear instructions for upgrading to new architecture
+
+  ## Bug Fixes
+
+  - **Import Errors:** Fixed import path issues after EE separation
+  - **TypeScript Paths:** Updated configuration for EE modules
+  - **Queue Structure:** Updated validators for new queue organization
+
+  ## Dependency Updates
+
+  ### New Dependencies
+  - `docling` - Python library for document processing
+  - `mammoth` - DOCX to markdown conversion
+  - `turndown` - HTML to markdown conversion
+
+  ## Breaking Changes
+
+  <Warning>
+  If you were using any of the following features, they now require an Enterprise Edition license:
+  - Agentic retrieval system
+  - BullMQ-based queues
+  - RBAC (Role-Based Access Control)
+  - Worker processes
+  - Custom tokenizer features
+  </Warning>
+
+  ## Migration Guide
+
+  For users upgrading from previous versions:
+
+  1. Update to `@exulu/backend@latest`
+  2. Review your usage of enterprise features
+  3. Update import paths if you're importing from internal modules
+  4. Check the CE vs EE documentation to understand feature availability
+
+  ```bash
+  npm install @exulu/backend@latest
+  ```
+
+  ## What This Means For You
+
+  - **Clear Licensing:** Understand exactly which features are available in each edition
+  - **Better Architecture:** Cleaner separation of concerns between providers and agents
+  - **Advanced Processing:** Extract structured content from complex documents with high accuracy
+  - **VLM Validation:** Leverage vision models to improve OCR quality
+  - **Code-first Agents:** Define agents programmatically for better version control and deployment
+  - **Improved Maintainability:** Clearer code structure makes customization easier
+</Update>
+
+<Update label="March 2026 - Q1 Winter Release">
   **Release Date:** March 5, 2026
 
   We're excited to share the latest updates to Exulu IMP! This release focuses on intelligent retrieval capabilities, code quality improvements, and expanded AI model support.
@@ -132,7 +226,7 @@ description: "Product updates and release notes for Exulu IMP"
   ```
 </Update>
 
-<Update label="January 2026">
+<Update label="January 2026 - Q4 Winter Release">
   **Release Date:** January 10, 2026
 
   We're excited to announce a major platform update bringing significant workflow enhancements, a significantly improved chat experience, and substantial architectural improvements. This release represents our most comprehensive update to date, with a focus on developer productivity, system performance, and user experience.
