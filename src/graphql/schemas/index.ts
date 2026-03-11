@@ -20,7 +20,6 @@ import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
-import { processUiMessagesFlow, validateWorkflowPayload } from "@SRC/exulu/workers.ts";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
 import { GraphQLDate } from "@SRC/graphql/types";
@@ -33,6 +32,7 @@ import { getJobsByQueueName } from "../resolvers/job-queues";
 import { createMutations } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
+import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts

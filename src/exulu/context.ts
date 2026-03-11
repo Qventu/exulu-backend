@@ -11,7 +11,6 @@ import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules";
 import type { ExuluEmbedder } from "./embedder";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
-import { bullmqDecorator } from "@SRC/queues/decorator";
 import { postgresClient } from "@SRC/postgres/client";
 import type { SearchFilters } from "@SRC/graphql/types";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -24,6 +23,7 @@ import { ExuluTool } from "./tool";
 import { z } from "zod";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import { updateStatistic } from "./statistics";
+import { bullmqDecorator } from "@EE/queues/decorator";
 
 export type ExuluContextFieldDefinition = {
   name: string;

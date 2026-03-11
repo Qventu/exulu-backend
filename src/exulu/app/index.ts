@@ -1,6 +1,5 @@
 import { type Express } from "express";
 import { createExpressRoutes, global_queues } from "@SRC/exulu/routes.ts";
-import { createWorkers } from "@SRC/exulu/workers.ts";
 import { ExuluMCP } from "@SRC/mcp/index.ts";
 import express from "express";
 import {
@@ -46,6 +45,7 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { exuluApp } from "./singleton";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { checkLicense } from "@EE/entitlements.ts";
+import { createWorkers } from "@EE/workers.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 const consoleTransport = new winston.transports.Console({
