@@ -1,0 +1,102 @@
+---
+title: 'Prompt Library'
+description: 'GraphQL types for prompt library and favorites'
+---
+
+## prompt_library
+
+Saved prompts for reuse across agents.
+
+```graphql
+type prompt_library {
+  id: ID!
+  name: String!
+  content: String!
+  tags: JSON          # string[]
+  category: String
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  prompt_libraryPagination(
+    filters: [
+      { tags: { contains: ["support", "greeting"] } }
+    ]
+  ) {
+    items {
+      id
+      name
+      content
+      tags
+    }
+  }
+}
+```
+
+## prompt_favorites
+
+User's favorited prompts.
+
+```graphql
+type prompt_favorites {
+  id: ID!
+  user: ID!
+  prompt: ID!
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## Usage
+
+The prompt library allows teams to:
+
+- **Share prompts** across multiple agents
+- **Organize prompts** with tags and categories
+- **Version control** prompt templates
+- **Favorite prompts** for quick access
+
+## Example: Creating a Reusable Prompt
+
+```graphql
+mutation {
+  prompt_libraryCreateOne(
+    input: {
+      name: "Customer Greeting"
+      content: "Hello! I'm here to help you with {{topic}}. What can I assist you with today?"
+      tags: ["greeting", "support", "customer-service"]
+      category: "support"
+      description: "Standard greeting for customer support agents"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent system instructions
+  </Card>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    User favorites
+  </Card>
+  <Card title="RBAC Types" icon="shield" href="/api-reference/core-types/rbac-types">
+    Prompt access control
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

@@ -1,20 +1,18 @@
-export interface Agent {
+import type { ExuluProviderWorkflowConfig } from "@SRC/exulu/provider";
+
+export interface ExuluAgent {
     id: string;
     modelName?: string;
     providerName?: string;
-    backend: string;
+    provider: string;
+    source: "code" | "database";
     memory?: string;
     welcomemessage?: string;
     type: "agent";
     name: string;
     image?: string;
     providerapikey?: string;
-    workflows?: {
-        enabled: boolean;
-        queue?: {
-            name: string;
-        };
-    };
+    workflows?: ExuluProviderWorkflowConfig;
     firewall?: {
         enabled: boolean;
         scanners?: {
@@ -28,6 +26,7 @@ export interface Agent {
     active?: boolean;
     description?: string;
     instructions?: string;
+    feedback?: boolean;
     slug?: string;
     tools?: {
         id: string;
@@ -51,20 +50,19 @@ export interface Agent {
         video: videoTypes[];
     }
     // New RBAC fields
-    rights_mode?: 'private' | 'users' | 'roles' | 'public' /* | 'projects' */;
-    created_by?: string;
+    rights_mode?: 'private' | 'users' | 'roles' | 'public'
+    created_by?: string | number;
     RBAC?: {
         type?: string;
         users?: Array<{ id: number; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
-        /* projects?: Array<{ id: string; rights: 'read' | 'write' }>; */
     };
     createdAt?: string;
     updatedAt?: string;
 }
 
 export type imageTypes = '.png' | '.jpg' | '.jpeg' | '.gif' | '.webp';
-export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt';
+export type fileTypes = '.pdf' | '.docx' | '.xlsx' | '.xls' | '.csv' | '.pptx' | '.ppt' | '.txt' | '.md' | '.json';
 export type audioTypes = '.mp3' | '.wav' | '.m4a' | '.mp4' | '.mpeg';
 export type videoTypes = '.mp4' | '.m4a' | '.mp3' | '.mpeg' | '.wav';
 export type allFileTypes = imageTypes | fileTypes | audioTypes | videoTypes;

@@ -1,0 +1,319 @@
+---
+title: "Configuration"
+description: "Complete guide to configuring your ExuluApp instance"
+---
+
+## Configuration overview
+
+The `ExuluConfig` object passed to `app.create()` controls all aspects of your Exulu IMP instance. This guide covers each configuration section in detail.
+
+## Basic structure
+
+```typescript
+import { ExuluApp, type ExuluConfig } from "@exulu/backend";
+
+const config: ExuluConfig = {
+  telemetry: { enabled: false },
+  logger: { /* Winston configuration */ },
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  fileUploads: { /* S3 configuration */ },
+  privacy: { /* Privacy settings */ }
+};
+
+const app = new ExuluApp();
+await app.create({ config });
+```
+
+## Telemetry
+
+Configure OpenTelemetry integration for distributed tracing.
+
+<ParamField path="telemetry.enabled" type="boolean" required>
+  Enable or disable OpenTelemetry tracing for the Express server
+</ParamField>
+
+```typescript
+config: {
+  telemetry: {
+    enabled: true
+  }
+}
+```
+
+<Note>
+  Telemetry data is sent to the configured OpenTelemetry collector. You need to set up OTEL environment variables or use `ExuluOtel.create()` separately.
+</Note>
+
+## Logging
+
+Configure Winston logging transports for both the Express server and workers.
+
+<ParamField path="logger.winston.transports" type="winston.transport[]">
+  Array of Winston transport instances for server logging
+</ParamField>
+
+```typescript
+import winston from "winston";
+
+config: {
+  logger: {
+    winston: {
+      transports: [
+        new winston.transports.Console({
+          format: winston.format.json()
+        }),
+        new winston.transports.File({
+          filename: "exulu-server.log"
+        })
+      ]
+    }
+  }
+}
+```
+
+<Tip>
+  If no transports are provided, ExuluApp defaults to console logging with timestamps and colors in development.
+</Tip>
+
+## Workers
+
+Configure BullMQ background workers for job processing.
+
+<ParamField path="workers.enabled" type="boolean" required>
+  Enable background workers. Set to `false` if running only an API server without job processing.
+</ParamField>
+
+<ParamField path="workers.logger.winston.transports" type="winston.transport[]">
+  Separate logging configuration for worker processes. Falls back to `logger.winston.transports` if not specified.
+</ParamField>
+
+<ParamField path="workers.telemetry.enabled" type="boolean">
+  Enable OpenTelemetry tracing for worker processes. Falls back to `telemetry.enabled` if not specified.
+</ParamField>
+
+```typescript
+config: {
+  workers: {
+    enabled: true,
+    logger: {
+      winston: {
+        transports: [
+          new winston.transports.File({
+            filename: "exulu-workers.log"
+          })
+        ]
+      }
+    },
+    telemetry: {
+      enabled: true
+    }
+  }
+}
+```
+
+### Starting workers
+
+After configuring workers, start them in a separate process:
+
+```typescript
+// workers.ts
+import { app } from "./app";
+
+await app.bullmq.workers.create();
+```
+
+<Warning>
+  Workers require Redis to be configured via the `REDIS_HOST` and `REDIS_PORT` environment variables.
+</Warning>
+
+## MCP (Model Context Protocol)
+
+Enable the MCP server for external tool integrations.
+
+<ParamField path="MCP.enabled" type="boolean" required>
+  Enable the MCP server. When enabled, ExuluApp exposes your agents, tools, and contexts via the MCP protocol.
+</ParamField>
+
+```typescript
+config: {
+  MCP: {
+    enabled: true
+  }
+}
+```
+
+<Info>
+  The MCP server integrates with your Express app and exposes endpoints for MCP clients to discover and invoke tools.
+</Info>
+
+## File uploads
+
+Configure S3-compatible storage for file uploads.
+
+<ParamField path="fileUploads.s3region" type="string" required>
+  AWS region for S3 bucket
+</ParamField>
+
+<ParamField path="fileUploads.s3key" type="string" required>
+  AWS access key ID
+</ParamField>
+
+<ParamField path="fileUploads.s3secret" type="string" required>
+  AWS secret access key
+</ParamField>
+
+<ParamField path="fileUploads.s3Bucket" type="string" required>
+  S3 bucket name
+</ParamField>
+
+<ParamField path="fileUploads.s3endpoint" type="string">
+  Custom S3 endpoint URL (for S3-compatible services like MinIO)
+</ParamField>
+
+<ParamField path="fileUploads.s3prefix" type="string">
+  Prefix for all uploaded files in the bucket
+</ParamField>
+
+```typescript
+config: {
+  fileUploads: {
+    s3region: "us-east-1",
+    s3key: process.env.AWS_ACCESS_KEY_ID,
+    s3secret: process.env.AWS_SECRET_ACCESS_KEY,
+    s3Bucket: "exulu-uploads",
+    s3prefix: "uploads/"
+  }
+}
+```
+
+<CodeGroup>
+```typescript MinIO example
+config: {
+  fileUploads: {
+    s3region: "us-east-1",
+    s3key: "minioadmin",
+    s3secret: "minioadmin",
+    s3Bucket: "exulu",
+    s3endpoint: "http://localhost:9000",
+    s3prefix: "files/"
+  }
+}
+```
+
+```typescript AWS S3 example
+config: {
+  fileUploads: {
+    s3region: "us-west-2",
+    s3key: process.env.AWS_ACCESS_KEY_ID,
+    s3secret: process.env.AWS_SECRET_ACCESS_KEY,
+    s3Bucket: "my-exulu-bucket"
+  }
+}
+```
+</CodeGroup>
+
+## Privacy
+
+Configure privacy and personalization features.
+
+<ParamField path="privacy.systemPromptPersonalization" type="boolean">
+  Enable system prompt personalization based on user interactions. When disabled, all users receive the same system prompts.
+</ParamField>
+
+```typescript
+config: {
+  privacy: {
+    systemPromptPersonalization: false
+  }
+}
+```
+
+## Complete example
+
+```typescript
+import { ExuluApp, type ExuluConfig } from "@exulu/backend";
+import winston from "winston";
+
+const config: ExuluConfig = {
+  telemetry: {
+    enabled: process.env.NODE_ENV === "production"
+  },
+  logger: {
+    winston: {
+      transports: [
+        new winston.transports.Console({
+          format: winston.format.combine(
+            winston.format.colorize(),
+            winston.format.simple()
+          )
+        }),
+        new winston.transports.File({
+          filename: "logs/exulu.log",
+          format: winston.format.json()
+        })
+      ]
+    }
+  },
+  workers: {
+    enabled: true,
+    telemetry: {
+      enabled: true
+    }
+  },
+  MCP: {
+    enabled: true
+  },
+  fileUploads: {
+    s3region: process.env.AWS_REGION!,
+    s3key: process.env.AWS_ACCESS_KEY_ID!,
+    s3secret: process.env.AWS_SECRET_ACCESS_KEY!,
+    s3Bucket: process.env.S3_BUCKET!,
+    s3prefix: "uploads/"
+  },
+  privacy: {
+    systemPromptPersonalization: false
+  }
+};
+
+const app = new ExuluApp();
+await app.create({ config });
+
+const expressApp = await app.express.init();
+expressApp.listen(3000);
+```
+
+## Environment variables
+
+Many configuration values should come from environment variables for security and deployment flexibility:
+
+```bash
+# Required for workers
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Required for database
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=exulu
+POSTGRES_PASSWORD=password
+POSTGRES_DB=exulu
+
+# Required for authentication
+NEXTAUTH_SECRET=your-secret-key
+
+# Optional for telemetry
+SIGNOZ_ACCESS_TOKEN=your-token
+SIGNOZ_TRACES_URL=https://your-signoz.com
+SIGNOZ_LOGS_URL=https://your-signoz.com
+
+# Optional for file uploads
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+AWS_REGION=us-east-1
+S3_BUCKET=your-bucket
+```
+
+<Note>
+  Use a `.env` file with `dotenv` for local development. Never commit secrets to version control.
+</Note>

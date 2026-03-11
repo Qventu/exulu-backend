@@ -1,0 +1,112 @@
+---
+title: 'Users'
+description: 'GraphQL types for users, roles, and authentication'
+---
+
+## user
+
+User accounts for authentication and access control.
+
+```graphql
+type user {
+  id: Int!
+  name: String
+  email: String!
+  emailVerified: Date
+  image: String
+  password: String
+  type: String        # "api" | "user"
+  apikey: String
+  role: ID
+  super_admin: Boolean
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  usersPagination(
+    filters: [{ type: { eq: "user" } }]
+  ) {
+    items {
+      id
+      name
+      email
+      role
+      super_admin
+    }
+  }
+}
+```
+
+<Warning>
+  The `password` and `apikey` fields are write-only for security. They are hashed with bcrypt and cannot be retrieved.
+</Warning>
+
+## role
+
+Role definitions for RBAC.
+
+```graphql
+type role {
+  id: ID!
+  name: String!
+  agents: String      # "read" | "write"
+  evals: String
+  workflows: String
+  variables: String
+  users: String
+  api: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+**Example mutation:**
+
+```graphql
+mutation {
+  rolesCreateOne(
+    input: {
+      name: "Developer"
+      agents: "write"
+      evals: "write"
+      workflows: "read"
+      variables: "read"
+      users: "read"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+## Permission Levels
+
+Roles support two permission levels for each resource type:
+
+- **read** - View resources
+- **write** - View and modify resources
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="RBAC Types" icon="shield" href="/api-reference/core-types/rbac-types">
+    Resource-level access control
+  </Card>
+  <Card title="Session Types" icon="comments" href="/api-reference/core-types/session-types">
+    User conversation sessions
+  </Card>
+  <Card title="Analytics" icon="chart-bar" href="/api-reference/core-types/analytics-types">
+    User activity statistics
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

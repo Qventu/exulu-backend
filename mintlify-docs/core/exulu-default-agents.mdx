@@ -1,0 +1,545 @@
+---
+title: "ExuluDefaultAgents"
+description: "Pre-configured agent instances for popular AI providers"
+---
+
+## Overview
+
+`ExuluDefaultAgents` provides ready-to-use ExuluProvider configurations for popular AI providers supported by the [Vercel AI SDK](https://ai-sdk.dev/providers/ai-sdk-providers). These default agents are convenience wrappers that make it easy to get started with different providers without having to configure each one manually.
+
+<Note>
+  ExuluDefaultAgents are merely implementations of AI SDK providers. You can easily create agents for **any provider** supported by the AI SDK by using the `ExuluProvider` class directly. See the [AI SDK providers documentation](https://ai-sdk.dev/providers/ai-sdk-providers) for the full list of available providers.
+</Note>
+
+## Available default agents
+
+ExuluDefaultAgents includes pre-configured agents for the most popular providers:
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" icon="openai">
+    GPT-4, GPT-4 Turbo, GPT-3.5, and more
+  </Card>
+  <Card title="Anthropic" icon="robot">
+    Claude Opus, Sonnet, and Haiku models
+  </Card>
+  <Card title="Google" icon="google">
+    Gemini Pro, Gemini Flash models
+  </Card>
+  <Card title="Custom providers" icon="plus">
+    Easy to add any AI SDK provider
+  </Card>
+</CardGroup>
+
+## Quick start
+
+```typescript
+import { ExuluDefaultAgents } from "@exulu/backend";
+
+// Use a pre-configured agent (example - actual API depends on implementation)
+const openaiAgent = ExuluDefaultAgents.openai;
+const anthropicAgent = ExuluDefaultAgents.anthropic;
+const googleAgent = ExuluDefaultAgents.google;
+```
+
+<Info>
+  Default agents still require authentication credentials. Use [ExuluVariables](/core/exulu-variables/introduction) to manage API keys securely.
+</Info>
+
+## Creating custom agents with AI SDK providers
+
+While ExuluDefaultAgents provides convenient defaults, you can create agents for **any** provider supported by the AI SDK:
+
+### OpenAI
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+const openaiAgent = new ExuluProvider({
+  id: "openai_gpt4",
+  name: "OpenAI GPT-4",
+  type: "agent",
+  description: "GPT-4 powered agent",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-4`, `gpt-3.5-turbo`
+
+[OpenAI AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/openai)
+
+### Anthropic
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+const anthropicAgent = new ExuluProvider({
+  id: "anthropic_claude",
+  name: "Claude Opus 4",
+  type: "agent",
+  description: "Claude Opus 4 powered agent",
+  provider: "anthropic",
+  config: {
+    name: "claude-opus-4-20250514",
+    model: {
+      create: ({ apiKey }) => createAnthropic({ apiKey })("claude-opus-4-20250514")
+    },
+    instructions: "You are Claude, a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`, `claude-3-haiku-20240307`
+
+[Anthropic AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic)
+
+### Google Generative AI
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+const googleAgent = new ExuluProvider({
+  id: "google_gemini",
+  name: "Google Gemini Pro",
+  type: "agent",
+  description: "Gemini Pro powered agent",
+  provider: "google",
+  config: {
+    name: "gemini-2.0-flash-exp",
+    model: {
+      create: ({ apiKey }) => createGoogleGenerativeAI({ apiKey })("gemini-2.0-flash-exp")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `gemini-2.0-flash-exp`, `gemini-1.5-pro`, `gemini-1.5-flash`, `gemini-1.0-pro`
+
+[Google AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/google-generative-ai)
+
+### Mistral
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createMistral } from "@ai-sdk/mistral";
+
+const mistralAgent = new ExuluProvider({
+  id: "mistral_large",
+  name: "Mistral Large",
+  type: "agent",
+  description: "Mistral Large powered agent",
+  provider: "mistral",
+  config: {
+    name: "mistral-large-latest",
+    model: {
+      create: ({ apiKey }) => createMistral({ apiKey })("mistral-large-latest")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `mistral-large-latest`, `mistral-small-latest`, `codestral-latest`
+
+[Mistral AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/mistral)
+
+### Cohere
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createCohere } from "@ai-sdk/cohere";
+
+const cohereAgent = new ExuluProvider({
+  id: "cohere_command",
+  name: "Cohere Command R+",
+  type: "agent",
+  description: "Cohere Command R+ powered agent",
+  provider: "cohere",
+  config: {
+    name: "command-r-plus",
+    model: {
+      create: ({ apiKey }) => createCohere({ apiKey })("command-r-plus")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `command-r-plus`, `command-r`, `command-light`
+
+[Cohere AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/cohere)
+
+### Groq
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createGroq } from "@ai-sdk/groq";
+
+const groqAgent = new ExuluAgent({
+  id: "groq_llama",
+  name: "Groq Llama 3",
+  type: "agent",
+  description: "Groq-powered Llama 3 agent",
+  provider: "groq",
+  config: {
+    name: "llama-3.1-70b-versatile",
+    model: {
+      create: ({ apiKey }) => createGroq({ apiKey })("llama-3.1-70b-versatile")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+```
+
+**Available models:** `llama-3.1-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768`
+
+[Groq AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/groq)
+
+### Azure OpenAI
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createAzure } from "@ai-sdk/azure";
+
+const azureAgent = new ExuluAgent({
+  id: "azure_gpt4",
+  name: "Azure GPT-4",
+  type: "agent",
+  description: "Azure OpenAI GPT-4 agent",
+  provider: "azure",
+  config: {
+    name: "gpt-4",
+    model: {
+      create: ({ apiKey }) => createAzure({
+        apiKey,
+        resourceName: "your-resource-name",
+      })("gpt-4-deployment-name")
+    },
+    instructions: "You are a helpful AI assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+```
+
+[Azure OpenAI AI SDK Documentation](https://ai-sdk.dev/providers/ai-sdk-providers/azure)
+
+## Using with ExuluVariables
+
+Combine custom agents with ExuluVariables for secure credential management:
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+// Retrieve API keys from variables
+const openaiKey = await ExuluVariables.get("openai_api_key");
+const anthropicKey = await ExuluVariables.get("anthropic_api_key");
+
+// Create agents with retrieved keys
+const openaiAgent = new ExuluAgent({
+  id: "openai_agent",
+  name: "OpenAI Assistant",
+  type: "agent",
+  description: "OpenAI powered assistant",
+  provider: "openai",
+  authenticationInformation: openaiKey,
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey: apiKey || openaiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful assistant."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+const anthropicAgent = new ExuluAgent({
+  id: "anthropic_agent",
+  name: "Claude Assistant",
+  type: "agent",
+  description: "Claude powered assistant",
+  provider: "anthropic",
+  authenticationInformation: anthropicKey,
+  config: {
+    name: "claude-opus-4-20250514",
+    model: {
+      create: ({ apiKey }) => createAnthropic({ apiKey: apiKey || anthropicKey })("claude-opus-4-20250514")
+    },
+    instructions: "You are Claude, a helpful assistant."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+```
+
+## Multi-provider setup
+
+Create a registry of agents for different providers:
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+
+async function createAgentRegistry() {
+  // Retrieve all API keys
+  const [openaiKey, anthropicKey, googleKey] = await Promise.all([
+    ExuluVariables.get("openai_api_key"),
+    ExuluVariables.get("anthropic_api_key"),
+    ExuluVariables.get("google_api_key")
+  ]);
+
+  return {
+    openai: new ExuluAgent({
+      id: "openai_gpt4",
+      name: "OpenAI GPT-4",
+      type: "agent",
+      provider: "openai",
+      authenticationInformation: openaiKey,
+      config: {
+        name: "gpt-4o",
+        model: {
+          create: ({ apiKey }) => createOpenAI({ apiKey: apiKey || openaiKey })("gpt-4o")
+        },
+        instructions: "You are a helpful assistant."
+      },
+      capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+    }),
+
+    anthropic: new ExuluAgent({
+      id: "anthropic_opus",
+      name: "Claude Opus 4",
+      type: "agent",
+      provider: "anthropic",
+      authenticationInformation: anthropicKey,
+      config: {
+        name: "claude-opus-4-20250514",
+        model: {
+          create: ({ apiKey }) => createAnthropic({ apiKey: apiKey || anthropicKey })("claude-opus-4-20250514")
+        },
+        instructions: "You are Claude, a helpful assistant."
+      },
+      capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+    }),
+
+    google: new ExuluAgent({
+      id: "google_gemini",
+      name: "Google Gemini",
+      type: "agent",
+      provider: "google",
+      authenticationInformation: googleKey,
+      config: {
+        name: "gemini-2.0-flash-exp",
+        model: {
+          create: ({ apiKey }) => createGoogleGenerativeAI({ apiKey: apiKey || googleKey })("gemini-2.0-flash-exp")
+        },
+        instructions: "You are a helpful assistant."
+      },
+      capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+    })
+  };
+}
+
+// Use the registry
+const agents = await createAgentRegistry();
+
+const response = await agents.openai.generateSync({
+  prompt: "Hello!",
+  agentInstance: await loadAgent("openai_gpt4"),
+  statistics: { label: "openai", trigger: "api" }
+});
+```
+
+## Dynamic provider selection
+
+Allow users to choose their preferred provider:
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+async function createAgentForProvider(provider: "openai" | "anthropic") {
+  const providerConfigs = {
+    openai: {
+      variableName: "openai_api_key",
+      modelName: "gpt-4o",
+      createFn: createOpenAI
+    },
+    anthropic: {
+      variableName: "anthropic_api_key",
+      modelName: "claude-opus-4-20250514",
+      createFn: createAnthropic
+    }
+  };
+
+  const config = providerConfigs[provider];
+  const apiKey = await ExuluVariables.get(config.variableName);
+
+  return new ExuluAgent({
+    id: `${provider}_agent`,
+    name: `${provider} Agent`,
+    type: "agent",
+    provider,
+    authenticationInformation: apiKey,
+    config: {
+      name: config.modelName,
+      model: {
+        create: ({ apiKey: key }) => config.createFn({ apiKey: key || apiKey })(config.modelName)
+      },
+      instructions: "You are a helpful assistant."
+    },
+    capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+  });
+}
+
+// User selects provider
+const selectedProvider = "openai"; // or "anthropic"
+const agent = await createAgentForProvider(selectedProvider);
+```
+
+## Explore more providers
+
+The AI SDK supports many more providers beyond the examples above:
+
+<CardGroup cols={3}>
+  <Card title="OpenAI" icon="openai" href="https://ai-sdk.dev/providers/ai-sdk-providers/openai">
+    GPT-4, GPT-3.5
+  </Card>
+  <Card title="Anthropic" icon="robot" href="https://ai-sdk.dev/providers/ai-sdk-providers/anthropic">
+    Claude models
+  </Card>
+  <Card title="Google" icon="google" href="https://ai-sdk.dev/providers/ai-sdk-providers/google-generative-ai">
+    Gemini models
+  </Card>
+  <Card title="Mistral" icon="m" href="https://ai-sdk.dev/providers/ai-sdk-providers/mistral">
+    Mistral Large, Small
+  </Card>
+  <Card title="Cohere" icon="c" href="https://ai-sdk.dev/providers/ai-sdk-providers/cohere">
+    Command R+
+  </Card>
+  <Card title="Groq" icon="bolt" href="https://ai-sdk.dev/providers/ai-sdk-providers/groq">
+    Fast LLaMA inference
+  </Card>
+  <Card title="Azure OpenAI" icon="microsoft" href="https://ai-sdk.dev/providers/ai-sdk-providers/azure">
+    Enterprise OpenAI
+  </Card>
+  <Card title="Vertex AI" icon="google" href="https://ai-sdk.dev/providers/ai-sdk-providers/google-vertex">
+    Google Cloud AI
+  </Card>
+  <Card title="Amazon Bedrock" icon="aws" href="https://ai-sdk.dev/providers/ai-sdk-providers/amazon-bedrock">
+    AWS AI models
+  </Card>
+</CardGroup>
+
+<Info>
+  Visit the [AI SDK Providers documentation](https://ai-sdk.dev/providers/ai-sdk-providers) for the complete list of supported providers and their configurations.
+</Info>
+
+## Community providers
+
+The AI SDK also supports community-maintained providers:
+
+- **Ollama**: Run local models
+- **Replicate**: Access thousands of models
+- **Fireworks AI**: Fast inference
+- **Together AI**: Open-source models
+- **Perplexity**: Search-augmented models
+- **xAI (Grok)**: xAI's Grok models
+- And many more...
+
+[View all community providers](https://ai-sdk.dev/providers/community-providers)
+
+## Best practices
+
+<Tip>
+  **Start with defaults**: Use ExuluDefaultAgents to get started quickly, then customize as needed.
+</Tip>
+
+<Note>
+  **Secure credentials**: Always use [ExuluVariables](/core/exulu-variables/introduction) to manage API keys securely.
+</Note>
+
+<Info>
+  **Provider selection**: Choose providers based on your needs: cost, latency, model capabilities, and data privacy requirements.
+</Info>
+
+<Warning>
+  **Rate limits**: Different providers have different rate limits. Configure [ExuluQueues](/core/exulu-queues/introduction) accordingly.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluAgent" icon="robot" href="/core/exulu-agent/introduction">
+    Learn about ExuluAgent configuration
+  </Card>
+  <Card title="ExuluVariables" icon="key" href="/core/exulu-variables/introduction">
+    Manage API keys securely
+  </Card>
+  <Card title="AI SDK Providers" icon="globe" href="https://ai-sdk.dev/providers/ai-sdk-providers">
+    Explore all available providers
+  </Card>
+  <Card title="AI SDK Docs" icon="book" href="https://ai-sdk.dev/docs">
+    Full AI SDK documentation
+  </Card>
+</CardGroup>

@@ -1,0 +1,552 @@
+---
+title: "Overview"
+description: "AI agents powered by LLMs that execute tasks, use tools, and interact with users"
+---
+
+## Overview
+
+`ExuluAgent` represents an AI agent that processes requests using large language models (LLMs). Agents can execute tasks, call tools, maintain conversations, and generate structured outputs. They serve as the primary interface between users and your AI application.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multi-provider support" icon="network-wired">
+    Built-in support for OpenAI, Anthropic, Google, Cerebras, and custom providers
+  </Card>
+  <Card title="Tool calling" icon="wrench">
+    Agents can use tools to query databases, call APIs, and perform actions
+  </Card>
+  <Card title="Streaming responses" icon="stream">
+    Real-time streaming for progressive response generation
+  </Card>
+  <Card title="Memory integration" icon="brain">
+    Optional context-based memory for persistent knowledge
+  </Card>
+  <Card title="Multi-modal support" icon="file-image">
+    Process text, images, documents, audio, and video
+  </Card>
+  <Card title="Structured outputs" icon="code">
+    Generate validated JSON outputs with Zod schemas
+  </Card>
+</CardGroup>
+
+## What is an agent?
+
+An agent is an LLM-powered entity that:
+
+1. **Receives input** from users or other agents (text, images, files, etc.)
+2. **Processes the request** using an LLM with custom instructions
+3. **Uses tools** to query information or perform actions
+4. **Generates responses** as text or structured data
+5. **Maintains conversation history** across multiple interactions
+
+Think of agents as intelligent assistants that can understand context, make decisions, and take actions on behalf of users.
+
+## Quick start
+
+```typescript
+import { ExuluAgent } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+// Create an agent
+const assistantAgent = new ExuluAgent({
+  id: "assistant",
+  name: "Assistant",
+  type: "agent",
+  description: "A helpful AI assistant",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful assistant. Answer questions clearly and concisely."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg"],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+
+// Register with ExuluApp
+const app = new ExuluApp();
+await app.create({
+  agents: {
+    assistant: assistantAgent
+  },
+  config: { /* ... */ }
+});
+
+// Use the agent
+const response = await assistantAgent.generateSync({
+  prompt: "What is the capital of France?",
+  agentInstance: await loadAgent("assistant"),
+  currentTools: [],
+  statistics: {
+    label: "assistant",
+    trigger: "api"
+  }
+});
+
+console.log(response); // "The capital of France is Paris."
+```
+
+## Agent types
+
+Exulu IMP includes pre-built agents for major providers:
+
+<Tabs>
+  <Tab title="OpenAI">
+    ```typescript
+    import { ExuluDefaultAgents } from "@exulu/backend";
+
+    const gpt4Agent = ExuluDefaultAgents.GPT_4O;
+    const gpt5Agent = ExuluDefaultAgents.GPT_5;
+    const o1Agent = ExuluDefaultAgents.O1;
+    ```
+
+    Available models: GPT-4o, GPT-4o-mini, GPT-4.1, GPT-5, O1, O1-mini, O3-mini
+  </Tab>
+
+  <Tab title="Anthropic">
+    ```typescript
+    import { ExuluDefaultAgents } from "@exulu/backend";
+
+    const claudeSonnet = ExuluDefaultAgents.CLAUDE_SONNET_4_5;
+    const claudeOpus = ExuluDefaultAgents.CLAUDE_OPUS_4;
+    ```
+
+    Available models: Claude Opus 4, Claude Sonnet 4, Claude Sonnet 4.5
+  </Tab>
+
+  <Tab title="Google">
+    ```typescript
+    import { ExuluDefaultAgents } from "@exulu/backend";
+
+    const gemini = ExuluDefaultAgents.GEMINI_2_5_FLASH;
+    const geminiPro = ExuluDefaultAgents.GEMINI_2_5_PRO;
+    ```
+
+    Available models: Gemini 2.5 Flash, Gemini 2.5 Pro
+  </Tab>
+
+  <Tab title="Other providers">
+    ```typescript
+    import { ExuluDefaultAgents } from "@exulu/backend";
+
+    const llama = ExuluDefaultAgents.LLAMA_3_3;
+    const cerebras = ExuluDefaultAgents.CEREBRAS_LLAMA;
+    ```
+
+    Also supports: Llama 3.3, Cerebras, DeepSeek, and custom providers
+  </Tab>
+</Tabs>
+
+## Architecture
+
+### AI SDK integration
+
+ExuluAgent is built on Vercel's AI SDK, providing:
+
+- **Unified interface** across multiple LLM providers
+- **Streaming support** for real-time responses
+- **Tool calling** with automatic function execution
+- **Structured outputs** with Zod schema validation
+
+```typescript
+import { streamText, generateText, generateObject } from "ai";
+
+// ExuluAgent uses these internally
+const response = await generateText({
+  model: agent.model.create({ apiKey }),
+  prompt: "Hello!",
+  tools: convertedTools
+});
+```
+
+### Conversation management
+
+Agents maintain conversation history through sessions:
+
+```typescript
+// Messages are stored in the database
+const session = "session-123";
+const previousMessages = await getAgentMessages({ session, user: userId });
+
+// New messages are appended
+const response = await agent.generateStream({
+  message: newMessage,
+  session: session,
+  user: currentUser
+});
+```
+
+### Tool integration
+
+Agents can use any ExuluTool:
+
+```typescript
+const agent = new ExuluAgent({
+  // ... agent config
+});
+
+// Tools are provided at runtime
+const response = await agent.generateSync({
+  prompt: "Search our docs for authentication",
+  currentTools: [
+    documentationSearchTool,
+    databaseQueryTool,
+    apiCallTool
+  ]
+});
+```
+
+## Core concepts
+
+### Instructions
+
+Instructions define the agent's behavior and personality:
+
+```typescript
+config: {
+  instructions: `You are a customer support agent for Acme Corp.
+
+Guidelines:
+- Be friendly and professional
+- Answer questions about our products and services
+- Escalate billing issues to human agents
+- Provide accurate, helpful information
+
+Company info:
+- Founded in 2020
+- Specializes in enterprise SaaS
+- 24/7 support available`
+}
+```
+
+<Tip>
+  Keep instructions clear and specific. Well-defined instructions significantly improve agent performance.
+</Tip>
+
+### Capabilities
+
+Define what input types the agent can handle:
+
+```typescript
+capabilities: {
+  text: true,                          // Text input
+  images: [".png", ".jpg", ".jpeg"],   // Image files
+  files: [".pdf", ".docx", ".txt"],    // Document files
+  audio: [".mp3", ".wav"],             // Audio files
+  video: [".mp4"]                      // Video files
+}
+```
+
+### Memory
+
+Agents can have persistent memory using ExuluContext:
+
+```typescript
+const agent = new ExuluAgent({
+  id: "assistant_with_memory",
+  name: "Assistant with Memory",
+  // ... other config
+  config: {
+    // ... model config
+    memory: "user_interactions" // Context ID for memory
+  }
+});
+```
+
+When configured, the agent:
+1. Searches relevant memories before responding
+2. Can create new memory items during conversations
+3. Maintains context across sessions
+
+### Workflows
+
+Enable background task processing:
+
+```typescript
+workflows: {
+  enabled: true,
+  queue: await ExuluQueues.register("agent_workflows")
+}
+```
+
+## Generation modes
+
+<Tabs>
+  <Tab title="Streaming">
+    Real-time progressive responses:
+
+    ```typescript
+    const { stream } = await agent.generateStream({
+      message: userMessage,
+      session: sessionId,
+      user: currentUser,
+      currentTools: tools,
+      agentInstance: agentData
+    });
+
+    // Stream to client
+    for await (const chunk of stream) {
+      console.log(chunk);
+    }
+    ```
+
+    Best for: Interactive chat, long responses, real-time feedback
+  </Tab>
+
+  <Tab title="Synchronous">
+    Wait for complete response:
+
+    ```typescript
+    const response = await agent.generateSync({
+      prompt: "Summarize this document",
+      agentInstance: agentData,
+      currentTools: tools
+    });
+
+    console.log(response); // Complete text response
+    ```
+
+    Best for: API calls, batch processing, background jobs
+  </Tab>
+
+  <Tab title="Structured output">
+    Generate validated JSON:
+
+    ```typescript
+    const result = await agent.generateSync({
+      prompt: "Extract key information from this text",
+      outputSchema: z.object({
+        title: z.string(),
+        summary: z.string(),
+        tags: z.array(z.string())
+      }),
+      agentInstance: agentData
+    });
+
+    console.log(result.title);    // Type-safe access
+    console.log(result.summary);
+    console.log(result.tags);
+    ```
+
+    Best for: Data extraction, form filling, structured data generation
+  </Tab>
+</Tabs>
+
+## Usage patterns
+
+### As a conversational assistant
+
+```typescript
+const chatAgent = new ExuluAgent({
+  id: "chat_assistant",
+  name: "Chat Assistant",
+  type: "agent",
+  description: "Conversational AI assistant",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o")
+    },
+    instructions: "You are a friendly, helpful assistant."
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg"],
+    files: [".pdf", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+
+// Stream responses
+const { stream } = await chatAgent.generateStream({
+  message: newMessage,
+  session: sessionId,
+  user: currentUser,
+  currentTools: [searchTool, calculatorTool]
+});
+```
+
+### As a data processor
+
+```typescript
+const extractorAgent = new ExuluAgent({
+  id: "data_extractor",
+  name: "Data Extractor",
+  type: "agent",
+  description: "Extracts structured data from text",
+  provider: "openai",
+  config: {
+    name: "gpt-4o-mini",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o-mini")
+    }
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: []
+  }
+});
+
+// Generate structured output
+const data = await extractorAgent.generateSync({
+  prompt: "Extract contact information from this email",
+  outputSchema: z.object({
+    name: z.string(),
+    email: z.string().email(),
+    phone: z.string().optional()
+  })
+});
+```
+
+### As a tool for other agents
+
+Agents can call other agents as tools:
+
+```typescript
+const specialistAgent = new ExuluAgent({
+  id: "sql_specialist",
+  name: "SQL Specialist",
+  type: "agent",
+  description: "Expert at writing SQL queries",
+  provider: "openai",
+  config: {
+    name: "gpt-4o",
+    model: { /* ... */ },
+    instructions: "You are an expert SQL developer. Write optimized, secure queries."
+  },
+  capabilities: {
+    text: true,
+    images: [],
+    files: [],
+    audio: [],
+    video: []
+  }
+});
+
+// Export as tool
+const sqlTool = await specialistAgent.tool(
+  "sql_specialist",
+  [specialistAgent],
+  contexts,
+  rerankers
+);
+
+// Main agent can use it
+const mainAgent = new ExuluAgent({
+  id: "main_assistant",
+  name: "Main Assistant",
+  type: "agent",
+  description: "General assistant that can delegate to specialists",
+  // ... config
+});
+
+const response = await mainAgent.generateSync({
+  prompt: "Write a query to find top customers",
+  currentTools: [sqlTool], // Main agent can call SQL specialist
+  // ... other params
+});
+```
+
+## Multi-modal capabilities
+
+<AccordionGroup>
+  <Accordion title="Text input">
+    All agents support text input by default:
+
+    ```typescript
+    capabilities: {
+      text: true
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Images">
+    Agents can process images (PNG, JPG, JPEG, GIF, WebP):
+
+    ```typescript
+    capabilities: {
+      text: true,
+      images: [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+    }
+    ```
+
+    Images are passed directly to models that support vision (GPT-4o, Claude Opus, Gemini Pro).
+  </Accordion>
+
+  <Accordion title="Documents">
+    Documents are converted to text before processing:
+
+    ```typescript
+    capabilities: {
+      text: true,
+      files: [".pdf", ".docx", ".xlsx", ".txt", ".md"]
+    }
+    ```
+
+    ExuluAgent uses `officeparser` to extract text from documents.
+  </Accordion>
+
+  <Accordion title="Audio">
+    Audio files can be processed if the model supports it:
+
+    ```typescript
+    capabilities: {
+      text: true,
+      audio: [".mp3", ".wav", ".m4a"]
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Video">
+    Video files for models with video understanding:
+
+    ```typescript
+    capabilities: {
+      text: true,
+      video: [".mp4"]
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best practices
+
+<Tip>
+  **Clear instructions**: Write detailed, specific instructions. Include examples of desired behavior and edge cases to handle.
+</Tip>
+
+<Note>
+  **Tool selection**: Provide only relevant tools to each agent. Too many tools can confuse the agent and increase latency.
+</Note>
+
+<Warning>
+  **API key security**: Always use encrypted variables for API keys. Never hardcode credentials in agent configurations.
+</Warning>
+
+<Info>
+  **Context length**: Monitor token usage and set appropriate `maxContextLength` to prevent exceeding model limits.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-agent/configuration">
+    Learn about all configuration options
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-agent/api-reference">
+    Explore methods and properties
+  </Card>
+</CardGroup>

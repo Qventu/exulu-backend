@@ -1,0 +1,539 @@
+---
+title: "Overview"
+description: "Extend agent capabilities with custom tools for API calls, database queries, and external integrations"
+---
+
+## Overview
+
+`ExuluTool` represents a function that agents can call to perform specific actions or retrieve information. Tools are the primary way to extend agent capabilities beyond text generation, enabling them to interact with external systems, query databases, perform calculations, or execute custom business logic.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="AI SDK integration" icon="robot">
+    Built on Vercel's AI SDK with native streaming support
+  </Card>
+  <Card title="Zod schema validation" icon="shield-check">
+    Type-safe input validation with Zod schemas
+  </Card>
+  <Card title="Multiple tool types" icon="layer-group">
+    Context search, function execution, agent delegation, web search
+  </Card>
+  <Card title="Configurable parameters" icon="sliders">
+    Dynamic tool configuration with variables and defaults
+  </Card>
+  <Card title="Async & streaming" icon="stream">
+    Support for async execution and streaming responses
+  </Card>
+  <Card title="Direct execution" icon="bolt">
+    Execute tools directly or through agent workflows
+  </Card>
+</CardGroup>
+
+## What is a tool?
+
+A tool is a structured function that:
+
+1. **Defines inputs** using Zod schemas for type safety and validation
+2. **Executes logic** through an async function or generator
+3. **Returns results** that agents can use to respond to users
+4. **Integrates with AI SDK** for seamless agent tool calling
+5. **Supports configuration** with dynamic parameters and variables
+
+Think of tools as the "hands" of your agents - they enable AI to take actions in your application.
+
+## Quick start
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+// Create a simple calculator tool
+const calculatorTool = new ExuluTool({
+  id: "calculator",
+  name: "calculator",
+  description: "Performs basic arithmetic operations",
+  type: "function",
+  category: "math",
+  inputSchema: z.object({
+    operation: z.enum(["add", "subtract", "multiply", "divide"]),
+    a: z.number().describe("First number"),
+    b: z.number().describe("Second number")
+  }),
+  config: [],
+  execute: async ({ operation, a, b }) => {
+    let result;
+    switch (operation) {
+      case "add":
+        result = a + b;
+        break;
+      case "subtract":
+        result = a - b;
+        break;
+      case "multiply":
+        result = a * b;
+        break;
+      case "divide":
+        result = a / b;
+        break;
+    }
+
+    return {
+      result: `${a} ${operation} ${b} = ${result}`
+    };
+  }
+});
+
+// Register with ExuluApp
+const app = new ExuluApp();
+await app.create({
+  tools: {
+    calculator: calculatorTool
+  },
+  config: { /* ... */ }
+});
+```
+
+## Tool types
+
+ExuluTool supports four distinct types:
+
+<Tabs>
+  <Tab title="function">
+    Custom functions that execute business logic, API calls, or data processing.
+
+    ```typescript
+    type: "function"
+    ```
+
+    Best for: Custom integrations, calculations, data transformations, API calls
+  </Tab>
+
+  <Tab title="context">
+    Semantic search tools that query ExuluContext instances.
+
+    ```typescript
+    type: "context"
+    ```
+
+    Best for: RAG (retrieval-augmented generation), knowledge base queries
+
+    <Note>
+      Context tools are automatically generated when you create an ExuluContext with `enableAsTool: true`.
+    </Note>
+  </Tab>
+
+  <Tab title="agent">
+    Delegation tools that invoke other agents for specialized tasks.
+
+    ```typescript
+    type: "agent"
+    ```
+
+    Best for: Multi-agent workflows, task delegation, specialized expertise
+  </Tab>
+
+  <Tab title="web_search">
+    Web search tools that fetch real-time information from the internet.
+
+    ```typescript
+    type: "web_search"
+    ```
+
+    Best for: Current events, fact-checking, research
+  </Tab>
+</Tabs>
+
+## Architecture
+
+### AI SDK integration
+
+ExuluTool wraps Vercel's AI SDK `tool()` function, providing:
+
+```typescript
+import { tool } from "ai";
+
+// Inside ExuluTool constructor
+this.tool = tool({
+  description: description,
+  inputSchema: inputSchema || z.object({}),
+  execute
+});
+```
+
+This enables seamless integration with AI SDK's streaming and tool calling features.
+
+### Input schema with Zod
+
+Tools use Zod schemas to define and validate inputs:
+
+```typescript
+inputSchema: z.object({
+  userId: z.string().describe("The user ID to look up"),
+  includeHistory: z.boolean().optional().describe("Include user history")
+})
+```
+
+The schema serves three purposes:
+1. **Type safety** - TypeScript types are inferred from the schema
+2. **Validation** - Inputs are validated before execution
+3. **Documentation** - Agents receive schema descriptions to understand parameters
+
+### Execution patterns
+
+Tools support two execution patterns:
+
+<AccordionGroup>
+  <Accordion title="Async function">
+    Standard async function that returns a result:
+
+    ```typescript
+    execute: async (inputs) => {
+      const data = await fetchData(inputs.userId);
+      return {
+        result: JSON.stringify(data)
+      };
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Async generator">
+    Generator function for streaming responses:
+
+    ```typescript
+    execute: async function* (inputs) {
+      for await (const chunk of processData(inputs)) {
+        yield {
+          result: chunk
+        };
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Core concepts
+
+### Tool identification
+
+Each tool has three identifiers:
+
+<ParamField path="id" type="string">
+  Unique identifier used for database references. Must start with a letter or underscore, contain only alphanumeric characters and underscores, 5-80 characters long. **Should not change after creation.**
+</ParamField>
+
+<ParamField path="name" type="string">
+  Human-readable name shown to agents and in UI. Used for tool invocation.
+</ParamField>
+
+<ParamField path="category" type="string">
+  Optional category for organizing tools (e.g., "database", "api", "math")
+</ParamField>
+
+```typescript
+{
+  id: "get_user_profile",
+  name: "get_user_profile",
+  category: "database"
+}
+```
+
+### Tool configuration
+
+The `config` array defines runtime parameters that can be configured per tool instance:
+
+```typescript
+config: [
+  {
+    name: "api_endpoint",
+    description: "Base URL for the API",
+    type: "string",
+    default: "https://api.example.com"
+  },
+  {
+    name: "enable_caching",
+    description: "Enable response caching",
+    type: "boolean",
+    default: true
+  },
+  {
+    name: "timeout",
+    description: "Request timeout in milliseconds",
+    type: "number",
+    default: 5000
+  },
+  {
+    name: "api_key",
+    description: "API authentication key",
+    type: "variable" // References ExuluVariables
+  }
+]
+```
+
+Configuration types:
+- `string` - Text values
+- `number` - Numeric values
+- `boolean` - True/false flags
+- `variable` - References to ExuluVariables (for secrets/environment values)
+
+### Return values
+
+Tool execution can return:
+
+<ResponseField name="result" type="string">
+  The main result to return to the agent (often JSON stringified)
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Optional job ID if the tool queued a background task
+</ResponseField>
+
+<ResponseField name="items" type="Item[]">
+  Optional array of items (typically used by context search tools)
+</ResponseField>
+
+```typescript
+return {
+  result: JSON.stringify({ status: "success", data: userData }),
+  job: "job-123-456" // If queued for background processing
+};
+```
+
+## Usage patterns
+
+### As agent tools
+
+Tools are automatically available to agents when registered with ExuluApp:
+
+```typescript
+const app = new ExuluApp();
+await app.create({
+  tools: {
+    calculator: calculatorTool,
+    weatherLookup: weatherTool,
+    databaseQuery: dbTool
+  },
+  agents: {
+    assistant: assistantAgent
+  },
+  config: { /* ... */ }
+});
+```
+
+Agents will automatically receive these tools and can call them during conversations based on user requests.
+
+### Direct execution
+
+You can also execute tools directly in your code:
+
+```typescript
+const result = await calculatorTool.execute({
+  agent: "assistant",
+  config: exuluConfig,
+  user: currentUser,
+  inputs: {
+    operation: "add",
+    a: 5,
+    b: 3
+  }
+});
+
+console.log(result.result); // "5 add 3 = 8"
+```
+
+### With streaming
+
+For long-running operations, use generators to stream results:
+
+```typescript
+const processTool = new ExuluTool({
+  id: "process_documents",
+  name: "process_documents",
+  description: "Processes multiple documents",
+  type: "function",
+  inputSchema: z.object({
+    documentIds: z.array(z.string())
+  }),
+  config: [],
+  execute: async function* ({ documentIds }) {
+    for (const docId of documentIds) {
+      const result = await processDocument(docId);
+      yield {
+        result: `Processed document ${docId}: ${result}`
+      };
+    }
+  }
+});
+```
+
+## Common use cases
+
+<AccordionGroup>
+  <Accordion title="Database queries">
+    Create tools that query your database:
+
+    ```typescript
+    const getUserTool = new ExuluTool({
+      id: "get_user",
+      name: "get_user",
+      description: "Retrieves user information from database",
+      type: "function",
+      inputSchema: z.object({
+        userId: z.string()
+      }),
+      config: [],
+      execute: async ({ userId }) => {
+        const user = await db.users.findOne({ id: userId });
+        return { result: JSON.stringify(user) };
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="API integrations">
+    Wrap external APIs as tools:
+
+    ```typescript
+    const weatherTool = new ExuluTool({
+      id: "weather",
+      name: "get_weather",
+      description: "Gets current weather for a location",
+      type: "function",
+      inputSchema: z.object({
+        location: z.string(),
+        units: z.enum(["metric", "imperial"]).optional()
+      }),
+      config: [
+        {
+          name: "api_key",
+          description: "Weather API key",
+          type: "variable"
+        }
+      ],
+      execute: async ({ location, units = "metric" }) => {
+        const response = await fetch(
+          `https://api.weather.com?location=${location}&units=${units}`
+        );
+        const data = await response.json();
+        return { result: JSON.stringify(data) };
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Business logic">
+    Encapsulate complex business logic:
+
+    ```typescript
+    const orderTool = new ExuluTool({
+      id: "create_order",
+      name: "create_order",
+      description: "Creates a new order with validation and inventory check",
+      type: "function",
+      inputSchema: z.object({
+        productId: z.string(),
+        quantity: z.number().positive(),
+        userId: z.string()
+      }),
+      config: [],
+      execute: async ({ productId, quantity, userId }) => {
+        // Check inventory
+        const available = await checkInventory(productId);
+        if (available < quantity) {
+          return {
+            result: JSON.stringify({
+              success: false,
+              error: "Insufficient inventory"
+            })
+          };
+        }
+
+        // Create order
+        const order = await createOrder({ productId, quantity, userId });
+
+        // Update inventory
+        await updateInventory(productId, -quantity);
+
+        return {
+          result: JSON.stringify({
+            success: true,
+            orderId: order.id
+          })
+        };
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="File operations">
+    Tools for file uploads, processing, and retrieval:
+
+    ```typescript
+    const fileProcessorTool = new ExuluTool({
+      id: "process_pdf",
+      name: "process_pdf",
+      description: "Extracts text from PDF files",
+      type: "function",
+      inputSchema: z.object({
+        fileKey: z.string().describe("S3 key of the PDF file")
+      }),
+      config: [],
+      execute: async ({ fileKey }) => {
+        const text = await extractTextFromPDF(fileKey);
+        return {
+          result: JSON.stringify({
+            fileKey,
+            extractedText: text,
+            wordCount: text.split(/\s+/).length
+          })
+        };
+      }
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best practices
+
+<Note>
+  **Input descriptions**: Always add `.describe()` to Zod schema fields. These descriptions help agents understand what each parameter does.
+</Note>
+
+<Warning>
+  **ID stability**: Never change a tool's `id` after creation. The ID is used in database references and changing it will break existing integrations.
+</Warning>
+
+<Tip>
+  **Error handling**: Always handle errors gracefully and return meaningful error messages in the result:
+
+  ```typescript
+  execute: async (inputs) => {
+    try {
+      const data = await riskyOperation(inputs);
+      return { result: JSON.stringify(data) };
+    } catch (error) {
+      return {
+        result: JSON.stringify({
+          error: error.message,
+          success: false
+        })
+      };
+    }
+  }
+  ```
+</Tip>
+
+<Info>
+  **JSON stringification**: Always stringify non-string results. Agents expect string results and will parse JSON automatically.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-tool/configuration">
+    Learn about all configuration options
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-tool/api-reference">
+    Explore methods and properties
+  </Card>
+</CardGroup>

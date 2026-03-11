@@ -1,0 +1,207 @@
+/* Custom styles matching Exulu CI from frontend/app/globals.css */
+
+/* Root variables matching brand colors */
+:root {
+  --exulu-primary: hsl(257.9412, 100%, 60%);
+  --exulu-primary-light: hsl(257.9412, 100%, 68%);
+  --exulu-primary-dark: hsl(257.9412, 100%, 52%);
+  --exulu-accent: hsl(208.209, 100%, 73.7255%);
+  --exulu-radius: 0.4rem;
+}
+
+.dark {
+  --exulu-primary: hsl(257.6687, 100%, 68.0392%);
+  --exulu-primary-light: hsl(257.6687, 100%, 76%);
+  --exulu-primary-dark: hsl(257.6687, 100%, 60%);
+  --exulu-accent: hsl(208.209, 100%, 73.7255%);
+}
+
+/* Hero section gradients */
+.hero-gradient {
+  background: linear-gradient(135deg, var(--exulu-primary) 0%, var(--exulu-primary-dark) 100%);
+}
+
+.hero-gradient-light {
+  background: linear-gradient(135deg, var(--exulu-primary-light) 0%, var(--exulu-primary) 100%);
+}
+
+/* Feature cards with hover effects */
+.feature-card {
+  transition: all 0.3s ease;
+  border: 1px solid hsl(257.9412, 100%, 60%, 0.1);
+  border-radius: var(--exulu-radius);
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px hsl(257.9412, 100%, 60%, 0.15);
+  border-color: hsl(257.9412, 100%, 60%, 0.3);
+}
+
+/* Stats section */
+.stat-item {
+  text-align: center;
+  padding: 2rem;
+}
+
+.stat-number {
+  font-size: 3rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--exulu-primary) 0%, var(--exulu-primary-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.stat-label {
+  font-size: 1rem;
+  color: #64748b;
+  margin-top: 0.5rem;
+}
+
+/* CTA buttons */
+.cta-primary {
+  background: linear-gradient(135deg, var(--exulu-primary) 0%, var(--exulu-primary-dark) 100%);
+  color: white;
+  padding: 1rem 2rem;
+  border-radius: var(--exulu-radius);
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 6px hsl(257.9412, 100%, 60%, 0.2);
+}
+
+.cta-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px hsl(257.9412, 100%, 60%, 0.3);
+  color: white;
+}
+
+.cta-secondary {
+  background: transparent;
+  color: var(--exulu-primary);
+  padding: 1rem 2rem;
+  border-radius: var(--exulu-radius);
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+  border: 2px solid var(--exulu-primary);
+  transition: all 0.3s ease;
+}
+
+.cta-secondary:hover {
+  background: hsl(257.9412, 100%, 60%, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Section spacing */
+.section-padding {
+  padding: 4rem 0;
+}
+
+/* Badge styles */
+.badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  background: hsl(257.9412, 100%, 60%, 0.1);
+  color: var(--exulu-primary);
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+/* Dark mode adjustments */
+.dark .stat-label {
+  color: #94a3b8;
+}
+
+.dark .feature-card {
+  border-color: hsl(257.6687, 100%, 68.0392%, 0.2);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.dark .feature-card:hover {
+  border-color: hsl(257.6687, 100%, 68.0392%, 0.4);
+  background: rgba(15, 23, 42, 0.8);
+}
+
+/* Testimonial styles */
+.testimonial {
+  padding: 2rem;
+  border-left: 4px solid var(--exulu-primary);
+  background: hsl(257.9412, 100%, 60%, 0.05);
+  border-radius: var(--exulu-radius);
+  margin: 1rem 0;
+}
+
+.dark .testimonial {
+  background: hsl(257.6687, 100%, 68.0392%, 0.1);
+}
+
+/* Logo showcase */
+.logo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 2rem;
+  align-items: center;
+  justify-items: center;
+  padding: 2rem 0;
+  opacity: 0.6;
+}
+
+.logo-grid img {
+  max-width: 120px;
+  height: auto;
+  filter: grayscale(100%);
+  transition: all 0.3s ease;
+}
+
+.logo-grid img:hover {
+  filter: grayscale(0%);
+  opacity: 1;
+}
+
+/* Animated gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, var(--exulu-primary) 0%, var(--exulu-primary-light) 50%, var(--exulu-primary) 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gradient 3s ease infinite;
+}
+
+@keyframes gradient {
+  0%, 100% {
+    background-position: 0% center;
+  }
+  50% {
+    background-position: 100% center;
+  }
+}
+
+/* Feature icons */
+.feature-icon {
+  width: 3rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--exulu-primary) 0%, var(--exulu-primary-light) 100%);
+  border-radius: var(--exulu-radius);
+  color: white;
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+/* Font customization matching CI */
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.025em;
+}
+
+code, pre {
+  font-family: 'JetBrains Mono', monospace;
+}

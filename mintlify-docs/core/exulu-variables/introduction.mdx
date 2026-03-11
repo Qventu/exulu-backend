@@ -1,0 +1,511 @@
+---
+title: "Overview"
+description: "Centralized, encrypted variable management for API keys and secrets"
+---
+
+## Overview
+
+`ExuluVariables` provides secure, centralized storage and retrieval of sensitive values like API keys, authentication tokens, and credentials. Variables are stored encrypted in the database and can be referenced across agents, tools, and embedders without exposing the actual values in code or environment files.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Encrypted storage" icon="lock">
+    Variables are encrypted at rest using AES encryption
+  </Card>
+  <Card title="Centralized management" icon="database">
+    Store once, use everywhere across your application
+  </Card>
+  <Card title="UI/API management" icon="browser">
+    Create and update variables via UI or API
+  </Card>
+  <Card title="Reference by name" icon="tag">
+    Use variable names instead of hardcoded values
+  </Card>
+  <Card title="Automatic decryption" icon="key">
+    Variables are decrypted automatically when retrieved
+  </Card>
+  <Card title="Reusable" icon="recycle">
+    Share variables across agents, tools, and embedders
+  </Card>
+</CardGroup>
+
+## Why use ExuluVariables?
+
+<AccordionGroup>
+  <Accordion title="Security">
+    Secrets aren't hardcoded in your codebase or stored in `.env` files that could be committed to version control. Variables are encrypted at rest and only decrypted when retrieved.
+  </Accordion>
+
+  <Accordion title="Centralization">
+    Update an API key once, and all agents, tools, and embedders using that variable automatically use the new value. No need to update multiple configuration files.
+  </Accordion>
+
+  <Accordion title="Flexibility">
+    Manage secrets through the UI or API without redeploying your application. Change API keys, tokens, or credentials on the fly.
+  </Accordion>
+
+  <Accordion title="Multi-environment">
+    Use different variables for development, staging, and production environments while keeping the same codebase.
+  </Accordion>
+
+  <Accordion title="Audit trail">
+    Track who created or updated variables (when integrated with your audit system).
+  </Accordion>
+</AccordionGroup>
+
+## Quick start
+
+### Storing a variable
+
+Variables can be created via the UI or API:
+
+```typescript
+// Via API or database
+INSERT INTO variables (name, value, encrypted)
+VALUES ('openai_api_key', 'encrypted_value_here', true);
+```
+
+### Retrieving a variable
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Get a variable value
+const apiKey = await ExuluVariables.get("openai_api_key");
+
+console.log(apiKey); // "sk-..."
+```
+
+The variable is automatically decrypted if it was stored encrypted.
+
+## Common use cases
+
+### API keys for LLM providers
+
+Store API keys for OpenAI, Anthropic, Google, and other providers:
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Store once in database:
+// name: "openai_api_key", value: "sk-...", encrypted: true
+// name: "anthropic_api_key", value: "sk-ant-...", encrypted: true
+
+// Use in agents
+const openaiKey = await ExuluVariables.get("openai_api_key");
+
+const agent = new ExuluAgent({
+  id: "assistant",
+  name: "OpenAI Assistant",
+  type: "agent",
+  description: "AI assistant",
+  provider: "openai",
+  authenticationInformation: openaiKey, // Use retrieved variable
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey: apiKey || openaiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful assistant."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+```
+
+### Embedding API keys
+
+Use variables for embedding provider credentials:
+
+```typescript
+import { ExuluVariables, ExuluEmbedder } from "@exulu/backend";
+
+// Retrieve the API key
+const openaiKey = await ExuluVariables.get("openai_api_key");
+
+// Use in embedder
+const embedder = new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  authenticationInformation: openaiKey // Use retrieved variable
+});
+```
+
+### Tool authentication
+
+Store credentials for external services used by tools:
+
+```typescript
+import { ExuluVariables, ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+// Create tool with variable reference
+const githubTool = new ExuluTool({
+  id: "github_search",
+  name: "search_github",
+  description: "Searches GitHub repositories",
+  type: "function",
+  inputSchema: z.object({
+    query: z.string()
+  }),
+  config: [
+    {
+      name: "github_token",
+      type: "variable", // Mark as variable reference
+      value: "github_api_token" // Variable name
+    }
+  ],
+  execute: async ({ query }, config) => {
+    // Retrieve the variable inside execute
+    const token = await ExuluVariables.get("github_api_token");
+
+    const response = await fetch(
+      `https://api.github.com/search/repositories?q=${query}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    const data = await response.json();
+    return { result: JSON.stringify(data.items.slice(0, 5)) };
+  }
+});
+```
+
+### Database credentials
+
+Store database connection strings and credentials:
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Retrieve database URL
+const databaseUrl = await ExuluVariables.get("database_url");
+
+// Use in database connection
+const db = createDatabaseClient({
+  connectionString: databaseUrl
+});
+```
+
+### Multi-tenant applications
+
+Different tenants can use different API keys:
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+// Store tenant-specific keys:
+// name: "tenant_1_openai_key", value: "sk-...", encrypted: true
+// name: "tenant_2_openai_key", value: "sk-...", encrypted: true
+
+async function getAgentForTenant(tenantId: string) {
+  const variableName = `tenant_${tenantId}_openai_key`;
+  const apiKey = await ExuluVariables.get(variableName);
+
+  return new ExuluAgent({
+    id: `tenant_${tenantId}_agent`,
+    name: `Agent for Tenant ${tenantId}`,
+    type: "agent",
+    description: "Tenant-specific agent",
+    provider: "openai",
+    authenticationInformation: apiKey,
+    config: { /* ... */ },
+    capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+  });
+}
+```
+
+## How it works
+
+### Storage
+
+Variables are stored in the `variables` table in PostgreSQL:
+
+```sql
+CREATE TABLE variables (
+  name VARCHAR PRIMARY KEY,
+  value TEXT NOT NULL,
+  encrypted BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Encryption
+
+When `encrypted: true`, variables are encrypted using AES encryption with `NEXTAUTH_SECRET` as the encryption key:
+
+```typescript
+// Encryption (when storing)
+const encrypted = CryptoJS.AES.encrypt(value, process.env.NEXTAUTH_SECRET).toString();
+
+// Decryption (when retrieving)
+const bytes = CryptoJS.AES.decrypt(encrypted, process.env.NEXTAUTH_SECRET);
+const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+```
+
+<Warning>
+  The `NEXTAUTH_SECRET` environment variable must be set and consistent across deployments. If it changes, previously encrypted variables cannot be decrypted.
+</Warning>
+
+### Retrieval
+
+When you call `ExuluVariables.get()`:
+
+1. Queries the `variables` table for the specified name
+2. Throws an error if the variable doesn't exist
+3. Decrypts the value if `encrypted: true`
+4. Returns the decrypted value
+
+## Variable workflow
+
+<Steps>
+  <Step title="Create variable">
+    Store a variable in the database via UI or API
+
+    ```typescript
+    // Via UI: Navigate to Settings → Variables → Add Variable
+    // Or via API/SQL:
+    INSERT INTO variables (name, value, encrypted)
+    VALUES ('my_api_key', 'sk-...', true);
+    ```
+  </Step>
+
+  <Step title="Reference in code">
+    Retrieve the variable using `ExuluVariables.get()`
+
+    ```typescript
+    const apiKey = await ExuluVariables.get("my_api_key");
+    ```
+  </Step>
+
+  <Step title="Use in configuration">
+    Pass the retrieved value to agents, tools, or embedders
+
+    ```typescript
+    const agent = new ExuluAgent({
+      // ...
+      authenticationInformation: apiKey
+    });
+    ```
+  </Step>
+
+  <Step title="Update as needed">
+    Update the variable value through UI or API without code changes
+
+    ```typescript
+    UPDATE variables
+    SET value = 'new_encrypted_value'
+    WHERE name = 'my_api_key';
+    ```
+  </Step>
+</Steps>
+
+## Variable naming conventions
+
+<Tip>
+  Use descriptive, namespaced names for variables to avoid conflicts and improve clarity.
+</Tip>
+
+**Recommended patterns:**
+
+```typescript
+// Provider API keys
+"openai_api_key"
+"anthropic_api_key"
+"google_api_key"
+
+// Service-specific
+"github_api_token"
+"stripe_api_key"
+"sendgrid_api_key"
+
+// Environment-specific
+"prod_openai_api_key"
+"dev_openai_api_key"
+
+// Tenant-specific
+"tenant_123_openai_key"
+"tenant_456_anthropic_key"
+
+// Feature-specific
+"embeddings_openai_key"
+"chat_openai_key"
+```
+
+## Error handling
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+try {
+  const apiKey = await ExuluVariables.get("my_variable");
+  console.log("Retrieved variable:", apiKey);
+} catch (error) {
+  console.error("Variable not found:", error.message);
+  // Handle missing variable (use default, prompt user, etc.)
+}
+```
+
+`ExuluVariables.get()` throws an error if:
+- The variable name doesn't exist in the database
+- Database connection fails
+- Decryption fails (e.g., wrong `NEXTAUTH_SECRET`)
+
+## Security considerations
+
+<Warning>
+  **Protect your `NEXTAUTH_SECRET`**: This key is used to encrypt/decrypt variables. Store it securely and never commit it to version control.
+</Warning>
+
+<Note>
+  **Database access**: Variables are stored in your PostgreSQL database. Ensure proper database access controls and backups.
+</Note>
+
+<Info>
+  **Encryption at rest**: Variables with `encrypted: true` are encrypted in the database. They are decrypted in memory when retrieved.
+</Info>
+
+<Tip>
+  **Principle of least privilege**: Only grant access to variables that are necessary. Consider using separate variables for different environments or tenants.
+</Tip>
+
+## Comparison with .env files
+
+| Feature | ExuluVariables | .env files |
+|---------|---------------|------------|
+| **Storage** | Database (encrypted) | File system (plain text) |
+| **Management** | UI/API | Manual file editing |
+| **Updates** | No redeployment needed | Requires restart/redeploy |
+| **Sharing** | Centralized across app | Per-instance |
+| **Version control** | Not in code | Risk of accidental commit |
+| **Encryption** | ✅ Built-in | ❌ Plain text |
+| **Audit trail** | ✅ Possible | ❌ No |
+| **Multi-tenant** | ✅ Easy | ❌ Difficult |
+
+**Use ExuluVariables when:**
+- You need to update secrets without redeployment
+- Multiple agents/tools share the same credentials
+- You want encrypted storage
+- You need centralized management
+- You're building a multi-tenant application
+
+**Use .env files when:**
+- You have simple, static configuration
+- Secrets are environment-specific and rarely change
+- You prefer file-based configuration
+
+## Integration examples
+
+### Complete agent setup
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+// Retrieve API key
+const openaiKey = await ExuluVariables.get("openai_api_key");
+
+// Create agent
+const agent = new ExuluAgent({
+  id: "customer_support",
+  name: "Customer Support Agent",
+  type: "agent",
+  description: "Handles customer inquiries",
+  provider: "openai",
+  authenticationInformation: openaiKey,
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey: apiKey || openaiKey })("gpt-4o")
+    },
+    instructions: "You are a helpful customer support agent."
+  },
+  capabilities: { text: true, images: [], files: [], audio: [], video: [] }
+});
+
+// Use agent
+const response = await agent.generateSync({
+  prompt: "How do I reset my password?",
+  agentInstance: await loadAgent("customer_support"),
+  statistics: { label: "support", trigger: "api" }
+});
+
+console.log(response);
+```
+
+### Multi-provider setup
+
+```typescript
+import { ExuluAgent, ExuluVariables } from "@exulu/backend";
+
+// Retrieve keys for multiple providers
+const [openaiKey, anthropicKey, googleKey] = await Promise.all([
+  ExuluVariables.get("openai_api_key"),
+  ExuluVariables.get("anthropic_api_key"),
+  ExuluVariables.get("google_api_key")
+]);
+
+// Create agents for each provider
+const openaiAgent = new ExuluAgent({
+  id: "openai_agent",
+  provider: "openai",
+  authenticationInformation: openaiKey,
+  // ... config
+});
+
+const anthropicAgent = new ExuluAgent({
+  id: "anthropic_agent",
+  provider: "anthropic",
+  authenticationInformation: anthropicKey,
+  // ... config
+});
+
+const googleAgent = new ExuluAgent({
+  id: "google_agent",
+  provider: "google",
+  authenticationInformation: googleKey,
+  // ... config
+});
+```
+
+## Best practices
+
+<Tip>
+  **Always encrypt sensitive values**: Set `encrypted: true` for API keys, tokens, passwords, and other secrets.
+</Tip>
+
+<Note>
+  **Use descriptive names**: Name variables clearly to avoid confusion (e.g., `openai_api_key` instead of `key1`).
+</Note>
+
+<Warning>
+  **Handle missing variables**: Always wrap `ExuluVariables.get()` in try/catch to handle cases where variables don't exist.
+</Warning>
+
+<Info>
+  **Document your variables**: Maintain a list of required variables for your application, especially when onboarding new team members.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-variables/configuration">
+    Learn about variable setup
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-variables/api-reference">
+    Explore methods and usage
+  </Card>
+  <Card title="ExuluAgent" icon="robot" href="/core/exulu-agent/introduction">
+    Use variables with agents
+  </Card>
+  <Card title="ExuluTool" icon="wrench" href="/core/exulu-tool/introduction">
+    Use variables with tools
+  </Card>
+</CardGroup>

@@ -1,0 +1,661 @@
+---
+title: 'API Reference'
+description: 'Complete GraphQL API reference for Exulu IMP'
+---
+
+## Overview
+
+The Exulu IMP GraphQL API provides programmatic access to manage agents, contexts, workflows, evaluations, and all other platform resources. The schema is **automatically generated** based on your ExuluContext and ExuluProvider instances, providing both core types and dynamic types tailored to your implementation.
+
+<CardGroup cols={3}>
+  <Card title="Dynamic schema" icon="wand-magic-sparkles">
+    Types are generated from your ExuluContext and ExuluProvider definitions
+  </Card>
+  <Card title="Full CRUD" icon="database">
+    Create, read, update, and delete operations for all resources
+  </Card>
+  <Card title="Advanced filtering" icon="filter">
+    Powerful filter operators with AND/OR logic
+  </Card>
+</CardGroup>
+
+## GraphQL endpoint
+
+```
+POST https://your-domain.com/graphql
+```
+
+## Authentication
+
+All API requests must be authenticated using one of three methods:
+
+### API key authentication
+
+Pass your API key in the `x-api-key` header:
+
+```bash
+curl -X POST https://your-domain.com/graphql \
+  -H "x-api-key: sk_abc123.../production-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { agentsPagination { items { id name } } }"}'
+```
+
+### Session token authentication
+
+For web applications using NextAuth:
+
+```bash
+curl -X POST https://your-domain.com/graphql \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "..."}'
+```
+
+### Internal key authentication
+
+For service-to-service communication:
+
+```bash
+curl -X POST https://your-domain.com/graphql \
+  -H "internal: YOUR_INTERNAL_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "..."}'
+```
+
+<Tip>
+  Generate API keys using [`ExuluDatabase.api.key.generate()`](/core/exulu-database#api-key-generation)
+</Tip>
+
+## GraphQL Playground
+
+The easiest way to explore and test your GraphQL API is using the built-in GraphQL Playground.
+
+### Accessing the playground
+
+When running the Exulu frontend:
+
+```bash
+npx @exulu/frontend
+```
+
+Visit the `/explorer` route in your browser:
+
+```
+http://localhost:3000/explorer
+```
+
+<Info>
+  The GraphQL Playground is automatically configured with your specific Exulu IMP implementation, including all your custom ExuluContext types and dynamic schema.
+</Info>
+
+### Features
+
+The playground provides:
+
+- **Schema explorer** - Browse all available types, queries, and mutations
+- **Autocomplete** - IntelliSense for query building
+- **Documentation** - Inline docs for all fields and operations
+- **Query history** - Access previously executed queries
+- **Variables editor** - Test queries with dynamic variables
+- **Authentication** - Automatically uses your session token
+
+<Tip>
+  Run `npx @exulu/frontend` in the same folder as your Exulu IMP project to ensure the playground reflects your current schema configuration.
+</Tip>
+
+### Example usage
+
+1. Start your Exulu IMP backend
+2. Run `npx @exulu/frontend` in your project folder
+3. Open `http://localhost:3000/explorer`
+4. Use the schema explorer to discover available types
+5. Build and execute queries using autocomplete
+
+The playground is especially useful for:
+- Testing queries during development
+- Exploring your dynamically-generated schema
+- Debugging filter and mutation operations
+- Learning the API structure
+
+## Schema structure
+
+The Exulu IMP GraphQL schema consists of:
+
+### Core types
+
+Predefined types for platform resources:
+
+- **agents** - AI agent configurations
+- **users** - User accounts and authentication
+- **roles** - Role-based access control
+- **agent_sessions** - Conversation sessions
+- **agent_messages** - Chat messages
+- **test_cases** - Evaluation test cases
+- **eval_sets** - Evaluation test sets
+- **eval_runs** - Evaluation executions
+- **workflow_templates** - Workflow definitions
+- **statistics** - Usage analytics
+- **variables** - Encrypted configuration values
+- **projects** - Project organization
+- **prompt_library** - Saved prompts
+- **prompt_favorites** - Favorited prompts
+
+### Dynamic types
+
+Types automatically generated from your ExuluContext instances. Each context creates:
+
+- **items table** - Main resource storage (e.g., `documentation`, `support_tickets`)
+- **chunks table** - Vector embeddings for semantic search (if embedder is configured)
+
+**Example:** A context with `id: "documentation"` generates:
+- `documentation` type
+- `documentationInput` type
+- `FilterDocumentation` input type
+- `documentationVectorSearch` query
+- CRUD mutations: `documentationCreateOne`, `documentationUpdateOne`, etc.
+
+## Making requests
+
+### Basic query
+
+```graphql
+query {
+  agentsPagination(limit: 10, page: 1) {
+    items {
+      id
+      name
+      description
+      provider
+      modelName
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      hasNextPage
+    }
+  }
+}
+```
+
+### With filters
+
+```graphql
+query {
+  agentsPagination(
+    limit: 10
+    page: 1
+    filters: [
+      { name: { contains: "assistant" } }
+      { provider: { eq: "anthropic" } }
+    ]
+  ) {
+    items {
+      id
+      name
+    }
+  }
+}
+```
+
+### Creating a resource
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Customer Support Agent"
+      description: "Handles customer inquiries"
+      backend: "anthropic_claude"
+      type: "agent"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+### Updating a resource
+
+```graphql
+mutation {
+  agentsUpdateOneById(
+    id: "agent-id-123"
+    input: {
+      name: "Updated Agent Name"
+      description: "New description"
+    }
+  ) {
+    item {
+      id
+      name
+      updatedAt
+    }
+  }
+}
+```
+
+## Filter operators
+
+Exulu IMP supports powerful filtering with type-specific operators:
+
+<AccordionGroup>
+  <Accordion title="String operators">
+    - `eq` - Equals
+    - `ne` - Not equals
+    - `in` - In array
+    - `contains` - Case-insensitive substring match
+    - `and` - Combine conditions with AND logic
+    - `or` - Combine conditions with OR logic
+
+    ```graphql
+    filters: [
+      { name: { contains: "assistant" } }
+      { description: { contains: "support" } }
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="Number operators">
+    - `eq` - Equals
+    - `ne` - Not equals
+    - `in` - In array
+    - `lte` - Less than or equal
+    - `gte` - Greater than or equal
+    - `and` - Combine conditions
+    - `or` - Combine conditions
+
+    ```graphql
+    filters: [
+      { age: { gte: 18, lte: 65 } }
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="Date operators">
+    - `lte` - On or before date
+    - `gte` - On or after date
+    - `and` - Combine conditions
+    - `or` - Combine conditions
+
+    ```graphql
+    filters: [
+      { createdAt: { gte: "2025-01-01T00:00:00Z" } }
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="Boolean operators">
+    - `eq` - Equals
+    - `ne` - Not equals
+    - `in` - In array
+    - `and` - Combine conditions
+    - `or` - Combine conditions
+
+    ```graphql
+    filters: [
+      { active: { eq: true } }
+    ]
+    ```
+  </Accordion>
+
+  <Accordion title="JSON operators">
+    - `eq` - Equals
+    - `ne` - Not equals
+    - `in` - In array
+    - `contains` - Contains (PostgreSQL `@>` operator)
+
+    ```graphql
+    filters: [
+      { metadata: { contains: { category: "support" } } }
+    ]
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Pagination
+
+All `*Pagination` queries return paginated results:
+
+```graphql
+query {
+  agentsPagination(limit: 20, page: 2) {
+    items {
+      id
+      name
+    }
+    pageInfo {
+      currentPage      # Current page number
+      pageCount        # Total number of pages
+      itemCount        # Total number of items
+      hasPreviousPage  # Whether there's a previous page
+      hasNextPage      # Whether there's a next page
+    }
+  }
+}
+```
+
+## Sorting
+
+Sort results by any field:
+
+```graphql
+query {
+  agentsPagination(
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      createdAt
+    }
+  }
+}
+```
+
+## Vector search
+
+For contexts with embedders, perform semantic search:
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "How do I deploy Exulu IMP?"
+    method: cosineDistance
+    cutoffs: { cosineDistance: 0.7 }
+    expand: { before: 1, after: 1 }
+  ) {
+    chunks {
+      chunk_content
+      chunk_cosine_distance
+      item_name
+      item_id
+    }
+    context {
+      name
+      embedder
+    }
+  }
+}
+```
+
+**Search methods:**
+- `cosineDistance` - Vector similarity (requires embedder)
+- `hybridSearch` - Combines vector and full-text search
+- `tsvector` - PostgreSQL full-text search
+
+## Role-based access control (RBAC)
+
+Resources with RBAC enabled include access control information:
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    RBAC {
+      type
+      users {
+        id
+        rights
+      }
+      roles {
+        id
+        rights
+      }
+    }
+  }
+}
+```
+
+**Setting RBAC on create:**
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Private Agent"
+      RBAC: {
+        users: [
+          { id: "user-123", rights: "write" }
+          { id: "user-456", rights: "read" }
+        ]
+      }
+    }
+  ) {
+    item {
+      id
+      RBAC {
+        users {
+          id
+          rights
+        }
+      }
+    }
+  }
+}
+```
+
+## Workflows
+
+Execute workflows with variables:
+
+```graphql
+mutation {
+  runWorkflow(
+    id: "workflow-123"
+    variables: {
+      customerName: "John Doe"
+      orderId: "12345"
+    }
+  ) {
+    result
+    job
+    metadata
+  }
+}
+```
+
+## Evaluations
+
+Run evaluation sets on agents:
+
+```graphql
+mutation {
+  runEval(
+    id: "eval-run-123"
+    test_case_ids: ["test-1", "test-2", "test-3"]
+  ) {
+    jobs
+    count
+  }
+}
+```
+
+## Background jobs
+
+Query job status from BullMQ queues:
+
+```graphql
+query {
+  jobs(
+    queue: eval_runs
+    statusses: [active, waiting, failed]
+    page: 1
+    limit: 50
+  ) {
+    items {
+      id
+      name
+      state
+      data
+      failedReason
+      attemptsMade
+    }
+    pageInfo {
+      currentPage
+      pageCount
+    }
+  }
+}
+```
+
+**Queue operations:**
+
+```graphql
+mutation {
+  # Pause a queue
+  pauseQueue(queue: eval_runs) {
+    success
+  }
+
+  # Resume a queue
+  resumeQueue(queue: eval_runs) {
+    success
+  }
+
+  # Drain waiting jobs
+  drainQueue(queue: eval_runs) {
+    success
+  }
+
+  # Delete a specific job
+  deleteJob(queue: eval_runs, id: "job-123") {
+    success
+  }
+}
+```
+
+## Statistics
+
+Aggregate statistics with grouping:
+
+```graphql
+query {
+  agentsStatistics(
+    groupBy: "provider"
+    limit: 10
+  ) {
+    group
+    count
+  }
+}
+```
+
+## Error handling
+
+Errors are returned in the standard GraphQL format:
+
+```json
+{
+  "errors": [
+    {
+      "message": "Record not found",
+      "locations": [{ "line": 2, "column": 3 }],
+      "path": ["agentById"]
+    }
+  ],
+  "data": null
+}
+```
+
+**Common error messages:**
+
+- `Record not found` - Resource doesn't exist or no access
+- `Insufficient permissions` - RBAC access denied
+- `Access control error` - User lacks role permission
+- `Invalid token` - Authentication failed
+- `You are not authorized` - Operation requires super_admin
+
+## Schema introspection
+
+Explore the schema using introspection:
+
+```graphql
+query {
+  __schema {
+    types {
+      name
+      kind
+      description
+    }
+  }
+}
+```
+
+Or query specific types:
+
+```graphql
+query {
+  __type(name: "agent") {
+    name
+    fields {
+      name
+      type {
+        name
+        kind
+      }
+    }
+  }
+}
+```
+
+## GraphQL clients
+
+In addition to the [built-in GraphQL Playground](#graphql-playground) available at `/explorer`, you can use any GraphQL client:
+
+- **GraphQL Playground** - Standalone desktop app
+- **Apollo Studio** - Cloud-based GraphQL IDE
+- **Insomnia** - REST and GraphQL client
+- **Postman** - Supports GraphQL requests
+
+## Rate limiting
+
+API rate limits are enforced per API key. If you exceed the limit, you'll receive:
+
+```json
+{
+  "errors": [
+    {
+      "message": "Rate limit exceeded. Try again in 60 seconds."
+    }
+  ]
+}
+```
+
+## Best practices
+
+<Tip>
+  **Request only needed fields** - GraphQL allows you to specify exactly which fields you need, reducing payload size and improving performance
+</Tip>
+
+<Note>
+  **Use pagination** - Always paginate large result sets to avoid timeout and memory issues
+</Note>
+
+<Warning>
+  **Avoid deeply nested queries** - Deeply nested queries can cause performance problems. Keep nesting to 3-4 levels maximum
+</Warning>
+
+<Info>
+  **Batch mutations** - When creating multiple resources, use array inputs instead of separate mutations when possible
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Core types" icon="database" href="/api-reference/core-types">
+    Explore predefined platform types
+  </Card>
+  <Card title="Dynamic types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Learn about context-generated types
+  </Card>
+  <Card title="Queries" icon="magnifying-glass" href="/api-reference/queries">
+    Reference for all query operations
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="/api-reference/mutations">
+    Reference for all mutation operations
+  </Card>
+</CardGroup>

@@ -1,0 +1,680 @@
+---
+title: "Configuration"
+description: "Complete guide to configuring ExuluEval evaluation functions"
+---
+
+## Constructor parameters
+
+ExuluEval requires specific configuration to define evaluation behavior:
+
+```typescript
+new ExuluEval({
+  id: string;
+  name: string;
+  description: string;
+  llm: boolean;
+  execute: (params) => Promise<number>;
+  config?: { name: string; description: string }[];
+  queue?: Promise<ExuluQueueConfig>;
+})
+```
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the evaluation function
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable name for the evaluation
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  Description of what this evaluation measures
+</ParamField>
+
+<ParamField path="llm" type="boolean" required>
+  Whether this evaluation uses an LLM for scoring (LLM-as-judge)
+</ParamField>
+
+<ParamField path="execute" type="function" required>
+  Function that performs the evaluation and returns a score from 0-100
+</ParamField>
+
+<ParamField path="config" type="array" default={undefined}>
+  Optional configuration parameters for the evaluation function
+</ParamField>
+
+<ParamField path="queue" type="Promise<ExuluQueueConfig>" default={undefined}>
+  Optional queue configuration for running evaluations as background jobs
+</ParamField>
+
+## Execute function
+
+The `execute` function receives evaluation parameters and must return a score between 0 and 100:
+
+```typescript
+execute: async ({
+  agent,      // Agent database record
+  backend,    // ExuluAgent instance
+  messages,   // Conversation messages
+  testCase,   // Test case with expected output
+  config      // Optional runtime configuration
+}) => {
+  // Your evaluation logic
+  return score; // Must be 0-100
+}
+```
+
+### Parameters
+
+<ParamField path="agent" type="Agent">
+  The agent database record being evaluated
+  ```typescript
+  interface Agent {
+    id: string;
+    name: string;
+    description: string;
+    // ... other agent properties
+  }
+  ```
+</ParamField>
+
+<ParamField path="backend" type="ExuluAgent">
+  ExuluAgent instance for generating responses or using LLM-as-judge
+</ParamField>
+
+<ParamField path="messages" type="UIMessage[]">
+  Array of conversation messages including inputs and generated response
+  ```typescript
+  interface UIMessage {
+    role: "user" | "assistant" | "system";
+    content: string;
+    toolInvocations?: ToolInvocation[];
+  }
+  ```
+</ParamField>
+
+<ParamField path="testCase" type="TestCase">
+  Test case containing inputs and expected outputs
+  ```typescript
+  interface TestCase {
+    id: string;
+    name: string;
+    description?: string;
+    inputs: UIMessage[];
+    expected_output: string;
+    expected_tools?: string[];
+    expected_knowledge_sources?: string[];
+    expected_agent_tools?: string[];
+  }
+  ```
+</ParamField>
+
+<ParamField path="config" type="Record<string, any>">
+  Runtime configuration values (optional)
+</ParamField>
+
+## Configuration patterns
+
+### Basic exact match evaluation
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+const exactMatchEval = new ExuluEval({
+  id: "exact_match",
+  name: "Exact Match",
+  description: "Returns 100 if response exactly matches expected output, 0 otherwise",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    return response === testCase.expected_output ? 100 : 0;
+  }
+});
+```
+
+### Partial match with scoring
+
+```typescript
+const partialMatchEval = new ExuluEval({
+  id: "partial_match",
+  name: "Partial Match",
+  description: "Scores based on how much of expected output appears in response",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content?.toLowerCase() || "";
+    const expected = testCase.expected_output.toLowerCase();
+
+    // Split into words
+    const expectedWords = expected.split(/\s+/);
+    const matchedWords = expectedWords.filter(word =>
+      response.includes(word)
+    );
+
+    return (matchedWords.length / expectedWords.length) * 100;
+  }
+});
+```
+
+### Keyword presence evaluation
+
+```typescript
+const keywordEval = new ExuluEval({
+  id: "keyword_presence",
+  name: "Keyword Presence",
+  description: "Checks if response contains required keywords",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content?.toLowerCase() || "";
+
+    const keywords = config?.keywords || [];
+    if (keywords.length === 0) return 100;
+
+    const foundKeywords = keywords.filter(kw =>
+      response.includes(kw.toLowerCase())
+    );
+
+    return (foundKeywords.length / keywords.length) * 100;
+  },
+  config: [
+    {
+      name: "keywords",
+      description: "Array of keywords that should appear in response"
+    }
+  ]
+});
+
+// Run with config
+const score = await keywordEval.run(
+  agent,
+  backend,
+  testCase,
+  messages,
+  { keywords: ["weather", "temperature", "San Francisco"] }
+);
+```
+
+### LLM-as-judge evaluation
+
+```typescript
+const llmJudgeEval = new ExuluEval({
+  id: "llm_judge",
+  name: "LLM Judge",
+  description: "Uses an LLM to evaluate response quality",
+  llm: true,
+  execute: async ({ backend, messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    const judgePrompt = `
+You are an expert evaluator. Rate the following response on a scale of 0-100.
+
+Test Case: ${testCase.name}
+Description: ${testCase.description || "N/A"}
+
+Expected Output:
+${testCase.expected_output}
+
+Actual Response:
+${response}
+
+Criteria:
+1. Accuracy: Does it match the expected output?
+2. Completeness: Does it address all required aspects?
+3. Clarity: Is it well-structured and understandable?
+4. Relevance: Does it stay on topic?
+
+Respond with ONLY a number from 0 to 100. No explanation.
+    `.trim();
+
+    const result = await backend.generateSync({
+      prompt: judgePrompt,
+      agentInstance: await loadAgent(config?.judgeAgentId || "default_judge"),
+      statistics: { label: "eval", trigger: "llm_judge" }
+    });
+
+    const score = parseInt(result.text.trim());
+
+    if (isNaN(score)) {
+      console.warn(`LLM judge returned non-numeric: ${result.text}`);
+      return 0;
+    }
+
+    return Math.max(0, Math.min(100, score));
+  },
+  config: [
+    {
+      name: "judgeAgentId",
+      description: "Agent ID to use for evaluation (must support text generation)"
+    }
+  ]
+});
+```
+
+### Tool usage evaluation
+
+```typescript
+const toolUsageEval = new ExuluEval({
+  id: "tool_usage",
+  name: "Tool Usage",
+  description: "Checks if agent used expected tools",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    // Extract tool calls from conversation
+    const toolCalls = messages
+      .flatMap(msg => msg.toolInvocations || [])
+      .map(inv => inv.toolName);
+
+    const expectedTools = testCase.expected_tools || [];
+
+    // If no tools expected, check that no tools were used
+    if (expectedTools.length === 0) {
+      return toolCalls.length === 0 ? 100 : 0;
+    }
+
+    // Check if all expected tools were used
+    const usedExpected = expectedTools.filter(tool =>
+      toolCalls.includes(tool)
+    );
+
+    return (usedExpected.length / expectedTools.length) * 100;
+  }
+});
+```
+
+### Regex pattern matching
+
+```typescript
+const regexMatchEval = new ExuluEval({
+  id: "regex_match",
+  name: "Regex Pattern Match",
+  description: "Checks if response matches regex pattern",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    const pattern = config?.pattern;
+    if (!pattern) {
+      throw new Error("Regex pattern required in config");
+    }
+
+    const regex = new RegExp(pattern, config?.flags || "");
+    return regex.test(response) ? 100 : 0;
+  },
+  config: [
+    {
+      name: "pattern",
+      description: "Regex pattern to match"
+    },
+    {
+      name: "flags",
+      description: "Regex flags (e.g., 'i' for case-insensitive)"
+    }
+  ]
+});
+
+// Run with regex config
+const score = await regexMatchEval.run(
+  agent,
+  backend,
+  testCase,
+  messages,
+  {
+    pattern: "\\d{2}°[FC]",  // Matches temperature like "68°F"
+    flags: "i"
+  }
+);
+```
+
+### Length-based evaluation
+
+```typescript
+const lengthEval = new ExuluEval({
+  id: "response_length",
+  name: "Response Length",
+  description: "Scores based on response length within acceptable range",
+  llm: false,
+  execute: async ({ messages, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+    const length = response.length;
+
+    const minLength = config?.minLength || 0;
+    const maxLength = config?.maxLength || Infinity;
+    const targetLength = config?.targetLength;
+
+    // If within range, score based on proximity to target
+    if (length < minLength) {
+      return Math.max(0, (length / minLength) * 100);
+    }
+
+    if (length > maxLength) {
+      return Math.max(0, 100 - ((length - maxLength) / maxLength) * 100);
+    }
+
+    // Within range
+    if (targetLength) {
+      const deviation = Math.abs(length - targetLength);
+      const maxDeviation = Math.max(
+        targetLength - minLength,
+        maxLength - targetLength
+      );
+      return Math.max(0, 100 - (deviation / maxDeviation) * 50);
+    }
+
+    return 100;
+  },
+  config: [
+    {
+      name: "minLength",
+      description: "Minimum acceptable character count"
+    },
+    {
+      name: "maxLength",
+      description: "Maximum acceptable character count"
+    },
+    {
+      name: "targetLength",
+      description: "Ideal character count (optional)"
+    }
+  ]
+});
+```
+
+### Composite evaluation
+
+Combine multiple evaluation criteria:
+
+```typescript
+const compositeEval = new ExuluEval({
+  id: "composite",
+  name: "Composite Evaluation",
+  description: "Combines multiple evaluation criteria with weights",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    let totalScore = 0;
+    let totalWeight = 0;
+
+    // Criteria 1: Contains expected output (weight: 50%)
+    const containsExpected = response.includes(testCase.expected_output);
+    totalScore += containsExpected ? 50 : 0;
+    totalWeight += 50;
+
+    // Criteria 2: Reasonable length (weight: 20%)
+    const isReasonableLength = response.length >= 50 && response.length <= 500;
+    totalScore += isReasonableLength ? 20 : 0;
+    totalWeight += 20;
+
+    // Criteria 3: Uses tools if expected (weight: 30%)
+    const toolCalls = messages.flatMap(msg => msg.toolInvocations || []);
+    const expectedTools = testCase.expected_tools || [];
+    if (expectedTools.length > 0) {
+      const toolsUsed = expectedTools.every(tool =>
+        toolCalls.some(call => call.toolName === tool)
+      );
+      totalScore += toolsUsed ? 30 : 0;
+      totalWeight += 30;
+    } else {
+      totalScore += 30; // No tools expected, full points
+      totalWeight += 30;
+    }
+
+    return (totalScore / totalWeight) * 100;
+  }
+});
+```
+
+## Queue configuration
+
+Run evaluations as background jobs using ExuluQueues:
+
+```typescript
+import { ExuluEval, ExuluQueues } from "@exulu/backend";
+
+const backgroundEval = new ExuluEval({
+  id: "background_eval",
+  name: "Background Evaluation",
+  description: "Runs as queued job",
+  llm: true,
+  execute: async ({ backend, messages, testCase }) => {
+    // Long-running evaluation logic
+    return 85;
+  },
+  queue: Promise.resolve({
+    connection: await ExuluQueues.getConnection(),
+    name: "evaluations",
+    prefix: "{exulu}",
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000
+      },
+      removeOnComplete: true,
+      removeOnFail: false
+    }
+  })
+});
+```
+
+## Advanced patterns
+
+### Semantic similarity evaluation
+
+Use embeddings to measure semantic similarity:
+
+```typescript
+import { ExuluEval, ExuluEmbedder, ExuluVariables } from "@exulu/backend";
+
+const semanticSimilarityEval = new ExuluEval({
+  id: "semantic_similarity",
+  name: "Semantic Similarity",
+  description: "Measures semantic similarity using embeddings",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    const embedder = new ExuluEmbedder({
+      id: "eval_embedder",
+      name: "Evaluation Embedder",
+      provider: "openai",
+      model: "text-embedding-3-small",
+      vectorDimensions: 1536,
+      authenticationInformation: await ExuluVariables.get("openai_api_key")
+    });
+
+    const [responseEmb, expectedEmb] = await embedder.generate([
+      response,
+      testCase.expected_output
+    ]);
+
+    // Cosine similarity
+    const similarity = cosineSimilarity(responseEmb, expectedEmb);
+
+    // Scale to 0-100
+    return similarity * 100;
+  }
+});
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const magnitudeA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const magnitudeB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  return dotProduct / (magnitudeA * magnitudeB);
+}
+```
+
+### Multi-aspect LLM judge
+
+Evaluate multiple aspects separately:
+
+```typescript
+const multiAspectJudgeEval = new ExuluEval({
+  id: "multi_aspect_judge",
+  name: "Multi-Aspect LLM Judge",
+  description: "Evaluates multiple aspects with separate LLM calls",
+  llm: true,
+  execute: async ({ backend, messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = lastMessage?.content || "";
+
+    const aspects = [
+      {
+        name: "accuracy",
+        weight: 40,
+        prompt: "Rate the accuracy of this response (0-100):"
+      },
+      {
+        name: "clarity",
+        weight: 30,
+        prompt: "Rate the clarity and readability (0-100):"
+      },
+      {
+        name: "completeness",
+        weight: 30,
+        prompt: "Rate how complete the response is (0-100):"
+      }
+    ];
+
+    let totalScore = 0;
+    let totalWeight = 0;
+
+    for (const aspect of aspects) {
+      const judgePrompt = `
+${aspect.prompt}
+
+Expected: ${testCase.expected_output}
+Actual: ${response}
+
+Respond with ONLY a number 0-100.
+      `.trim();
+
+      const result = await backend.generateSync({
+        prompt: judgePrompt,
+        agentInstance: await loadAgent(config?.judgeAgentId || "default_judge"),
+        statistics: { label: "eval", trigger: "multi_aspect_judge" }
+      });
+
+      const score = parseInt(result.text.trim());
+      if (!isNaN(score)) {
+        totalScore += Math.max(0, Math.min(100, score)) * aspect.weight;
+        totalWeight += aspect.weight;
+      }
+    }
+
+    return totalWeight > 0 ? totalScore / totalWeight : 0;
+  },
+  config: [
+    {
+      name: "judgeAgentId",
+      description: "Agent ID for LLM judge"
+    }
+  ]
+});
+```
+
+### A/B testing evaluation
+
+Compare two agent configurations:
+
+```typescript
+async function compareAgents(
+  agentA: Agent,
+  agentB: Agent,
+  backendA: ExuluAgent,
+  backendB: ExuluAgent,
+  testCases: TestCase[],
+  evals: ExuluEval[]
+) {
+  const resultsA = [];
+  const resultsB = [];
+
+  for (const testCase of testCases) {
+    // Generate response from Agent A
+    const responseA = await backendA.generateSync({
+      prompt: testCase.inputs[testCase.inputs.length - 1].content,
+      agentInstance: await loadAgent(agentA.id),
+      statistics: { label: "ab_test", trigger: "test" }
+    });
+
+    const messagesA = [
+      ...testCase.inputs,
+      { role: "assistant", content: responseA.text }
+    ];
+
+    // Generate response from Agent B
+    const responseB = await backendB.generateSync({
+      prompt: testCase.inputs[testCase.inputs.length - 1].content,
+      agentInstance: await loadAgent(agentB.id),
+      statistics: { label: "ab_test", trigger: "test" }
+    });
+
+    const messagesB = [
+      ...testCase.inputs,
+      { role: "assistant", content: responseB.text }
+    ];
+
+    // Run evaluations on both
+    for (const eval of evals) {
+      const scoreA = await eval.run(agentA, backendA, testCase, messagesA);
+      const scoreB = await eval.run(agentB, backendB, testCase, messagesB);
+
+      resultsA.push({ testCase: testCase.name, eval: eval.name, score: scoreA });
+      resultsB.push({ testCase: testCase.name, eval: eval.name, score: scoreB });
+    }
+  }
+
+  // Calculate averages
+  const avgA = resultsA.reduce((sum, r) => sum + r.score, 0) / resultsA.length;
+  const avgB = resultsB.reduce((sum, r) => sum + r.score, 0) / resultsB.length;
+
+  return {
+    agentA: { results: resultsA, average: avgA },
+    agentB: { results: resultsB, average: avgB },
+    winner: avgA > avgB ? "Agent A" : "Agent B"
+  };
+}
+```
+
+## Best practices
+
+<Tip>
+  **Weighted scoring**: For composite evaluations, use weighted scoring to prioritize important criteria.
+</Tip>
+
+<Note>
+  **Error handling**: Always handle errors in execute functions and return 0 or throw descriptive errors.
+</Note>
+
+<Warning>
+  **LLM judge reliability**: LLM judges can be inconsistent. Run multiple times or use temperature=0 for deterministic results.
+</Warning>
+
+<Info>
+  **Config validation**: Validate config parameters at the start of execute functions to provide clear error messages.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/core/exulu-eval/api-reference">
+    Explore all methods and properties
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-eval/introduction">
+    Learn about evaluation concepts
+  </Card>
+  <Card title="ExuluQueues" icon="layer-group" href="/core/exulu-queues/introduction">
+    Run evaluations as background jobs
+  </Card>
+  <Card title="ExuluAgent" icon="robot" href="/core/exulu-agent/introduction">
+    Create agents to evaluate
+  </Card>
+</CardGroup>

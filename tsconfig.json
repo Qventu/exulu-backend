@@ -9,7 +9,7 @@
     "outDir": "dist",
     "jsx": "react-jsx",
     "allowJs": true,
-    "noImplicitAny": false,
+
     // Bundler mode
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -17,19 +17,38 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Best practices
+    // Strict type checking (improved)
     "strict": true,
-    "skipLibCheck": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    // Some stricter flags (disabled by default)
+    "noImplicitAny": false,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+
+    // Additional checks (enabled for better code quality)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
     "noPropertyAccessFromIndexSignature": false,
+    "strictPropertyInitialization": false,
+
+    // Quality of life
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // Path aliases
+    "baseUrl": ".",
     "paths": {
       "@EXULU_TYPES/*": ["./types/*"],
+      "@SRC/*": ["./src/*"],
+      "@EE/*": ["./ee/*"]
     }
   },
-  "include": ["src", "../types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": ["src", "../types/**/*.ts", "ee"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }

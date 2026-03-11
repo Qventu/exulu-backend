@@ -1,0 +1,772 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluEval"
+---
+
+## ExuluEval class
+
+```typescript
+class ExuluEval {
+  public id: string;
+  public name: string;
+  public description: string;
+  public llm: boolean;
+  public config?: { name: string; description: string }[];
+  public queue?: Promise<ExuluQueueConfig>;
+
+  constructor(params: ExuluEvalParams);
+  async run(
+    agent: Agent,
+    backend: ExuluAgent,
+    testCase: TestCase,
+    messages: UIMessage[],
+    config?: Record<string, any>
+  ): Promise<number>;
+}
+```
+
+## Constructor
+
+Creates a new evaluation function instance.
+
+```typescript
+new ExuluEval(params: ExuluEvalParams)
+```
+
+### Parameters
+
+<ParamField path="params" type="ExuluEvalParams" required>
+  Configuration object for the evaluation function
+
+  ```typescript
+  interface ExuluEvalParams {
+    id: string;
+    name: string;
+    description: string;
+    llm: boolean;
+    execute: (params: ExecuteParams) => Promise<number>;
+    config?: { name: string; description: string }[];
+    queue?: Promise<ExuluQueueConfig>;
+  }
+  ```
+</ParamField>
+
+<ParamField path="params.id" type="string" required>
+  Unique identifier for this evaluation function
+</ParamField>
+
+<ParamField path="params.name" type="string" required>
+  Human-readable name
+</ParamField>
+
+<ParamField path="params.description" type="string" required>
+  Description of what this evaluation measures
+</ParamField>
+
+<ParamField path="params.llm" type="boolean" required>
+  Whether this evaluation uses an LLM (LLM-as-judge)
+</ParamField>
+
+<ParamField path="params.execute" type="function" required>
+  Function that performs the evaluation
+  ```typescript
+  async (params: {
+    agent: Agent;
+    backend: ExuluAgent;
+    messages: UIMessage[];
+    testCase: TestCase;
+    config?: Record<string, any>;
+  }) => Promise<number>
+  ```
+  Must return a score between 0 and 100
+</ParamField>
+
+<ParamField path="params.config" type="array">
+  Optional configuration schema
+  ```typescript
+  {
+    name: string;        // Config parameter name
+    description: string; // What this parameter does
+  }[]
+  ```
+</ParamField>
+
+<ParamField path="params.queue" type="Promise<ExuluQueueConfig>">
+  Optional queue configuration for background execution
+</ParamField>
+
+### Example
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+const eval = new ExuluEval({
+  id: "exact_match",
+  name: "Exact Match",
+  description: "Checks if response exactly matches expected output",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const response = messages[messages.length - 1]?.content || "";
+    return response === testCase.expected_output ? 100 : 0;
+  }
+});
+```
+
+## Properties
+
+### id
+
+<ResponseField name="id" type="string">
+  Unique identifier for this evaluation function
+</ResponseField>
+
+```typescript
+const evalId = eval.id; // "exact_match"
+```
+
+### name
+
+<ResponseField name="name" type="string">
+  Human-readable name for the evaluation
+</ResponseField>
+
+```typescript
+const evalName = eval.name; // "Exact Match"
+```
+
+### description
+
+<ResponseField name="description" type="string">
+  Description of what this evaluation measures
+</ResponseField>
+
+```typescript
+const evalDesc = eval.description; // "Checks if response exactly matches expected output"
+```
+
+### llm
+
+<ResponseField name="llm" type="boolean">
+  Whether this evaluation uses an LLM for scoring
+</ResponseField>
+
+```typescript
+const usesLLM = eval.llm; // false
+```
+
+### config
+
+<ResponseField name="config" type="array | undefined">
+  Configuration schema defining runtime parameters
+
+  ```typescript
+  {
+    name: string;
+    description: string;
+  }[]
+  ```
+</ResponseField>
+
+```typescript
+const configSchema = eval.config;
+// [{ name: "threshold", description: "Minimum score threshold" }]
+```
+
+### queue
+
+<ResponseField name="queue" type="Promise<ExuluQueueConfig> | undefined">
+  Queue configuration for background execution
+</ResponseField>
+
+```typescript
+const queueConfig = await eval.queue;
+```
+
+## Methods
+
+### run()
+
+Executes the evaluation function and returns a score.
+
+```typescript
+async run(
+  agent: Agent,
+  backend: ExuluAgent,
+  testCase: TestCase,
+  messages: UIMessage[],
+  config?: Record<string, any>
+): Promise<number>
+```
+
+<ParamField path="agent" type="Agent" required>
+  Agent database record being evaluated
+  ```typescript
+  interface Agent {
+    id: string;
+    name: string;
+    description: string;
+    // ... other properties
+  }
+  ```
+</ParamField>
+
+<ParamField path="backend" type="ExuluAgent" required>
+  ExuluAgent instance for generating responses or using LLM-as-judge
+</ParamField>
+
+<ParamField path="testCase" type="TestCase" required>
+  Test case with inputs and expected outputs
+  ```typescript
+  interface TestCase {
+    id: string;
+    name: string;
+    description?: string;
+    inputs: UIMessage[];
+    expected_output: string;
+    expected_tools?: string[];
+    expected_knowledge_sources?: string[];
+    expected_agent_tools?: string[];
+    createdAt: string;
+    updatedAt: string;
+  }
+  ```
+</ParamField>
+
+<ParamField path="messages" type="UIMessage[]" required>
+  Conversation messages including inputs and agent responses
+  ```typescript
+  interface UIMessage {
+    role: "user" | "assistant" | "system";
+    content: string;
+    toolInvocations?: ToolInvocation[];
+  }
+  ```
+</ParamField>
+
+<ParamField path="config" type="Record<string, any>">
+  Optional runtime configuration values
+</ParamField>
+
+<ResponseField name="return" type="Promise<number>">
+  Score from 0 to 100
+</ResponseField>
+
+**Example:**
+
+```typescript
+const score = await eval.run(
+  agent,
+  backend,
+  testCase,
+  messages,
+  { threshold: 80 }
+);
+
+console.log(`Score: ${score}/100`);
+```
+
+**Error handling:**
+
+```typescript
+try {
+  const score = await eval.run(agent, backend, testCase, messages);
+  console.log(`Score: ${score}`);
+} catch (error) {
+  console.error("Evaluation failed:", error.message);
+  // Error: Eval function must return a score between 0 and 100, got 150
+}
+```
+
+**Throws:**
+- Error if execute function returns score < 0 or > 100
+- Error if execute function throws an error
+
+## Type definitions
+
+### ExuluEvalParams
+
+```typescript
+interface ExuluEvalParams {
+  id: string;
+  name: string;
+  description: string;
+  llm: boolean;
+  execute: (params: {
+    agent: Agent;
+    backend: ExuluAgent;
+    messages: UIMessage[];
+    testCase: TestCase;
+    config?: Record<string, any>;
+  }) => Promise<number>;
+  config?: {
+    name: string;
+    description: string;
+  }[];
+  queue?: Promise<ExuluQueueConfig>;
+}
+```
+
+### TestCase
+
+```typescript
+interface TestCase {
+  id: string;
+  name: string;
+  description?: string;
+  inputs: UIMessage[];                   // Input messages
+  expected_output: string;               // Expected response
+  expected_tools?: string[];             // Expected tool names
+  expected_knowledge_sources?: string[]; // Expected context IDs
+  expected_agent_tools?: string[];       // Expected agent tool IDs
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+### UIMessage
+
+```typescript
+interface UIMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  toolInvocations?: ToolInvocation[];
+}
+
+interface ToolInvocation {
+  toolName: string;
+  toolCallId: string;
+  args: Record<string, any>;
+  result?: any;
+}
+```
+
+## Usage examples
+
+### Basic exact match
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+const exactMatch = new ExuluEval({
+  id: "exact_match",
+  name: "Exact Match",
+  description: "100 if exact match, 0 otherwise",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const response = messages[messages.length - 1]?.content || "";
+    return response === testCase.expected_output ? 100 : 0;
+  }
+});
+
+const score = await exactMatch.run(agent, backend, testCase, messages);
+console.log(`Score: ${score}/100`);
+```
+
+### Keyword evaluation with config
+
+```typescript
+const keywordEval = new ExuluEval({
+  id: "keyword_check",
+  name: "Keyword Check",
+  description: "Checks for presence of keywords",
+  llm: false,
+  execute: async ({ messages, config }) => {
+    const response = messages[messages.length - 1]?.content?.toLowerCase() || "";
+    const keywords = config?.keywords || [];
+
+    if (keywords.length === 0) return 100;
+
+    const found = keywords.filter(kw => response.includes(kw.toLowerCase()));
+    return (found.length / keywords.length) * 100;
+  },
+  config: [
+    {
+      name: "keywords",
+      description: "Array of required keywords"
+    }
+  ]
+});
+
+const score = await keywordEval.run(
+  agent,
+  backend,
+  testCase,
+  messages,
+  { keywords: ["weather", "temperature"] }
+);
+```
+
+### LLM-as-judge
+
+```typescript
+const llmJudge = new ExuluEval({
+  id: "llm_judge",
+  name: "LLM Quality Judge",
+  description: "Uses LLM to evaluate response quality",
+  llm: true,
+  execute: async ({ backend, messages, testCase, config }) => {
+    const response = messages[messages.length - 1]?.content || "";
+
+    const judgePrompt = `
+Rate this response on a scale of 0-100.
+
+Expected: ${testCase.expected_output}
+Actual: ${response}
+
+Respond with ONLY a number 0-100.
+    `.trim();
+
+    const result = await backend.generateSync({
+      prompt: judgePrompt,
+      agentInstance: await loadAgent(config?.judgeAgentId),
+      statistics: { label: "eval", trigger: "llm_judge" }
+    });
+
+    const score = parseInt(result.text.trim());
+    return isNaN(score) ? 0 : Math.max(0, Math.min(100, score));
+  },
+  config: [
+    {
+      name: "judgeAgentId",
+      description: "Agent to use for judging"
+    }
+  ]
+});
+
+const score = await llmJudge.run(
+  agent,
+  backend,
+  testCase,
+  messages,
+  { judgeAgentId: "claude_opus_judge" }
+);
+```
+
+### Tool usage evaluation
+
+```typescript
+const toolUsageEval = new ExuluEval({
+  id: "tool_usage",
+  name: "Tool Usage Check",
+  description: "Verifies correct tools were used",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const toolCalls = messages
+      .flatMap(msg => msg.toolInvocations || [])
+      .map(inv => inv.toolName);
+
+    const expectedTools = testCase.expected_tools || [];
+
+    if (expectedTools.length === 0) {
+      return toolCalls.length === 0 ? 100 : 0;
+    }
+
+    const usedExpected = expectedTools.filter(tool =>
+      toolCalls.includes(tool)
+    );
+
+    return (usedExpected.length / expectedTools.length) * 100;
+  }
+});
+
+const score = await toolUsageEval.run(agent, backend, testCase, messages);
+```
+
+### Batch evaluation
+
+```typescript
+async function runAllEvaluations(
+  agent: Agent,
+  backend: ExuluAgent,
+  testCases: TestCase[],
+  evaluations: ExuluEval[]
+) {
+  const results = [];
+
+  for (const testCase of testCases) {
+    // Generate response
+    const response = await backend.generateSync({
+      prompt: testCase.inputs[testCase.inputs.length - 1].content,
+      agentInstance: await loadAgent(agent.id),
+      statistics: { label: "eval", trigger: "test" }
+    });
+
+    const messages = [
+      ...testCase.inputs,
+      { role: "assistant", content: response.text }
+    ];
+
+    // Run all evaluations
+    for (const evaluation of evaluations) {
+      const score = await evaluation.run(agent, backend, testCase, messages);
+
+      results.push({
+        testCaseId: testCase.id,
+        testCaseName: testCase.name,
+        evaluationId: evaluation.id,
+        evaluationName: evaluation.name,
+        score
+      });
+    }
+  }
+
+  return results;
+}
+
+// Use
+const results = await runAllEvaluations(
+  agent,
+  backend,
+  testCases,
+  [exactMatch, keywordEval, toolUsageEval]
+);
+
+console.log("Results:", results);
+```
+
+### Evaluation suite
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+class EvaluationSuite {
+  private evaluations: ExuluEval[] = [];
+
+  add(evaluation: ExuluEval) {
+    this.evaluations.push(evaluation);
+  }
+
+  async runAll(
+    agent: Agent,
+    backend: ExuluAgent,
+    testCase: TestCase,
+    messages: UIMessage[],
+    config?: Record<string, any>
+  ) {
+    const results = await Promise.all(
+      this.evaluations.map(async (eval) => ({
+        id: eval.id,
+        name: eval.name,
+        score: await eval.run(agent, backend, testCase, messages, config)
+      }))
+    );
+
+    return {
+      testCase: testCase.name,
+      evaluations: results,
+      average: results.reduce((sum, r) => sum + r.score, 0) / results.length,
+      passed: results.every(r => r.score >= (config?.threshold || 80))
+    };
+  }
+}
+
+// Use
+const suite = new EvaluationSuite();
+suite.add(exactMatch);
+suite.add(keywordEval);
+suite.add(toolUsageEval);
+
+const result = await suite.runAll(agent, backend, testCase, messages);
+console.log("Suite result:", result);
+```
+
+### Composite evaluation
+
+```typescript
+const compositeEval = new ExuluEval({
+  id: "composite",
+  name: "Composite Evaluation",
+  description: "Combines multiple criteria with weights",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const response = messages[messages.length - 1]?.content || "";
+    let totalScore = 0;
+
+    // Accuracy (50%)
+    const containsExpected = response.includes(testCase.expected_output);
+    totalScore += containsExpected ? 50 : 0;
+
+    // Length (20%)
+    const isReasonableLength = response.length >= 50 && response.length <= 500;
+    totalScore += isReasonableLength ? 20 : 0;
+
+    // Tool usage (30%)
+    const toolCalls = messages.flatMap(msg => msg.toolInvocations || []);
+    const expectedTools = testCase.expected_tools || [];
+    if (expectedTools.length > 0) {
+      const toolsUsed = expectedTools.every(tool =>
+        toolCalls.some(call => call.toolName === tool)
+      );
+      totalScore += toolsUsed ? 30 : 0;
+    } else {
+      totalScore += 30;
+    }
+
+    return totalScore;
+  }
+});
+```
+
+### Error handling
+
+```typescript
+const safeEval = new ExuluEval({
+  id: "safe_eval",
+  name: "Safe Evaluation",
+  description: "Evaluation with comprehensive error handling",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    try {
+      const response = messages[messages.length - 1]?.content;
+
+      if (!response) {
+        console.warn("No response content found");
+        return 0;
+      }
+
+      // Your evaluation logic
+      const score = computeScore(response, testCase.expected_output);
+
+      // Validate score range
+      if (score < 0 || score > 100) {
+        throw new Error(`Score out of range: ${score}`);
+      }
+
+      return score;
+    } catch (error) {
+      console.error(`Evaluation error: ${error.message}`);
+      throw error; // Re-throw for ExuluEval to handle
+    }
+  }
+});
+
+// Run with error handling
+try {
+  const score = await safeEval.run(agent, backend, testCase, messages);
+  console.log(`Score: ${score}`);
+} catch (error) {
+  console.error("Evaluation failed:", error.message);
+  // Handle failure (log, alert, retry, etc.)
+}
+```
+
+## Integration patterns
+
+### With test management system
+
+```typescript
+interface EvaluationResult {
+  evaluationId: string;
+  testCaseId: string;
+  score: number;
+  timestamp: string;
+  agentId: string;
+  passed: boolean;
+}
+
+async function runAndStoreEvaluation(
+  evaluation: ExuluEval,
+  agent: Agent,
+  backend: ExuluAgent,
+  testCase: TestCase,
+  messages: UIMessage[],
+  threshold: number = 80
+): Promise<EvaluationResult> {
+  const score = await evaluation.run(agent, backend, testCase, messages);
+
+  const result: EvaluationResult = {
+    evaluationId: evaluation.id,
+    testCaseId: testCase.id,
+    score,
+    timestamp: new Date().toISOString(),
+    agentId: agent.id,
+    passed: score >= threshold
+  };
+
+  // Store in database
+  const { db } = await postgresClient();
+  await db.into("evaluation_results").insert(result);
+
+  return result;
+}
+```
+
+### CI/CD integration
+
+```typescript
+async function runCIPipeline(
+  agent: Agent,
+  backend: ExuluAgent,
+  testCases: TestCase[],
+  evaluations: ExuluEval[],
+  minPassRate: number = 0.8
+) {
+  const results = [];
+
+  for (const testCase of testCases) {
+    const response = await backend.generateSync({
+      prompt: testCase.inputs[testCase.inputs.length - 1].content,
+      agentInstance: await loadAgent(agent.id),
+      statistics: { label: "ci", trigger: "test" }
+    });
+
+    const messages = [
+      ...testCase.inputs,
+      { role: "assistant", content: response.text }
+    ];
+
+    for (const evaluation of evaluations) {
+      const score = await evaluation.run(agent, backend, testCase, messages);
+      results.push({ testCase: testCase.name, eval: evaluation.name, score });
+    }
+  }
+
+  const averageScore = results.reduce((sum, r) => sum + r.score, 0) / results.length;
+  const passRate = results.filter(r => r.score >= 80).length / results.length;
+
+  if (passRate < minPassRate) {
+    throw new Error(
+      `CI failed: Pass rate ${passRate.toFixed(2)} below minimum ${minPassRate}. ` +
+      `Average score: ${averageScore.toFixed(2)}/100`
+    );
+  }
+
+  console.log(`✓ CI passed: ${passRate.toFixed(2)} pass rate, ${averageScore.toFixed(2)} avg score`);
+  return { averageScore, passRate, results };
+}
+```
+
+## Best practices
+
+<Tip>
+  **Validate inputs**: Check that messages and testCase have expected structure before running evaluation logic.
+</Tip>
+
+<Note>
+  **Score range**: Always ensure your execute function returns a value between 0 and 100, inclusive.
+</Note>
+
+<Warning>
+  **LLM consistency**: LLM judges can be inconsistent. Use temperature=0 for more deterministic scoring.
+</Warning>
+
+<Info>
+  **Multiple evaluations**: Use multiple evaluation functions to assess different aspects (accuracy, style, tool usage).
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration guide" icon="gear" href="/core/exulu-eval/configuration">
+    Learn about evaluation configuration
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-eval/introduction">
+    Understand evaluation concepts
+  </Card>
+  <Card title="ExuluAgent" icon="robot" href="/core/exulu-agent/introduction">
+    Create agents to evaluate
+  </Card>
+  <Card title="ExuluQueues" icon="layer-group" href="/core/exulu-queues/introduction">
+    Run evaluations as background jobs
+  </Card>
+</CardGroup>

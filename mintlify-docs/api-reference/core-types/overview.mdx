@@ -1,0 +1,73 @@
+---
+title: 'Overview'
+description: 'Predefined GraphQL types for Exulu IMP platform resources'
+---
+
+## Overview
+
+Core types are predefined GraphQL types provided by Exulu IMP for managing platform resources. These types are always available in the schema, regardless of your implementation.
+
+## Type Categories
+
+<CardGroup cols={2}>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent configurations, capabilities, and rate limiting
+  </Card>
+  <Card title="Session Types" icon="comments" href="/api-reference/core-types/session-types">
+    Conversation sessions and messages
+  </Card>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    Users, roles, and authentication
+  </Card>
+  <Card title="Evaluation Types" icon="chart-line" href="/api-reference/core-types/evaluation-types">
+    Test cases, eval sets, and eval runs
+  </Card>
+  <Card title="Workflow Types" icon="workflow" href="/api-reference/core-types/workflow-types">
+    Workflow templates and execution
+  </Card>
+  <Card title="Configuration" icon="gear" href="/api-reference/core-types/configuration-types">
+    Variables and project organization
+  </Card>
+  <Card title="Prompt Management" icon="pen-to-square" href="/api-reference/core-types/prompt-types">
+    Prompt library and favorites
+  </Card>
+  <Card title="Analytics" icon="chart-bar" href="/api-reference/core-types/analytics-types">
+    Usage statistics and reporting
+  </Card>
+  <Card title="Job Management" icon="gears" href="/api-reference/core-types/job-types">
+    Background job tracking
+  </Card>
+  <Card title="RBAC Types" icon="shield" href="/api-reference/core-types/rbac-types">
+    Access control and permissions
+  </Card>
+</CardGroup>
+
+## Common Fields
+
+Most core types include these standard fields:
+
+- **id** - Unique identifier (ID or Int)
+- **createdAt** - Timestamp when resource was created
+- **updatedAt** - Timestamp when resource was last modified
+- **RBAC** - Access control settings (when RBAC is enabled)
+
+## Type Safety
+
+All core types are fully typed in the GraphQL schema with TypeScript support. Use GraphQL introspection to explore available fields and their types.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Dynamic Types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Learn about context-generated types
+  </Card>
+  <Card title="Queries" icon="magnifying-glass" href="/api-reference/queries">
+    Explore all query operations
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="/api-reference/mutations">
+    Explore all mutation operations
+  </Card>
+  <Card title="API Introduction" icon="book" href="/api-reference/introduction">
+    Back to API overview
+  </Card>
+</CardGroup>

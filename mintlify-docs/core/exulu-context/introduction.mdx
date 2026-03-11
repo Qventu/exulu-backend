@@ -1,0 +1,394 @@
+---
+title: "Overview"
+description: "Semantic search contexts with vector embeddings for retrieval-augmented generation"
+---
+
+## Overview
+
+`ExuluContext` represents a semantic search index that powers retrieval-augmented generation (RAG) in Exulu IMP. Each context maintains a collection of items with vector embeddings, enabling agents to query relevant information using natural language, keywords, or hybrid search.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Vector search" icon="magnifying-glass">
+    Semantic search with pgvector for similarity-based retrieval
+  </Card>
+  <Card title="Hybrid search" icon="arrows-split-up-and-left">
+    Combines vector similarity with full-text keyword search
+  </Card>
+  <Card title="Data sources" icon="database">
+    Scheduled data ingestion from external systems
+  </Card>
+  <Card title="Processors" icon="gear">
+    Transform items before storage and embeddings generation
+  </Card>
+  <Card title="Auto tool generation" icon="wrench">
+    Automatically exposed as a tool for agents to use
+  </Card>
+  <Card title="Chunk expansion" icon="expand">
+    Retrieve surrounding context chunks for better results
+  </Card>
+</CardGroup>
+
+## What is a context?
+
+A context is a semantic search index that:
+
+1. **Stores structured data** with custom fields (text, numbers, files, JSON, etc.)
+2. **Generates embeddings** using a configured embedder (OpenAI, Anthropic, etc.)
+3. **Enables semantic search** through vector similarity and full-text search
+4. **Automatically becomes a tool** that agents can call to retrieve information
+5. **Manages data sources** that periodically sync external data
+
+Think of a context as a specialized database table optimized for AI retrieval with semantic understanding.
+
+## Quick start
+
+```typescript
+import { ExuluContext, ExuluEmbedder } from "@exulu/backend";
+
+// Create an embedder
+const embedder = new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536
+});
+
+// Create a context
+const docsContext = new ExuluContext({
+  id: "documentation",
+  name: "Documentation",
+  description: "Product documentation and help articles",
+  active: true,
+  embedder: embedder,
+  fields: [
+    {
+      name: "title",
+      type: "text",
+      required: true
+    },
+    {
+      name: "content",
+      type: "text",
+      required: true
+    },
+    {
+      name: "url",
+      type: "text"
+    }
+  ],
+  sources: [],
+  configuration: {
+    calculateVectors: "onInsert",
+    enableAsTool: true,
+    maxRetrievalResults: 10
+  }
+});
+
+// Use in ExuluApp
+const app = new ExuluApp();
+await app.create({
+  contexts: {
+    documentation: docsContext
+  },
+  config: { /* ... */ }
+});
+```
+
+## Architecture
+
+### Database structure
+
+Each context creates two PostgreSQL tables:
+
+<AccordionGroup>
+  <Accordion title="Items table">
+    Stores the actual data items with your custom fields plus built-in fields:
+    - `id` - UUID primary key
+    - `name` - Item name
+    - `description` - Item description
+    - `external_id` - Optional external identifier for syncing
+    - `tags` - Comma-separated tags
+    - `created_by` - User who created the item
+    - `rights_mode` - Access control mode (private, public, restricted)
+    - `embeddings_updated_at` - Last embeddings generation timestamp
+    - `chunks_count` - Number of embedding chunks
+    - Your custom fields
+  </Accordion>
+
+  <Accordion title="Chunks table">
+    Stores embedding chunks generated from items:
+    - `id` - UUID primary key
+    - `source` - Foreign key to items table
+    - `content` - Text content of the chunk
+    - `chunk_index` - Position within the document
+    - `metadata` - JSON metadata
+    - `embedding` - Vector embedding (pgvector)
+    - `fts` - Full-text search index (tsvector)
+  </Accordion>
+</AccordionGroup>
+
+### Search methods
+
+<Tabs>
+  <Tab title="Hybrid search">
+    Combines semantic understanding with keyword matching. Best for most queries.
+
+    ```typescript
+    const results = await context.search({
+      query: "How do I configure authentication?",
+      keywords: ["auth", "config"],
+      method: "hybridSearch",
+      limit: 10
+    });
+    ```
+  </Tab>
+
+  <Tab title="Semantic search">
+    Uses vector similarity for conceptual matching. Best for questions with synonyms and paraphrasing.
+
+    ```typescript
+    const results = await context.search({
+      query: "authentication setup process",
+      method: "cosineDistance",
+      limit: 10
+    });
+    ```
+  </Tab>
+
+  <Tab title="Keyword search">
+    Full-text search for exact term matching. Best for technical names, IDs, or specific phrases.
+
+    ```typescript
+    const results = await context.search({
+      keywords: ["API-KEY-123", "production"],
+      method: "tsvector",
+      limit: 10
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Core concepts
+
+### Fields
+
+Define the structure of your items with typed fields:
+
+```typescript
+fields: [
+  { name: "title", type: "text", required: true },
+  { name: "category", type: "text", index: true },
+  { name: "priority", type: "number", default: 0 },
+  { name: "metadata", type: "json" },
+  { name: "document", type: "file", allowedFileTypes: ["pdf", "docx"] },
+  { name: "status", type: "text", enumValues: ["draft", "published"] }
+]
+```
+
+<Note>
+  Field types include: text, number, boolean, date, json, file, and more. See the [configuration guide](/core/exulu-context/configuration) for all available types.
+</Note>
+
+### Embedder
+
+The embedder generates vector representations of your items:
+
+```typescript
+embedder: new ExuluEmbedder({
+  id: "my_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  template: "Title: {{title}}\n\nContent: {{content}}"
+})
+```
+
+The embedder uses a template to format item data before generating embeddings.
+
+### Sources
+
+Data sources automatically sync external data into your context:
+
+```typescript
+sources: [
+  {
+    id: "notion_sync",
+    name: "Notion Documentation",
+    description: "Syncs docs from Notion",
+    config: {
+      schedule: "0 * * * *", // Every hour
+      queue: myQueue,
+      retries: 3
+    },
+    execute: async ({ exuluConfig }) => {
+      // Fetch data from Notion API
+      const pages = await fetchNotionPages();
+      return pages.map(page => ({
+        external_id: page.id,
+        name: page.title,
+        content: page.content
+      }));
+    }
+  }
+]
+```
+
+### Processor
+
+Processors transform items before storage or embeddings generation:
+
+```typescript
+processor: {
+  name: "Extract text from PDF",
+  config: {
+    trigger: "onInsert",
+    generateEmbeddings: true
+  },
+  execute: async ({ item, utils }) => {
+    // Extract text from PDF file
+    const text = await utils.storage.extractText(item.document_s3key);
+    return {
+      ...item,
+      content: text
+    };
+  }
+}
+```
+
+## Usage patterns
+
+### As an agent tool
+
+When `enableAsTool: true`, contexts automatically become tools that agents can call:
+
+```typescript
+// Agent receives this tool automatically
+{
+  name: "documentation_context_search",
+  description: "Gets information from the context called: Documentation...",
+  inputSchema: {
+    query: "The user's question",
+    keywords: ["relevant", "terms"],
+    method: "hybrid" | "semantic" | "keyword"
+  }
+}
+```
+
+Agents will intelligently choose when to query your context based on the user's question.
+
+### Direct querying
+
+You can also query contexts directly in your code:
+
+```typescript
+const context = app.context("documentation");
+const results = await context.search({
+  query: "How do I configure CORS?",
+  keywords: ["CORS", "config"],
+  method: "hybridSearch",
+  itemFilters: [
+    { field: "category", operator: "=", value: "configuration" }
+  ],
+  limit: 5
+});
+
+console.log(results.chunks); // Array of matching chunks with metadata
+```
+
+### Managing items
+
+Create, update, and delete items programmatically:
+
+```typescript
+// Create an item
+const { item, job } = await context.createItem(
+  {
+    external_id: "doc-123",
+    name: "Getting Started",
+    content: "Welcome to our platform..."
+  },
+  config,
+  userId
+);
+
+// Update an item
+await context.updateItem(
+  {
+    id: item.id,
+    content: "Updated content..."
+  },
+  config,
+  userId
+);
+
+// Delete an item
+await context.deleteItem({ id: item.id });
+```
+
+## Search features
+
+### Chunk expansion
+
+Retrieve surrounding chunks for more context:
+
+```typescript
+configuration: {
+  expand: {
+    before: 1, // Include 1 chunk before match
+    after: 2   // Include 2 chunks after match
+  }
+}
+```
+
+### Search cutoffs
+
+Filter results by relevance score:
+
+```typescript
+configuration: {
+  cutoffs: {
+    cosineDistance: 0.7,  // Only results with >0.7 similarity
+    tsvector: 0.5,        // Only results with >0.5 keyword score
+    hybrid: 0.6           // Only results with >0.6 combined score
+  }
+}
+```
+
+### Query rewriting
+
+Improve search quality with query rewriting:
+
+```typescript
+queryRewriter: async (query: string) => {
+  // Call LLM to expand/clarify the query
+  const rewritten = await llm.rewrite(query);
+  return rewritten;
+}
+```
+
+### Result reranking
+
+Reorder results based on custom logic:
+
+```typescript
+resultReranker: async (results) => {
+  // Use a reranker model or custom logic
+  const reranked = await reranker.rerank(results);
+  return reranked;
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-context/configuration">
+    Learn about all configuration options
+  </Card>
+  <Card title="API reference" icon="code" href="/core/exulu-context/api-reference">
+    Explore methods and properties
+  </Card>
+</CardGroup>

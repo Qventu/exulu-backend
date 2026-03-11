@@ -1,0 +1,135 @@
+---
+title: 'Job Management'
+description: 'GraphQL types for background job tracking with BullMQ'
+---
+
+## Job
+
+Background job information from BullMQ.
+
+```graphql
+type Job {
+  id: String!
+  name: String!
+  returnvalue: JSON
+  stacktrace: [String]
+  finishedOn: Date
+  processedOn: Date
+  attemptsMade: Int
+  failedReason: String
+  state: String!
+  data: JSON
+  timestamp: Date
+}
+```
+
+## Query Jobs
+
+**By queue and status:**
+
+```graphql
+query {
+  jobs(
+    queue: eval_runs
+    statusses: [active, waiting, failed]
+    page: 1
+    limit: 50
+  ) {
+    items {
+      id
+      name
+      state
+      failedReason
+    }
+  }
+}
+```
+
+## Job States
+
+- **waiting** - Job is queued
+- **active** - Job is currently processing
+- **completed** - Job finished successfully
+- **failed** - Job failed with error
+- **delayed** - Job is scheduled for later
+- **paused** - Queue is paused
+
+## Queue Information
+
+Get detailed queue status:
+
+```graphql
+query {
+  queue(queue: eval_runs) {
+    name
+    concurrency {
+      worker
+      queue
+    }
+    timeoutInSeconds
+    ratelimit
+    isMaxed
+    isPaused
+    jobs {
+      paused
+      completed
+      failed
+      waiting
+      active
+      delayed
+    }
+  }
+}
+```
+
+## Queue Management
+
+Manage queue operations:
+
+```graphql
+mutation {
+  # Pause a queue
+  pauseQueue(queue: eval_runs) {
+    success
+  }
+
+  # Resume a queue
+  resumeQueue(queue: eval_runs) {
+    success
+  }
+
+  # Drain waiting jobs
+  drainQueue(queue: eval_runs) {
+    success
+  }
+
+  # Delete a specific job
+  deleteJob(queue: eval_runs, id: "job-123") {
+    success
+  }
+}
+```
+
+## Common Queues
+
+- **eval_runs** - Evaluation execution
+- **chunk_generation** - Vector embedding generation
+- **workflow_execution** - Workflow runs
+- **context_processing** - Context data processing
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Evaluation Types" icon="chart-line" href="/api-reference/core-types/evaluation-types">
+    Eval run jobs
+  </Card>
+  <Card title="Workflow Types" icon="workflow" href="/api-reference/core-types/workflow-types">
+    Workflow execution jobs
+  </Card>
+  <Card title="Dynamic Types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Context chunk jobs
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

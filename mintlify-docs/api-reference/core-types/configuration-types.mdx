@@ -1,0 +1,83 @@
+---
+title: 'Configuration'
+description: 'GraphQL types for encrypted variables and project organization'
+---
+
+## variables
+
+Encrypted configuration values (alternative to .env files).
+
+```graphql
+type variables {
+  id: ID!
+  name: String!
+  value: String!
+  encrypted: Boolean!
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+<Note>
+  Values are encrypted with AES using `NEXTAUTH_SECRET`. Use [`ExuluVariables.get()`](/core/exulu-variables/api-reference#get) to retrieve decrypted values.
+</Note>
+
+**Example usage:**
+
+```graphql
+mutation {
+  variablesCreateOne(
+    input: {
+      name: "openai_api_key"
+      value: "sk-..."
+      encrypted: true
+      description: "OpenAI API key for production"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+## projects
+
+Project organization for grouping resources.
+
+```graphql
+type projects {
+  id: ID!
+  name: String!
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+Projects provide a way to organize related resources for better management and organization.
+
+## Security
+
+<Warning>
+  Variable values are write-only. Once encrypted, they cannot be retrieved through GraphQL - use the ExuluVariables API instead.
+</Warning>
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Workflow Types" icon="workflow" href="/api-reference/core-types/workflow-types">
+    Workflow variables
+  </Card>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent configuration
+  </Card>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    Access permissions
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

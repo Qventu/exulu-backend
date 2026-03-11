@@ -1,0 +1,648 @@
+---
+title: "Configuration"
+description: "Complete guide to configuring ExuluContext for semantic search"
+---
+
+## Constructor parameters
+
+The ExuluContext constructor accepts a configuration object with the following parameters:
+
+```typescript
+const context = new ExuluContext({
+  id: string,
+  name: string,
+  description: string,
+  active: boolean,
+  fields: ExuluContextFieldDefinition[],
+  embedder?: ExuluEmbedder,
+  processor?: ExuluContextProcessor,
+  sources: ExuluContextSource[],
+  rateLimit?: RateLimiterRule,
+  queryRewriter?: (query: string) => Promise<string>,
+  resultReranker?: (results: any[]) => Promise<any[]>,
+  configuration?: { /* ... */ }
+});
+```
+
+## Required parameters
+
+### id
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the context. Must be a valid PostgreSQL identifier: start with a letter or underscore, contain only letters, digits, or underscores, 5-80 characters long.
+</ParamField>
+
+```typescript
+id: "product_docs"
+```
+
+<Warning>
+  The ID is used for database table names and should not change after creation. Changing the ID requires database migration.
+</Warning>
+
+### name
+
+<ParamField path="name" type="string" required>
+  Human-readable name displayed in UI and logs
+</ParamField>
+
+```typescript
+name: "Product Documentation"
+```
+
+### description
+
+<ParamField path="description" type="string" required>
+  Description of what information this context contains. Used in the auto-generated tool description for agents.
+</ParamField>
+
+```typescript
+description: "Product documentation, help articles, and tutorials for end users"
+```
+
+### active
+
+<ParamField path="active" type="boolean" required>
+  Whether this context is active and available for use
+</ParamField>
+
+```typescript
+active: true
+```
+
+### fields
+
+<ParamField path="fields" type="ExuluContextFieldDefinition[]" required>
+  Array of field definitions that define the schema for items in this context
+</ParamField>
+
+```typescript
+fields: [
+  {
+    name: "title",
+    type: "text",
+    required: true,
+    editable: true
+  },
+  {
+    name: "content",
+    type: "text",
+    required: true
+  },
+  {
+    name: "category",
+    type: "text",
+    index: true,
+    enumValues: ["guide", "reference", "tutorial"]
+  }
+]
+```
+
+#### Field definition properties
+
+<ParamField path="fields[].name" type="string" required>
+  Field name (must be valid PostgreSQL column name)
+</ParamField>
+
+<ParamField path="fields[].type" type="ExuluFieldTypes" required>
+  Field type: `text`, `number`, `boolean`, `date`, `json`, `file`, `longtext`, `decimal`, `integer`, `timestamp`
+</ParamField>
+
+<ParamField path="fields[].required" type="boolean">
+  Whether this field is required when creating items
+</ParamField>
+
+<ParamField path="fields[].editable" type="boolean">
+  Whether this field can be edited after creation
+</ParamField>
+
+<ParamField path="fields[].unique" type="boolean">
+  Whether this field must have unique values
+</ParamField>
+
+<ParamField path="fields[].index" type="boolean">
+  Whether to create a database index on this field for faster queries
+</ParamField>
+
+<ParamField path="fields[].default" type="any">
+  Default value for this field
+</ParamField>
+
+<ParamField path="fields[].calculated" type="boolean">
+  Whether this field is calculated/computed rather than user-provided
+</ParamField>
+
+<ParamField path="fields[].enumValues" type="string[]">
+  For text fields, restrict values to this list of allowed values
+</ParamField>
+
+<ParamField path="fields[].allowedFileTypes" type="allFileTypes[]">
+  For file fields, restrict allowed file types (e.g., `["pdf", "docx", "txt"]`)
+</ParamField>
+
+### sources
+
+<ParamField path="sources" type="ExuluContextSource[]" required>
+  Array of data sources that populate this context
+</ParamField>
+
+```typescript
+sources: [
+  {
+    id: "github_issues",
+    name: "GitHub Issues",
+    description: "Syncs issues from GitHub repository",
+    config: {
+      schedule: "0 */6 * * *", // Every 6 hours
+      queue: await ExuluQueues.register("github_sync"),
+      retries: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000
+      }
+    },
+    execute: async ({ exuluConfig }) => {
+      const issues = await fetchGitHubIssues();
+      return issues.map(issue => ({
+        external_id: issue.id,
+        name: issue.title,
+        content: issue.body,
+        metadata: { labels: issue.labels }
+      }));
+    }
+  }
+]
+```
+
+#### Source configuration
+
+<ParamField path="sources[].id" type="string" required>
+  Unique identifier for the source
+</ParamField>
+
+<ParamField path="sources[].name" type="string" required>
+  Human-readable source name
+</ParamField>
+
+<ParamField path="sources[].description" type="string" required>
+  Description of what this source provides
+</ParamField>
+
+<ParamField path="sources[].config.schedule" type="string">
+  Cron expression for scheduled execution (e.g., `"0 * * * *"` for hourly)
+</ParamField>
+
+<ParamField path="sources[].config.queue" type="Promise<ExuluQueueConfig>">
+  Queue configuration for background processing
+</ParamField>
+
+<ParamField path="sources[].config.retries" type="number">
+  Number of retry attempts on failure (default: 3)
+</ParamField>
+
+<ParamField path="sources[].config.backoff" type="object">
+  Backoff strategy for retries: `{ type: "exponential" | "linear", delay: number }`
+</ParamField>
+
+<ParamField path="sources[].execute" type="function" required>
+  Async function that fetches and returns items from the source
+</ParamField>
+
+## Optional parameters
+
+### embedder
+
+<ParamField path="embedder" type="ExuluEmbedder">
+  Embedder instance that generates vector embeddings for items
+</ParamField>
+
+```typescript
+import { ExuluEmbedder } from "@exulu/backend";
+
+embedder: new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  template: "{{title}}\n\n{{content}}"
+})
+```
+
+<Note>
+  Without an embedder, semantic search is not available. You can still use the context for structured data storage and retrieval.
+</Note>
+
+### processor
+
+<ParamField path="processor" type="ExuluContextProcessor">
+  Processor that transforms items before storage or embeddings generation
+</ParamField>
+
+```typescript
+processor: {
+  name: "PDF Text Extractor",
+  config: {
+    trigger: "onInsert", // or "onUpdate", "always", "manual"
+    generateEmbeddings: true, // Auto-trigger embeddings after processing
+    queue: await ExuluQueues.register("processing"),
+    timeoutInSeconds: 300,
+    retries: 2,
+    backoff: {
+      type: "exponential",
+      delay: 2000
+    }
+  },
+  filter: async ({ item, user }) => {
+    // Optional: Filter which items to process
+    return item.document_s3key !== undefined;
+  },
+  execute: async ({ item, utils, exuluConfig }) => {
+    // Transform the item
+    const text = await utils.storage.extractText(item.document_s3key);
+    return {
+      ...item,
+      content: text,
+      textlength: text.length
+    };
+  }
+}
+```
+
+### rateLimit
+
+<ParamField path="rateLimit" type="RateLimiterRule">
+  Rate limiting rules for API access to this context
+</ParamField>
+
+```typescript
+rateLimit: {
+  points: 100,      // Number of requests
+  duration: 60,     // Time window in seconds
+  blockDuration: 60 // Block duration after exceeding limit
+}
+```
+
+### queryRewriter
+
+<ParamField path="queryRewriter" type="(query: string) => Promise<string>">
+  Function that rewrites queries before search to improve results
+</ParamField>
+
+```typescript
+queryRewriter: async (query: string) => {
+  // Use an LLM to expand or clarify the query
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [
+      {
+        role: "system",
+        content: "Expand this query to improve search results"
+      },
+      {
+        role: "user",
+        content: query
+      }
+    ]
+  });
+  return response.choices[0].message.content;
+}
+```
+
+### resultReranker
+
+<ParamField path="resultReranker" type="(results: any[]) => Promise<any[]>">
+  Function that reranks search results based on custom logic or a reranker model
+</ParamField>
+
+```typescript
+resultReranker: async (results) => {
+  // Use a reranker to improve result ordering
+  const reranked = await cohereReranker.rerank({
+    query: results[0].query,
+    documents: results.map(r => r.chunk_content)
+  });
+
+  return reranked.results.map(r => results[r.index]);
+}
+```
+
+## Configuration object
+
+<ParamField path="configuration" type="object">
+  Additional configuration options for search behavior
+</ParamField>
+
+### calculateVectors
+
+<ParamField path="configuration.calculateVectors" type="'manual' | 'onUpdate' | 'onInsert' | 'always'">
+  When to automatically generate embeddings for items (default: `"manual"`)
+</ParamField>
+
+```typescript
+configuration: {
+  calculateVectors: "onInsert" // Generate embeddings when items are created
+}
+```
+
+<Tabs>
+  <Tab title="manual">
+    Never auto-generate embeddings. You must call `embeddings.generate.one()` or `embeddings.generate.all()` manually.
+  </Tab>
+
+  <Tab title="onInsert">
+    Generate embeddings when new items are created
+  </Tab>
+
+  <Tab title="onUpdate">
+    Generate embeddings when items are updated
+  </Tab>
+
+  <Tab title="always">
+    Generate embeddings on both insert and update
+  </Tab>
+</Tabs>
+
+### maxRetrievalResults
+
+<ParamField path="configuration.maxRetrievalResults" type="number">
+  Maximum number of results to return from search queries (default: `10`)
+</ParamField>
+
+```typescript
+configuration: {
+  maxRetrievalResults: 20
+}
+```
+
+### defaultRightsMode
+
+<ParamField path="configuration.defaultRightsMode" type="'private' | 'public' | 'restricted'">
+  Default access control mode for new items (default: `"private"`)
+</ParamField>
+
+```typescript
+configuration: {
+  defaultRightsMode: "public"
+}
+```
+
+### enableAsTool
+
+<ParamField path="configuration.enableAsTool" type="boolean">
+  Whether to automatically expose this context as a tool for agents (default: `true`)
+</ParamField>
+
+```typescript
+configuration: {
+  enableAsTool: true // Agents can query this context
+}
+```
+
+<Info>
+  When enabled, agents receive a tool called `{context_name}_context_search` that they can use to query this context.
+</Info>
+
+### cutoffs
+
+<ParamField path="configuration.cutoffs" type="object">
+  Minimum relevance scores for different search methods
+</ParamField>
+
+```typescript
+configuration: {
+  cutoffs: {
+    cosineDistance: 0.7,  // Min similarity for semantic search (0-1)
+    tsvector: 0.5,        // Min score for keyword search
+    hybrid: 0.6           // Min score for hybrid search
+  }
+}
+```
+
+Results below these thresholds are filtered out.
+
+### expand
+
+<ParamField path="configuration.expand" type="object">
+  Number of surrounding chunks to include with each result
+</ParamField>
+
+```typescript
+configuration: {
+  expand: {
+    before: 1, // Include 1 chunk before the matched chunk
+    after: 2   // Include 2 chunks after the matched chunk
+  }
+}
+```
+
+This provides more context around matched chunks, improving the agent's understanding.
+
+### language
+
+<ParamField path="configuration.language" type="'english' | 'german'">
+  Language for full-text search indexing (default: `"english"`)
+</ParamField>
+
+```typescript
+configuration: {
+  language: "german" // Use German text search configuration
+}
+```
+
+This affects stemming and stop words in keyword search.
+
+## Complete example
+
+```typescript
+import {
+  ExuluContext,
+  ExuluEmbedder,
+  ExuluQueues
+} from "@exulu/backend";
+
+const embedder = new ExuluEmbedder({
+  id: "openai_ada",
+  name: "OpenAI Ada",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536,
+  template: "Title: {{title}}\nCategory: {{category}}\n\n{{content}}"
+});
+
+const docsContext = new ExuluContext({
+  id: "product_docs",
+  name: "Product Documentation",
+  description: "Comprehensive product docs including guides, API references, and tutorials",
+  active: true,
+
+  fields: [
+    {
+      name: "title",
+      type: "text",
+      required: true,
+      index: true
+    },
+    {
+      name: "content",
+      type: "longtext",
+      required: true
+    },
+    {
+      name: "category",
+      type: "text",
+      enumValues: ["guide", "api", "tutorial", "reference"],
+      index: true
+    },
+    {
+      name: "url",
+      type: "text",
+      unique: true
+    },
+    {
+      name: "last_updated",
+      type: "timestamp"
+    },
+    {
+      name: "metadata",
+      type: "json"
+    }
+  ],
+
+  embedder: embedder,
+
+  processor: {
+    name: "Markdown Processor",
+    config: {
+      trigger: "onInsert",
+      generateEmbeddings: true,
+      queue: await ExuluQueues.register("doc_processing")
+    },
+    execute: async ({ item }) => {
+      // Process markdown, extract headings, etc.
+      const processed = processMarkdown(item.content);
+      return {
+        ...item,
+        content: processed.text,
+        metadata: { headings: processed.headings }
+      };
+    }
+  },
+
+  sources: [
+    {
+      id: "github_docs",
+      name: "GitHub Documentation",
+      description: "Sync docs from GitHub repository",
+      config: {
+        schedule: "0 */4 * * *", // Every 4 hours
+        queue: await ExuluQueues.register("github_sync"),
+        retries: 3,
+        backoff: {
+          type: "exponential",
+          delay: 2000
+        }
+      },
+      execute: async ({ exuluConfig }) => {
+        const docs = await fetchGitHubDocs();
+        return docs.map(doc => ({
+          external_id: doc.path,
+          name: doc.title,
+          content: doc.content,
+          category: doc.category,
+          url: doc.url,
+          last_updated: doc.updatedAt
+        }));
+      }
+    }
+  ],
+
+  rateLimit: {
+    points: 100,
+    duration: 60,
+    blockDuration: 60
+  },
+
+  queryRewriter: async (query) => {
+    // Expand query with LLM
+    return expandQuery(query);
+  },
+
+  resultReranker: async (results) => {
+    // Rerank with Cohere
+    return rerankResults(results);
+  },
+
+  configuration: {
+    calculateVectors: "onInsert",
+    maxRetrievalResults: 15,
+    defaultRightsMode: "public",
+    enableAsTool: true,
+    cutoffs: {
+      cosineDistance: 0.65,
+      tsvector: 0.5,
+      hybrid: 0.6
+    },
+    expand: {
+      before: 1,
+      after: 2
+    },
+    language: "english"
+  }
+});
+```
+
+## Field type reference
+
+<AccordionGroup>
+  <Accordion title="text">
+    Short text field (VARCHAR). Use for titles, names, categories, etc.
+  </Accordion>
+
+  <Accordion title="longtext">
+    Long text field (TEXT). Use for descriptions, articles, documentation content.
+  </Accordion>
+
+  <Accordion title="number">
+    Floating point number (DOUBLE PRECISION)
+  </Accordion>
+
+  <Accordion title="integer">
+    Whole number (INTEGER)
+  </Accordion>
+
+  <Accordion title="decimal">
+    Precise decimal number (DECIMAL)
+  </Accordion>
+
+  <Accordion title="boolean">
+    True/false value (BOOLEAN)
+  </Accordion>
+
+  <Accordion title="date">
+    Date without time (DATE)
+  </Accordion>
+
+  <Accordion title="timestamp">
+    Date with time (TIMESTAMP)
+  </Accordion>
+
+  <Accordion title="json">
+    JSON object or array (JSONB)
+  </Accordion>
+
+  <Accordion title="file">
+    S3 file reference. Creates a `{field_name}_s3key` column that stores the S3 object key.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/core/exulu-context/api-reference">
+    Explore all methods and properties
+  </Card>
+  <Card title="ExuluEmbedder" icon="brain" href="/core/exulu-embedder/introduction">
+    Learn about configuring embedders
+  </Card>
+</CardGroup>

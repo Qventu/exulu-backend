@@ -1,4 +1,4 @@
-import { Chunk } from './base';
+import { Chunk } from "./base";
 
 /**
  * Represents the essential data for a sentence within a text.
@@ -145,7 +145,7 @@ export class SentenceChunk extends Chunk {
    *   SentenceChunk(text=..., startIndex=..., endIndex=..., tokenCount=..., sentences=[Sentence(...), ...])
    */
   public toString(): string {
-    const sentencesStr = this.sentences.map(s => s.toString()).join(', ');
+    const sentencesStr = this.sentences.map((s) => s.toString()).join(", ");
     return `SentenceChunk(text=${this.text}, startIndex=${this.startIndex}, endIndex=${this.endIndex}, tokenCount=${this.tokenCount}, sentences=[${sentencesStr}])`;
   }
 
@@ -160,7 +160,7 @@ export class SentenceChunk extends Chunk {
     const baseDict = super.toDict();
     return {
       ...baseDict,
-      sentences: this.sentences.map(sentence => sentence.toDict()),
+      sentences: this.sentences.map((sentence) => sentence.toDict()),
     };
   }
 
@@ -173,7 +173,7 @@ export class SentenceChunk extends Chunk {
    * @returns {SentenceChunk} A new SentenceChunk object created from the provided dictionary-like object.
    */
   public static fromDict(data: SentenceChunkData): SentenceChunk {
-    const sentences = data.sentences.map(sentence => Sentence.fromDict(sentence));
+    const sentences = data.sentences.map((sentence) => Sentence.fromDict(sentence));
     return new SentenceChunk({
       text: data.text,
       startIndex: data.startIndex,
@@ -183,4 +183,4 @@ export class SentenceChunk extends Chunk {
       embedding: data.embedding ?? undefined,
     });
   }
-} 
+}

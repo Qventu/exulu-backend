@@ -1,0 +1,110 @@
+---
+title: 'Agents'
+description: 'GraphQL types for AI agent configurations and capabilities'
+---
+
+## agent
+
+AI agent configurations and instances.
+
+```graphql
+type agent {
+  id: ID!
+  name: String!
+  description: String
+  backend: String!
+  type: String!
+  createdAt: Date!
+  updatedAt: Date!
+
+  # Backend-specific fields
+  provider: String
+  providerName: String
+  modelName: String
+  systemInstructions: String
+  authenticationInformation: String
+
+  # Configuration
+  rateLimit: RateLimiterRule
+  streaming: Boolean
+  capabilities: AgentCapabilities
+  maxContextLength: Int
+
+  # Workflows
+  workflows: AgentWorkflows
+
+  # Access control (if RBAC enabled)
+  RBAC: RBACData
+
+  # Routing
+  slug: String
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    provider
+    modelName
+    capabilities {
+      text
+      images
+      files
+    }
+    workflows {
+      enabled
+      queue {
+        name
+      }
+    }
+  }
+}
+```
+
+## AgentCapabilities
+
+Defines what content types the agent can process.
+
+```graphql
+type AgentCapabilities {
+  text: Boolean
+  images: [String]    # e.g., [".png", ".jpg"]
+  files: [String]     # e.g., [".pdf", ".docx"]
+  audio: [String]
+  video: [String]
+}
+```
+
+## RateLimiterRule
+
+Rate limiting configuration for agent requests.
+
+```graphql
+type RateLimiterRule {
+  name: String
+  rate_limit: RateLimiterRuleRateLimit
+}
+
+type RateLimiterRuleRateLimit {
+  time: Int    # Time window in seconds
+  limit: Int   # Max requests per time window
+}
+```
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Session Types" icon="comments" href="/api-reference/core-types/session-types">
+    Agent sessions and messages
+  </Card>
+  <Card title="Workflow Types" icon="workflow" href="/api-reference/core-types/workflow-types">
+    Agent workflow configurations
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

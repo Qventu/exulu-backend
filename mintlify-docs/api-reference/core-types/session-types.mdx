@@ -1,0 +1,77 @@
+---
+title: 'Sessions'
+description: 'GraphQL types for conversation sessions and messages'
+---
+
+## agent_sessions
+
+Conversation sessions between users and agents.
+
+```graphql
+type agent_sessions {
+  id: ID!
+  agent: ID!
+  user: ID
+  name: String
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  agent_sessionsPagination(
+    limit: 20
+    filters: [{ agent: { eq: "agent-123" } }]
+  ) {
+    items {
+      id
+      name
+      createdAt
+    }
+  }
+}
+```
+
+## agent_messages
+
+Individual messages within a session.
+
+```graphql
+type agent_messages {
+  id: ID!
+  session: ID!
+  role: String!       # "user" | "assistant" | "system"
+  content: String!
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## Usage
+
+Sessions track conversation history between users and agents. Each session contains multiple messages with different roles:
+
+- **user** - Messages from the user
+- **assistant** - Responses from the AI agent
+- **system** - System instructions or context
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent configurations
+  </Card>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    User accounts
+  </Card>
+  <Card title="RBAC Types" icon="shield" href="/api-reference/core-types/rbac-types">
+    Session access control
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

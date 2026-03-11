@@ -1,0 +1,267 @@
+---
+title: "Getting started"
+description: "Get started with Exulu IMP by setting up a local development environment"
+---
+
+## Introduction
+
+This guide walks you through setting up a local development environment for the Exulu Intelligence Management Platform (IMP). By the end of this guide, you'll have a fully functional local instance running with both backend and frontend services.
+
+<iframe
+  width="100%"
+  height="400"
+  src="https://share.descript.com/embed/bRNJCqznUga"
+  title="Setting Up Your Development Environment"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowfullscreen
+></iframe>
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed on your machine:
+
+- [Node.js](https://nodejs.org/) (we recommend using [nvm](https://github.com/nvm-sh/nvm) for version management)
+- [Docker](https://www.docker.com/) and Docker Compose
+- A code editor (we use [Cursor](https://cursor.sh/), but any IDE works)
+- An NPM token for accessing the private Exulu packages (contact your admin or partner manager)
+
+## Step 1: Clone the Repository
+
+Start by cloning the example repository from GitHub:
+
+```bash
+git clone https://github.com/Qventu/exulu-example.git
+cd exulu-example
+```
+
+Open the project in your preferred IDE.
+
+## Step 2: Set Up Node Version
+
+The project includes an `.nvmrc` file that specifies the required Node.js version. If you're using nvm, simply run:
+
+```bash
+nvm use
+```
+
+If you don't have the specified version installed, nvm will prompt you to install it first:
+
+```bash
+nvm install
+nvm use
+```
+
+<Tip>If you prefer not to use nvm, check the `.nvmrc` file for the required Node.js version and ensure you have it installed.</Tip>
+
+## Step 3: Configure NPM Token
+
+To install private dependencies from the Exulu NPM package repository, you need to create a `.npmrc` file with your authentication token.
+
+1. Rename the `.npmrc.example` file to `.npmrc`:
+   ```bash
+   mv .npmrc.example .npmrc
+   ```
+
+2. Add your NPM token to the `.npmrc` file. The file should look like this:
+   ```
+   @exulu:registry=https://registry.npmjs.org/
+   //registry.npmjs.org/:_authToken=YOUR_TOKEN_HERE
+   ```
+
+<Warning>If you don't have a token, request one from your admin or partner manager.</Warning>
+
+## Step 4: Install Dependencies
+
+With the `.npmrc` file configured, install all project dependencies:
+
+```bash
+npm install
+```
+
+This may take a few minutes to complete.
+
+## Step 5: Set Up Environment Variables
+
+The repository includes a `.env.example` file with default settings for local development.
+
+1. Rename the file to `.env`:
+   ```bash
+   mv .env.example .env
+   ```
+
+2. The default settings are pre-configured for localhost and should work out of the box. The file includes:
+   - Postgres connection settings
+   - Redis connection settings
+   - S3 bucket configuration (optional, can be added later)
+
+<Info>For most local development setups, you won't need to modify the default `.env` values.</Info>
+
+## Step 6: Run Docker Services
+
+The example repository includes a `docker-compose.services.yaml` file that provides all required services:
+
+- **PostgreSQL with pgvector** - Database with vector extension support
+- **Redis** - Caching and session management
+- **MinIO** - S3-compatible object storage (optional)
+
+Start the services using Docker Compose:
+
+```bash
+docker-compose -f docker-compose.services.yaml up -d
+```
+
+<Tip>If you have naming conflicts with existing containers, you can modify the container names in the `docker-compose.services.yaml` file before running the command.</Tip>
+
+Verify the services are running:
+
+```bash
+docker ps
+```
+
+You should see containers for PostgreSQL, Redis, and MinIO running.
+
+## Step 7: Initialize the Database
+
+Before you can use the backend, you need to initialize the database schema:
+
+```bash
+npm run utils:init
+```
+
+This script will:
+- Create the database if it doesn't exist
+- Set up all required tables and schemas
+- Create a default admin user with credentials:
+  - **Email:** `admin@exulu.com`
+  - **Password:** `admin`
+
+<Warning>If the script fails with a connection error, ensure your PostgreSQL container is running and healthy. You can run the script again if needed.</Warning>
+
+You can verify the database was created successfully by connecting to it:
+
+```bash
+# Using psql
+psql -h localhost -U postgres -d exulu
+```
+
+## Step 8: Start the Backend Server
+
+Start the backend development server:
+
+```bash
+npm run dev
+```
+
+The server should start successfully and be available on the default port (typically 4000). You'll see output indicating the server is running and connected to the database.
+
+<Info>The development server will automatically restart when you make changes to your code.</Info>
+
+## Step 9: Start the Frontend
+
+Open a new terminal session (keep the backend server running) and start the frontend. You have three options:
+
+### Option 1: Using NPX (Recommended for Quick Start)
+
+The easiest way to get started is using the pre-built NPM package:
+
+```bash
+npx @exulu/frontend
+```
+
+This will:
+- Install the frontend package locally
+- Load your local environment variables
+- Make the frontend available on port 3000
+
+### Option 2: Using Docker
+
+Alternatively, use the pre-built Docker image:
+
+```bash
+docker-compose -f docker-compose.frontend.yaml up
+```
+
+### Option 3: Running from Source
+
+For frontend development, clone the open-source frontend repository:
+
+```bash
+git clone https://github.com/Qventu/exulu-frontend.git
+cd exulu-frontend
+npm install
+npm run dev
+```
+
+<Tip>Option 3 is recommended if you want to contribute to the frontend or customize it beyond what's possible through configuration.</Tip>
+
+## Step 10: Login and Verify
+
+Once both the backend and frontend are running:
+
+1. Open your browser and navigate to [http://localhost:3000](http://localhost:3000)
+
+2. You should see the Exulu IMP login screen
+
+3. Log in using the default admin credentials:
+   - **Email:** `admin@exulu.com`
+   - **Password:** `admin`
+
+4. After logging in, you'll see the dashboard with all available features:
+   - Agents
+   - Chat sessions
+   - Knowledge bases (Contexts)
+   - Workflows
+   - Evaluations
+   - And more...
+
+<Check>Congratulations! Your local Exulu IMP instance is now running successfully.</Check>
+
+## Next Steps
+
+Now that your development environment is set up, you can:
+
+- [Create your first agent](/core/exulu-agent/introduction) and customize it for your use case
+- [Set up knowledge bases](/core/exulu-context/introduction) to provide context to your agents
+- [Configure tools](/core/exulu-tool/introduction) to extend agent capabilities
+- [Explore workflows](/core/exulu-app/introduction) to automate complex tasks
+
+## Troubleshooting
+
+### Connection Refused Errors
+
+If you encounter connection refused errors when initializing the database:
+- Ensure Docker containers are running: `docker ps`
+- Check container logs: `docker logs <container-name>`
+- Restart the PostgreSQL container if needed
+
+### Port Conflicts
+
+If ports 3000, 4000, 5432, or 6379 are already in use:
+- Stop conflicting services
+- Or modify the ports in your `.env` and `docker-compose.services.yaml` files
+
+### NPM Token Issues
+
+If you get authentication errors during `npm install`:
+- Verify your token is correctly formatted in `.npmrc`
+- Ensure the token hasn't expired
+- Contact your admin for a new token if needed
+
+### Database Initialization Failures
+
+If `npm run utils:init` fails:
+- Check that PostgreSQL is running and accepting connections
+- Verify your database credentials in `.env`
+- Try running the command again (it's safe to run multiple times)
+
+## Development Workflow
+
+When developing with Exulu IMP:
+
+1. **Backend changes:** The dev server auto-restarts when you modify code
+2. **Frontend changes:** If running from source, Next.js will hot-reload
+3. **Database schema changes:** Run migration scripts or re-run `utils:init`
+4. **Environment changes:** Restart both servers after modifying `.env`
+
+<Info>Keep both terminal sessions open to see logs from both backend and frontend services.</Info>

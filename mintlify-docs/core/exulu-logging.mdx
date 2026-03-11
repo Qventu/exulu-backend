@@ -1,0 +1,464 @@
+---
+title: "Logging"
+description: "Winston logger implementation with OpenTelemetry integration"
+---
+
+## Overview
+
+Exulu uses [Winston](https://github.com/winstonjs/winston) for structured logging across all components, including the Express server, MCP server, and worker instances. The logging system is centralized through a logger factory function that creates Winston logger instances with conditional OpenTelemetry integration.
+
+## Architecture
+
+The logging system is built around a centralized logger factory in `src/exulu/logger.ts` that creates Winston logger instances with:
+
+- **Structured JSON logging**: All logs are formatted as JSON with timestamps and metadata
+- **Error stack traces**: Automatic stack trace capture for error objects
+- **Environment context**: Automatic service name and environment labeling
+- **Conditional OpenTelemetry**: OTel transport enabled based on configuration
+- **Console fallback**: Always includes console transport for development
+- **Instance-level control**: Express, Workers, and MCP can have independent telemetry settings
+
+## Logger configuration
+
+### Core logger setup
+
+The `createLogger` function accepts an `enableOtel` boolean parameter to conditionally enable OpenTelemetry transport:
+
+```typescript
+import { createLogger } from "@exulu/backend";
+
+const logger = createLogger({
+  enableOtel: true  // Enable OpenTelemetry integration
+});
+```
+
+### Implementation details
+
+The logger is configured with the following Winston setup:
+
+```typescript
+const createLogger = ({ enableOtel }: { enableOtel: boolean }) => {
+  const logger = winston.createLogger({
+    level: 'debug',
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.errors({ stack: true }),
+      winston.format.metadata(),
+      winston.format.json()
+    ),
+    defaultMeta: {
+      service: 'Exulu',
+      environment: process.env.NODE_ENV || 'development',
+    },
+    transports: [
+      new winston.transports.Console(),
+      ...(enableOtel ? [new OpenTelemetryTransportV3()] : []),
+    ],
+  });
+  return logger;
+}
+```
+
+### Configuration-driven telemetry
+
+The `ExuluApp` class manages telemetry configuration through the `ExuluConfig` type:
+
+```typescript
+export type ExuluConfig = {
+  telemetry?: {
+    enabled: boolean,
+  }
+  workers: {
+    enabled: boolean,
+    logsDir?: string,
+    telemetry?: {
+      enabled: boolean,
+    }
+  }
+  // ...
+}
+```
+
+## Integration points
+
+### Express server logging
+
+In your Express application, the logger is automatically created and configured:
+
+```typescript
+const logger = createLogger({
+  enableOtel: this._config?.telemetry?.enabled ?? false
+});
+```
+
+The logger is then passed to `createExpressRoutes()` for use throughout the Express application.
+
+**Example usage in routes:**
+
+```typescript
+logger.info('Processing user request', {
+  userId: req.user.id,
+  endpoint: req.path
+});
+
+logger.error('Failed to process request', {
+  error: err.message,
+  stack: err.stack
+});
+```
+
+### BullMQ workers logging
+
+Workers create their own logger instance with independent telemetry configuration:
+
+```typescript
+const logger = createLogger({
+  enableOtel: this._config?.workers?.telemetry?.enabled ?? false
+});
+```
+
+This allows you to:
+- Enable telemetry for production workers while keeping it off in development
+- Have different logging configurations for different worker types
+- Control logging overhead independently from the main application
+
+**Example usage in workers:**
+
+```typescript
+logger.debug('Starting job processing', {
+  jobId: job.id,
+  queue: job.queueName
+});
+
+logger.info('Job completed successfully', {
+  jobId: job.id,
+  duration: Date.now() - startTime
+});
+```
+
+### MCP server logging
+
+The MCP server receives the logger instance via dependency injection:
+
+```typescript
+create = async ({
+  express,
+  contexts,
+  agents,
+  config,
+  tools,
+  tracer,
+  logger  // Logger injected here
+}: {
+  logger: Logger
+}) => {
+  // Logger is passed in and used throughout MCP server
+}
+```
+
+## Usage examples
+
+### Basic configuration
+
+Configure telemetry in your ExuluApp config:
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Enables OTel for Express and MCP
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: false  // Workers use console-only logging
+      }
+    }
+  },
+  contexts: contexts,
+  agents: agents
+});
+```
+
+### Environment-specific logging
+
+Different settings for development, staging, and production:
+
+```typescript
+const isProduction = process.env.NODE_ENV === "production";
+const isDevelopment = process.env.NODE_ENV === "development";
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: isProduction  // Only send to OTel in production
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: isProduction && !isDevelopment
+      }
+    }
+  }
+});
+```
+
+### Structured logging best practices
+
+```typescript
+// Good - structured with context
+logger.info('User authenticated', {
+  userId: user.id,
+  method: 'oauth',
+  provider: 'google'
+});
+
+// Good - error with stack trace
+logger.error('Database connection failed', {
+  error: err.message,
+  stack: err.stack,
+  database: 'postgresql',
+  host: process.env.DB_HOST
+});
+
+// Avoid - unstructured messages
+logger.info(`User ${user.id} authenticated via google`);
+```
+
+## Log levels
+
+Winston supports the following log levels (in order of priority):
+
+- `error` - Error events that might still allow the application to continue
+- `warn` - Warning events that indicate potential issues
+- `info` - Informational messages highlighting application progress
+- `http` - HTTP request/response logging
+- `verbose` - More detailed informational messages
+- `debug` - Detailed debugging information
+- `silly` - Most detailed logging (rarely used)
+
+The default log level is `debug`, which includes all levels except `silly`.
+
+### Setting log levels
+
+```typescript
+// Log levels are configured in the createLogger function
+// Default: 'debug'
+
+logger.error('Critical error occurred');   // Always logged
+logger.warn('Warning message');            // Always logged
+logger.info('Info message');               // Always logged
+logger.debug('Debug details');             // Logged when level >= debug
+```
+
+## OpenTelemetry integration
+
+When OpenTelemetry is enabled, logs are automatically correlated with traces:
+
+```typescript
+// Logger with OTEL integration
+const logger = createLogger({
+  enableOtel: config?.telemetry?.enabled ?? false
+});
+
+// Logs are automatically correlated with active trace
+logger.info("Processing request", {
+  userId: "user-123",
+  operation: "search"
+});
+
+// In SigNoz, you can jump from traces to logs and vice versa
+```
+
+### Benefits of OTel integration
+
+<CardGroup cols={2}>
+  <Card title="Trace correlation" icon="link">
+    Logs are automatically linked to active traces
+  </Card>
+  <Card title="Context propagation" icon="route">
+    Trace IDs and span IDs included in log metadata
+  </Card>
+  <Card title="Unified observability" icon="chart-mixed">
+    View logs and traces together in SigNoz
+  </Card>
+  <Card title="Debugging workflow" icon="bug">
+    Jump from trace to related logs and vice versa
+  </Card>
+</CardGroup>
+
+### Viewing logs in SigNoz
+
+After enabling OTel logging, visit your SigNoz dashboard to:
+
+1. View logs in the **Logs Explorer**
+2. Filter logs by trace ID, span ID, or custom attributes
+3. Jump from a trace span to related logs
+4. Search logs using structured query language
+
+## Performance considerations
+
+### Console vs OpenTelemetry
+
+- **Console transport**: Synchronous, low overhead, good for development
+- **OpenTelemetry transport**: Asynchronous, batched export, minimal production overhead
+
+### Batching and buffering
+
+Logs are batched when using OpenTelemetry:
+- Batch size: 512 log records
+- Batch interval: 1 second
+- This minimizes network overhead and improves performance
+
+### Production best practices
+
+<Tip>
+  Use structured logging with consistent field names to make searching and filtering easier in SigNoz.
+</Tip>
+
+<Warning>
+  Avoid logging sensitive data like passwords, API keys, or personal information. Use redaction or filtering if necessary.
+</Warning>
+
+<Note>
+  Enable debug-level logging only in development. Use info or warn level in production to reduce log volume.
+</Note>
+
+## Troubleshooting
+
+### Logs not appearing in SigNoz
+
+<AccordionGroup>
+  <Accordion title="Check telemetry configuration">
+    Verify that telemetry is enabled in your config:
+
+    ```typescript
+    console.log("Telemetry enabled:", config.telemetry?.enabled);
+    console.log("Worker telemetry:", config.workers?.telemetry?.enabled);
+    ```
+  </Accordion>
+
+  <Accordion title="Verify environment variables">
+    Ensure OpenTelemetry environment variables are set:
+
+    ```bash
+    echo $SIGNOZ_LOGS_URL
+    echo $SIGNOZ_ACCESS_TOKEN
+    ```
+
+    Should be:
+    - SigNoz Cloud: `https://ingest.{region}.signoz.cloud:443/v1/logs`
+    - Self-hosted: `http://localhost:4318/v1/logs`
+  </Accordion>
+
+  <Accordion title="Check logger initialization">
+    Ensure the logger is created with OpenTelemetry enabled:
+
+    ```typescript
+    const logger = createLogger({
+      enableOtel: true  // Must be true for OTel export
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Review console output">
+    Check if logs appear in console but not in SigNoz. This indicates a transport issue, not a logging issue.
+  </Accordion>
+</AccordionGroup>
+
+### High log volume
+
+If you're generating too many logs:
+
+1. Increase log level to `info` or `warn` in production
+2. Use sampling for high-frequency operations
+3. Disable debug logging for specific components
+4. Use filters in SigNoz to focus on important logs
+
+### Log format issues
+
+If logs aren't properly structured:
+
+1. Always pass objects as the second parameter to logger methods
+2. Use consistent field names across your application
+3. Avoid string interpolation in log messages
+4. Use the metadata format for structured data
+
+## Example log outputs
+
+### Console output (development)
+
+```json
+{
+  "level": "info",
+  "message": "Processing user request",
+  "timestamp": "2024-03-10T15:30:45.123Z",
+  "service": "Exulu",
+  "environment": "development",
+  "userId": "user-123",
+  "endpoint": "/api/agents/run"
+}
+```
+
+### OpenTelemetry output (production)
+
+The same log with trace correlation:
+
+```json
+{
+  "level": "info",
+  "message": "Processing user request",
+  "timestamp": "2024-03-10T15:30:45.123Z",
+  "service": "Exulu",
+  "environment": "production",
+  "userId": "user-123",
+  "endpoint": "/api/agents/run",
+  "trace_id": "1234567890abcdef",
+  "span_id": "abcdef123456",
+  "trace_flags": "01"
+}
+```
+
+## Best practices summary
+
+<CardGroup cols={2}>
+  <Card title="Structure your logs" icon="table">
+    Use objects for log metadata, not string concatenation
+  </Card>
+  <Card title="Use appropriate levels" icon="layer-group">
+    error for errors, warn for warnings, info for important events
+  </Card>
+  <Card title="Add context" icon="circle-info">
+    Include relevant IDs, timestamps, and operation details
+  </Card>
+  <Card title="Enable in production" icon="rocket">
+    Use OTel integration for production observability
+  </Card>
+  <Card title="Protect sensitive data" icon="shield">
+    Never log passwords, tokens, or PII
+  </Card>
+  <Card title="Keep it consistent" icon="equals">
+    Use the same field names across your application
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluOtel" icon="chart-line" href="/core/exulu-otel">
+    Learn about OpenTelemetry integration
+  </Card>
+  <Card title="ExuluApp" icon="box" href="/core/exulu-app/introduction">
+    Configure telemetry in ExuluApp
+  </Card>
+  <Card title="SigNoz" icon="chart-mixed" href="https://signoz.io/docs/">
+    Explore SigNoz documentation
+  </Card>
+  <Card title="Winston" icon="book" href="https://github.com/winstonjs/winston">
+    Winston logger documentation
+  </Card>
+</CardGroup>
