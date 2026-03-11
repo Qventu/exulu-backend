@@ -30,9 +30,9 @@ import createLogger from "@SRC/exulu/logger.ts";
 import { postgresClient } from "@SRC/postgres/client.ts";
 import winston, { type transport } from "winston";
 import util from "util";
-import { redisServer } from "@SRC/bullmq/server.ts";
+import { redisServer } from "@EE/queues/server.ts";
 import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
-import { ExuluQueues } from "@SRC/index.ts";
+import { queues as ExuluQueues } from "@EE/queues/queues";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
@@ -44,15 +44,8 @@ import { getTableName, type ExuluContext, type ExuluContextSource } from "../con
 import type { ExuluTool } from "../tool";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { exuluApp } from "./singleton";
-import { RBACResolver } from "@SRC/graphql/resolvers/rbac-resolver.ts";
-
-const loadAgentCache = new Map<
-  string,
-  {
-    agent: ExuluAgent;
-    expiresAt: Date;
-  }
->();
+import { RBACResolver } from "../../../ee/rbac-resolver.ts";
+import { checkLicense } from "@EE/entitlements.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 const consoleTransport = new winston.transports.Console({
@@ -261,6 +254,11 @@ export class ExuluApp {
 
     const queueSet = new Set<ExuluQueueConfig>();
 
+    const license = checkLicense()
+    if (!license["queues"] && ExuluQueues.list.size > 0) {
+      throw new Error(`[EXULU] You are not licensed to use queues but have registered the following queues: ${Array.from(ExuluQueues.list.keys()).join(", ")}. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
+    }
+
     if (redisServer.host?.length && redisServer.port?.length) {
       ExuluQueues.register(
         global_queues.eval_runs,
@@ -315,16 +313,24 @@ export class ExuluApp {
     return this._tools;
   }
 
-  public async agent(id: string): Promise<ExuluAgent | undefined> {
-    let agentInstance: ExuluAgent | undefined;
-    const cachedAgent = loadAgentCache.get(id);
-    if (cachedAgent && cachedAgent.expiresAt > new Date()) {
-      return cachedAgent.agent;
+  public async agent(id: string, include: {
+    source: {
+      code: boolean;
+      database: boolean;
     }
+  } = {
+      source: {
+        code: true,
+        database: true
+      }
+    }
+  ): Promise<ExuluAgent | undefined> {
+
+    let agentInstance: ExuluAgent | undefined;
 
     // First check if the agent is defined as code
     // and provided to the ExuluApp constructor.
-    if (this._agents.length > 0) {
+    if (this._agents.length > 0 && include.source.code) {
       agentInstance = this._agents.find((x) => x.id === id);
       if (agentInstance) {
         if (!agentInstance.RBAC) {
@@ -338,74 +344,84 @@ export class ExuluApp {
           agentInstance.rights_mode = "public";
         }
         agentInstance.source = "code";
-        loadAgentCache.set(id, {
-          agent: agentInstance,
-          expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
-        });
         return agentInstance;
       }
     }
+    if (include.source.database) {
+      // If not, check if the agent is defined in the database.
+      const { db } = await postgresClient();
+      agentInstance = await db
+        .from("agents")
+        .where({
+          id,
+        })
+        .first();
 
-    // If not, check if the agent is defined in the database.
-    const { db } = await postgresClient();
-    agentInstance = await db
-      .from("agents")
-      .where({
-        id,
-      })
-      .first();
+      if (!agentInstance) {
+        throw new Error("Agent instance not found.");
+      }
 
-    if (!agentInstance) {
-      throw new Error("Agent instance not found.");
+      const agentRbac = await RBACResolver(
+        db,
+        "agent",
+        agentInstance.id,
+        agentInstance.rights_mode || "private",
+      );
+      agentInstance.RBAC = agentRbac;
+
+      if (!agentInstance) {
+        throw new Error("Agent instance not found.");
+      }
+      return agentInstance;
     }
 
-    const agentRbac = await RBACResolver(
-      db,
-      "agent",
-      agentInstance.id,
-      agentInstance.rights_mode || "private",
-    );
-    agentInstance.RBAC = agentRbac;
-
-    if (!agentInstance) {
-      throw new Error("Agent instance not found.");
-    }
-    loadAgentCache.set(id, {
-      agent: agentInstance,
-      expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
-    });
-    return agentInstance;
+    return undefined;
   }
 
-  public async agents(): Promise<ExuluAgent[]> {
-    const { db } = await postgresClient();
-    let agents = await db.from("agents");
-    for (const agent of agents) {
-      const agentRbac = await RBACResolver(db, "agent", agent.id, agent.rights_mode || "private");
-      agent.RBAC = agentRbac;
-      loadAgentCache.set(agent.id, {
-        agent: agent,
-        expiresAt: new Date(Date.now() + 1000 * 60 * 1), // 1 minute
-      });
+  public async agents(include: {
+    source: {
+      code: boolean;
+      database: boolean;
     }
-    if (this._agents.length > 0) {
-      agents = [
-        ...this._agents.map((agent) => {
-          if (!agent.RBAC) {
-            // Set default RBAC for agents that are defined
-            // as code in the ExuluApp constructor to public.
-            agent.RBAC = {
-              type: "public",
-              users: [],
-              roles: [],
+  } = {
+      source: {
+        code: true,
+        database: true
+      }
+    }
+  ): Promise<ExuluAgent[]> {
+
+    const { db } = await postgresClient();
+    let agents: ExuluAgent[] = [];
+
+    if (include.source.database) {
+      agents = await db.from("agents");
+    }
+
+    if (include.source.code) {
+      for (const agent of agents) {
+        const agentRbac = await RBACResolver(db, "agent", agent.id, agent.rights_mode || "private");
+        agent.RBAC = agentRbac;
+      }
+      if (this._agents.length > 0) {
+        agents = [
+          ...this._agents.map((agent) => {
+            if (!agent.RBAC) {
+              // Set default RBAC for agents that are defined
+              // as code in the ExuluApp constructor to public.
+              agent.RBAC = {
+                type: "public",
+                users: [],
+                roles: [],
+              }
+              agent.rights_mode = "public";
             }
-            agent.rights_mode = "public";
-          }
-          agent.source = "code";
-          return agent;
-        }),
-        ...agents
-      ];
+            agent.source = "code";
+            return agent;
+          }),
+          ...agents
+        ];
+      }
     }
 
     return agents;
@@ -465,6 +481,12 @@ export class ExuluApp {
   public bullmq = {
     workers: {
       create: async (queues?: string[]) => {
+
+        const license = checkLicense()
+        if (!license["queues"]) {
+          throw new Error(`[EXULU] You are not licensed to use queues so cannot instantiate workers. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
+        }
+
         console.log(`
                     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
                     ██╔════╝╚██╗██╔╝██║   ██║██║      ██║   ██║

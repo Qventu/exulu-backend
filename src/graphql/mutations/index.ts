@@ -17,7 +17,7 @@ import bcrypt from "bcryptjs";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
-import { handleRBACUpdate } from "../resolvers/rbac-update.ts";
+import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 
 const postprocessDeletion = async ({

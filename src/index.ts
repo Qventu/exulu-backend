@@ -7,7 +7,7 @@ import "dotenv/config";
 import { redisClient } from "./redis/client";
 export { ExuluApp } from "./exulu/app/index.ts";
 import { authentication } from "./auth/auth";
-export { queues as ExuluQueues } from "./bullmq/queues";
+export { queues as ExuluQueues } from "@EE/queues/queues.ts";
 import { RecursiveChunker } from "./chunking/recursive";
 export { ExuluEmbedder } from "./exulu/embedder.ts"
 export { ExuluContext } from "./exulu/context.ts"
@@ -23,6 +23,7 @@ import { ExuluContext } from "./exulu/context.ts";
 import CryptoJS from "crypto-js";
 import { postgresClient } from "./postgres/client";
 import { type Variable } from "@EXULU_TYPES/models/variable";
+import { MarkdownChunker } from "@EE/markdown";
 import {
   gpt5MiniProvider,
   gpt5Provider,
@@ -46,6 +47,7 @@ import {
 } from "./templates/providers/google/vertex";
 import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
 import type { Item } from "@EXULU_TYPES/models/item";
+import { documentProcessor } from "@EE/documents/processing/doc_processor.ts";
 export type { Item as ExuluItem };
 
 export const ExuluJobs = {
@@ -100,6 +102,10 @@ export const ExuluAuthentication = {
   authenticate: authentication,
 }
 
+export const ExuluDocumentProcessor = {
+  process: documentProcessor,
+}
+
 export const ExuluOtel = {
   create: ({
     SIGNOZ_ACCESS_TOKEN,
@@ -145,6 +151,7 @@ export const ExuluDatabase = {
 
 export const ExuluChunkers = {
   sentence: SentenceChunker,
+  markdown: MarkdownChunker,
   recursive: {
     function: RecursiveChunker,
     rules: RecursiveRules,

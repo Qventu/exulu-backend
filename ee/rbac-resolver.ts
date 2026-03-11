@@ -1,3 +1,5 @@
+import { checkLicense } from "./entitlements";
+
 export const RBACResolver = async (
   db: any,
   entityName: string,
@@ -8,6 +10,17 @@ export const RBACResolver = async (
   users: any[];
   roles: any[];
 }> => {
+
+  // If RBAC is not available
+  // the system defaults to public.
+  const license = checkLicense()
+  if (!license.rbac) {
+    return {
+      type: "public",
+      users: [],
+      roles: []
+    }
+  }
   // Get RBAC records for this resource
   const rbacRecords = await db
     .from("rbac")

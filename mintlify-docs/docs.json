@@ -23,7 +23,10 @@
         "tab": "Home",
         "icon": "house",
         "pages": [
-          "index"
+          "index",
+          "community-edition",
+          "enterprise-edition",
+          "partners"
         ]
       },
       {
@@ -56,7 +59,7 @@
                 ]
               },
               {
-                "group": "ExuluAgent",
+                "group": "ExuluProvider",
                 "pages": [
                   "core/exulu-agent/introduction",
                   "core/exulu-agent/configuration",
@@ -121,6 +124,7 @@
               },
               "core/exulu-default-agents",
               "core/exulu-otel",
+              "core/exulu-logging",
               "core/exulu-authentication",
               "core/exulu-database"
             ]
@@ -224,6 +228,7 @@
     ]
   },
   "contextual": {
+    "display": "toc",
     "options": [
       "copy",
       "view",

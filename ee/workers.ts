@@ -1,5 +1,5 @@
 import IORedis from "ioredis";
-import { redisServer } from "../bullmq/server";
+import { redisServer } from "@EE/queues/server.ts";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
@@ -10,10 +10,9 @@ import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
 import type { ExuluReranker } from "@SRC/exulu/reranker.ts";
 import type { ExuluEval } from "@SRC/exulu/evals.ts";
 import type { ExuluTool } from "@SRC/exulu/tool.ts";
-import { postgresClient } from "../postgres/client";
-import type { BullMqJobData } from "@SRC/bullmq/decorator.ts";
+import { postgresClient } from "@SRC/postgres/client";
+import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { type Tracer } from "@opentelemetry/api";
-import type { ExuluConfig } from "./app/index.ts";
 import { v4 as uuidv4 } from "uuid";
 import { type UIMessage } from "ai";
 import CryptoJS from "crypto-js";
@@ -23,12 +22,13 @@ import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { EvalRunEvalFunction } from "@EXULU_TYPES/models/eval-run";
-import { updateStatistic } from "./statistics.ts";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
-import type { ExuluProvider } from "./provider.ts";
-import { exuluApp } from "./app/singleton.ts";
+import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
+import { updateStatistic } from "@SRC/exulu/statistics";
+import type { ExuluProvider } from "@SRC/exulu/provider.ts";
+import { exuluApp } from "@SRC/exulu/app/singleton";
 
 let redisConnection: IORedis;
 

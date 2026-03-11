@@ -3,6 +3,7 @@ import { type UIMessage } from "ai";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluProvider } from "./provider";
+import { checkLicense } from "@EE/entitlements";
 
 interface ExuluEvalParams {
   id: string;

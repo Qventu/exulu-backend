@@ -41,6 +41,7 @@ import { ExuluProvider, saveChat } from "./provider.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
+import { checkLicense } from "@EE/entitlements.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -62,6 +63,7 @@ export const global_queues = {
 
 const {
   agentsSchema,
+  feedbackSchema,
   projectsSchema,
   jobResultsSchema,
   testCasesSchema,
@@ -145,6 +147,7 @@ export const createExpressRoutes = async (
       usersSchema(),
       rolesSchema(),
       agentsSchema(),
+      feedbackSchema(),
       projectsSchema(),
       jobResultsSchema(),
       promptLibrarySchema(),
@@ -166,7 +169,6 @@ export const createExpressRoutes = async (
     tools,
     config,
     evals,
-    queues || [],
     rerankers || [],
   );
 
@@ -437,6 +439,17 @@ Mood: friendly and intelligent.
   });
 
   app.get("/theme", async (req: Request, res: Response) => {
+    const license = checkLicense();
+    if (!license["custom-branding"]) {
+      console.warn("[EXULU] You are not licensed to use custom branding so cannot fetch theme config.");
+      res.status(200).json({
+        theme: {
+          light: {},
+          dark: {},
+        },
+      });
+      return;
+    }
     const { db } = await postgresClient();
     const themeConfig = await db
       .from("platform_configurations")
@@ -520,6 +533,13 @@ Mood: friendly and intelligent.
       // todo display rate limit message in the chat UI
 
       const agent = await exuluApp.get().agent(instance);
+
+      if (!agent) {
+        res.status(404).json({
+          message: "Agent with id " + instance + " not found.",
+        });
+        return;
+      }
 
       const requestValidationResult = requestValidators.agents(req);
 
@@ -729,27 +749,27 @@ Mood: friendly and intelligent.
                 }),
                 ...(metadata?.inputTokens
                   ? [
-                      updateStatistic({
-                        name: "inputTokens",
-                        label: statistics.label,
-                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                        trigger: statistics.trigger,
-                        count: metadata?.inputTokens,
-                        user: user?.id,
-                        role: user?.role?.id,
-                      }),
-                    ]
+                    updateStatistic({
+                      name: "inputTokens",
+                      label: statistics.label,
+                      type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                      trigger: statistics.trigger,
+                      count: metadata?.inputTokens,
+                      user: user?.id,
+                      role: user?.role?.id,
+                    }),
+                  ]
                   : []),
                 ...(metadata?.outputTokens
                   ? [
-                      updateStatistic({
-                        name: "outputTokens",
-                        label: statistics.label,
-                        type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                        trigger: statistics.trigger,
-                        count: metadata?.outputTokens,
-                      }),
-                    ]
+                    updateStatistic({
+                      name: "outputTokens",
+                      label: statistics.label,
+                      type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                      trigger: statistics.trigger,
+                      count: metadata?.outputTokens,
+                    }),
+                  ]
                   : []),
               ]);
             }
@@ -971,52 +991,50 @@ Mood: friendly and intelligent.
         let system:
           | string
           | {
-              type: "text";
-              text: string;
-            }[] = req.body.system;
+            type: "text";
+            text: string;
+          }[] = req.body.system;
 
         if (Array.isArray(req.body.system)) {
           system = [
             ...req.body.system,
             ...(agent
               ? [
-                  {
-                    type: "text",
-                    text: `
+                {
+                  type: "text",
+                  text: `
                             You are an agent named: ${agent?.name}
                             Here are some additional instructions for you: ${agent?.instructions}`,
-                  },
-                ]
+                },
+              ]
               : []),
             ...(project
               ? [
-                  {
-                    type: "text",
-                    text: `Additional information:
+                {
+                  type: "text",
+                  text: `Additional information:
 
                             The project you are working on is: ${project?.name}
                             Here is some additional information about the project: ${project?.description}`,
-                  },
-                ]
+                },
+              ]
               : []),
           ];
         } else {
           system = `${req.body.system}\n\n
-                ${
-                  agent
-                    ? `You are an agent named: ${agent?.name}
+                ${agent
+              ? `You are an agent named: ${agent?.name}
                 Here are some additional instructions for you: ${agent?.instructions}`
-                    : ""
-                }
+              : ""
+            }
 
-                ${
-                  project?.id
-                    ? `Additional information:
+                ${project?.id
+              ? `Additional information:
 
                 The project you are working on is: ${project?.name}
                 The project description is: ${project?.description}`
-                    : ""
-                }
+              : ""
+            }
                 `;
         }
 
@@ -1131,31 +1149,31 @@ Mood: friendly and intelligent.
           }),
           ...(totalInputTokens
             ? [
-                updateStatistic({
-                  name: "inputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: totalInputTokens,
-                  user: user.id,
-                  role: user?.role?.id,
-                  ...(project ? { project: project.id } : {}),
-                }),
-              ]
+              updateStatistic({
+                name: "inputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: totalInputTokens,
+                user: user.id,
+                role: user?.role?.id,
+                ...(project ? { project: project.id } : {}),
+              }),
+            ]
             : []),
           ...(totalOutputTokens
             ? [
-                updateStatistic({
-                  name: "outputTokens",
-                  label: statistics.label,
-                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                  trigger: statistics.trigger,
-                  count: totalInputTokens,
-                  user: user.id,
-                  role: user?.role?.id,
-                  ...(project ? { project: project.id } : {}),
-                }),
-              ]
+              updateStatistic({
+                name: "outputTokens",
+                label: statistics.label,
+                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                trigger: statistics.trigger,
+                count: totalInputTokens,
+                user: user.id,
+                role: user?.role?.id,
+                ...(project ? { project: project.id } : {}),
+              }),
+            ]
             : []),
         ]);
 

@@ -1,11 +1,20 @@
 // Helper function to handle RBAC updates
+import { checkLicense } from "./entitlements.ts";
+
 export const handleRBACUpdate = async (
   db: any,
   entityName: string,
   resourceId: string,
   rbacData: any,
   existingRbacRecords: any[],
-) => {
+): Promise<void> => {
+
+  const license = checkLicense()
+  if (!license.rbac) {
+    console.warn(`[EXULU] You are not licensed to use RBAC.`);
+    return;
+  }
+  
   const { users = [], roles = [] /* projects = [] */ } = rbacData;
 
   // Get existing RBAC records if not provided

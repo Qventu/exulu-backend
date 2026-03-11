@@ -13,6 +13,9 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { applySorting } from "./apply-sorting";
 import { applyFilters } from "./apply-filters";
 import type { ExuluProvider } from "@SRC/exulu/provider";
+import { exuluApp } from "@SRC/exulu/app/singleton";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
+import { checkRecordAccess } from "@SRC/utils/check-record-access";
 
 export const itemsPaginationRequest = async ({
   db,
@@ -131,12 +134,35 @@ export function createQueries(
   const tableNameSingular = table.name.singular.toLowerCase();
   const queries = {
     [`${tableNameSingular}ById`]: async (_, args, context, info) => {
-      const { db } = context;
+
+      let result: ExuluAgent | undefined;
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
-      let query = db.from(tableNamePlural).select(sanitizedFields).where({ id: args.id });
-      query = applyAccessControl(table, query, context.user);
-      let result = await query.first();
+
+      if (table.name.singular === "agent") {
+        // First check if the agent is defined as code
+        // and provided to the ExuluApp constructor.
+        result = await exuluApp.get().agent(args.id);
+        if (result) {
+          const hasAccess = await checkRecordAccess(result, "read", context.user);
+          if (!hasAccess) {
+            result = undefined;
+          } else {
+            // Remove fields that are not requested.
+            const object = {};
+            requestedFields.forEach((field) => {
+              object[field] = result![field];
+            });
+            result = object as ExuluAgent;
+          }
+        }
+      } else {
+        const { db } = context;
+        let query = db.from(tableNamePlural).select(sanitizedFields).where({ id: args.id });
+        query = applyAccessControl(table, query, context.user);
+        result = await query.first();
+      }
+
       return finalizeRequestedFields({
         args,
         table,
@@ -150,12 +176,35 @@ export function createQueries(
       });
     },
     [`${tableNameSingular}ByIds`]: async (_, args, context, info) => {
-      const { db } = context;
+
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
-      let query = db.from(tableNamePlural).select(sanitizedFields).whereIn("id", args.ids);
-      query = applyAccessControl(table, query, context.user);
-      let result = await query;
+
+      let result: ExuluAgent[] = [];
+      if (table.name.singular === "agent") {
+        for (const id of args.ids) {
+          // First check if the agent is defined as code
+          // and provided to the ExuluApp constructor.
+          const agent = await exuluApp.get().agent(id);
+          if (agent) {
+            const hasAccess = await checkRecordAccess(agent, "read", context.user);
+            if (hasAccess) {
+              // Remove fields that are not requested.
+              const object = {};
+              requestedFields.forEach((field) => {
+                object[field] = agent![field];
+              });
+              result.push(object as ExuluAgent);
+            }
+          }
+        }
+      } else {
+        const { db } = context;
+        let query = db.from(tableNamePlural).select(sanitizedFields).whereIn("id", args.ids);
+        query = applyAccessControl(table, query, context.user);
+        result = await query;
+      }
+
       return finalizeRequestedFields({
         args,
         table,
@@ -178,6 +227,7 @@ export function createQueries(
       query = applyAccessControl(table, query, context.user);
       query = applySorting(query, sort);
       let result = await query.first();
+      // todo add coding based agents
       return finalizeRequestedFields({
         args,
         table,
@@ -205,6 +255,7 @@ export function createQueries(
         user: context.user,
         fields: sanitizedFields,
       });
+      // todo add coding based agents
       return {
         pageInfo,
         items: finalizeRequestedFields({

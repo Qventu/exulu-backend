@@ -1,5 +1,5 @@
 import { ExuluVariables } from "@SRC/index";
-import { queues as ExuluQueues } from "../../bullmq/queues";
+import { queues as ExuluQueues } from "@EE/queues/queues";
 import { ExuluEval } from "@SRC/exulu/evals";
 import { z } from "zod";
 

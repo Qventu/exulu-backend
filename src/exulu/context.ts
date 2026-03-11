@@ -11,7 +11,7 @@ import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules";
 import type { ExuluEmbedder } from "./embedder";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
-import { bullmqDecorator } from "@SRC/bullmq/decorator";
+import { bullmqDecorator } from "@SRC/queues/decorator";
 import { postgresClient } from "@SRC/postgres/client";
 import type { SearchFilters } from "@SRC/graphql/types";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -121,7 +121,7 @@ export class ExuluContext {
       before?: number;
       after?: number;
     };
-    language?: "german" | "english";
+    languages?: ("german" | "english")[];
   };
   public sources: ExuluContextSource[] = [];
 
@@ -155,7 +155,7 @@ export class ExuluContext {
       calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always";
       defaultRightsMode?: ExuluRightsMode;
       enableAsTool?: boolean;
-      language?: "german" | "english";
+      languages?: ("german" | "english")[];
       maxRetrievalResults?: number;
       expand?: {
         before?: number;
@@ -175,7 +175,7 @@ export class ExuluContext {
     this.processor = processor;
     this.configuration = configuration || {
       calculateVectors: "manual",
-      language: "english",
+      languages: ["english"],
       defaultRightsMode: "private",
       maxRetrievalResults: 10,
       expand: {
@@ -1015,9 +1015,16 @@ export class ExuluContext {
       table.specificType("embedding", `vector(${this.embedder.vectorDimensions})`);
 
       // Generated tsvector column (PG 12+)
+      const languages = this.configuration.languages?.length
+        ? this.configuration.languages
+        : ["english"];
+      const tsvectorExpression = languages
+        .map((lang) => `to_tsvector('${lang}', coalesce(content, ''))`)
+        .join(" || ");
+
       table.specificType(
         "fts",
-        `tsvector GENERATED ALWAYS AS (to_tsvector('${this.configuration.language || "english"}', coalesce(content, ''))) STORED`,
+        `tsvector GENERATED ALWAYS AS (${tsvectorExpression}) STORED`,
       );
 
       // GIN index on the tsvector and hnsw index on the embedding

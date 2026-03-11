@@ -26,6 +26,7 @@ export interface ExuluAgent {
     active?: boolean;
     description?: string;
     instructions?: string;
+    feedback?: boolean;
     slug?: string;
     tools?: {
         id: string;

@@ -1,7 +1,7 @@
 /** Base Chunking Class. **/
 
 import { Chunk } from "./types/base";
-import { ExuluTokenizer } from "./tokenizer";
+import { ExuluTokenizer } from "../../ee/tokenizer";
 
 /**
  * Base class for all chunking classes.

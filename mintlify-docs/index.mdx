@@ -1,54 +1,76 @@
 ---
-mode: 'center'
+title: Exulu IMP
+description: Exulu IMP is a comprehensive AI management platform built on TypeScript that provides everything you need to create sophisticated multi-agent systems with RAG, GraphQL API, streaming APIs, and a full admin UI.
+mode: 'wide'
 ---
 
-<div style={{ textAlign: 'center', padding: '1rem 0 3rem' }}>
+## Choose Your Edition
 
-  <div className="badge">
-    Fully Featured PaaS · Production-Ready · TypeScript · Source Available
+<div style={{
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
+  gap: '2rem',
+  margin: '3rem 0'
+}}>
+  <div style={{
+    padding: '2rem',
+    borderRadius: '1rem',
+    border: '2px solid #16A34A',
+    background: 'linear-gradient(135deg, rgba(22, 163, 74, 0.05) 0%, rgba(7, 201, 131, 0.05) 100%)'
+  }}>
+    <h3 style={{ fontSize: '1.75rem', fontWeight: '800', marginBottom: '1rem', color: '#16A34A', marginTop: '0' }}>
+      Community Edition
+    </h3>
+    <p style={{ fontSize: '1rem', color: '#64748b', marginBottom: '1.5rem', minHeight: '60px' }}>
+      Source-available platform with everything you need to build powerful AI applications. Perfect for startups, side projects, and teams getting started.
+    </p>
+    <h4 style={{ fontSize: '0.875rem', fontWeight: '700', marginBottom: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>
+      Core Features
+    </h4>
+    <ul style={{ color: '#64748b', marginBottom: '2rem', lineHeight: '1.8' }}>
+      <li>✅ Create agents</li>
+      <li>✅ Tool Call</li>
+      <li>✅ GraphQL API</li>
+      <li>✅ Basic Chunking</li>
+      <li>✅ RAG</li>
+      <li>✅ Streaming APIs</li>
+      <li>✅ Audit Logs</li>
+      <li>✅ Admin UI</li>
+      <li>✅ Chat UI</li>
+    </ul>
+    <a href="/community-edition" className="cta-primary" style={{ width: '100%', display: 'block', textAlign: 'center' }}>
+      View Community Edition →
+    </a>
   </div>
-  <h1 style={{
-    fontSize: '3.5rem',
-    fontWeight: '800',
-    lineHeight: '1.2',
-    marginBottom: '1.5rem',
-    marginTop: '1rem'
-  }}>
-    Build Powerful, Scalable, Secure AI Applications <br/>
-    <span className="gradient-text">In Minutes, Not Months</span>
-  </h1>
-
-   <p style={{
-    fontSize: '0.875rem',
-    color: '#94a3b8',
-    marginBottom: '1.5rem',
-    fontWeight: '500'
-  }}>
-    Made in the Netherlands and Germany with Love ❤️
-  </p>
-
-  <p style={{
-    fontSize: '1.25rem',
-    color: '#64748b',
-    maxWidth: '42rem',
-    margin: '0 auto 2rem',
-    lineHeight: '1.8'
-  }}>
-    Exulu IMP is a comprehensive PaaS Stack built on Typescript that provides everything you need to create sophisticated multi-agent systems with semantic search, RAG, prompt libraries, role-based access management, GraphQL API, projects, template conversations, a full admin UI, streaming APIs, audit logs, and queue management.
-  </p>
 
   <div style={{
-    display: 'flex',
-    gap: '1rem',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-    marginTop: '2rem'
+    padding: '2rem',
+    borderRadius: '1rem',
+    border: '2px solid #8B5CF6',
+    background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.05) 0%, rgba(124, 58, 237, 0.05) 100%)'
   }}>
-    <a href="/backend/introduction" className="cta-primary">
-      Get Started →
-    </a>
-    <a href="/api-reference/introduction" className="cta-secondary">
-      View API Docs
+    <h3 style={{ fontSize: '1.75rem', fontWeight: '800', marginBottom: '1rem', color: '#8B5CF6', marginTop: '0' }}>
+      Enterprise Edition
+    </h3>
+    <p style={{ fontSize: '1rem', color: '#64748b', marginBottom: '1.5rem', minHeight: '60px' }}>
+      Advanced capabilities for production-grade applications at scale. Built for teams that need enterprise features and support.
+    </p>
+    <h4 style={{ fontSize: '0.875rem', fontWeight: '700', marginBottom: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>
+      Everything in Community, plus:
+    </h4>
+    <ul style={{ color: '#64748b', marginBottom: '2rem', lineHeight: '1.8' }}>
+      <li>🔐 Role-Based Access Control</li>
+      <li>⚙️ Queue Management</li>
+      <li>✅ Evaluations</li>
+      <li>🔄 Template Conversations</li>
+      <li>🎯 Agentic Retrieval</li>
+      <li>📄 Advanced Document Processing</li>
+      <li>💬 User Feedback</li>
+      <li>🤖 Multi-Agent Tooling</li>
+      <li>🎨 Custom Branding</li>
+    </ul>
+    <a href="/enterprise-edition" className="cta-primary" style={{ width: '100%', display: 'block', textAlign: 'center', background: '#8B5CF6' }}>
+      View Enterprise Edition →
     </a>
   </div>
 </div>
@@ -72,10 +94,10 @@ mode: 'center'
   </div>
 
   <div className="feature-card" style={{ padding: '2rem', borderRadius: '1rem' }}>
-    <div className="feature-icon">🔐</div>
-    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Built-in RBAC from Day One</h3>
+    <div className="feature-icon">💪</div>
+    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Source Available</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Integrated user management with role-based access control at the knowledge base level. Control who can access which data across agents, roles, and users—essential for enterprise deployments where multiple teams work with different agents on a central platform.
+      Full transparency with source-available code. Inspect, understand, and customize the platform to meet your exact needs. Enterprise Edition available for advanced features like RBAC, queue management, and evaluation frameworks.
     </p>
   </div>
 
@@ -88,18 +110,18 @@ mode: 'center'
   </div>
 
   <div className="feature-card" style={{ padding: '2rem', borderRadius: '1rem' }}>
-    <div className="feature-icon">🔄</div>
-    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Production-Grade Queue Management</h3>
+    <div className="feature-icon">🔌</div>
+    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Multi-Provider AI Support</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Fully integrated Redis BullMQ modules with ready-to-use UI and APIs for managing queues, rate limits, and embedding pipelines. Essential for scaling operations like processing thousands of documents without custom infrastructure code.
+      Use any LLM provider: OpenAI, Anthropic, Google, Mistral, Cohere, and more. Switch providers per agent or use multiple providers in the same application for maximum flexibility.
     </p>
   </div>
 
   <div className="feature-card" style={{ padding: '2rem', borderRadius: '1rem' }}>
-    <div className="feature-icon">📚</div>
-    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Prompt Library & Template Conversations</h3>
+    <div className="feature-icon">💾</div>
+    <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Battle-Tested Infrastructure</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Agent-level prompt library accessible via UI and API, plus native template conversations for modeling complex multi-step reasoning workflows. Save sessions as templates to standardize and evaluate sophisticated reasoning patterns.
+      Built on PostgreSQL for data persistence and vector search, plus Redis for queue management, rate limiting and caching. Production-ready infrastructure that scales from prototype to production without architectural changes.
     </p>
   </div>
 
@@ -107,7 +129,7 @@ mode: 'center'
     <div className="feature-icon">🚀</div>
     <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Battle-Tested Streaming APIs</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Production-ready streaming APIs with standardized source outputs and integrated hallucination detection. Developed alongside a fully functional frontend used by real customers, ensuring practical usability beyond just providing primitives.
+      Production-ready streaming APIs with standardized source outputs and integrated hallucination detection. Developed alongside a fully functional frontend used in production every day, ensuring practical usability beyond just providing primitives.
     </p>
   </div>
 
@@ -115,7 +137,7 @@ mode: 'center'
     <div className="feature-icon">🌍</div>
     <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>European Data Sovereignty</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Built in Europe with European data protection standards in mind. Self-hostable PaaS architecture designed for organizations prioritizing digital sovereignty and GDPR compliance, without dependency on US-based cloud vendors.
+      Built in Europe with European data protection standards in mind (incl. GDPR endpoints). Self-hostable PaaS architecture designed for organizations prioritizing digital sovereignty and GDPR compliance, without dependency on US-based cloud vendors.
     </p>
   </div>
 
@@ -123,7 +145,7 @@ mode: 'center'
     <div className="feature-icon">⚡</div>
     <h3 style={{ fontSize: '1.25rem', fontWeight: '700', marginBottom: '0.75rem' }}>Comprehensive GraphQL API</h3>
     <p style={{ color: '#64748b', lineHeight: '1.7' }}>
-      Headless architecture with one of the most extensive GraphQL APIs available. Control every aspect of the platform—create agents, manage tools, handle knowledge sources, trigger updates and embeddings—all via a unified, type-safe API.
+      Headless architecture with one of the most extensive GraphQL APIs available for AI management systems. Control every aspect of the platform. Ereate agents, manage tools, handle knowledge sources, trigger updates and embeddings, all via a unified, type-safe API.
     </p>
   </div>
 </div>
@@ -143,7 +165,7 @@ mode: 'center'
   </Card>
   <Card
     title="Frontend Interface"
-    icon="desktop"
+    icon="screen-share"
     href="/frontend/introduction"
   >
     React-based web UI for managing agents, contexts, workflows, and evaluations
@@ -160,7 +182,7 @@ mode: 'center'
 ---
 
 <div style={{ textAlign: 'center', padding: '0rem 0' }}>
-  <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', width: '100%' }}>
+  <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', width: '100%', textAlign: 'center', margin: '0 auto 2rem' }}>
     Everything You Need to Build AI Apps
   </h2>
   <p style={{ fontSize: '1.125rem', color: '#64748b', maxWidth: '48rem', margin: '0 auto 3rem' }}>
@@ -169,14 +191,14 @@ mode: 'center'
 </div>
 
 <AccordionGroup>
-  <Accordion title="🤖 Multi-Agent Systems" defaultOpen>
+  <Accordion title="🤖 Multi-Agent Systems">
     Create sophisticated AI agents powered by leading LLM providers. Build single agents or complex multi-agent workflows with built-in orchestration. Each agent can have different capabilities, tools, and providers.
 
     ```typescript
-    import { ExuluAgent } from "@exulu/backend";
+    import { ExuluProvider } from "@exulu/backend";
     import { createAnthropic } from "@ai-sdk/anthropic";
 
-    const researchAgent = new ExuluAgent({
+    const researchAgent = new ExuluProvider({
       id: "research_assistant",
       name: "Research Assistant",
       provider: "anthropic",
@@ -205,7 +227,7 @@ mode: 'center'
   </Accordion>
 
   <Accordion title="🔍 Semantic Search & RAG">
-    Production-ready semantic search with vector embeddings, hybrid search (vector + full-text), and flexible chunking strategies. Perfect for building RAG applications.
+    Production-ready semantic search with vector embeddings, hybrid search (vector + full-text), multi-language support and flexible chunking strategies. Perfect for building RAG applications.
 
     ```typescript
     const context = new ExuluContext({
@@ -223,20 +245,20 @@ mode: 'center'
     Your schema is automatically generated from your context definitions. Define your data structures once and get a complete CRUD API with filtering, pagination, and vector search - no manual schema writing.
   </Accordion>
 
-  <Accordion title="🔄 Conversation Templates">
-    Unlike traditional automation workflows, Exulu provides a unique system of conversation templates—predefined conversations where you define input messages, outputs, and subsequent interactions. Simply chat with an AI agent to design your workflow, then save it as a template. This intuitive approach lets you capture complex multi-step reasoning patterns and reuse them across your application. Schedule template conversations with cron expressions for automated execution.
+  <Accordion title="🔧 Custom Tools">
+    Create custom tools that your agents can use to interact with external APIs, databases, or any service. Tools are automatically exposed to agents and can be intelligently called during conversations based on user needs.
   </Accordion>
 
-  <Accordion title="✅ Evaluation & Testing">
-    Built-in evaluation framework for testing agent performance. Create test cases, run evaluation sets, and measure quality with custom evaluation functions and LLM-based judges.
+  <Accordion title="🎨 Full Admin UI">
+    Complete React-based admin interface for managing your AI platform. Create agents, configure contexts, monitor sessions, view analytics, and more—all without touching code.
   </Accordion>
 
-  <Accordion title="🔐 Role-Based Access Control">
-    Fine-grained RBAC system with user and role-based permissions. Control access at the resource level with read/write permissions and private/public modes.
+  <Accordion title="💾 PostgreSQL + Redis">
+    Built on battle-tested infrastructure with PostgreSQL for data persistence and vector search using pgvector, plus Redis for caching and real-time features. Production-ready from day one.
   </Accordion>
 
-  <Accordion title="⚙️ Background Job Processing">
-    Built on top of BullMQ, Exulu provides a full API and UI for managing embedding generation, chunk processing, and agent execution with configurable queues, rate limits, and retries.
+  <Accordion title="🔌 Multi-Provider Support">
+    Use any LLM provider: OpenAI, Anthropic, Google, Mistral, Cohere, and more. Switch providers per agent or use multiple providers in the same application.
   </Accordion>
 
   <Accordion title="📈 Observability & Monitoring">
@@ -251,12 +273,11 @@ mode: 'center'
   borderRadius: '1rem',
   padding: '1rem 2rem',
   margin: '1rem 0',
-  textAlign: 'center'
 }}>
-  <h2 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '1rem', textAlign: 'center' }}>
+  <h2 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '1rem' }}>
     Get Started in under 5 minutes
   </h2>
-  <p style={{ fontSize: '1.125rem', color: '#64748b', marginBottom: '2rem', textAlign: 'center' }}>
+  <p style={{ fontSize: '1.125rem', color: '#64748b', marginBottom: '2rem' }}>
     Install Exulu IMP and start building your first AI application
   </p>
 
@@ -299,7 +320,7 @@ mode: 'center'
     </div>
   </div>
 
-  <a href="/backend/introduction" className="cta-primary">
+  <a href="/backend/introduction" className="cta-primary" style={{ marginBottom: "2rem"}}>
     View Quickstart Guide →
   </a>
 </div>
@@ -342,7 +363,6 @@ mode: 'center'
 ---
 
 <div style={{
-  textAlign: 'center',
   padding: '4rem 2rem',
   background: 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
   borderRadius: '1rem',
@@ -355,7 +375,7 @@ mode: 'center'
   <p style={{ fontSize: '1.25rem', marginBottom: '2rem', opacity: 0.9 }}>
     Join developers building the next generation of AI applications
   </p>
-  <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
     <a
       href="/quickstart"
       style={{

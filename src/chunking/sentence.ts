@@ -1,6 +1,6 @@
 /** Module containing SentenceChunker class. */
 
-import { ExuluTokenizer, type TokenizerModelName } from "./tokenizer";
+import { ExuluTokenizer, type TokenizerModelName } from "../../ee/tokenizer";
 import { Sentence, SentenceChunk } from "./types/sentence";
 import { BaseChunker } from "./base";
 

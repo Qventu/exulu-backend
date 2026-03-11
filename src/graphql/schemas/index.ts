@@ -15,19 +15,18 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
-import type { Queue } from "bullmq";
-import { ExuluQueues } from "@SRC/index.ts";
+import { queues as ExuluQueues } from "@EE/queues/queues";
 import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
-import type { BullMqJobData } from "@SRC/bullmq/decorator.ts";
+import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@SRC/exulu/workers.ts";
 import type { UIMessage } from "ai";
-import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
-import { RBACResolver } from "@SRC/graphql/resolvers/rbac-resolver";
+import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { createQueries } from "@SRC/graphql/resolvers";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { getJobsByQueueName } from "../resolvers/job-queues";
@@ -86,7 +85,6 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     fields.push("  streaming: Boolean");
     fields.push("  capabilities: AgentCapabilities");
     fields.push("  maxContextLength: Int");
-    fields.push("  provider: String");
     fields.push("  authenticationInformation: String");
     fields.push("  systemInstructions: String");
     fields.push("  workflows: AgentWorkflows");
@@ -223,15 +221,6 @@ export function createSDL(
   tools: ExuluTool[],
   config: ExuluConfig,
   evals: ExuluEval[],
-  queues: {
-    queue: Queue;
-    ratelimit: number;
-    concurrency: {
-      worker: number;
-      queue: number;
-    };
-    timeoutInSeconds?: number;
-  }[],
   rerankers: ExuluReranker[],
 ) {
   const contextSchemas: ExuluTableDefinition[] = contexts.map((context) =>

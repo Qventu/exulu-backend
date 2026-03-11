@@ -2,7 +2,7 @@ import { getChunksTableName, type ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
-import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
@@ -58,6 +58,9 @@ const addProviderFields = async (
                 role: user.role?.id,
                 model: undefined,
               });
+              if (!instance) {
+                return null;
+              }
               return {
                 ...instance,
                 name: instance.name,

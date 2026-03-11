@@ -14,13 +14,15 @@ import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { User } from "@EXULU_TYPES/models/user";
 import { postgresClient } from "@SRC/postgres/client";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { preprocessQuery } from "./query-preprocessing";
+import { preprocessQuery } from "@SRC/utils/query-preprocessing";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
 import type { SearchFilters } from "@SRC/graphql/types";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
+import { withRetry } from "@SRC/utils/with-retry";
+import { checkLicense } from "@EE/entitlements";
 /**
  * Agentic Retrieval Tool
  *
@@ -46,31 +48,6 @@ interface ToolResult {
   chunk_index?: number;
   chunk_content?: string;
   metadata?: any;
-}
-
-// Helper function to retry generateText calls
-async function withRetry<T>(generateFn: () => Promise<T>, maxRetries: number = 3): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await generateFn();
-    } catch (error) {
-      lastError = error;
-      console.error(`[EXULU] generateText attempt ${attempt} failed:`, error);
-
-      if (attempt === maxRetries) {
-        // Final attempt failed, throw the error
-        throw error;
-      }
-
-      // Wait before retrying (exponential backoff)
-      await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
-    }
-  }
-
-  // This should never be reached, but TypeScript needs it
-  throw lastError;
 }
 
 interface AgenticRetrievalOutput {
@@ -1022,7 +999,14 @@ export const createAgenticRetrievalTool = ({
   role?: string;
   model: any;
   projectRetrievalTool?: ExuluTool;
-}): ExuluTool => {
+}): ExuluTool | undefined => {
+
+  const license = checkLicense()
+  if (!license["agentic-retrieval"]) {
+    console.warn(`[EXULU] You are not licensed to use agentic retrieval.`);
+    return undefined;
+  }
+
   const contextNames = contexts.map((ctx) => ctx.id).join(", ");
 
   return new ExuluTool({

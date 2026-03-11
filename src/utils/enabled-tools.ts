@@ -1,4 +1,4 @@
-import { createAgenticRetrievalTool } from "@SRC/templates/tools/agentic-retrieval/index.ts";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";

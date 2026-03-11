@@ -9,6 +9,7 @@ import type { ExuluContext } from "@SRC/exulu/context";
 
 const {
   agentsSchema,
+  feedbackSchema,
   testCasesSchema,
   evalSetsSchema,
   evalRunsSchema,
@@ -76,6 +77,7 @@ const up = async function (knex: Knex) {
     promptFavoritesSchema(),
     rbacSchema(),
     agentsSchema(),
+    feedbackSchema(),
     variablesSchema(),
     workflowTemplatesSchema(),
   ];

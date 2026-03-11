@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { redisServer } from "./server";
 import { BullMQOtel } from "bullmq-otel";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
+import { checkLicense } from "@EE/entitlements";
 
 // Used for workflows and embedders
 class ExuluQueues {
@@ -73,6 +74,10 @@ class ExuluQueues {
   ): {
     use: () => Promise<ExuluQueueConfig>;
   } => {
+    const license = checkLicense();
+    if (!license["queues"]) {
+      throw new Error(`[EXULU] You are not licensed to use queues so cannot register a queue. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
+    }
     const queueConcurrency = concurrency.queue || 1;
     const workerConcurrency = concurrency.worker || 1;
 

@@ -1,4 +1,4 @@
-import { ExuluQueues } from "@SRC/index";
+import { queues as ExuluQueues } from "@EE/queues/queues";
 import type { Job, JobState } from "bullmq";
 
 export async function getJobsByQueueName(

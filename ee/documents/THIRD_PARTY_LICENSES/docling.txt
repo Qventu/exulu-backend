@@ -1,24 +1,16 @@
-This software uses parts of the concepts discovered and created by the team behind Chonkie.
+================================================================================
+Docling Python Package
+https://github.com/DS4SD/docling
+================================================================================
 
-We couldn't use their NPM package as by default it uses the huggingface transformers library
-for tokenization, which is 300+ mb in size and also installes the xenova runtimes for node and
-web, which are each 200mb+ leading to a total package size of 1GB+ which was unacceptable for 
-CI/CD pipelines where we had to prepackage and deliver the full dist to an environment without
-internet access.
+This license applies ONLY to the Docling package used as a dependency in this
+module. It does NOT apply to any other code in this repository or folder.
 
-The way around this was to copy the main chunking algorithms from Chonkie (sentence and recursive) and
-plugin our own tokenizer (using tiktoken) as an alternative.
-
-Update 09.03.2026:
-We created a completely new propietary version for markdown chunking from scratch in markdown.ts 
-as existing libraries did not deliver what we needed (clean breakpoints, page metadata, handling 
-multi page tables and more).
-
--------
+--------------------------------------------------------------------------------
 
 MIT License
 
-Copyright (c) 2025 Chonkie
+Copyright (c) 2024 International Business Machines
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,4 +1,4 @@
-import { preprocessQuery } from "@SRC/templates/tools/agentic-retrieval/query-preprocessing";
+import { preprocessQuery } from "@SRC/utils/query-preprocessing";
 import { applySorting } from "./apply-sorting";
 import type { SearchFilters } from "../types";
 import { applyAccessControl } from "../utilities/access-control";
@@ -255,9 +255,9 @@ export const vectorSearch = async ({
     );
   }
 
-  const language = configuration.language || "english";
+  const languages = configuration.languages?.length ? configuration.languages : ["english"];
 
-  console.log("[EXULU] Vector search params:", { method, query, cutoffs });
+  console.log("[EXULU] Vector search params:", { method, query, cutoffs, languages });
 
   let resultChunks: any[] = [];
 
@@ -276,14 +276,26 @@ export const vectorSearch = async ({
         cutoff: cutoffs?.tsvector,
       });
 
+      // Build multi-language ts_rank expression using GREATEST to get max rank across languages
+      const rankExpression = languages
+        .map((lang) => `ts_rank(chunks.fts, to_tsquery('${lang}', ?))`)
+        .join(", ");
+      const rankParams = languages.map(() => orQuery);
+
+      // Build multi-language match expression using OR to match any language
+      const matchExpression = languages
+        .map((lang) => `chunks.fts @@ to_tsquery('${lang}', ?)`)
+        .join(" OR ");
+      const matchParams = languages.map(() => orQuery);
+
       // rank + filter + sort (DESC)
       // Use to_tsquery with OR logic for more lenient matching
       // Remove the cutoff threshold check since OR queries typically have lower ranks
       chunksQuery
-        .select(db.raw(`ts_rank(chunks.fts, to_tsquery(?, ?)) as fts_rank`, [language, orQuery]))
+        .select(db.raw(`GREATEST(${rankExpression}) as fts_rank`, rankParams))
         .whereRaw(
-          `(chunks.fts @@ to_tsquery(?, ?)) AND (items.archived IS FALSE OR items.archived IS NULL)`,
-          [language, orQuery],
+          `((${matchExpression})) AND (items.archived IS FALSE OR items.archived IS NULL)`,
+          matchParams,
         )
         .orderByRaw(`fts_rank DESC`);
 
@@ -324,23 +336,30 @@ export const vectorSearch = async ({
       const semanticWeight = 1.0;
       const rrfK = 50;
 
+      // Build multi-language expressions for full text search
+      const ftRankExpression = languages
+        .map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`)
+        .join(", ");
+      const ftRankParams = languages.map(() => query);
+
+      const ftMatchExpression = languages
+        .map((lang) => `chunks.fts @@ plainto_tsquery('${lang}', ?)`)
+        .join(" OR ");
+      const ftMatchParams = languages.map(() => query);
+
       // Build the full_text CTE subquery
       let fullTextQuery = db(chunksTable + " as chunks")
         .select([
           "chunks.id",
           "chunks.source",
           db.raw(
-            `row_number() OVER (ORDER BY ts_rank(chunks.fts, plainto_tsquery(?, ?)) DESC) AS rank_ix`,
-            [language, query],
+            `row_number() OVER (ORDER BY GREATEST(${ftRankExpression}) DESC) AS rank_ix`,
+            ftRankParams,
           ),
         ])
         .leftJoin(mainTable + " as items", "items.id", "chunks.source")
-        .whereRaw(`chunks.fts @@ plainto_tsquery(?, ?)`, [language, query])
-        .whereRaw(`ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?`, [
-          language,
-          query,
-          cutoffs?.tsvector || 0,
-        ])
+        .whereRaw(`(${ftMatchExpression})`, ftMatchParams)
+        .whereRaw(`GREATEST(${ftRankExpression}) > ?`, [...ftRankParams, cutoffs?.tsvector || 0])
         .whereRaw(`(items.archived IS FALSE OR items.archived IS NULL)`)
         .limit(Math.min(matchCount * 2, 500));
 
@@ -384,7 +403,10 @@ export const vectorSearch = async ({
           db.raw('chunks."updatedAt" as chunk_updated_at'),
           db.raw('items."updatedAt" as item_updated_at'),
           db.raw('items."createdAt" as item_created_at'),
-          db.raw(`ts_rank(chunks.fts, plainto_tsquery(?, ?)) AS fts_rank`, [language, query]),
+          db.raw(
+            `GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`).join(", ")}) AS fts_rank`,
+            languages.map(() => query),
+          ),
           db.raw(`(1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance`),
           db.raw(
             `
@@ -413,11 +435,10 @@ export const vectorSearch = async ({
                   `,
           [rrfK, fullTextWeight, rrfK, semanticWeight, cutoffs?.hybrid || 0],
         )
-        .whereRaw(`(chunks.fts IS NULL OR ts_rank(chunks.fts, plainto_tsquery(?, ?)) > ?)`, [
-          language,
-          query,
-          cutoffs?.tsvector || 0,
-        ])
+        .whereRaw(
+          `(chunks.fts IS NULL OR GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`).join(", ")}) > ?)`,
+          [...languages.map(() => query), cutoffs?.tsvector || 0],
+        )
         .whereRaw(`(chunks.embedding IS NULL OR (1 - (chunks.embedding <=> ${vectorExpr})) >= ?)`, [
           cutoffs?.cosineDistance || 0,
         ])

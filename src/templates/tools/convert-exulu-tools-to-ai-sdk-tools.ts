@@ -12,7 +12,7 @@ import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
-import { createAgenticRetrievalTool } from "./agentic-retrieval";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -185,11 +185,6 @@ export const convertExuluToolsToAiSdkTools = async (
       model: model,
       projectRetrievalTool: projectRetrievalTool,
     });
-    if (!agenticSearchTool) {
-      throw new Error(
-        "Agentic search tool could not be instantiated, this is an internal error in the Exulu framework, please contact support.",
-      );
-    }
     if (agenticSearchTool) {
       // Replace the agentic search tool with the new one.
       const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");

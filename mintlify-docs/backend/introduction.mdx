@@ -39,7 +39,7 @@ npm install @exulu/backend
 Create your first Exulu IMP instance using the factory pattern:
 
 ```typescript
-import { ExuluApp, ExuluAgent } from "@exulu/backend";
+import { ExuluApp, ExuluProvider } from "@exulu/backend";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
 let instance: ExuluApp | null = null;
@@ -60,7 +60,7 @@ export const exulu = async (): Promise<ExuluApp> => {
     rerankers: [],
     tools: [],
     agents: [
-      new ExuluAgent({
+      new ExuluProvider({
         id: "assistant",
         name: "Assistant",
         provider: "anthropic",

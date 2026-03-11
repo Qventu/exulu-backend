@@ -5,10 +5,10 @@ description: "Pre-configured agent instances for popular AI providers"
 
 ## Overview
 
-`ExuluDefaultAgents` provides ready-to-use ExuluAgent configurations for popular AI providers supported by the [Vercel AI SDK](https://ai-sdk.dev/providers/ai-sdk-providers). These default agents are convenience wrappers that make it easy to get started with different providers without having to configure each one manually.
+`ExuluDefaultAgents` provides ready-to-use ExuluProvider configurations for popular AI providers supported by the [Vercel AI SDK](https://ai-sdk.dev/providers/ai-sdk-providers). These default agents are convenience wrappers that make it easy to get started with different providers without having to configure each one manually.
 
 <Note>
-  ExuluDefaultAgents are merely implementations of AI SDK providers. You can easily create agents for **any provider** supported by the AI SDK by using the `ExuluAgent` class directly. See the [AI SDK providers documentation](https://ai-sdk.dev/providers/ai-sdk-providers) for the full list of available providers.
+  ExuluDefaultAgents are merely implementations of AI SDK providers. You can easily create agents for **any provider** supported by the AI SDK by using the `ExuluProvider` class directly. See the [AI SDK providers documentation](https://ai-sdk.dev/providers/ai-sdk-providers) for the full list of available providers.
 </Note>
 
 ## Available default agents
@@ -52,10 +52,10 @@ While ExuluDefaultAgents provides convenient defaults, you can create agents for
 ### OpenAI
 
 ```typescript
-import { ExuluAgent } from "@exulu/backend";
+import { ExuluProvider } from "@exulu/backend";
 import { createOpenAI } from "@ai-sdk/openai";
 
-const openaiAgent = new ExuluAgent({
+const openaiAgent = new ExuluProvider({
   id: "openai_gpt4",
   name: "OpenAI GPT-4",
   type: "agent",
@@ -85,10 +85,10 @@ const openaiAgent = new ExuluAgent({
 ### Anthropic
 
 ```typescript
-import { ExuluAgent } from "@exulu/backend";
+import { ExuluProvider } from "@exulu/backend";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
-const anthropicAgent = new ExuluAgent({
+const anthropicAgent = new ExuluProvider({
   id: "anthropic_claude",
   name: "Claude Opus 4",
   type: "agent",
@@ -118,10 +118,10 @@ const anthropicAgent = new ExuluAgent({
 ### Google Generative AI
 
 ```typescript
-import { ExuluAgent } from "@exulu/backend";
+import { ExuluProvider } from "@exulu/backend";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
-const googleAgent = new ExuluAgent({
+const googleAgent = new ExuluProvider({
   id: "google_gemini",
   name: "Google Gemini Pro",
   type: "agent",
@@ -151,10 +151,10 @@ const googleAgent = new ExuluAgent({
 ### Mistral
 
 ```typescript
-import { ExuluAgent } from "@exulu/backend";
+import { ExuluProvider } from "@exulu/backend";
 import { createMistral } from "@ai-sdk/mistral";
 
-const mistralAgent = new ExuluAgent({
+const mistralAgent = new ExuluProvider({
   id: "mistral_large",
   name: "Mistral Large",
   type: "agent",
@@ -184,10 +184,10 @@ const mistralAgent = new ExuluAgent({
 ### Cohere
 
 ```typescript
-import { ExuluAgent } from "@exulu/backend";
+import { ExuluProvider } from "@exulu/backend";
 import { createCohere } from "@ai-sdk/cohere";
 
-const cohereAgent = new ExuluAgent({
+const cohereAgent = new ExuluProvider({
   id: "cohere_command",
   name: "Cohere Command R+",
   type: "agent",

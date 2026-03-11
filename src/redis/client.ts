@@ -1,5 +1,5 @@
 import { createClient, type RedisClientType } from "redis";
-import { redisServer } from "../bullmq/server.ts";
+import { redisServer } from "../../ee/queues/server.ts";
 let client: Record<string, RedisClientType> = {};
 
 export async function redisClient(): Promise<{

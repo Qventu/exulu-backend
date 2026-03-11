@@ -36,6 +36,7 @@ import type { ExuluConfig } from "./app/index.ts";
 import { createNewMemoryItemTool } from "@SRC/templates/tools/memory-tool.ts";
 import type { Request } from "express";
 import { exuluApp } from "./app/singleton.ts";
+import { checkLicense } from "@EE/entitlements.ts";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -154,6 +155,12 @@ export class ExuluProvider {
 
     if (!agent) {
       return null;
+    }
+
+    const license = checkLicense()
+
+    if (!license["multi-agent-tooling"]) {
+      console.warn(`[EXULU] You are not licensed to use multi-agent tooling so cannot export this agent as a tool. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
     }
 
     return new ExuluTool({

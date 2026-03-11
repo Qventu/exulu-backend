@@ -4,7 +4,7 @@ This document describes how winston logging has been integrated into the Exulu b
 
 ## Architecture Overview
 
-The logging system is centralized through a logger factory function in `src/registry/logger.ts` that creates winston logger instances with conditional OpenTelemetry integration.
+The logging system is centralized through a logger factory function in `src/exulu/logger.ts` that creates winston logger instances with conditional OpenTelemetry integration.
 
 ## Logger Configuration
 
@@ -59,7 +59,7 @@ export type ExuluConfig = {
 
 ### 1. Express Server Logging
 
-In `src/registry/index.ts:154-156`, the Express server creates a logger instance:
+In `src/exulu/app/index`, the Express server creates a logger instance:
 
 ```typescript
 const logger = createLogger({
@@ -71,7 +71,7 @@ The logger is then passed to `createExpressRoutes()` for use throughout the Expr
 
 ### 2. BullMQ Workers Logging  
 
-In `src/registry/index.ts:123-125`, workers create their own logger instance:
+In `src/exulu/app`, workers create their own logger instance:
 
 ```typescript
 const logger = createLogger({
