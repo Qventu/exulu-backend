@@ -1,0 +1,304 @@
+---
+title: Community Edition
+description: Exulu IMP Community Edition is a comprehensive source-available platform built on TypeScript that provides everything you need to create sophisticated multi-agent systems with RAG, GraphQL API, streaming APIs, audit logs, and a full admin UI.
+mode: 'wide'
+---
+
+<div className="badge">
+  Source Available · Production-Ready · TypeScript · Open Core
+</div>
+
+## A Complete AI Development Stack for Production Applications
+
+<CardGroup cols={3}>
+  <Card
+    title="Backend Framework"
+    icon="server"
+    href="/backend/introduction"
+  >
+    Node.js/TypeScript with GraphQL API, database management, and AI orchestration
+  </Card>
+  <Card
+    title="Frontend Interface"
+    icon="screen-share"
+    href="/frontend/introduction"
+  >
+    React-based web UI for managing agents, contexts, and workflows
+  </Card>
+  <Card
+    title="GraphQL API"
+    icon="code"
+    href="/api-reference/introduction"
+  >
+    Dynamically generated API that adapts to your implementation
+  </Card>
+</CardGroup>
+
+<div style={{ padding: '0rem 0', marginTop: '2rem' }}>
+  <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', width: '100%', margin: '0 auto 2rem', textAlign: 'center' }}>
+    Core Features in Community Edition
+  </h2>
+  <p style={{ fontSize: '1.125rem', color: '#64748b', maxWidth: '48rem', margin: '0 0 1rem' }}>
+    Everything you need to build sophisticated AI applications and multi-agent systems:
+  </p>
+</div>
+
+<AccordionGroup>
+  <Accordion title="🤖 Multi-Agent Systems">
+    Create sophisticated AI agents powered by leading LLM providers. Build single agents or complex multi-agent workflows with built-in orchestration. Each agent can have different capabilities, tools, and providers.
+
+    ```typescript
+    import { ExuluProvider } from "@exulu/backend";
+    import { createAnthropic } from "@ai-sdk/anthropic";
+
+    const researchAgent = new ExuluProvider({
+      id: "research_assistant",
+      name: "Research Assistant",
+      provider: "anthropic",
+      description: "AI agent specialized in research tasks",
+      type: "agent",
+      capabilities: {
+        text: true,
+        images: [".png", ".jpg", ".jpeg", ".webp"],
+        files: [".pdf", ".docx"],
+        audio: [],
+        video: []
+      },
+      maxContextLength: 200000,
+      config: {
+        name: "Research Assistant",
+        instructions: "You are a helpful research assistant...",
+        model: {
+          create: ({ apiKey }) => {
+            const anthropic = createAnthropic({ apiKey });
+            return anthropic.languageModel("claude-sonnet-4-5");
+          }
+        }
+      }
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="🔍 Semantic Search & RAG">
+    Production-ready semantic search with vector embeddings, hybrid search (vector + full-text), and flexible chunking strategies. Perfect for building RAG applications.
+
+    ```typescript
+    const context = new ExuluContext({
+      id: "documentation",
+      embedder: openAIEmbedder,
+      fields: [
+        { name: "title", type: "string" },
+        { name: "content", type: "string" }
+      ]
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="📊 Dynamic GraphQL API">
+    Your schema is automatically generated from your context definitions. Define your data structures once and get a complete CRUD API with filtering, pagination, and vector search - no manual schema writing.
+  </Accordion>
+
+  <Accordion title="🔧 Custom Tools">
+    Create custom tools that your agents can use. Integrate with external APIs, databases, or any service. Tools are automatically exposed to agents and can be called during conversations.
+  </Accordion>
+
+  <Accordion title="📈 Observability & Monitoring">
+    OpenTelemetry integration for comprehensive observability. Track agent performance, monitor API usage, and analyze system behavior with distributed tracing and structured logging.
+  </Accordion>
+
+  <Accordion title="🎨 Full Admin UI">
+    Complete React-based admin interface for managing your AI platform. Create agents, configure contexts, monitor sessions, and more—all without touching code.
+  </Accordion>
+
+  <Accordion title="💾 PostgreSQL + Redis">
+    Built on battle-tested infrastructure with PostgreSQL for data persistence and vector search, plus Redis for caching and real-time features.
+  </Accordion>
+
+  <Accordion title="🔌 Multi-Provider Support">
+    Use any LLM provider supported by Vercel AI SDK: OpenAI, Anthropic, Google, Mistral, Cohere, and more. Switch providers per agent or use multiple providers in the same application.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+<div style={{
+  background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(124, 58, 237, 0.1) 100%)',
+  borderRadius: '1rem',
+  padding: '2rem',
+  margin: '3rem 0',
+  border: '2px solid #8B5CF6'
+}}>
+  <h3 style={{ fontSize: '1.5rem', fontWeight: '700', marginBottom: '1rem' }}>
+    Need Enterprise Features?
+  </h3>
+  <p style={{ fontSize: '1.125rem', color: '#64748b', marginBottom: '1.5rem' }}>
+    Upgrade to Enterprise Edition for advanced capabilities like RBAC, queue management, evaluation frameworks, template conversations, and more.
+  </p>
+  <div>
+    <a href="/enterprise-edition" className="cta-primary">
+      Explore Enterprise Edition →
+    </a>
+  </div>
+</div>
+
+---
+
+<div style={{
+  background: 'linear-gradient(135deg, rgba(22, 163, 74, 0.1) 0%, rgba(7, 201, 131, 0.1) 100%)',
+  borderRadius: '1rem',
+  padding: '1rem 2rem',
+  margin: '1rem 0',
+}}>
+  <h2 style={{ fontSize: '2rem', fontWeight: '800', marginBottom: '1rem' }}>
+    Get Started in under 5 minutes
+  </h2>
+  <p style={{ fontSize: '1.125rem', color: '#64748b' }}>
+    Install Exulu IMP and start building your first AI application
+  </p>
+
+  <div style={{
+    display: 'flex',
+    gap: '2rem',
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    marginBottom: '2rem'
+  }}>
+    <div style={{ flex: '1', minWidth: '250px', maxWidth: '400px' }}>
+      <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', textAlign: 'center' }}>
+        Install via NPM
+      </h3>
+      <div style={{
+        background: '#0f172a',
+        borderRadius: '0.75rem',
+        padding: '1.5rem',
+        textAlign: 'left',
+        fontFamily: 'monospace'
+      }}>
+        <code style={{ color: '#e2e8f0' }}>npm install @exulu/backend</code>
+      </div>
+    </div>
+
+    <div style={{ flex: '1', minWidth: '250px', maxWidth: '400px' }}>
+      <h3 style={{ fontSize: '1.125rem', fontWeight: '600', marginBottom: '1rem', textAlign: 'center' }}>
+        Clone Example Repository
+      </h3>
+      <div style={{
+        background: '#0f172a',
+        borderRadius: '0.75rem',
+        padding: '1.5rem',
+        textAlign: 'left',
+        fontFamily: 'monospace'
+      }}>
+        <code style={{ color: '#e2e8f0' }}>git clone https://github.com/Qventu/exulu-example</code>
+      </div>
+    </div>
+  </div>
+
+  <a href="/backend/introduction" className="cta-primary">
+    View Quickstart Guide →
+  </a>
+</div>
+
+---
+
+## Join the Community
+
+<CardGroup cols={2}>
+  <Card
+    title="GitHub Discussions"
+    icon="github"
+    href="https://github.com/Qventu/exulu-backend/discussions"
+  >
+    Ask questions, share ideas, and connect with other developers
+  </Card>
+  <Card
+    title="Report Issues"
+    icon="bug"
+    href="https://github.com/Qventu/exulu-backend/issues"
+  >
+    Found a bug or have a feature request? Let us know
+  </Card>
+  <Card
+    title="Follow on LinkedIn"
+    icon="linkedin"
+    href="https://www.linkedin.com/company/exulu"
+  >
+    Stay updated with the latest news and announcements
+  </Card>
+  <Card
+    title="View on npm"
+    icon="box"
+    href="https://www.npmjs.com/package/@exulu/backend"
+  >
+    Check out the package on npm registry
+  </Card>
+</CardGroup>
+
+---
+
+## What's Not Included in Community Edition?
+
+<Info>
+The following features require [Enterprise Edition](/enterprise-edition):
+
+- **Role-Based Access Control (RBAC)** - Fine-grained permission management
+- **Queue Management** - Production-grade background job processing with BullMQ
+- **Evaluation Framework** - Comprehensive testing and quality measurement
+- **Template Conversations** - Reusable multi-step workflows
+- **Agentic Retrieval** - Advanced multi-strategy search
+- **Advanced Document Processing** - Enterprise-grade document parsing
+- **Agent Feedback System** - Built-in user feedback collection
+- **Multi-Agent Tooling** - Advanced agent orchestration
+- **Custom Branding** - White-label your deployment
+</Info>
+
+---
+
+<div style={{
+  padding: '4rem 2rem',
+  background: 'linear-gradient(135deg, #16A34A 0%, #15803D 100%)',
+  borderRadius: '1rem',
+  margin: '3rem 0',
+  color: 'white'
+}}>
+  <h2 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', color: 'white' }}>
+    Ready to Build Something Amazing?
+  </h2>
+  <p style={{ fontSize: '1.25rem', marginBottom: '2rem', opacity: 0.9 }}>
+    Join developers building the next generation of AI applications with Exulu Community Edition
+  </p>
+  <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+    <a
+      href="/backend/introduction"
+      style={{
+        background: 'white',
+        color: '#16A34A',
+        padding: '1rem 2rem',
+        borderRadius: '0.5rem',
+        fontWeight: '600',
+        textDecoration: 'none',
+        display: 'inline-block',
+        transition: 'all 0.3s ease'
+      }}
+    >
+      Get Started Free →
+    </a>
+    <a
+      href="https://github.com/Qventu/exulu-backend"
+      style={{
+        background: 'transparent',
+        color: 'white',
+        padding: '1rem 2rem',
+        borderRadius: '0.5rem',
+        fontWeight: '600',
+        textDecoration: 'none',
+        display: 'inline-block',
+        border: '2px solid white',
+        transition: 'all 0.3s ease'
+      }}
+    >
+      View on GitHub
+    </a>
+  </div>
+</div>

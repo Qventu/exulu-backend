@@ -1,0 +1,163 @@
+---
+title: 'RBAC'
+description: 'GraphQL types for role-based access control'
+---
+
+## RBACData
+
+Access control information for resources.
+
+```graphql
+type RBACData {
+  type: String!       # "public" | "private" | "users" | "roles"
+  users: [RBACUser!]
+  roles: [RBACRole!]
+}
+
+type RBACUser {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+
+type RBACRole {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+```
+
+## RBACInput
+
+Input type for setting RBAC permissions.
+
+```graphql
+input RBACInput {
+  users: [RBACUserInput!]
+  roles: [RBACRoleInput!]
+}
+
+input RBACUserInput {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+
+input RBACRoleInput {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+```
+
+## RBAC Modes
+
+### Public Mode
+
+Resource is accessible to all authenticated users:
+
+```graphql
+{
+  RBAC: {
+    type: "public"
+  }
+}
+```
+
+### Private Mode
+
+Resource is only accessible to creator:
+
+```graphql
+{
+  RBAC: {
+    type: "private"
+  }
+}
+```
+
+### User-Based Access
+
+Grant specific users access:
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Private Agent"
+      RBAC: {
+        users: [
+          { id: "user-123", rights: "write" }
+          { id: "user-456", rights: "read" }
+        ]
+      }
+    }
+  ) {
+    item {
+      id
+      RBAC {
+        type
+        users {
+          id
+          rights
+        }
+      }
+    }
+  }
+}
+```
+
+### Role-Based Access
+
+Grant role-based access:
+
+```graphql
+mutation {
+  agentsUpdateOneById(
+    id: "agent-123"
+    input: {
+      RBAC: {
+        roles: [
+          { id: "developer", rights: "write" }
+          { id: "viewer", rights: "read" }
+        ]
+      }
+    }
+  ) {
+    item {
+      id
+      RBAC {
+        roles {
+          id
+          rights
+        }
+      }
+    }
+  }
+}
+```
+
+## Permission Rights
+
+- **read** - Can view the resource
+- **write** - Can view and modify the resource
+
+## RBAC Hierarchy
+
+1. **super_admin** - Full access to all resources
+2. **Role permissions** - Access based on user's role
+3. **Resource RBAC** - Specific resource-level permissions
+4. **Creator** - Special access for resource creator
+
+## Related Types
+
+<CardGroup cols={2}>
+  <Card title="User Management" icon="users" href="/api-reference/core-types/user-management">
+    Users and roles
+  </Card>
+  <Card title="Agent Types" icon="robot" href="/api-reference/core-types/agent-types">
+    Agent access control
+  </Card>
+  <Card title="Session Types" icon="comments" href="/api-reference/core-types/session-types">
+    Session access control
+  </Card>
+  <Card title="Back to Overview" icon="arrow-left" href="/api-reference/core-types/overview">
+    View all core types
+  </Card>
+</CardGroup>

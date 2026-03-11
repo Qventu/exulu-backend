@@ -1,0 +1,1154 @@
+---
+title: 'Queries'
+description: 'Complete reference for all GraphQL query operations'
+---
+
+## Overview
+
+All query operations in Exulu IMP follow consistent patterns. This reference covers both core type queries and the patterns that apply to dynamically generated queries.
+
+## Query patterns
+
+Every resource type (core and dynamic) gets these query operations:
+
+| Operation | Purpose | Authentication required |
+|-----------|---------|------------------------|
+| `{type}ById` | Fetch single resource by ID | Yes |
+| `{type}ByIds` | Fetch multiple resources by IDs | Yes |
+| `{type}One` | Fetch single resource with filters | Yes |
+| `{typePlural}Pagination` | Paginated list with filters | Yes |
+| `{typePlural}Statistics` | Aggregate statistics | Yes |
+
+## By ID queries
+
+### Pattern
+
+```graphql
+{type}ById(id: ID!): {type}
+```
+
+### Example
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    description
+    provider
+    modelName
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "data": {
+    "agentById": {
+      "id": "agent-123",
+      "name": "Customer Support Agent",
+      "description": "Handles customer inquiries",
+      "provider": "anthropic",
+      "modelName": "claude-sonnet-4-5"
+    }
+  }
+}
+```
+
+### Error handling
+
+```json
+{
+  "errors": [
+    {
+      "message": "Record not found",
+      "path": ["agentById"]
+    }
+  ],
+  "data": {
+    "agentById": null
+  }
+}
+```
+
+## By IDs queries (batch)
+
+### Pattern
+
+```graphql
+{type}ByIds(ids: [ID!]!): [{type}]!
+```
+
+### Example
+
+```graphql
+query {
+  agentsByIds(ids: ["agent-1", "agent-2", "agent-3"]) {
+    id
+    name
+    provider
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "data": {
+    "agentsByIds": [
+      {
+        "id": "agent-1",
+        "name": "Assistant 1",
+        "provider": "openai"
+      },
+      {
+        "id": "agent-2",
+        "name": "Assistant 2",
+        "provider": "anthropic"
+      },
+      {
+        "id": "agent-3",
+        "name": "Assistant 3",
+        "provider": "google"
+      }
+    ]
+  }
+}
+```
+
+## One (filtered) queries
+
+### Pattern
+
+```graphql
+{type}One(
+  filters: [Filter{Type}]
+  sort: SortBy
+): {type}
+```
+
+### Example
+
+```graphql
+query {
+  agentOne(
+    filters: [
+      { name: { contains: "support" } }
+      { provider: { eq: "anthropic" } }
+    ]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    id
+    name
+    description
+  }
+}
+```
+
+### With complex filters
+
+```graphql
+query {
+  userOne(
+    filters: [
+      {
+        or: [
+          { email: { contains: "@example.com" } }
+          { email: { contains: "@company.com" } }
+        ]
+      }
+      { super_admin: { eq: false } }
+    ]
+  ) {
+    id
+    name
+    email
+  }
+}
+```
+
+## Pagination queries
+
+### Pattern
+
+```graphql
+{typePlural}Pagination(
+  limit: Int = 10
+  page: Int = 1
+  filters: [Filter{Type}]
+  sort: SortBy
+): {Type}PaginationResult
+```
+
+### Basic pagination
+
+```graphql
+query {
+  agentsPagination(limit: 20, page: 1) {
+    items {
+      id
+      name
+      provider
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      itemCount
+      hasPreviousPage
+      hasNextPage
+    }
+  }
+}
+```
+
+### With filters and sorting
+
+```graphql
+query {
+  agentsPagination(
+    limit: 50
+    page: 2
+    filters: [
+      { provider: { in: ["anthropic", "openai"] } }
+      { createdAt: { gte: "2025-01-01T00:00:00Z" } }
+    ]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      provider
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      hasNextPage
+    }
+  }
+}
+```
+
+### Response
+
+```json
+{
+  "data": {
+    "agentsPagination": {
+      "items": [
+        {
+          "id": "agent-1",
+          "name": "Assistant A",
+          "provider": "anthropic",
+          "createdAt": "2025-01-15T10:00:00Z"
+        }
+      ],
+      "pageInfo": {
+        "currentPage": 2,
+        "pageCount": 5,
+        "hasNextPage": true
+      }
+    }
+  }
+}
+```
+
+## Statistics queries
+
+### Pattern
+
+```graphql
+{typePlural}Statistics(
+  filters: [Filter{Type}]
+  groupBy: String
+  limit: Int = 10
+): [StatisticsResult]!
+
+type StatisticsResult {
+  group: String!
+  count: Int!
+}
+```
+
+### Total count
+
+```graphql
+query {
+  agentsStatistics {
+    group
+    count
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "agentsStatistics": [
+      {
+        "group": "total",
+        "count": 42
+      }
+    ]
+  }
+}
+```
+
+### Group by field
+
+```graphql
+query {
+  agentsStatistics(
+    groupBy: "provider"
+    limit: 10
+  ) {
+    group
+    count
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "agentsStatistics": [
+      { "group": "anthropic", "count": 15 },
+      { "group": "openai", "count": 12 },
+      { "group": "google", "count": 8 },
+      { "group": "cerebras", "count": 7 }
+    ]
+  }
+}
+```
+
+### With filters
+
+```graphql
+query {
+  agent_sessionsStatistics(
+    filters: [
+      { createdAt: { gte: "2025-01-01T00:00:00Z" } }
+    ]
+    groupBy: "agent"
+    limit: 5
+  ) {
+    group
+    count
+  }
+}
+```
+
+## Vector search queries
+
+Available for contexts with embedders configured.
+
+### Pattern
+
+```graphql
+{contextPlural}VectorSearch(
+  query: String!
+  method: VectorMethodEnum!
+  itemFilters: [Filter{Context}]
+  cutoffs: SearchCutoffs
+  expand: SearchExpand
+): {context}VectorSearchResult
+```
+
+### Cosine distance search
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "How do I deploy the application?"
+    method: cosineDistance
+    cutoffs: { cosineDistance: 0.7 }
+  ) {
+    chunks {
+      chunk_content
+      chunk_cosine_distance
+      item_name
+      item_id
+    }
+    context {
+      name
+      embedder
+    }
+    query
+    method
+  }
+}
+```
+
+### Hybrid search (vector + full-text)
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "authentication setup"
+    method: hybridSearch
+    cutoffs: {
+      cosineDistance: 0.8
+      tsvector: 0.1
+    }
+  ) {
+    chunks {
+      chunk_content
+      chunk_hybrid_score
+      chunk_cosine_distance
+      chunk_fts_rank
+      item_name
+    }
+  }
+}
+```
+
+### With filters and expansion
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "database migration"
+    method: cosineDistance
+    itemFilters: [
+      { category: { eq: "tutorials" } }
+    ]
+    cutoffs: { cosineDistance: 0.75 }
+    expand: { before: 1, after: 2 }
+  ) {
+    chunks {
+      chunk_content
+      chunk_index
+      chunk_cosine_distance
+      item_name
+      item_id
+    }
+  }
+}
+```
+
+### Full-text search only
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "installation guide"
+    method: tsvector
+  ) {
+    chunks {
+      chunk_content
+      chunk_fts_rank
+      item_name
+    }
+  }
+}
+```
+
+## Chunk by ID queries
+
+Fetch individual chunks from vector search contexts.
+
+### Pattern
+
+```graphql
+{context}ChunkById(id: ID!): {context}VectorSearchChunk
+```
+
+### Example
+
+```graphql
+query {
+  documentationChunkById(id: "chunk-123") {
+    chunk_content
+    chunk_index
+    chunk_id
+    chunk_source
+    chunk_metadata
+    chunk_created_at
+    item_id
+    item_name
+    item_external_id
+  }
+}
+```
+
+## Special queries
+
+### Providers
+
+List all available agent providers.
+
+```graphql
+query {
+  providers {
+    items {
+      id
+      name
+      description
+      provider
+      providerName
+      modelName
+      type
+    }
+  }
+}
+```
+
+### Tools
+
+List available tools for agents.
+
+```graphql
+query {
+  tools(
+    search: "weather"
+    category: "api"
+    limit: 20
+    page: 1
+  ) {
+    items {
+      id
+      name
+      description
+      category
+      type
+      config
+    }
+    total
+    page
+    limit
+  }
+}
+```
+
+### Tool categories
+
+```graphql
+query {
+  toolCategories
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "toolCategories": [
+      "agents",
+      "api",
+      "contexts",
+      "database",
+      "file-processing",
+      "web"
+    ]
+  }
+}
+```
+
+### Contexts
+
+List all available semantic search contexts.
+
+```graphql
+query {
+  contexts {
+    items {
+      id
+      name
+      description
+      active
+      slug
+      embedder {
+        id
+        name
+        config {
+          name
+          description
+          default
+        }
+        queue
+      }
+      fields
+      sources {
+        id
+        name
+        description
+        config {
+          schedule
+          queue
+          retries
+          params {
+            name
+            description
+            default
+          }
+        }
+      }
+      processor {
+        name
+        description
+        queue
+        trigger
+        timeoutInSeconds
+        generateEmbeddings
+      }
+    }
+  }
+}
+```
+
+### Context by ID
+
+```graphql
+query {
+  contextById(id: "documentation") {
+    id
+    name
+    description
+    embedder {
+      name
+      queue
+    }
+    fields
+    configuration
+  }
+}
+```
+
+### Evaluations
+
+List available evaluation functions.
+
+```graphql
+query {
+  evals {
+    items {
+      id
+      name
+      description
+      llm
+      config {
+        name
+        description
+      }
+    }
+  }
+}
+```
+
+### Rerankers
+
+List available reranking models.
+
+```graphql
+query {
+  rerankers {
+    items {
+      id
+      name
+      description
+    }
+  }
+}
+```
+
+### Unique prompt tags
+
+```graphql
+query {
+  getUniquePromptTags
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "getUniquePromptTags": [
+      "greeting",
+      "support",
+      "technical",
+      "sales"
+    ]
+  }
+}
+```
+
+## Job queries
+
+### Jobs by queue
+
+```graphql
+query {
+  jobs(
+    queue: eval_runs
+    statusses: [active, waiting, failed]
+    page: 1
+    limit: 50
+  ) {
+    items {
+      id
+      name
+      state
+      data
+      returnvalue
+      stacktrace
+      finishedOn
+      processedOn
+      attemptsMade
+      failedReason
+      timestamp
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      itemCount
+      hasNextPage
+    }
+  }
+}
+```
+
+### Queue information
+
+```graphql
+query {
+  queue(queue: eval_runs) {
+    name
+    concurrency {
+      worker
+      queue
+    }
+    timeoutInSeconds
+    ratelimit
+    isMaxed
+    isPaused
+    jobs {
+      paused
+      completed
+      failed
+      waiting
+      active
+      delayed
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "queue": {
+      "name": "eval_runs",
+      "concurrency": {
+        "worker": 2,
+        "queue": 10
+      },
+      "timeoutInSeconds": 180,
+      "ratelimit": 100,
+      "isMaxed": false,
+      "isPaused": false,
+      "jobs": {
+        "paused": 0,
+        "completed": 245,
+        "failed": 12,
+        "waiting": 5,
+        "active": 2,
+        "delayed": 0
+      }
+    }
+  }
+}
+```
+
+## Workflow queries
+
+### Workflow schedule
+
+Check if a workflow has a scheduled execution.
+
+```graphql
+query {
+  workflowSchedule(workflow: "workflow-123") {
+    id
+    schedule
+    next
+    iteration
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "workflowSchedule": {
+      "id": "workflow-123-schedule",
+      "schedule": "0 9 * * *",
+      "next": "2025-01-16T09:00:00Z",
+      "iteration": 5
+    }
+  }
+}
+```
+
+## Advanced filtering examples
+
+### String operators
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      { name: { contains: "assistant" } }
+      { description: { contains: "support" } }
+    ]
+  ) {
+    items {
+      id
+      name
+    }
+  }
+}
+```
+
+### Number operators
+
+```graphql
+query {
+  statisticsPagination(
+    filters: [
+      { count: { gte: 100, lte: 1000 } }
+    ]
+  ) {
+    items {
+      label
+      count
+    }
+  }
+}
+```
+
+### Date operators
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      {
+        createdAt: {
+          gte: "2025-01-01T00:00:00Z"
+          lte: "2025-01-31T23:59:59Z"
+        }
+      }
+    ]
+  ) {
+    items {
+      id
+      name
+      createdAt
+    }
+  }
+}
+```
+
+### AND logic
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      {
+        and: [
+          { provider: { eq: "anthropic" } }
+          { name: { contains: "claude" } }
+        ]
+      }
+    ]
+  ) {
+    items {
+      id
+      name
+    }
+  }
+}
+```
+
+### OR logic
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      {
+        or: [
+          { provider: { eq: "anthropic" } }
+          { provider: { eq: "openai" } }
+        ]
+      }
+    ]
+  ) {
+    items {
+      id
+      name
+      provider
+    }
+  }
+}
+```
+
+### Complex nested logic
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      {
+        and: [
+          {
+            or: [
+              { provider: { eq: "anthropic" } }
+              { provider: { eq: "openai" } }
+            ]
+          }
+          { name: { contains: "assistant" } }
+          {
+            createdAt: {
+              gte: "2025-01-01T00:00:00Z"
+            }
+          }
+        ]
+      }
+    ]
+  ) {
+    items {
+      id
+      name
+      provider
+    }
+  }
+}
+```
+
+## Field selection
+
+Request only the fields you need:
+
+### Minimal fields
+
+```graphql
+query {
+  agentsPagination(limit: 100) {
+    items {
+      id
+      name
+    }
+  }
+}
+```
+
+### All basic fields
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    description
+    backend
+    type
+    provider
+    modelName
+    createdAt
+    updatedAt
+  }
+}
+```
+
+### With nested objects
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    capabilities {
+      text
+      images
+      files
+    }
+    rateLimit {
+      name
+      rate_limit {
+        time
+        limit
+      }
+    }
+    workflows {
+      enabled
+      queue {
+        name
+      }
+    }
+  }
+}
+```
+
+### With RBAC
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    RBAC {
+      type
+      users {
+        id
+        rights
+      }
+      roles {
+        id
+        rights
+      }
+    }
+  }
+}
+```
+
+## Query variables
+
+Use variables for dynamic queries:
+
+```graphql
+query GetAgent($id: ID!) {
+  agentById(id: $id) {
+    id
+    name
+    description
+  }
+}
+```
+
+**Variables:**
+
+```json
+{
+  "id": "agent-123"
+}
+```
+
+### With filters
+
+```graphql
+query GetAgents(
+  $limit: Int!
+  $page: Int!
+  $provider: String
+) {
+  agentsPagination(
+    limit: $limit
+    page: $page
+    filters: [
+      { provider: { eq: $provider } }
+    ]
+  ) {
+    items {
+      id
+      name
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```
+
+**Variables:**
+
+```json
+{
+  "limit": 20,
+  "page": 1,
+  "provider": "anthropic"
+}
+```
+
+## Query aliases
+
+Use aliases to fetch the same resource with different parameters:
+
+```graphql
+query {
+  anthropicAgents: agentsPagination(
+    filters: [{ provider: { eq: "anthropic" } }]
+  ) {
+    items {
+      id
+      name
+    }
+  }
+
+  openaiAgents: agentsPagination(
+    filters: [{ provider: { eq: "openai" } }]
+  ) {
+    items {
+      id
+      name
+    }
+  }
+}
+```
+
+## Fragments
+
+Reuse field selections with fragments:
+
+```graphql
+fragment AgentBasics on agent {
+  id
+  name
+  description
+  provider
+  modelName
+}
+
+query {
+  agent1: agentById(id: "agent-1") {
+    ...AgentBasics
+  }
+
+  agent2: agentById(id: "agent-2") {
+    ...AgentBasics
+  }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Mutations" icon="pen-to-square" href="/api-reference/mutations">
+    Learn about mutation operations
+  </Card>
+  <Card title="Core types" icon="database" href="/api-reference/core-types">
+    Explore predefined types
+  </Card>
+  <Card title="Dynamic types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Learn about context types
+  </Card>
+  <Card title="Introduction" icon="book" href="/api-reference/introduction">
+    Back to API overview
+  </Card>
+</CardGroup>

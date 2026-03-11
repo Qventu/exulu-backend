@@ -1,0 +1,83 @@
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
+import type { ExuluTool } from "@SRC/exulu/tool";
+import type { ExuluContext } from "@SRC/exulu/context";
+import type { ExuluReranker } from "@SRC/exulu/reranker";
+import type { User } from "@EXULU_TYPES/models/user.ts";
+import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
+import type { ExuluProvider } from "@SRC/exulu/provider";
+import { exuluApp } from "@SRC/exulu/app/singleton";
+
+export const getEnabledTools = async (
+  agent: ExuluAgent,
+  allExuluTools: ExuluTool[],
+  allContexts: ExuluContext[],
+  allRerankers: ExuluReranker[] | undefined,
+  disabledTools: string[] = [],
+  providers: ExuluProvider[],
+  user?: User,
+) => {
+  let enabledTools: ExuluTool[] = [];
+  if (agent.tools) {
+    const results = await Promise.all(
+      agent.tools.map(async ({ id, type }) => {
+        let hydrated: ExuluTool | null | undefined;
+        if (id === "agentic_context_search") {
+          return createAgenticRetrievalTool({
+            // This tool is reinstantiated in the convertExuluToolsToAiSdkTools function, where
+            // we can access the activated contexts and model that is calling it but we also
+            // return it here so we know it was generally enabled as a tool.
+            contexts: allContexts,
+            rerankers: allRerankers || [],
+            user: user,
+            role: user?.role?.id,
+            model: undefined,
+          });
+        }
+        if (type === "agent") {
+          if (id === agent.id) {
+            return null;
+          }
+          // The target agent instance, not the agentInstance that is calling the tool
+          const agentAsTool = await exuluApp.get().agent(id); // for agents used as tools, the tool id === the agent id
+          if (!agentAsTool) {
+            throw new Error(
+              "Trying to load a tool of type 'agent', but the associated agent with id " +
+                id +
+                " was not found in the database.",
+            );
+          }
+          const provider = providers.find((a) => a.id === agentAsTool.provider);
+          if (!provider) {
+            throw new Error(
+              "Trying to load a tool of type 'agent', but the associated agent with id " +
+                id +
+                " does not have a provider set for it.",
+            );
+          }
+
+          // if no access do not return it
+          const hasAccessToAgent = await checkRecordAccess(agentAsTool, "read", user);
+
+          if (!hasAccessToAgent) {
+            return null;
+          }
+
+          hydrated = await provider.tool(agentAsTool.id, providers, allContexts, allRerankers || []);
+        } else {
+          hydrated = allExuluTools.find((t) => t.id === id);
+        }
+        return hydrated;
+      }),
+    );
+    enabledTools = results.filter(Boolean) as ExuluTool[];
+  }
+
+  console.log("[EXULU] available tools", enabledTools?.length);
+
+  // Message specific tools, the user can overwrite to disable specific tools
+  // for individual messages.
+  console.log("[EXULU] disabled tools", disabledTools?.length);
+  enabledTools = enabledTools.filter((tool) => !disabledTools.includes(tool.id));
+  return enabledTools;
+};

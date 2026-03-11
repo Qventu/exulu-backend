@@ -9,3 +9,6 @@
 .claude/settings.json
 # Job logs
 logs/jobs/
+./claude
+# jscpd duplicate code reports
+cpd-report/

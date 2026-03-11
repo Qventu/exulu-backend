@@ -1,0 +1,585 @@
+---
+title: 'Core Types'
+description: 'Predefined GraphQL types for Exulu IMP platform resources'
+---
+
+## Overview
+
+Core types are predefined GraphQL types provided by Exulu IMP for managing platform resources. These types are always available in the schema, regardless of your implementation.
+
+## Agent
+
+### agent
+
+AI agent configurations and instances.
+
+```graphql
+type agent {
+  id: ID!
+  name: String!
+  description: String
+  backend: String!
+  type: String!
+  createdAt: Date!
+  updatedAt: Date!
+
+  # Backend-specific fields
+  provider: String
+  providerName: String
+  modelName: String
+  systemInstructions: String
+  authenticationInformation: String
+
+  # Configuration
+  rateLimit: RateLimiterRule
+  streaming: Boolean
+  capabilities: AgentCapabilities
+  maxContextLength: Int
+
+  # Workflows
+  workflows: AgentWorkflows
+
+  # Access control (if RBAC enabled)
+  RBAC: RBACData
+
+  # Routing
+  slug: String
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  agentById(id: "agent-123") {
+    id
+    name
+    provider
+    modelName
+    capabilities {
+      text
+      images
+      files
+    }
+    workflows {
+      enabled
+      queue {
+        name
+      }
+    }
+  }
+}
+```
+
+### AgentCapabilities
+
+Defines what content types the agent can process.
+
+```graphql
+type AgentCapabilities {
+  text: Boolean
+  images: [String]    # e.g., [".png", ".jpg"]
+  files: [String]     # e.g., [".pdf", ".docx"]
+  audio: [String]
+  video: [String]
+}
+```
+
+### RateLimiterRule
+
+Rate limiting configuration for agent requests.
+
+```graphql
+type RateLimiterRule {
+  name: String
+  rate_limit: RateLimiterRuleRateLimit
+}
+
+type RateLimiterRuleRateLimit {
+  time: Int    # Time window in seconds
+  limit: Int   # Max requests per time window
+}
+```
+
+## Session types
+
+### agent_sessions
+
+Conversation sessions between users and agents.
+
+```graphql
+type agent_sessions {
+  id: ID!
+  agent: ID!
+  user: ID
+  name: String
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  agent_sessionsPagination(
+    limit: 20
+    filters: [{ agent: { eq: "agent-123" } }]
+  ) {
+    items {
+      id
+      name
+      createdAt
+    }
+  }
+}
+```
+
+### agent_messages
+
+Individual messages within a session.
+
+```graphql
+type agent_messages {
+  id: ID!
+  session: ID!
+  role: String!       # "user" | "assistant" | "system"
+  content: String!
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## User management types
+
+### user
+
+User accounts for authentication and access control.
+
+```graphql
+type user {
+  id: Int!
+  name: String
+  email: String!
+  emailVerified: Date
+  image: String
+  password: String
+  type: String        # "api" | "user"
+  apikey: String
+  role: ID
+  super_admin: Boolean
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  usersPagination(
+    filters: [{ type: { eq: "user" } }]
+  ) {
+    items {
+      id
+      name
+      email
+      role
+      super_admin
+    }
+  }
+}
+```
+
+<Warning>
+  The `password` and `apikey` fields are write-only for security. They are hashed with bcrypt and cannot be retrieved.
+</Warning>
+
+### role
+
+Role definitions for RBAC.
+
+```graphql
+type role {
+  id: ID!
+  name: String!
+  agents: String      # "read" | "write"
+  evals: String
+  workflows: String
+  variables: String
+  users: String
+  api: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+**Example mutation:**
+
+```graphql
+mutation {
+  rolesCreateOne(
+    input: {
+      name: "Developer"
+      agents: "write"
+      evals: "write"
+      workflows: "read"
+      variables: "read"
+      users: "read"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+## Evaluation types
+
+### test_cases
+
+Test cases for evaluating agent performance.
+
+```graphql
+type test_cases {
+  id: ID!
+  name: String!
+  description: String
+  inputs: JSON!                           # UIMessage[]
+  expected_output: String!
+  expected_tools: JSON                    # string[]
+  expected_knowledge_sources: JSON        # string[]
+  expected_agent_tools: JSON              # string[]
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  test_casesCreateOne(
+    input: {
+      name: "Weather Query"
+      description: "User asks about weather"
+      inputs: [
+        { role: "user", content: "What's the weather like?" }
+      ]
+      expected_output: "Based on current data, it's 68°F and sunny."
+      expected_tools: ["get_weather"]
+    }
+  ) {
+    item {
+      id
+      name
+    }
+  }
+}
+```
+
+### eval_sets
+
+Collections of test cases for batch evaluation.
+
+```graphql
+type eval_sets {
+  id: ID!
+  name: String!
+  description: String
+  test_case_ids: JSON       # string[]
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+### eval_runs
+
+Evaluation execution records.
+
+```graphql
+type eval_runs {
+  id: ID!
+  name: String!
+  description: String
+  agent_id: ID!
+  test_case_ids: JSON           # string[]
+  eval_functions: JSON          # string[]
+  config: JSON
+  scoring_method: String
+  pass_threshold: Float
+  timeout_in_seconds: Int
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+## Workflow types
+
+### workflow_templates
+
+Workflow definitions with agent execution steps.
+
+```graphql
+type workflow_templates {
+  id: ID!
+  name: String!
+  description: String
+  agent: ID!
+  steps_json: JSON
+  variables: [String]     # Extracted from steps_json
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  workflow_templateById(id: "workflow-123") {
+    id
+    name
+    agent
+    variables
+  }
+}
+```
+
+## Configuration types
+
+### variables
+
+Encrypted configuration values (alternative to .env files).
+
+```graphql
+type variables {
+  id: ID!
+  name: String!
+  value: String!
+  encrypted: Boolean!
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+<Note>
+  Values are encrypted with AES using `NEXTAUTH_SECRET`. Use [`ExuluVariables.get()`](/core/exulu-variables/api-reference#get) to retrieve decrypted values.
+</Note>
+
+### projects
+
+Project organization for grouping resources.
+
+```graphql
+type projects {
+  id: ID!
+  name: String!
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## Prompt management types
+
+### prompt_library
+
+Saved prompts for reuse across agents.
+
+```graphql
+type prompt_library {
+  id: ID!
+  name: String!
+  content: String!
+  tags: JSON          # string[]
+  category: String
+  description: String
+  createdAt: Date!
+  updatedAt: Date!
+  RBAC: RBACData
+}
+```
+
+**Example query:**
+
+```graphql
+query {
+  prompt_libraryPagination(
+    filters: [
+      { tags: { contains: ["support", "greeting"] } }
+    ]
+  ) {
+    items {
+      id
+      name
+      content
+      tags
+    }
+  }
+}
+```
+
+### prompt_favorites
+
+User's favorited prompts.
+
+```graphql
+type prompt_favorites {
+  id: ID!
+  user: ID!
+  prompt: ID!
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+## Analytics types
+
+### statistics
+
+Usage statistics and analytics.
+
+```graphql
+type statistics {
+  id: ID!
+  name: String!
+  label: String!
+  type: String!
+  trigger: String!
+  count: Int!
+  user: ID
+  role: ID
+  createdAt: Date!
+  updatedAt: Date!
+}
+```
+
+**Aggregate statistics:**
+
+```graphql
+query {
+  statisticsStatistics(
+    groupBy: "label"
+    filters: [
+      { type: { eq: "agent_run" } }
+    ]
+    limit: 10
+  ) {
+    group
+    count
+  }
+}
+```
+
+## Job management types
+
+### Job
+
+Background job information from BullMQ.
+
+```graphql
+type Job {
+  id: String!
+  name: String!
+  returnvalue: JSON
+  stacktrace: [String]
+  finishedOn: Date
+  processedOn: Date
+  attemptsMade: Int
+  failedReason: String
+  state: String!
+  data: JSON
+  timestamp: Date
+}
+```
+
+**Query jobs:**
+
+```graphql
+query {
+  jobs(
+    queue: eval_runs
+    statusses: [active, waiting, failed]
+    page: 1
+    limit: 50
+  ) {
+    items {
+      id
+      name
+      state
+      failedReason
+    }
+  }
+}
+```
+
+## RBAC
+
+### RBACData
+
+Access control information for resources.
+
+```graphql
+type RBACData {
+  type: String!       # "public" | "private" | "users" | "roles"
+  users: [RBACUser!]
+  roles: [RBACRole!]
+}
+
+type RBACUser {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+
+type RBACRole {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+```
+
+### RBACInput
+
+Input type for setting RBAC permissions.
+
+```graphql
+input RBACInput {
+  users: [RBACUserInput!]
+  roles: [RBACRoleInput!]
+}
+
+input RBACUserInput {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+
+input RBACRoleInput {
+  id: ID!
+  rights: String!     # "read" | "write"
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Dynamic types" icon="wand-magic-sparkles" href="/api-reference/dynamic-types">
+    Learn about context-generated types
+  </Card>
+  <Card title="Queries" icon="magnifying-glass" href="/api-reference/queries">
+    Explore all query operations
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="/api-reference/mutations">
+    Explore all mutation operations
+  </Card>
+  <Card title="Introduction" icon="book" href="/api-reference/introduction">
+    Back to API overview
+  </Card>
+</CardGroup>

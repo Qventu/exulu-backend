@@ -1,0 +1,670 @@
+---
+title: "ExuluOtel"
+description: "OpenTelemetry integration for distributed tracing and logging"
+---
+
+## Overview
+
+`ExuluOtel` provides built-in OpenTelemetry (OTEL) support for distributed tracing and logging across your Exulu application. It automatically instruments your application to collect traces and logs, helping you monitor performance, debug issues, and understand system behavior in production.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Distributed tracing" icon="route">
+    Track requests across services and components
+  </Card>
+  <Card title="Structured logging" icon="file-lines">
+    Correlate logs with traces for better debugging
+  </Card>
+  <Card title="Auto-instrumentation" icon="wand-magic-sparkles">
+    Automatic instrumentation of Node.js modules
+  </Card>
+  <Card title="SigNoz integration" icon="chart-line">
+    Built-in support for SigNoz (cloud and self-hosted)
+  </Card>
+  <Card title="Component control" icon="sliders">
+    Enable/disable telemetry per component
+  </Card>
+  <Card title="Graceful shutdown" icon="power-off">
+    Ensures traces are flushed before exit
+  </Card>
+</CardGroup>
+
+## What is OpenTelemetry?
+
+OpenTelemetry (OTEL) is an open-source observability framework for collecting traces, metrics, and logs from your applications. It helps you:
+
+- **Monitor performance**: Identify slow operations and bottlenecks
+- **Debug issues**: Trace requests through your entire system
+- **Understand behavior**: See how components interact
+- **Optimize resources**: Find inefficient code paths
+- **Alert on problems**: Set up monitoring and alerting
+
+## Quick start
+
+### Prerequisites
+
+ExuluOtel currently supports **SigNoz** as the observability backend. You can use:
+
+- [SigNoz Cloud](https://signoz.io/teams/) (hosted solution)
+- [Self-hosted SigNoz](https://signoz.io/docs/install/) (open-source)
+
+### Environment variables
+
+Set up your SigNoz credentials:
+
+```bash
+# .env file
+SIGNOZ_TRACES_URL=https://ingest.{region}.signoz.cloud:443/v1/traces
+SIGNOZ_LOGS_URL=https://ingest.{region}.signoz.cloud:443/v1/logs
+SIGNOZ_ACCESS_TOKEN=your-signoz-access-token
+```
+
+**For SigNoz Cloud:**
+- Get your ingestion URL and token from your SigNoz dashboard
+- Format: `https://ingest.{region}.signoz.cloud:443`
+- Regions: `us`, `in`, `eu`
+
+**For self-hosted SigNoz:**
+```bash
+SIGNOZ_TRACES_URL=http://localhost:4318/v1/traces
+SIGNOZ_LOGS_URL=http://localhost:4318/v1/logs
+SIGNOZ_ACCESS_TOKEN=  # Optional for self-hosted
+```
+
+### Initialize OpenTelemetry
+
+```typescript
+import { ExuluOtel } from "@exulu/backend";
+
+// Create and start OpenTelemetry SDK
+const otel = ExuluOtel.create({
+  SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+  SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+  SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!
+});
+
+// Start tracing
+otel.start();
+```
+
+<Warning>
+  Initialize ExuluOtel **before** creating your ExuluApp to ensure all operations are traced.
+</Warning>
+
+### Enable in ExuluApp
+
+Enable telemetry in your application configuration:
+
+```typescript
+import { ExuluApp, ExuluOtel } from "@exulu/backend";
+
+// Initialize OTEL first
+const otel = ExuluOtel.create({
+  SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+  SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+  SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!
+});
+
+otel.start();
+
+// Create app with telemetry enabled
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Enable global telemetry
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: true  // Enable worker telemetry
+      }
+    }
+  },
+  contexts: {
+    // Your contexts
+  },
+  agents: {
+    // Your agents
+  }
+});
+```
+
+## Configuration
+
+### Global telemetry
+
+Enable or disable telemetry globally:
+
+```typescript
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Global switch for all telemetry
+    }
+  }
+});
+```
+
+**When enabled:**
+- Express server routes are traced
+- MCP operations are traced
+- Logs are correlated with traces
+
+### Component-level telemetry
+
+Enable telemetry for specific components:
+
+```typescript
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Global telemetry
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: true  // Worker-specific telemetry
+      }
+    }
+  }
+});
+```
+
+**Components:**
+- **Workers**: BullMQ job processing traces
+- **Express server**: HTTP request/response traces
+- **MCP server**: Model Context Protocol operation traces
+
+### Environment-specific configuration
+
+Different settings for dev/staging/prod:
+
+```typescript
+const isProduction = process.env.NODE_ENV === "production";
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: isProduction  // Only in production
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: isProduction
+      }
+    }
+  }
+});
+```
+
+## What gets traced?
+
+### Automatic instrumentation
+
+ExuluOtel uses OpenTelemetry auto-instrumentation to automatically trace:
+
+<AccordionGroup>
+  <Accordion title="HTTP requests/responses">
+    - Express.js routes
+    - Outgoing HTTP/HTTPS requests
+    - Response status codes and timing
+    - Headers and query parameters
+  </Accordion>
+
+  <Accordion title="Database operations">
+    - PostgreSQL queries
+    - Connection pool usage
+    - Query timing and errors
+  </Accordion>
+
+  <Accordion title="Redis operations">
+    - BullMQ queue operations
+    - Redis commands
+    - Connection management
+  </Accordion>
+
+  <Accordion title="File system operations">
+    - File reads/writes
+    - Directory operations
+    - S3 storage interactions
+  </Accordion>
+
+  <Accordion title="LLM API calls">
+    - OpenAI API requests
+    - Anthropic API requests
+    - Other provider API calls
+    - Token usage and latency
+  </Accordion>
+</AccordionGroup>
+
+### Custom traces
+
+Components automatically create custom traces for:
+
+- **Agent operations**: `generateSync()`, `generateStream()`
+- **Context operations**: `search()`, `createItem()`, `updateItem()`
+- **Tool executions**: Function tool calls
+- **Worker jobs**: Background job processing
+- **Embeddings generation**: Batch and single embeddings
+
+## Viewing traces in SigNoz
+
+After enabling telemetry, visit your SigNoz dashboard to view traces.
+
+### Trace structure
+
+```
+HTTP POST /api/agents/run
+├─ Agent.generateSync()
+│  ├─ Context.search()
+│  │  ├─ PostgreSQL: vector search query
+│  │  └─ Embedder.generate()
+│  │     └─ OpenAI API: create embeddings
+│  ├─ Tool.execute()
+│  │  └─ External API call
+│  └─ OpenAI API: chat completion
+└─ Response sent
+```
+
+### Key metrics
+
+- **Duration**: How long each operation took
+- **Status**: Success, error, or timeout
+- **Attributes**: Operation-specific metadata
+- **Events**: Important moments in the trace
+- **Logs**: Structured logs correlated with spans
+
+## Configuration examples
+
+### Production setup
+
+```typescript
+import { ExuluApp, ExuluOtel } from "@exulu/backend";
+
+// Initialize OTEL
+const otel = ExuluOtel.create({
+  SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+  SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+  SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!
+});
+
+otel.start();
+
+// Production configuration
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Always on in production
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: true  // Trace background jobs
+      }
+    },
+    MCP: {
+      enabled: true
+      // Uses global telemetry setting
+    }
+  },
+  contexts: contexts,
+  agents: agents
+});
+```
+
+### Development setup
+
+```typescript
+import { ExuluApp, ExuluOtel } from "@exulu/backend";
+
+// Only enable if env vars are set
+const telemetryEnabled = Boolean(
+  process.env.SIGNOZ_TRACES_URL &&
+  process.env.SIGNOZ_LOGS_URL &&
+  process.env.SIGNOZ_ACCESS_TOKEN
+);
+
+if (telemetryEnabled) {
+  const otel = ExuluOtel.create({
+    SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+    SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+    SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!
+  });
+
+  otel.start();
+}
+
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    telemetry: {
+      enabled: telemetryEnabled  // Optional in dev
+    }
+  }
+});
+```
+
+### Selective component tracing
+
+```typescript
+await app.create({
+  config: {
+    telemetry: {
+      enabled: true  // Global enabled
+    },
+    workers: {
+      enabled: true,
+      telemetry: {
+        enabled: false  // Disable worker traces (reduce noise)
+      }
+    }
+  }
+});
+```
+
+## Integration with logging
+
+ExuluOtel automatically correlates structured logs with traces:
+
+```typescript
+import { createLogger } from "@exulu/backend";
+
+// Logger with OTEL integration
+const logger = createLogger({
+  enableOtel: config?.telemetry?.enabled ?? false
+});
+
+// Logs are automatically correlated with active trace
+logger.info("Processing request", {
+  userId: "user-123",
+  operation: "search"
+});
+
+// In SigNoz, you can jump from traces to logs and vice versa
+```
+
+## Performance considerations
+
+### Overhead
+
+OpenTelemetry adds minimal overhead:
+- **CPU**: ~1-2% increase
+- **Memory**: ~10-20MB for SDK
+- **Network**: Batched export reduces impact
+
+### Sampling
+
+For high-traffic applications, consider sampling:
+
+```typescript
+// Future: Sampling configuration
+// Currently traces all requests when enabled
+```
+
+### Batch export
+
+Traces and logs are exported in batches to minimize network overhead:
+- Traces: Batched every 5 seconds or 512 spans
+- Logs: Batched every 1 second or 512 records
+
+## Troubleshooting
+
+### Traces not appearing in SigNoz
+
+<AccordionGroup>
+  <Accordion title="Check environment variables">
+    Ensure all required variables are set:
+
+    ```bash
+    echo $SIGNOZ_TRACES_URL
+    echo $SIGNOZ_LOGS_URL
+    echo $SIGNOZ_ACCESS_TOKEN
+    ```
+
+    Verify URLs are correct:
+    - SigNoz Cloud: `https://ingest.{region}.signoz.cloud:443`
+    - Self-hosted: `http://localhost:4318` (or your host)
+  </Accordion>
+
+  <Accordion title="Verify telemetry is enabled">
+    Check your configuration:
+
+    ```typescript
+    console.log("Telemetry enabled:", config.telemetry?.enabled);
+    console.log("Worker telemetry:", config.workers?.telemetry?.enabled);
+    ```
+  </Accordion>
+
+  <Accordion title="Check network connectivity">
+    Test connection to SigNoz:
+
+    ```bash
+    curl -X POST https://ingest.{region}.signoz.cloud:443/v1/traces \
+      -H "signoz-access-token: your-token" \
+      -H "Content-Type: application/json" \
+      -d '{}'
+    ```
+  </Accordion>
+
+  <Accordion title="Review logs">
+    Check for OTEL initialization:
+
+    ```
+    [EXULU] Setting up OpenTelemetry
+    ```
+
+    Look for errors:
+    ```
+    Error terminating tracing: ...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### High cardinality warnings
+
+If you see high cardinality warnings in SigNoz:
+
+- Avoid using user IDs or request IDs as span names
+- Use attributes instead of span names for variable data
+- Limit the number of unique span names
+
+### Memory issues
+
+If experiencing memory pressure:
+
+- Reduce batch sizes (requires custom configuration)
+- Enable selective component tracing
+- Consider sampling for high-traffic routes
+
+## Graceful shutdown
+
+ExuluOtel handles graceful shutdown automatically:
+
+```typescript
+// Listens for SIGTERM signal
+process.on('SIGTERM', () => {
+  sdk.shutdown()
+    .then(() => console.log('Tracing terminated'))
+    .catch((error) => console.log('Error terminating tracing', error))
+    .finally(() => process.exit(0));
+});
+```
+
+This ensures:
+- In-flight traces are flushed
+- Connections are closed properly
+- No data is lost on shutdown
+
+## Best practices
+
+<Tip>
+  **Initialize early**: Start ExuluOtel before creating ExuluApp to capture all traces from initialization.
+</Tip>
+
+<Note>
+  **Use in production**: OpenTelemetry is production-ready and adds minimal overhead. Enable it to gain visibility into your application.
+</Note>
+
+<Warning>
+  **Protect credentials**: Store SigNoz credentials in environment variables or [ExuluVariables](/core/exulu-variables/introduction), never hardcode them.
+</Warning>
+
+<Info>
+  **Correlate logs**: Enable OTEL-aware logging to correlate logs with traces for better debugging.
+</Info>
+
+## SigNoz setup
+
+### SigNoz Cloud
+
+1. Sign up at [signoz.io](https://signoz.io/teams/)
+2. Create a new project
+3. Copy ingestion details from Settings → Ingestion Settings
+4. Set environment variables with your credentials
+
+### Self-hosted SigNoz
+
+1. Install SigNoz using Docker:
+
+```bash
+git clone https://github.com/SigNoz/signoz.git
+cd signoz/deploy
+./install.sh
+```
+
+2. Access SigNoz at `http://localhost:3301`
+
+3. Configure environment variables:
+
+```bash
+SIGNOZ_TRACES_URL=http://localhost:4318/v1/traces
+SIGNOZ_LOGS_URL=http://localhost:4318/v1/logs
+SIGNOZ_ACCESS_TOKEN=  # Not required for self-hosted
+```
+
+[SigNoz installation guide](https://signoz.io/docs/install/)
+
+## Future enhancements
+
+Planned features for ExuluOtel:
+
+- Support for additional OTEL backends (Jaeger, Zipkin, etc.)
+- Custom sampling strategies
+- Metrics collection (in addition to traces and logs)
+- Advanced span filtering
+- Custom instrumentation helpers
+
+## Example traces
+
+### Agent generation trace
+
+```
+Trace: Agent.generateSync
+├─ Span: load_agent_config (2ms)
+├─ Span: search_contexts (45ms)
+│  ├─ Span: generate_embeddings (38ms)
+│  │  └─ Span: openai_api_call (35ms)
+│  └─ Span: postgres_vector_search (5ms)
+├─ Span: execute_tools (120ms)
+│  └─ Span: github_api_call (115ms)
+└─ Span: llm_generation (850ms)
+   └─ Span: openai_chat_completion (845ms)
+
+Total duration: 1,017ms
+```
+
+### Context search trace
+
+```
+Trace: Context.search
+├─ Span: embedder_generate (42ms)
+│  └─ Span: openai_embeddings_api (38ms)
+├─ Span: postgres_vector_search (8ms)
+└─ Span: reranker_execute (25ms)
+   └─ Span: cohere_rerank_api (22ms)
+
+Total duration: 75ms
+```
+
+### Worker job trace
+
+```
+Trace: Worker.processJob (queue: embeddings)
+├─ Span: fetch_context_item (5ms)
+│  └─ Span: postgres_query (3ms)
+├─ Span: chunk_text (15ms)
+├─ Span: generate_embeddings_batch (250ms)
+│  └─ Span: openai_embeddings_api (245ms)
+└─ Span: store_embeddings (20ms)
+   └─ Span: postgres_bulk_insert (18ms)
+
+Total duration: 290ms
+```
+
+## API reference
+
+### ExuluOtel.create()
+
+Factory method to create and configure OpenTelemetry SDK.
+
+```typescript
+ExuluOtel.create(options: {
+  SIGNOZ_TRACES_URL: string;
+  SIGNOZ_LOGS_URL: string;
+  SIGNOZ_ACCESS_TOKEN: string;
+}): NodeSDK
+```
+
+**Parameters:**
+
+<ParamField path="SIGNOZ_TRACES_URL" type="string" required>
+  URL for trace export (OTLP/HTTP endpoint)
+</ParamField>
+
+<ParamField path="SIGNOZ_LOGS_URL" type="string" required>
+  URL for log export (OTLP/HTTP endpoint)
+</ParamField>
+
+<ParamField path="SIGNOZ_ACCESS_TOKEN" type="string" required>
+  SigNoz access token for authentication
+</ParamField>
+
+**Returns:** `NodeSDK` - OpenTelemetry Node SDK instance
+
+**Example:**
+
+```typescript
+import { ExuluOtel } from "@exulu/backend";
+
+const otel = ExuluOtel.create({
+  SIGNOZ_TRACES_URL: "https://ingest.us.signoz.cloud:443/v1/traces",
+  SIGNOZ_LOGS_URL: "https://ingest.us.signoz.cloud:443/v1/logs",
+  SIGNOZ_ACCESS_TOKEN: "your-access-token"
+});
+
+// Start tracing
+otel.start();
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluApp" icon="box" href="/core/exulu-app/introduction">
+    Learn about ExuluApp configuration
+  </Card>
+  <Card title="SigNoz docs" icon="chart-line" href="https://signoz.io/docs/">
+    Explore SigNoz documentation
+  </Card>
+  <Card title="OpenTelemetry" icon="globe" href="https://opentelemetry.io/docs/">
+    Learn about OpenTelemetry
+  </Card>
+  <Card title="ExuluVariables" icon="key" href="/core/exulu-variables/introduction">
+    Manage telemetry credentials
+  </Card>
+</CardGroup>

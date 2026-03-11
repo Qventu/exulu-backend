@@ -1,0 +1,18 @@
+{
+  "threshold": 10,
+  "reporters": ["console", "html"],
+  "ignore": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/*.d.ts"
+  ],
+  "format": ["typescript", "javascript"],
+  "minLines": 5,
+  "minTokens": 50,
+  "maxLines": 1000,
+  "output": "./cpd-report",
+  "silent": false
+}

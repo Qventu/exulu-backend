@@ -1,0 +1,851 @@
+---
+title: 'Dynamic Types'
+description: 'Auto-generated GraphQL types from ExuluContext instances'
+---
+
+## Overview
+
+Dynamic types are **automatically generated** from your `ExuluContext` instances. Each context you define creates a complete set of GraphQL types, queries, and mutations tailored to your data structure.
+
+<Info>
+  Dynamic types make Exulu IMP's GraphQL API adapt to your implementation without requiring manual schema updates.
+</Info>
+
+## Type generation
+
+When you create an `ExuluContext`:
+
+```typescript
+const documentationContext = new ExuluContext({
+  id: "documentation",
+  name: "Documentation",
+  description: "Product documentation",
+  tableName: "docs_items",
+  fields: [
+    { name: "title", type: "string", required: true },
+    { name: "url", type: "string" },
+    { name: "category", type: "string" }
+  ],
+  embedder: myEmbedder
+});
+```
+
+Exulu IMP generates:
+
+1. **Main type** - `documentation`
+2. **Input type** - `documentationInput`
+3. **Filter type** - `FilterDocumentation`
+4. **Queries** - `documentationById`, `documentationPagination`, `documentationVectorSearch`, etc.
+5. **Mutations** - `documentationCreateOne`, `documentationUpdateOne`, etc.
+6. **Pagination result** - `DocumentationPaginationResult`
+7. **Vector search types** - `documentationVectorSearchResult`, `documentationVectorSearchChunk`
+
+## Generated types
+
+### Main type
+
+The main resource type includes your custom fields plus standard fields:
+
+```graphql
+type {contextId} {
+  # Your custom fields
+  {fieldName}: {fieldType}
+
+  # Standard fields (always included)
+  id: ID!
+  createdAt: Date!
+  updatedAt: Date!
+
+  # Vector search fields (if embedder configured)
+  averageRelevance: Float
+  totalRelevance: Float
+  chunks: [ItemChunks]
+
+  # RBAC field (if enabled on context)
+  RBAC: RBACData
+}
+```
+
+**Example for documentation context:**
+
+```graphql
+type documentation {
+  # Custom fields
+  title: String!
+  url: String
+  category: String
+
+  # Standard fields
+  id: ID!
+  createdAt: Date!
+  updatedAt: Date!
+
+  # Vector search fields
+  averageRelevance: Float
+  totalRelevance: Float
+  chunks: [ItemChunks]
+}
+```
+
+### Input type
+
+For creating and updating resources:
+
+```graphql
+input {contextId}Input {
+  {fieldName}: {fieldType}
+  RBAC: RBACInput  # If RBAC enabled
+}
+```
+
+**Example:**
+
+```graphql
+input documentationInput {
+  title: String!
+  url: String
+  category: String
+  RBAC: RBACInput
+}
+```
+
+### Filter type
+
+For filtering queries with operators:
+
+```graphql
+input Filter{ContextId} {
+  {fieldName}: FilterOperator{FieldType}
+}
+```
+
+**Example:**
+
+```graphql
+input FilterDocumentation {
+  title: FilterOperatorString
+  url: FilterOperatorString
+  category: FilterOperatorString
+  createdAt: FilterOperatorDate
+}
+```
+
+## Field type mapping
+
+ExuluContext fields are mapped to GraphQL types:
+
+| ExuluContext type | GraphQL type | Filter operators |
+|-------------------|--------------|------------------|
+| `string` | `String` | `eq`, `ne`, `in`, `contains`, `and`, `or` |
+| `number` | `Float` | `eq`, `ne`, `in`, `lte`, `gte`, `and`, `or` |
+| `boolean` | `Boolean` | `eq`, `ne`, `in`, `and`, `or` |
+| `date` | `Date` | `lte`, `gte`, `and`, `or` |
+| `json` | `JSON` | `eq`, `ne`, `in`, `contains` |
+| `enum` | `{fieldName}Enum` | `eq`, `ne`, `in`, `and`, `or` |
+| `file` | `String` | `eq`, `ne`, `in`, `contains`, `and`, `or` |
+
+## Enum field types
+
+Enum fields generate dedicated enum types:
+
+```typescript
+const ticketContext = new ExuluContext({
+  id: "tickets",
+  name: "Support Tickets",
+  fields: [
+    {
+      name: "status",
+      type: "enum",
+      enumValues: ["open", "in-progress", "resolved", "closed"]
+    },
+    {
+      name: "priority",
+      type: "enum",
+      enumValues: ["low", "medium", "high", "urgent"]
+    }
+  ]
+});
+```
+
+**Generates:**
+
+```graphql
+enum statusEnum {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum priorityEnum {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+type tickets {
+  status: statusEnum
+  priority: priorityEnum
+  # ...
+}
+
+input FilterTickets {
+  status: FilterOperatorstatusEnum
+  priority: FilterOperatorpriorityEnum
+}
+```
+
+## Generated queries
+
+Each context generates these queries:
+
+### By ID
+
+```graphql
+{contextId}ById(id: ID!): {contextId}
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationById(id: "doc-123") {
+    id
+    title
+    url
+    category
+  }
+}
+```
+
+### By IDs (batch)
+
+```graphql
+{contextId}ByIds(ids: [ID!]!): [{contextId}]!
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationByIds(ids: ["doc-1", "doc-2", "doc-3"]) {
+    id
+    title
+  }
+}
+```
+
+### One (filtered)
+
+```graphql
+{contextId}One(
+  filters: [Filter{ContextId}]
+  sort: SortBy
+): {contextId}
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationOne(
+    filters: [{ category: { eq: "getting-started" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    id
+    title
+  }
+}
+```
+
+### Pagination
+
+```graphql
+{contextPlural}Pagination(
+  limit: Int
+  page: Int
+  filters: [Filter{ContextId}]
+  sort: SortBy
+): {ContextId}PaginationResult
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationPagination(
+    limit: 20
+    page: 1
+    filters: [{ title: { contains: "install" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      title
+      url
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      hasNextPage
+    }
+  }
+}
+```
+
+### Statistics
+
+```graphql
+{contextPlural}Statistics(
+  filters: [Filter{ContextId}]
+  groupBy: String
+  limit: Int
+): [StatisticsResult]!
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationStatistics(
+    groupBy: "category"
+    limit: 10
+  ) {
+    group
+    count
+  }
+}
+```
+
+### Vector search (if embedder configured)
+
+```graphql
+{contextPlural}VectorSearch(
+  query: String!
+  method: VectorMethodEnum!
+  itemFilters: [Filter{ContextId}]
+  cutoffs: SearchCutoffs
+  expand: SearchExpand
+): {contextId}VectorSearchResult
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationVectorSearch(
+    query: "How do I deploy the application?"
+    method: cosineDistance
+    cutoffs: { cosineDistance: 0.7 }
+    expand: { before: 1, after: 1 }
+  ) {
+    chunks {
+      chunk_content
+      chunk_cosine_distance
+      item_name
+      item_id
+    }
+    context {
+      name
+      embedder
+    }
+  }
+}
+```
+
+### Chunk by ID (if embedder configured)
+
+```graphql
+{contextId}ChunkById(id: ID!): {contextId}VectorSearchChunk
+```
+
+**Example:**
+
+```graphql
+query {
+  documentationChunkById(id: "chunk-123") {
+    chunk_content
+    chunk_index
+    item_name
+    item_id
+  }
+}
+```
+
+## Generated mutations
+
+Each context generates these mutations:
+
+### Create one
+
+```graphql
+{contextPlural}CreateOne(
+  input: {contextId}Input!
+  upsert: Boolean
+): {contextId}MutationPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationCreateOne(
+    input: {
+      title: "Getting Started"
+      url: "https://docs.example.com/start"
+      category: "tutorials"
+    }
+  ) {
+    item {
+      id
+      title
+    }
+    job  # If embeddings are generated
+  }
+}
+```
+
+### Copy one
+
+```graphql
+{contextPlural}CopyOneById(id: ID!): {contextId}MutationPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationCopyOneById(id: "doc-123") {
+    item {
+      id
+      title  # Will be "Original Title (Copy)"
+    }
+  }
+}
+```
+
+### Update one (by filter)
+
+```graphql
+{contextPlural}UpdateOne(
+  where: [Filter{ContextId}]
+  input: {contextId}Input!
+): {contextId}MutationPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationUpdateOne(
+    where: [{ url: { eq: "https://old-url.com" } }]
+    input: {
+      url: "https://new-url.com"
+    }
+  ) {
+    item {
+      id
+      url
+    }
+    job  # If embeddings regenerated
+  }
+}
+```
+
+### Update one by ID
+
+```graphql
+{contextPlural}UpdateOneById(
+  id: ID!
+  input: {contextId}Input!
+): {contextId}MutationPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationUpdateOneById(
+    id: "doc-123"
+    input: {
+      title: "Updated Title"
+      category: "advanced"
+    }
+  ) {
+    item {
+      id
+      title
+      category
+    }
+  }
+}
+```
+
+### Remove one
+
+```graphql
+{contextPlural}RemoveOne(where: JSON!): {contextId}
+{contextPlural}RemoveOneById(id: ID!): {contextId}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationRemoveOneById(id: "doc-123") {
+    id
+    title
+  }
+}
+```
+
+## Embedder-specific mutations
+
+Contexts with embedders get additional mutations:
+
+### Generate chunks
+
+```graphql
+{contextId}GenerateChunks(
+  where: [Filter{ContextId}]
+  limit: Int
+): {contextId}GenerateChunksReturnPayload
+
+type {contextId}GenerateChunksReturnPayload {
+  message: String!
+  items: Int!
+  jobs: [String!]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationGenerateChunks(
+    where: [{ category: { eq: "tutorials" } }]
+    limit: 50
+  ) {
+    message
+    items
+    jobs
+  }
+}
+```
+
+### Delete chunks
+
+```graphql
+{contextId}DeleteChunks(
+  where: [Filter{ContextId}]
+  limit: Int
+): {contextId}DeleteChunksReturnPayload
+
+type {contextId}DeleteChunksReturnPayload {
+  message: String!
+  items: Int!
+  jobs: [String!]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationDeleteChunks(
+    where: [{ category: { eq: "deprecated" } }]
+  ) {
+    message
+    items
+  }
+}
+```
+
+## Source-specific mutations
+
+Contexts with sources get:
+
+### Execute source
+
+```graphql
+{contextId}ExecuteSource(
+  source: ID!
+  inputs: JSON!
+): {contextId}ExecuteSourceReturnPayload
+
+type {contextId}ExecuteSourceReturnPayload {
+  message: String!
+  jobs: [String!]
+  items: [String!]
+}
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationExecuteSource(
+    source: "github_docs_sync"
+    inputs: {
+      repository: "myorg/myrepo"
+      branch: "main"
+    }
+  ) {
+    message
+    items
+    jobs
+  }
+}
+```
+
+## Processor-specific mutations
+
+Contexts with processors get:
+
+### Process item
+
+```graphql
+{contextId}ProcessItem(item: ID!): {contextId}ProcessItemFieldReturnPayload
+
+type {contextId}ProcessItemFieldReturnPayload {
+  message: String!
+  results: [String]
+  jobs: [String]
+}
+```
+
+### Process items (batch)
+
+```graphql
+{contextId}ProcessItems(
+  limit: Int
+  filters: [Filter{ContextId}]
+  sort: SortBy
+): {contextId}ProcessItemFieldReturnPayload
+```
+
+**Example:**
+
+```graphql
+mutation {
+  documentationProcessItems(
+    limit: 10
+    filters: [{ category: { eq: "api" } }]
+  ) {
+    message
+    results
+    jobs
+  }
+}
+```
+
+## Vector search types
+
+### VectorSearchResult
+
+```graphql
+type {contextId}VectorSearchResult {
+  chunks: [{contextId}VectorSearchChunk!]!
+  context: VectorSearchResultContext!
+  itemFilters: JSON!
+  chunkFilters: JSON!
+  query: String!
+  method: VectorMethodEnum!
+}
+```
+
+### VectorSearchChunk
+
+```graphql
+type {contextId}VectorSearchChunk {
+  chunk_content: String
+  chunk_index: Int
+  chunk_id: String
+  chunk_source: String
+  chunk_metadata: JSON
+  chunk_created_at: Date
+  chunk_updated_at: Date
+  item_updated_at: Date
+  item_created_at: Date
+  item_id: String!
+  item_external_id: String
+  item_name: String!
+  chunk_cosine_distance: Float
+  chunk_fts_rank: Float
+  chunk_hybrid_score: Float
+}
+```
+
+### Search methods
+
+```graphql
+enum VectorMethodEnum {
+  cosineDistance    # Vector similarity (requires embedder)
+  hybridSearch      # Vector + full-text search
+  tsvector          # PostgreSQL full-text search only
+}
+```
+
+### Search cutoffs
+
+```graphql
+input SearchCutoffs {
+  cosineDistance: Float  # 0-1, lower is more similar
+  hybrid: Float
+  tsvector: Float
+}
+```
+
+### Search expand
+
+```graphql
+input SearchExpand {
+  before: Int  # Include N chunks before match
+  after: Int   # Include N chunks after match
+}
+```
+
+## Pagination result types
+
+```graphql
+type {ContextId}PaginationResult {
+  pageInfo: PageInfo!
+  items: [{contextId}]!
+}
+
+type PageInfo {
+  pageCount: Int!
+  itemCount: Int!
+  currentPage: Int!
+  hasPreviousPage: Boolean!
+  hasNextPage: Boolean!
+}
+```
+
+## Mutation payload types
+
+```graphql
+type {contextId}MutationPayload {
+  item: {contextId}!
+  job: String  # Job ID if background processing triggered
+}
+```
+
+## Complete example
+
+Here's a full example showing all generated types for a context:
+
+```typescript
+const ticketsContext = new ExuluContext({
+  id: "tickets",
+  name: "Support Tickets",
+  tableName: "support_tickets",
+  fields: [
+    { name: "subject", type: "string", required: true },
+    { name: "description", type: "string" },
+    { name: "status", type: "enum", enumValues: ["open", "closed"] },
+    { name: "priority", type: "number" }
+  ],
+  embedder: myEmbedder
+});
+```
+
+**Generates schema:**
+
+```graphql
+# Enums
+enum statusEnum {
+  OPEN
+  CLOSED
+}
+
+# Main type
+type tickets {
+  subject: String!
+  description: String
+  status: statusEnum
+  priority: Float
+  id: ID!
+  createdAt: Date!
+  updatedAt: Date!
+  averageRelevance: Float
+  totalRelevance: Float
+  chunks: [ItemChunks]
+}
+
+# Input type
+input ticketsInput {
+  subject: String!
+  description: String
+  status: statusEnum
+  priority: Float
+}
+
+# Filter type
+input FilterTickets {
+  subject: FilterOperatorString
+  description: FilterOperatorString
+  status: FilterOperatorstatusEnum
+  priority: FilterOperatorFloat
+  createdAt: FilterOperatorDate
+}
+
+# Queries
+type Query {
+  ticketsById(id: ID!): tickets
+  ticketsByIds(ids: [ID!]!): [tickets]!
+  ticketsOne(filters: [FilterTickets], sort: SortBy): tickets
+  ticketsPagination(limit: Int, page: Int, filters: [FilterTickets], sort: SortBy): TicketsPaginationResult
+  ticketsStatistics(filters: [FilterTickets], groupBy: String, limit: Int): [StatisticsResult]!
+  ticketsVectorSearch(query: String!, method: VectorMethodEnum!, itemFilters: [FilterTickets], cutoffs: SearchCutoffs, expand: SearchExpand): ticketsVectorSearchResult
+  ticketsChunkById(id: ID!): ticketsVectorSearchChunk
+}
+
+# Mutations
+type Mutation {
+  ticketsCreateOne(input: ticketsInput!, upsert: Boolean): ticketsMutationPayload
+  ticketsCopyOneById(id: ID!): ticketsMutationPayload
+  ticketsUpdateOne(where: [FilterTickets], input: ticketsInput!): ticketsMutationPayload
+  ticketsUpdateOneById(id: ID!, input: ticketsInput!): ticketsMutationPayload
+  ticketsRemoveOne(where: JSON!): tickets
+  ticketsRemoveOneById(id: ID!): tickets
+  ticketsGenerateChunks(where: [FilterTickets], limit: Int): ticketsGenerateChunksReturnPayload
+  ticketsDeleteChunks(where: [FilterTickets], limit: Int): ticketsDeleteChunksReturnPayload
+}
+```
+
+## Best practices
+
+<Tip>
+  **Use descriptive context IDs** - They become GraphQL type names, so choose clear, singular nouns (e.g., `document`, `ticket`, `article`)
+</Tip>
+
+<Note>
+  **Plan field names carefully** - They become GraphQL field names and cannot easily be changed without migration
+</Note>
+
+<Warning>
+  **Enum values must be valid GraphQL identifiers** - They're automatically converted to uppercase and sanitized
+</Warning>
+
+<Info>
+  **Enable embedders for semantic search** - Vector search types are only generated when an embedder is configured
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Core types" icon="database" href="/api-reference/core-types">
+    Explore predefined platform types
+  </Card>
+  <Card title="Queries" icon="magnifying-glass" href="/api-reference/queries">
+    Learn about all query operations
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="/api-reference/mutations">
+    Learn about all mutation operations
+  </Card>
+  <Card title="ExuluContext" icon="database" href="/core/exulu-context/introduction">
+    Learn how to create contexts
+  </Card>
+</CardGroup>

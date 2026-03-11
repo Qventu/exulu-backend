@@ -1,218 +1,159 @@
-import 'dotenv/config'
-import { redisClient } from "./redis/client"
-import { validateJob } from "./bullmq/validators"
-export { ExuluContext, ExuluReranker, ExuluEmbedder, ExuluAgent, ExuluTool, ExuluEval, type ExuluStorage, type ExuluQueueConfig, type ExuluEvalMetadata, type ExuluEvalTokenMetadata /* ExuluMcpToolsClient */ } from "./registry/classes"
-export { ExuluApp } from "./registry/index"
-export { authentication as ExuluAuthentication } from "./auth/auth"
-export { queues as ExuluQueues } from "./bullmq/queues"
-export { logMetadata } from "./registry/log-metadata"
+/* 
+This file serves as the export and entry
+point for the npm package.
+*/
+
+import "dotenv/config";
+import { redisClient } from "./redis/client";
+export { ExuluApp } from "./exulu/app/index.ts";
+import { authentication } from "./auth/auth";
+export { queues as ExuluQueues } from "@EE/queues/queues.ts";
 import { RecursiveChunker } from "./chunking/recursive";
+export { ExuluEmbedder } from "./exulu/embedder.ts"
+export { ExuluContext } from "./exulu/context.ts"
+export { ExuluTool } from "./exulu/tool"
+export { ExuluReranker } from "./exulu/reranker"
+export { ExuluEval } from "./exulu/evals"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
-import { execute as initDb } from "./postgres/init-db"
-import { generateApiKey } from './auth/generate-key'
-import { create } from './registry/otel'
-import type { ExuluContext } from './registry/classes'
-import CryptoJS from 'crypto-js';
-import { postgresClient } from './postgres/client'
-import { type Variable } from '@EXULU_TYPES/models/variable'
-import { gpt5MiniAgent, gpt5agent, gpt5proAgent, gpt5CodexAgent, gpt5NanoAgent, gpt41Agent, gpt41MiniAgent, gpt4oAgent, gpt4oMiniAgent } from './templates/agents/openai/gpt'
-import { claudeSonnet4Agent, claudeOpus4Agent, claudeSonnet45Agent } from './templates/agents/anthropic/claude'
-import { vertexGemini25FlashAgent, vertexGemini3ProAgent, vertexGemini25ProAgent } from './templates/agents/google/vertex'
-import { gptOss120bAgent, llama38bAgent, llama3370bAgent } from './templates/agents/cerebras'
-import type { Item } from '@EXULU_TYPES/models/item'
-export type { Item as ExuluItem }
+import { execute as initDb } from "./postgres/init-db";
+import { generateApiKey } from "./auth/generate-key";
+import { create } from "./exulu/otel";
+import { ExuluContext } from "./exulu/context.ts";
+import CryptoJS from "crypto-js";
+import { postgresClient } from "./postgres/client";
+import { type Variable } from "@EXULU_TYPES/models/variable";
+import { MarkdownChunker } from "@EE/markdown";
+import {
+  gpt5MiniProvider,
+  gpt5Provider,
+  gpt5proProvider,
+  gpt5CodexProvider,
+  gpt5NanoProvider,
+  gpt41Provider,
+  gpt41MiniProvider,
+  gpt4oProvider,
+  gpt4oMiniProvider,
+} from "./templates/providers/openai/gpt";
+import {
+  claudeSonnet4Provider,
+  claudeOpus4Provider,
+  claudeSonnet45Provider,
+} from "./templates/providers/anthropic/claude";
+import {
+  vertexGemini25FlashProvider,
+  vertexGemini3ProProvider,
+  vertexGemini25ProProvider,
+} from "./templates/providers/google/vertex";
+import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
+import type { Item } from "@EXULU_TYPES/models/item";
+import { documentProcessor } from "@EE/documents/processing/doc_processor.ts";
+export type { Item as ExuluItem };
 
 export const ExuluJobs = {
-    redis: redisClient,
-    jobs: {
-        validate: validateJob
-    }
-}
+  redis: redisClient,
+};
 
-export const ExuluDefaultAgents = {
-    anthropic: {
-        opus4: claudeOpus4Agent,
-        sonnet4: claudeSonnet4Agent,
-        sonnet45: claudeSonnet45Agent
-    },
-    cerebras: {
-        gptOss120b: gptOss120bAgent,
-        llama38b: llama38bAgent,
-        llama3370b: llama3370bAgent
-    },
-    google: {
-        vertexGemini25Flash: vertexGemini25FlashAgent,
-        vertexGemini25Pro: vertexGemini25ProAgent,
-        vertexGemini3Pro: vertexGemini3ProAgent
-    },
-    openai: {
-        gpt5Mini: gpt5MiniAgent,
-        gpt5: gpt5agent,
-        gpt5pro: gpt5proAgent,
-        gpt5Codex: gpt5CodexAgent,
-        gpt5Nano: gpt5NanoAgent,
-        gpt41: gpt41Agent,
-        gpt41Mini: gpt41MiniAgent,
-        gpt4o: gpt4oAgent,
-        gpt4oMini: gpt4oMiniAgent
-    }
-}
+export const ExuluDefaultProviders = {
+  anthropic: {
+    opus4: claudeOpus4Provider,
+    sonnet4: claudeSonnet4Provider,
+    sonnet45: claudeSonnet45Provider,
+  },
+  cerebras: {
+    gptOss120b: gptOss120bProvider,
+    llama38b: llama38bProvider,
+    llama3370b: llama3370bProvider,
+  },
+  google: {
+    vertexGemini25Flash: vertexGemini25FlashProvider,
+    vertexGemini25Pro: vertexGemini25ProProvider,
+    vertexGemini3Pro: vertexGemini3ProProvider,
+  },
+  openai: {
+    gpt5Mini: gpt5MiniProvider,
+    gpt5: gpt5Provider,
+    gpt5pro: gpt5proProvider,
+    gpt5Codex: gpt5CodexProvider,
+    gpt5Nano: gpt5NanoProvider,
+    gpt41: gpt41Provider,
+    gpt41Mini: gpt41MiniProvider,
+    gpt4o: gpt4oProvider,
+    gpt4oMini: gpt4oMiniProvider,
+  },
+};
 
 export const ExuluVariables = {
-    get: async (name: string) => {
-        const { db } = await postgresClient();
-        let variable: Variable | undefined = await db.from("variables").where({ name: name }).first();
-        if (!variable) {
-            throw new Error(`Variable ${name} not found.`);
-        }
-        if (variable.encrypted) {
-            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-            variable.value = bytes.toString(CryptoJS.enc.Utf8);
-        }
-        return variable.value;
+  get: async (name: string) => {
+    const { db } = await postgresClient();
+    let variable: Variable | undefined = await db.from("variables").where({ name: name }).first();
+    if (!variable) {
+      throw new Error(`Variable ${name} not found.`);
     }
+    if (variable.encrypted) {
+      const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
+      variable.value = bytes.toString(CryptoJS.enc.Utf8);
+    }
+    return variable.value;
+  },
+};
+
+export const ExuluAuthentication = {
+  authenticate: authentication,
 }
 
-export const ExuluUtils = {
-    batch: async ({
-        fn,
-        size,
-        inputs,
-        delay,
-        retries
-    }: {
-        fn: (data: any) => Promise<any>;
-        size: number;
-        inputs: any[];
-        delay: number;
-        retries: {
-            max: number;
-            delays: number[];
-        }
-    }): Promise<any[]> => {
-        if (!size) {
-            size = 10;
-        }
-        if (!inputs) {
-            throw new Error("Inputs are required.");
-        }
-        if (!delay) {
-            delay = 0;
-        }
-        let results: any[] = [];
-        let lastBatchTime = 0;
-
-        for (let start = 0; start < inputs.length; start += size) {
-            const currentTime = Date.now();
-            const timeSinceLastBatch = currentTime - lastBatchTime;
-            if (timeSinceLastBatch < delay * 1000) {
-                console.log("[EXULU] Utils function, waiting for", delay - timeSinceLastBatch, "seconds")
-                await new Promise(resolve => setTimeout(resolve, delay * 1000 - timeSinceLastBatch));
-            }
-            lastBatchTime = Date.now();
-            console.log(`[EXULU] Utils function, processing batch ${start / size + 1} of ${Math.ceil(inputs.length / size)} (${Math.min(start + 1, inputs.length)}-${Math.min(start + size, inputs.length)} of ${inputs.length})`);
-            const end = start + size > inputs.length ? inputs.length : start + size;
-
-            const slicedResults = await Promise.all(inputs.slice(start, end).map((data, i) => {
-                if (retries?.max) {
-                    return ExuluUtils.retry({
-                        fn: async () => {
-                            return await fn(data)
-                        },
-                        retries: retries.max,
-                        delays: retries.delays
-                    });
-                } else {
-                    return fn(data);
-                }
-
-            }));
-
-            results = [
-                ...results,
-                ...slicedResults,
-            ]
-        }
-        return results;
-    },
-    retry: async ({
-        fn,
-        retries,
-        delays
-    }: {
-        fn: () => Promise<any>;
-        retries?: number;
-        delays?: number[];
-    }) => {
-        if (!retries) {
-            retries = 3;
-        }
-        if (!delays) {
-            delays = [1000, 5000, 10000];
-        }
-        for (let i = 0; i < retries; i++) {
-            try {
-                return await fn();
-            } catch (error) {
-                console.error(`[EXULU] Util function, retry attempt ${i + 1} failed:`, error);
-                if (i >= retries - 1) {
-                    throw error;
-                }
-                if (!delays[i]) {
-                    delays[i] = delays[delays.length - 1] || 10000; // default to the last provided delay or 10 seconds
-                }
-                const delay = delays && delays[i] ? delays[i] : 10000;
-                console.log(`[EXULU] Util function, retrying in ${delay! / 1000} seconds...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-    }
+export const ExuluDocumentProcessor = {
+  process: documentProcessor,
 }
-
 
 export const ExuluOtel = {
-    create: ({
-        SIGNOZ_ACCESS_TOKEN,
-        SIGNOZ_TRACES_URL,
-        SIGNOZ_LOGS_URL
-    }: {
-        SIGNOZ_ACCESS_TOKEN: string;
-        SIGNOZ_TRACES_URL: string;
-        SIGNOZ_LOGS_URL: string;
-    }) => {
-        return create({
-            SIGNOZ_ACCESS_TOKEN,
-            SIGNOZ_TRACES_URL,
-            SIGNOZ_LOGS_URL
-        })
-    }
-}
+  create: ({
+    SIGNOZ_ACCESS_TOKEN,
+    SIGNOZ_TRACES_URL,
+    SIGNOZ_LOGS_URL,
+  }: {
+    SIGNOZ_ACCESS_TOKEN: string;
+    SIGNOZ_TRACES_URL: string;
+    SIGNOZ_LOGS_URL: string;
+  }) => {
+    return create({
+      SIGNOZ_ACCESS_TOKEN,
+      SIGNOZ_TRACES_URL,
+      SIGNOZ_LOGS_URL,
+    });
+  },
+};
 
-export { STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM, type STATISTICS_TYPE as EXULU_STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics"
-export { JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM, type JOB_STATUS as EXULU_JOB_STATUS } from "@EXULU_TYPES/enums/jobs"
+export {
+  STATISTICS_TYPE_ENUM as EXULU_STATISTICS_TYPE_ENUM,
+  type STATISTICS_TYPE as EXULU_STATISTICS_TYPE,
+} from "@EXULU_TYPES/enums/statistics";
+export {
+  JOB_STATUS_ENUM as EXULU_JOB_STATUS_ENUM,
+  type JOB_STATUS as EXULU_JOB_STATUS,
+} from "@EXULU_TYPES/enums/jobs";
 
-export const db = {
-    init: async ({
-        contexts
-    }: {
-        contexts: ExuluContext[]
-    }) => {
-        await initDb({ contexts })
+export const ExuluDatabase = {
+  init: async ({ contexts }: { contexts: ExuluContext[] }) => {
+    await initDb({ contexts });
+  },
+  update: async ({ contexts }: { contexts: ExuluContext[] }) => {
+    await initDb({ contexts });
+  },
+  api: {
+    key: {
+      generate: async (name: string, email: string) => {
+        return await generateApiKey(name, email);
+      },
     },
-    api: {
-        key: {
-            generate: async (name: string, email: string) => {
-                return await generateApiKey(name, email)
-            }
-        }
-    }
-}
+  },
+};
 
 export const ExuluChunkers = {
-    sentence: SentenceChunker,
-    recursive: {
-        function: RecursiveChunker,
-        rules: RecursiveRules
-    }
-}
+  sentence: SentenceChunker,
+  markdown: MarkdownChunker,
+  recursive: {
+    function: RecursiveChunker,
+    rules: RecursiveRules,
+  },
+};

@@ -1,0 +1,596 @@
+---
+title: "Configuration"
+description: "Complete guide to configuring ExuluChunkers for text splitting"
+---
+
+## SentenceChunker configuration
+
+### Factory method
+
+Create a SentenceChunker using the async factory method:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.sentence.create(options);
+```
+
+### Options
+
+<ParamField path="chunkSize" type="number" required>
+  Maximum number of tokens per chunk
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512  // Max 512 tokens per chunk
+});
+```
+
+**Guidelines:**
+- Small chunks (128-256): High granularity, more chunks, higher costs
+- Medium chunks (256-512): Balanced for most use cases
+- Large chunks (512-1024): Less granular, fewer chunks, lower costs
+
+**Match your embedding model:**
+- OpenAI text-embedding-3-small: 8,191 tokens → use 512-1024
+- OpenAI text-embedding-3-large: 8,191 tokens → use 512-1024
+- Cohere embed-english-v3.0: 512 tokens → use 256-512
+
+<ParamField path="chunkOverlap" type="number" default={0}>
+  Number of tokens to overlap between consecutive chunks (default: 0)
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50  // 50 tokens overlap
+});
+```
+
+**Guidelines:**
+- No overlap (0): No redundancy, sharp boundaries
+- Low overlap (10-20): Minimal context preservation
+- Medium overlap (50-100): Good balance for natural language
+- High overlap (100-200): Maximum context, but increases chunk count
+
+**Recommended overlap ratios:**
+- 10-15% of chunk size for technical docs
+- 15-20% of chunk size for natural language
+- 20-25% of chunk size for narrative content
+
+<Warning>
+  Overlap must be less than `chunkSize`. The chunker throws an error if `chunkOverlap >= chunkSize`.
+</Warning>
+
+<ParamField path="minSentencesPerChunk" type="number" default={1}>
+  Minimum number of sentences per chunk (default: 1)
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  minSentencesPerChunk: 2  // At least 2 sentences per chunk
+});
+```
+
+**Use cases:**
+- `1`: Allow single-sentence chunks (default)
+- `2-3`: Ensure contextual coherence
+- `3+`: For documents where individual sentences lack context
+
+<ParamField path="minCharactersPerSentence" type="number" default={10}>
+  Minimum character length for a text segment to be considered a sentence (default: 10)
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  minCharactersPerSentence: 20  // Sentences must be at least 20 chars
+});
+```
+
+**Use cases:**
+- `5-10`: Allow short sentences (e.g., "Yes.", "No.")
+- `10-20`: Filter out fragments (default)
+- `20+`: Ensure substantive sentences
+
+### Complete example
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,                // Max 512 tokens per chunk
+  chunkOverlap: 75,              // 75 tokens overlap (15% of chunk size)
+  minSentencesPerChunk: 2,       // At least 2 sentences per chunk
+  minCharactersPerSentence: 15   // Sentences must be at least 15 chars
+});
+
+const text = `
+  Machine learning is transforming industries. It enables
+  computers to learn patterns from data. This technology
+  powers recommendation systems, fraud detection, and more.
+
+  Deep learning is a subset of machine learning. It uses
+  neural networks with many layers. These networks can
+  recognize complex patterns in images, text, and audio.
+`;
+
+const chunks = await chunker(text);
+
+console.log(chunks.length);        // Number of chunks
+console.log(chunks[0].text);       // First chunk text
+console.log(chunks[0].tokenCount); // Token count
+```
+
+## RecursiveChunker configuration
+
+### Factory method
+
+Create a RecursiveChunker using the async factory method:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.recursive.function.create(options);
+```
+
+### Options
+
+<ParamField path="chunkSize" type="number" required>
+  Maximum number of tokens per chunk
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024  // Max 1024 tokens per chunk
+});
+```
+
+Same guidelines as SentenceChunker `chunkSize`.
+
+<ParamField path="rules" type="RecursiveRules" default="default rules">
+  Recursive splitting rules defining the hierarchy (default: paragraphs → sentences → pauses → words → tokens)
+</ParamField>
+
+```typescript
+// Use default rules
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024
+  // rules not specified = default rules
+});
+
+// Or specify custom rules
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n"] },            // Split by double newline
+    { delimiters: [". ", "! ", "? "] },  // Then sentences
+    { whitespace: true }                 // Then whitespace
+  ]
+});
+
+const customChunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  rules: rules
+});
+```
+
+**Default rules hierarchy:**
+1. **Paragraphs**: `["\n\n", "\r\n", "\n", "\r"]`
+2. **Sentences**: `[". ", "! ", "? "]`
+3. **Pauses**: `["{", "}", '"', "[", "]", "<", ">", "(", ")", ":", ";", ",", "—", "|", "~", "-", "...", "`", "'"]`
+4. **Words**: `whitespace: true`
+5. **Tokens**: No delimiters (fallback to token-level splitting)
+
+<ParamField path="minCharactersPerChunk" type="number" default={50}>
+  Minimum character length for a chunk (default: 50)
+</ParamField>
+
+```typescript
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  minCharactersPerChunk: 100  // Chunks must be at least 100 chars
+});
+```
+
+**Guidelines:**
+- `20-50`: Allow smaller chunks
+- `50-100`: Default range
+- `100+`: Ensure substantive chunks
+
+### Complete example
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Custom rules for markdown documents
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n## ", "\n### "] },  // Split by headers
+    { delimiters: ["\n\n"] },              // Then paragraphs
+    { delimiters: [". ", "! ", "? "] },   // Then sentences
+    { whitespace: true }                   // Then words
+  ]
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  rules: rules,
+  minCharactersPerChunk: 75
+});
+
+const markdown = `
+## Introduction
+
+Machine learning enables computers to learn from data.
+It powers many modern applications.
+
+## Applications
+
+Recommendation systems use ML to suggest content.
+Fraud detection systems identify suspicious activity.
+
+## Future Directions
+
+The field continues to evolve rapidly.
+New techniques emerge regularly.
+`;
+
+const chunks = await chunker(markdown);
+
+for (const chunk of chunks) {
+  console.log(`Level ${chunk.level}: ${chunk.text.slice(0, 50)}...`);
+  console.log(`Tokens: ${chunk.tokenCount}`);
+}
+```
+
+## RecursiveRules configuration
+
+### Constructor
+
+Create custom recursive rules:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [...]  // Array of RecursiveLevelData
+});
+```
+
+### Levels
+
+<ParamField path="levels" type="RecursiveLevelData[]">
+  Array of recursive levels defining the splitting hierarchy
+</ParamField>
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n"] },
+    { delimiters: [". "] },
+    { whitespace: true }
+  ]
+});
+```
+
+Each level is a `RecursiveLevelData` object with:
+
+<ParamField path="delimiters" type="string | string[]">
+  Delimiter(s) to use for splitting at this level
+</ParamField>
+
+```typescript
+// Single delimiter
+{ delimiters: "\n\n" }
+
+// Multiple delimiters
+{ delimiters: [". ", "! ", "? "] }
+```
+
+<ParamField path="whitespace" type="boolean" default={false}>
+  Whether to split on whitespace at this level (default: false)
+</ParamField>
+
+```typescript
+// Split on any whitespace character
+{ whitespace: true }
+```
+
+<Warning>
+  Cannot use both `delimiters` and `whitespace` in the same level. They are mutually exclusive.
+</Warning>
+
+<ParamField path="includeDelim" type="'prev' | 'next'" default="prev">
+  Whether to include the delimiter in the previous or next chunk (default: "prev")
+</ParamField>
+
+```typescript
+// Delimiter stays with previous chunk
+{ delimiters: [". "], includeDelim: "prev" }
+
+// Delimiter moves to next chunk
+{ delimiters: ["\n## "], includeDelim: "next" }
+```
+
+**Use cases:**
+- `"prev"`: For punctuation (sentences keep their periods)
+- `"next"`: For headers (headers stay with their content)
+
+### RecursiveLevel examples
+
+<Tabs>
+  <Tab title="Markdown documents">
+    ```typescript
+    const rules = new ExuluChunkers.recursive.rules({
+      levels: [
+        // Split by headers (keep header with content)
+        {
+          delimiters: ["\n# ", "\n## ", "\n### "],
+          includeDelim: "next"
+        },
+        // Split by paragraphs
+        { delimiters: ["\n\n"] },
+        // Split by sentences
+        { delimiters: [". ", "! ", "? "] },
+        // Split by words
+        { whitespace: true }
+      ]
+    });
+    ```
+  </Tab>
+
+  <Tab title="Code documentation">
+    ```typescript
+    const rules = new ExuluChunkers.recursive.rules({
+      levels: [
+        // Split by code blocks
+        { delimiters: ["```"] },
+        // Split by sections
+        { delimiters: ["\n\n"] },
+        // Split by list items
+        { delimiters: ["\n- ", "\n* ", "\n1. "] },
+        // Split by sentences
+        { delimiters: [". "] },
+        // Split by words
+        { whitespace: true }
+      ]
+    });
+    ```
+  </Tab>
+
+  <Tab title="Structured data">
+    ```typescript
+    const rules = new ExuluChunkers.recursive.rules({
+      levels: [
+        // Split by JSON objects
+        { delimiters: ["},\n"] },
+        // Split by object properties
+        { delimiters: [",\n  "] },
+        // Split by words
+        { whitespace: true }
+      ]
+    });
+    ```
+  </Tab>
+
+  <Tab title="Minimal (aggressive)">
+    ```typescript
+    const rules = new ExuluChunkers.recursive.rules({
+      levels: [
+        // Only paragraphs and words
+        { delimiters: ["\n\n"] },
+        { whitespace: true }
+      ]
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration patterns
+
+### Natural language documents
+
+```typescript
+// Optimized for articles, blog posts, documentation
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 75,              // 15% overlap
+  minSentencesPerChunk: 2,       // At least 2 sentences
+  minCharactersPerSentence: 15
+});
+```
+
+**Why this works:**
+- 512 tokens fits most embedding models
+- 15% overlap preserves context
+- Minimum 2 sentences ensures coherence
+- 15 char minimum filters fragments
+
+### Technical documentation
+
+```typescript
+// Optimized for API docs, guides, tutorials
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n## ", "\n### "] },  // Headers
+    { delimiters: ["```"] },              // Code blocks
+    { delimiters: ["\n\n"] },             // Paragraphs
+    { delimiters: [". "] },               // Sentences
+    { whitespace: true }                   // Words
+  ]
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,              // Larger for code examples
+  rules: rules,
+  minCharactersPerChunk: 100
+});
+```
+
+**Why this works:**
+- Respects structural boundaries (headers, code)
+- 1024 tokens accommodates code examples
+- 100 char minimum ensures substantive chunks
+
+### Long-form content
+
+```typescript
+// Optimized for books, papers, long articles
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 768,               // Larger chunks
+  chunkOverlap: 150,            // ~20% overlap
+  minSentencesPerChunk: 3,      // More context per chunk
+  minCharactersPerSentence: 20
+});
+```
+
+**Why this works:**
+- Larger chunks capture more context
+- Higher overlap maintains narrative flow
+- Minimum 3 sentences ensures coherence
+- 20 char minimum ensures quality sentences
+
+### High-precision search
+
+```typescript
+// Optimized for precise search results
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 256,               // Smaller chunks
+  chunkOverlap: 25,             // ~10% overlap
+  minSentencesPerChunk: 1,      // Allow single sentences
+  minCharactersPerSentence: 10
+});
+```
+
+**Why this works:**
+- Smaller chunks = more precise results
+- Lower overlap = less redundancy
+- Single sentences allowed for granularity
+
+### Code files
+
+```typescript
+// Optimized for source code
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\nclass ", "\nfunction ", "\nconst "] },  // Top-level declarations
+    { delimiters: ["{\n", "}\n"] },                           // Blocks
+    { delimiters: ["\n"] },                                   // Lines
+    { whitespace: true }                                       // Words
+  ]
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 2048,              // Larger for functions/classes
+  rules: rules,
+  minCharactersPerChunk: 50
+});
+```
+
+**Why this works:**
+- Respects code structure (functions, classes)
+- Large chunks keep functions/methods together
+- Line-level splitting for smaller units
+
+## Tuning recommendations
+
+### Start conservative
+
+```typescript
+// Begin with safe defaults
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50,
+  minSentencesPerChunk: 1,
+  minCharactersPerSentence: 10
+});
+
+// Test and adjust based on:
+// - Search result quality
+// - Chunk count and costs
+// - Context preservation
+```
+
+### Monitor chunk statistics
+
+```typescript
+const chunks = await chunker(text);
+
+const avgTokens = chunks.reduce((sum, c) => sum + c.tokenCount, 0) / chunks.length;
+const maxTokens = Math.max(...chunks.map(c => c.tokenCount));
+const minTokens = Math.min(...chunks.map(c => c.tokenCount));
+
+console.log(`Chunks: ${chunks.length}`);
+console.log(`Avg tokens: ${avgTokens.toFixed(2)}`);
+console.log(`Max tokens: ${maxTokens}`);
+console.log(`Min tokens: ${minTokens}`);
+
+// Adjust configuration based on statistics
+```
+
+### Test with real data
+
+```typescript
+// Sample representative documents
+const sampleDocs = [
+  "Short article content...",
+  "Medium length blog post...",
+  "Very long technical documentation..."
+];
+
+// Test chunking
+for (const doc of sampleDocs) {
+  const chunks = await chunker(doc);
+  console.log(`Doc length: ${doc.length} chars`);
+  console.log(`Chunks: ${chunks.length}`);
+  console.log(`Avg chunk: ${doc.length / chunks.length} chars`);
+  console.log("---");
+}
+
+// Adjust based on results
+```
+
+## Common pitfalls
+
+<Warning>
+  **Overlap >= chunk size**: The chunker will throw an error. Ensure `chunkOverlap < chunkSize`.
+</Warning>
+
+<Warning>
+  **Chunk size too small**: Very small chunks lose context. Minimum recommended: 128 tokens.
+</Warning>
+
+<Warning>
+  **No overlap on narrative content**: Natural language benefits from overlap. Use 10-20% overlap for continuity.
+</Warning>
+
+<Warning>
+  **Wrong chunker for content type**: Use SentenceChunker for natural language, RecursiveChunker for structured content.
+</Warning>
+
+## Best practices
+
+<Tip>
+  **Match embedding model**: Set `chunkSize` to 60-80% of your embedding model's token limit to leave room for metadata.
+</Tip>
+
+<Note>
+  **Use overlap for RAG**: Overlap improves retrieval quality in RAG systems by ensuring context isn't lost at boundaries.
+</Note>
+
+<Info>
+  **Custom rules for domain content**: If your documents have consistent structure (e.g., legal docs, medical records), create custom RecursiveRules to respect that structure.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/core/exulu-chunkers/api-reference">
+    Explore methods and properties
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-chunkers/introduction">
+    Learn about chunking concepts
+  </Card>
+</CardGroup>

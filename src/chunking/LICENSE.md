@@ -9,6 +9,11 @@ internet access.
 The way around this was to copy the main chunking algorithms from Chonkie (sentence and recursive) and
 plugin our own tokenizer (using tiktoken) as an alternative.
 
+Update 09.03.2026:
+We created a completely new propietary version for markdown chunking from scratch in markdown.ts 
+as existing libraries did not deliver what we needed (clean breakpoints, page metadata, handling 
+multi page tables and more).
+
 -------
 
 MIT License

@@ -1,81 +1,105 @@
-# Exulu Software License Agreement
+Copyright (c) 2023-2026 Qventu B.v.
 
-**Version 1.0**  
-**Effective Date: [Insert Date]**
+Certain portions of this software are licensed as described below:
 
-This Software License Agreement (the **"Agreement"**) is a legal agreement between **Qventu Bv.**, a company registered in the Netherlands with its registered office at **Lindenlaan 30, 6301 EL Valkenburg aan de Geul**, and registered with the Dutch Chamber of Commerce under number **76483894** (hereinafter "**Qventu**"), and the individual or entity installing, copying, accessing, or otherwise using the **Exulu** software (the "**Licensee**").
+- All content located within the "ee" directories of this repository, where applicable, is governed by the license specified in "ee/LICENSE".
+- All third-party components included within the Exulu Software remain subject to the original license provided by the respective component owner.
+- Content that falls outside the directories or restrictions noted above is made available under the "Elastic License 2.0" license, as outlined below.
 
-By installing, copying, or otherwise using the Exulu software (the "**Software**"), Licensee agrees to be bound by the terms of this Agreement.
+## Partner License for PaaS/SaaS Providers
 
----
+Agencies and providers wishing to use this software as a Platform-as-a-Service (PaaS) or Software-as-a-Service (SaaS) solution may inquire about our partner license agreement by contacting us at info@qventu.com.
 
-## 1. Ownership and Intellectual Property
+Elastic License 2.0
 
-The Software, including all associated intellectual property rights, documentation, and any copies or derivative works, is and shall remain the sole property of **Qventu Bv.**.
+URL: https://www.elastic.co/licensing/elastic-license
 
-Nothing in this Agreement shall be construed as transferring any rights, title, or ownership in or to the Software to the Licensee, except as explicitly set forth herein.
+## Acceptance
 
----
+By using the software, you agree to all of the terms and conditions below.
 
-## 2. Grant of License
+## Copyright License
 
-Subject to the terms and conditions of this Agreement, Qventu grants to the Licensee a **non-exclusive, non-transferable, non-sublicensable**, and **revocable license** to use the Software **only while a valid license agreement is in effect** between the Licensee and either:
+The licensor grants you a non-exclusive, royalty-free, worldwide,
+non-sublicensable, non-transferable license to use, copy, distribute, make
+available, and prepare derivative works of the software, in each case subject to
+the limitations and conditions below.
 
-- **Qventu Bv.**, or
-- an **official partner** of Qventu Bv., authorized to grant such licenses.
+## Limitations
 
----
+You may not provide the software to third parties as a hosted or managed
+service, where the service provides users with access to any substantial set of
+the features or functionality of the software.
 
-## 3. License Restrictions
+You may not move, change, disable, or circumvent the license key functionality
+in the software, and you may not remove or obscure any functionality in the
+software that is protected by the license key.
 
-Licensee shall not:
+You may not alter, remove, or obscure any licensing, copyright, or other notices
+of the licensor in the software. Any use of the licensor’s trademarks is subject
+to applicable law.
 
-- Use the Software without an active license agreement as specified in Section 2.
-- Distribute, sublicense, lease, rent, lend, or otherwise transfer the Software to any third party.
-- Reverse engineer, decompile, or disassemble the Software, except as permitted by applicable law.
-- Modify or create derivative works based on the Software unless expressly authorized in writing by Qventu.
+## Patents
 
----
+The licensor grants you a license, under any patent claims the licensor can
+license, or becomes able to license, to make, have made, use, sell, offer for
+sale, import and have imported the software, in each case subject to the
+limitations and conditions in this license. This license does not cover any
+patent claims that you cause to be infringed by modifications or additions to
+the software. If you or your company make any written claim that the software
+infringes or contributes to infringement of any patent, your patent license for
+the software granted under these terms ends immediately. If your company makes
+such a claim, your patent license ends immediately for work on behalf of your
+company.
 
-## 4. Term and Termination
+## Notices
 
-This Agreement and the license granted herein shall remain in effect only while there is an active license agreement in place as defined in Section 2.
+You must ensure that anyone who gets a copy of any part of the software from you
+also gets a copy of these terms.
 
-Qventu may terminate this Agreement immediately upon written notice if the Licensee breaches any provision of this Agreement or uses the Software without a valid license.
+If you modify the software, you must include in any modified copies of the
+software prominent notices stating that you have modified the software.
 
-Upon termination, Licensee must immediately cease all use of the Software and destroy all copies in their possession or control.
+## No Other Rights
 
----
+These terms do not imply any licenses other than those expressly granted in
+these terms.
 
-## 5. Disclaimer of Warranties
+## Termination
 
-The Software is provided "AS IS" without warranty of any kind, whether express, implied, or statutory, including but not limited to warranties of merchantability, fitness for a particular purpose, and non-infringement.
+If you use the software in violation of these terms, such use is not licensed,
+and your licenses will automatically terminate. If the licensor provides you
+with a notice of your violation, and you cease all violation of this license no
+later than 30 days after you receive that notice, your licenses will be
+reinstated retroactively. However, if you violate these terms after such
+reinstatement, any additional violation of these terms will cause your licenses
+to terminate automatically and permanently.
 
----
+## No Liability
 
-## 6. Limitation of Liability
+*As far as the law allows, the software comes as is, without any warranty or
+condition, and the licensor will not be liable to you for any damages arising
+out of these terms or the use or nature of the software, under any kind of
+legal claim.*
 
-To the maximum extent permitted by applicable law, in no event shall Qventu be liable for any indirect, incidental, consequential, special, or punitive damages arising out of or related to this Agreement or the use of the Software, even if Qventu has been advised of the possibility of such damages.
+## Definitions
 
----
+The **licensor** is the entity offering these terms, and the **software** is the
+software the licensor makes available under these terms, including any portion
+of it.
 
-## 7. Governing Law and Jurisdiction
+**you** refers to the individual or entity agreeing to these terms.
 
-This Agreement shall be governed by and construed in accordance with the laws of the **Netherlands**. Any disputes arising out of or in connection with this Agreement shall be subject to the exclusive jurisdiction of the competent courts of the Netherlands.
+**your company** is any legal entity, sole proprietorship, or other kind of
+organization that you work for, plus all organizations that have control over,
+are under the control of, or are under common control with that
+organization. **control** means ownership of substantially all the assets of an
+entity, or the power to direct its management and policies by vote, contract, or
+otherwise. Control can be direct or indirect.
 
----
+**your licenses** are all the licenses granted to you for the software under
+these terms.
 
-## 8. Contact Information
+**use** means anything you do with the software requiring one of your licenses.
 
-For inquiries regarding this Agreement or licensing of the Software, please contact:
-
-**Qventu Bv.**  
-Lindenlaan 30  
-6301 EL Valkenburg aan de Geul  
-Netherlands  
-KvK: 76483894  
-Email: [Insert Contact Email]
-
----
-
-© Qventu Bv. All rights reserved.
+**trademark** means trademarks, service marks, and similar rights.

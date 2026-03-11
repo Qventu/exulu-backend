@@ -1,0 +1,1011 @@
+---
+title: "API reference"
+description: "Complete method and property reference for ExuluChunkers"
+---
+
+## ExuluChunkers namespace
+
+ExuluChunkers is exported as a namespace object:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Access sentence chunker
+const sentenceChunker = await ExuluChunkers.sentence.create({...});
+
+// Access recursive chunker
+const recursiveChunker = await ExuluChunkers.recursive.function.create({...});
+
+// Access recursive rules
+const rules = new ExuluChunkers.recursive.rules({...});
+```
+
+## SentenceChunker
+
+### create()
+
+Factory method to create a new SentenceChunker instance.
+
+```typescript
+static async create(options: SentenceChunkerOptions): Promise<CallableSentenceChunker>
+```
+
+<ParamField path="options" type="SentenceChunkerOptions" required>
+  Configuration options for the chunker
+</ParamField>
+
+<ParamField path="options.chunkSize" type="number" required>
+  Maximum number of tokens per chunk
+</ParamField>
+
+<ParamField path="options.chunkOverlap" type="number" default={0}>
+  Number of tokens to overlap between chunks (default: 0)
+</ParamField>
+
+<ParamField path="options.minSentencesPerChunk" type="number" default={1}>
+  Minimum sentences per chunk (default: 1)
+</ParamField>
+
+<ParamField path="options.minCharactersPerSentence" type="number" default={10}>
+  Minimum character length for a sentence (default: 10)
+</ParamField>
+
+<ResponseField name="return" type="Promise<CallableSentenceChunker>">
+  A callable chunker function that can be invoked with text
+</ResponseField>
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Create chunker
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50,
+  minSentencesPerChunk: 2,
+  minCharactersPerSentence: 15
+});
+
+// Use chunker
+const text = "Your document text here...";
+const chunks = await chunker(text);
+
+console.log(chunks.length);        // Number of chunks
+console.log(chunks[0].text);       // First chunk text
+console.log(chunks[0].tokenCount); // Token count
+```
+
+### CallableSentenceChunker
+
+The chunker returned by `create()` is a callable function:
+
+```typescript
+async (text: string): Promise<Chunk[]>
+```
+
+<ParamField path="text" type="string" required>
+  The text to chunk
+</ParamField>
+
+<ResponseField name="return" type="Promise<Chunk[]>">
+  Array of Chunk objects
+</ResponseField>
+
+```typescript
+const chunks = await chunker("Long text to chunk...");
+
+for (const chunk of chunks) {
+  console.log(chunk.text);
+  console.log(chunk.tokenCount);
+  console.log(chunk.startIndex, chunk.endIndex);
+}
+```
+
+### Properties
+
+The callable chunker also has properties from the SentenceChunker class:
+
+<ResponseField name="chunkSize" type="number">
+  Maximum tokens per chunk
+</ResponseField>
+
+<ResponseField name="chunkOverlap" type="number">
+  Overlap in tokens
+</ResponseField>
+
+<ResponseField name="minSentencesPerChunk" type="number">
+  Minimum sentences per chunk
+</ResponseField>
+
+<ResponseField name="minCharactersPerSentence" type="number">
+  Minimum characters per sentence
+</ResponseField>
+
+<ResponseField name="tokenizer" type="ExuluTokenizer">
+  The tokenizer instance used for counting tokens
+</ResponseField>
+
+```typescript
+console.log(chunker.chunkSize);         // 512
+console.log(chunker.chunkOverlap);      // 50
+console.log(chunker.minSentencesPerChunk); // 2
+```
+
+## RecursiveChunker
+
+### create()
+
+Factory method to create a new RecursiveChunker instance.
+
+```typescript
+static async create(options: RecursiveChunkerOptions): Promise<CallableRecursiveChunker>
+```
+
+<ParamField path="options" type="RecursiveChunkerOptions" required>
+  Configuration options for the chunker
+</ParamField>
+
+<ParamField path="options.chunkSize" type="number" required>
+  Maximum number of tokens per chunk
+</ParamField>
+
+<ParamField path="options.rules" type="RecursiveRules" default="default rules">
+  Recursive splitting rules (default: paragraphs → sentences → pauses → words → tokens)
+</ParamField>
+
+<ParamField path="options.minCharactersPerChunk" type="number" default={50}>
+  Minimum character length for a chunk (default: 50)
+</ParamField>
+
+<ResponseField name="return" type="Promise<CallableRecursiveChunker>">
+  A callable chunker function that can be invoked with text
+</ResponseField>
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Create with default rules
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  minCharactersPerChunk: 75
+});
+
+// Or with custom rules
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n"] },
+    { delimiters: [". "] },
+    { whitespace: true }
+  ]
+});
+
+const customChunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  rules: rules,
+  minCharactersPerChunk: 50
+});
+```
+
+### CallableRecursiveChunker
+
+The chunker returned by `create()` is a callable function:
+
+```typescript
+async (text: string): Promise<RecursiveChunk[]>
+```
+
+<ParamField path="text" type="string" required>
+  The text to chunk
+</ParamField>
+
+<ResponseField name="return" type="Promise<RecursiveChunk[]>">
+  Array of RecursiveChunk objects
+</ResponseField>
+
+```typescript
+const chunks = await chunker("Long text to chunk...");
+
+for (const chunk of chunks) {
+  console.log(`Level ${chunk.level}: ${chunk.text}`);
+  console.log(`Tokens: ${chunk.tokenCount}`);
+  console.log(`Range: ${chunk.startIndex}-${chunk.endIndex}`);
+}
+```
+
+### Properties
+
+The callable chunker also has properties from the RecursiveChunker class:
+
+<ResponseField name="chunkSize" type="number">
+  Maximum tokens per chunk
+</ResponseField>
+
+<ResponseField name="rules" type="RecursiveRules">
+  The recursive splitting rules
+</ResponseField>
+
+<ResponseField name="minCharactersPerChunk" type="number">
+  Minimum characters per chunk
+</ResponseField>
+
+<ResponseField name="tokenizer" type="ExuluTokenizer">
+  The tokenizer instance used for counting tokens
+</ResponseField>
+
+```typescript
+console.log(chunker.chunkSize);              // 1024
+console.log(chunker.minCharactersPerChunk);  // 75
+console.log(chunker.rules.length);           // Number of levels
+```
+
+## RecursiveRules
+
+Class representing recursive chunking rules.
+
+### Constructor
+
+```typescript
+new RecursiveRules(data?: RecursiveRulesData)
+```
+
+<ParamField path="data" type="RecursiveRulesData">
+  Configuration for recursive rules
+</ParamField>
+
+<ParamField path="data.levels" type="RecursiveLevelData[]">
+  Array of recursive levels defining the splitting hierarchy
+</ParamField>
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Create with default levels
+const defaultRules = new ExuluChunkers.recursive.rules();
+
+// Create with custom levels
+const customRules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n", "\n"] },
+    { delimiters: [". ", "! ", "? "] },
+    { whitespace: true }
+  ]
+});
+```
+
+**Default levels:**
+1. Paragraphs: `["\n\n", "\r\n", "\n", "\r"]`
+2. Sentences: `[". ", "! ", "? "]`
+3. Pauses: `["{", "}", '"', "[", "]", "<", ">", "(", ")", ":", ";", ",", "—", "|", "~", "-", "...", "`", "'"]`
+4. Words: `whitespace: true`
+5. Tokens: No delimiters
+
+### Properties
+
+<ResponseField name="levels" type="RecursiveLevel[]">
+  Array of recursive levels
+</ResponseField>
+
+<ResponseField name="length" type="number" getter>
+  Number of levels in the rules
+</ResponseField>
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules();
+
+console.log(rules.length);      // 5 (default levels)
+console.log(rules.levels[0]);   // First level (paragraphs)
+```
+
+### Methods
+
+#### getLevel()
+
+Get a level by index.
+
+```typescript
+getLevel(index: number): RecursiveLevel | undefined
+```
+
+<ParamField path="index" type="number" required>
+  The index of the level to retrieve
+</ParamField>
+
+<ResponseField name="return" type="RecursiveLevel | undefined">
+  The level at the specified index, or undefined if not found
+</ResponseField>
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules();
+
+const firstLevel = rules.getLevel(0);   // Paragraphs level
+const secondLevel = rules.getLevel(1);  // Sentences level
+const invalid = rules.getLevel(999);    // undefined
+```
+
+#### toDict()
+
+Convert rules to a dictionary-like object.
+
+```typescript
+toDict(): RecursiveRulesData
+```
+
+<ResponseField name="return" type="RecursiveRulesData">
+  Dictionary representation of the rules
+</ResponseField>
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n"] },
+    { whitespace: true }
+  ]
+});
+
+const dict = rules.toDict();
+console.log(dict);
+// { levels: [{ delimiters: ["\n\n"], whitespace: false, includeDelim: "prev" }, ...] }
+```
+
+#### fromDict()
+
+Create RecursiveRules from a dictionary.
+
+```typescript
+static fromDict(data: RecursiveRulesData): RecursiveRules
+```
+
+<ParamField path="data" type="RecursiveRulesData" required>
+  Dictionary representation of rules
+</ParamField>
+
+<ResponseField name="return" type="RecursiveRules">
+  New RecursiveRules instance
+</ResponseField>
+
+```typescript
+const data = {
+  levels: [
+    { delimiters: ["\n\n"] },
+    { whitespace: true }
+  ]
+};
+
+const rules = ExuluChunkers.recursive.rules.fromDict(data);
+```
+
+#### toString()
+
+String representation of the rules.
+
+```typescript
+toString(): string
+```
+
+<ResponseField name="return" type="string">
+  String representation
+</ResponseField>
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules();
+console.log(rules.toString());
+// "RecursiveRules(levels=[...])"
+```
+
+#### Symbol.iterator
+
+The rules object is iterable:
+
+```typescript
+for (const level of rules) {
+  console.log(level.delimiters);
+  console.log(level.whitespace);
+}
+```
+
+## RecursiveLevel
+
+Class representing a single level in the recursive hierarchy.
+
+### Constructor
+
+```typescript
+new RecursiveLevel(data?: RecursiveLevelData)
+```
+
+<ParamField path="data" type="RecursiveLevelData">
+  Configuration for the level
+</ParamField>
+
+<ParamField path="data.delimiters" type="string | string[]">
+  Delimiter(s) to use for splitting at this level
+</ParamField>
+
+<ParamField path="data.whitespace" type="boolean" default={false}>
+  Whether to split on whitespace (default: false)
+</ParamField>
+
+<ParamField path="data.includeDelim" type="'prev' | 'next'" default="prev">
+  Whether to include delimiter in previous or next chunk (default: "prev")
+</ParamField>
+
+```typescript
+// Single delimiter
+const level1 = new RecursiveLevel({
+  delimiters: "\n\n"
+});
+
+// Multiple delimiters
+const level2 = new RecursiveLevel({
+  delimiters: [". ", "! ", "? "],
+  includeDelim: "prev"
+});
+
+// Whitespace splitting
+const level3 = new RecursiveLevel({
+  whitespace: true
+});
+
+// No delimiters (token-level fallback)
+const level4 = new RecursiveLevel();
+```
+
+<Warning>
+  Cannot use both `delimiters` and `whitespace` in the same level. They are mutually exclusive.
+</Warning>
+
+### Properties
+
+<ResponseField name="delimiters" type="string | string[] | undefined">
+  Custom delimiters for chunking
+</ResponseField>
+
+<ResponseField name="whitespace" type="boolean">
+  Whether to use whitespace as a delimiter
+</ResponseField>
+
+<ResponseField name="includeDelim" type="'prev' | 'next'">
+  Where to include the delimiter
+</ResponseField>
+
+```typescript
+const level = new RecursiveLevel({
+  delimiters: [". ", "! ", "? "],
+  includeDelim: "prev"
+});
+
+console.log(level.delimiters);    // [". ", "! ", "? "]
+console.log(level.whitespace);    // false
+console.log(level.includeDelim);  // "prev"
+```
+
+### Methods
+
+#### toDict()
+
+Convert level to dictionary.
+
+```typescript
+toDict(): RecursiveLevelData
+```
+
+<ResponseField name="return" type="RecursiveLevelData">
+  Dictionary representation
+</ResponseField>
+
+```typescript
+const level = new RecursiveLevel({ delimiters: [". "] });
+const dict = level.toDict();
+console.log(dict);
+// { delimiters: [". "], whitespace: false, includeDelim: "prev" }
+```
+
+#### fromDict()
+
+Create RecursiveLevel from dictionary.
+
+```typescript
+static fromDict(data: RecursiveLevelData): RecursiveLevel
+```
+
+<ParamField path="data" type="RecursiveLevelData" required>
+  Dictionary representation
+</ParamField>
+
+<ResponseField name="return" type="RecursiveLevel">
+  New RecursiveLevel instance
+</ResponseField>
+
+```typescript
+const data = { delimiters: [". "], includeDelim: "next" };
+const level = RecursiveLevel.fromDict(data);
+```
+
+#### toString()
+
+String representation of the level.
+
+```typescript
+toString(): string
+```
+
+<ResponseField name="return" type="string">
+  String representation
+</ResponseField>
+
+```typescript
+const level = new RecursiveLevel({ delimiters: [". "] });
+console.log(level.toString());
+// "RecursiveLevel(delimiters=["."], whitespace=false, includeDelim=prev)"
+```
+
+## Chunk
+
+Base class for text chunks.
+
+### Properties
+
+<ResponseField name="text" type="string">
+  The chunk text
+</ResponseField>
+
+<ResponseField name="startIndex" type="number">
+  Starting index in the original text
+</ResponseField>
+
+<ResponseField name="endIndex" type="number">
+  Ending index in the original text
+</ResponseField>
+
+<ResponseField name="tokenCount" type="number">
+  Number of tokens in the chunk
+</ResponseField>
+
+<ResponseField name="embedding" type="number[] | undefined">
+  Optional embedding vector for the chunk
+</ResponseField>
+
+```typescript
+const chunk = chunks[0];
+
+console.log(chunk.text);        // "This is the first chunk..."
+console.log(chunk.startIndex);  // 0
+console.log(chunk.endIndex);    // 245
+console.log(chunk.tokenCount);  // 48
+console.log(chunk.embedding);   // undefined (or embedding array)
+```
+
+### Methods
+
+#### toString()
+
+String representation of the chunk (returns the text).
+
+```typescript
+toString(): string
+```
+
+<ResponseField name="return" type="string">
+  The chunk text
+</ResponseField>
+
+```typescript
+console.log(chunk.toString()); // "This is the first chunk..."
+```
+
+#### toRepresentation()
+
+Detailed string representation.
+
+```typescript
+toRepresentation(): string
+```
+
+<ResponseField name="return" type="string">
+  Detailed representation
+</ResponseField>
+
+```typescript
+console.log(chunk.toRepresentation());
+// "Chunk(text='...', tokenCount=48, startIndex=0, endIndex=245)"
+```
+
+#### slice()
+
+Get a slice of the chunk's text.
+
+```typescript
+slice(start?: number, end?: number): string
+```
+
+<ParamField path="start" type="number">
+  Starting index for the slice
+</ParamField>
+
+<ParamField path="end" type="number">
+  Ending index for the slice
+</ParamField>
+
+<ResponseField name="return" type="string">
+  Sliced text
+</ResponseField>
+
+```typescript
+const chunk = chunks[0];
+console.log(chunk.slice(0, 50)); // First 50 characters
+```
+
+#### toDict()
+
+Convert chunk to dictionary.
+
+```typescript
+toDict(): ChunkData
+```
+
+<ResponseField name="return" type="ChunkData">
+  Dictionary representation
+</ResponseField>
+
+```typescript
+const dict = chunk.toDict();
+console.log(dict);
+// { text: "...", startIndex: 0, endIndex: 245, tokenCount: 48, embedding: undefined }
+```
+
+#### fromDict()
+
+Create Chunk from dictionary.
+
+```typescript
+static fromDict(data: ChunkData): Chunk
+```
+
+<ParamField path="data" type="ChunkData" required>
+  Dictionary representation
+</ParamField>
+
+<ResponseField name="return" type="Chunk">
+  New Chunk instance
+</ResponseField>
+
+```typescript
+const data = {
+  text: "Sample text",
+  startIndex: 0,
+  endIndex: 11,
+  tokenCount: 3
+};
+
+const chunk = Chunk.fromDict(data);
+```
+
+#### copy()
+
+Create a deep copy of the chunk.
+
+```typescript
+copy(): Chunk
+```
+
+<ResponseField name="return" type="Chunk">
+  Deep copy of the chunk
+</ResponseField>
+
+```typescript
+const original = chunks[0];
+const copy = original.copy();
+
+console.log(copy.text === original.text); // true
+console.log(copy === original);           // false (different objects)
+```
+
+## RecursiveChunk
+
+Extends `Chunk` with recursion level tracking.
+
+### Properties
+
+All properties from `Chunk`, plus:
+
+<ResponseField name="level" type="number | undefined">
+  The recursion level at which this chunk was created
+</ResponseField>
+
+```typescript
+const chunk = chunks[0];
+
+console.log(chunk.text);        // "This is the first chunk..."
+console.log(chunk.tokenCount);  // 48
+console.log(chunk.level);       // 0 (split at top level)
+```
+
+**Level interpretation:**
+- `0`: Split at first level (e.g., paragraphs)
+- `1`: Split at second level (e.g., sentences)
+- `2`: Split at third level (e.g., pauses)
+- etc.
+
+### Methods
+
+All methods from `Chunk`, with overridden implementations that preserve the `level` property.
+
+## Usage examples
+
+### Basic sentence chunking
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50
+});
+
+const text = `
+  Artificial intelligence is transforming industries worldwide.
+  Machine learning enables computers to learn from data without
+  explicit programming. Deep learning uses neural networks to
+  recognize complex patterns in images, text, and audio.
+
+  The field continues to evolve rapidly. New techniques emerge
+  regularly, pushing the boundaries of what's possible.
+`;
+
+const chunks = await chunker(text);
+
+console.log(`Created ${chunks.length} chunks`);
+
+for (const [i, chunk] of chunks.entries()) {
+  console.log(`\nChunk ${i + 1}:`);
+  console.log(`  Text: ${chunk.text.slice(0, 50)}...`);
+  console.log(`  Tokens: ${chunk.tokenCount}`);
+  console.log(`  Range: ${chunk.startIndex}-${chunk.endIndex}`);
+}
+```
+
+### Recursive chunking with custom rules
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+// Define custom rules for markdown
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    // Split by headers (keep header with content)
+    {
+      delimiters: ["\n## ", "\n### "],
+      includeDelim: "next"
+    },
+    // Split by paragraphs
+    { delimiters: ["\n\n"] },
+    // Split by sentences
+    { delimiters: [". ", "! ", "? "] },
+    // Split by words
+    { whitespace: true }
+  ]
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  rules: rules,
+  minCharactersPerChunk: 75
+});
+
+const markdown = `
+## Introduction
+
+Machine learning is a subset of artificial intelligence.
+It enables systems to learn and improve from experience.
+
+## Applications
+
+Recommendation systems use ML to personalize content.
+Fraud detection systems identify suspicious patterns.
+Autonomous vehicles use ML for navigation and decision-making.
+
+## Future Directions
+
+The field continues to advance rapidly.
+New architectures and techniques emerge regularly.
+`;
+
+const chunks = await chunker(markdown);
+
+console.log(`Created ${chunks.length} chunks`);
+
+for (const [i, chunk] of chunks.entries()) {
+  console.log(`\nChunk ${i + 1} (level ${chunk.level}):`);
+  console.log(`  Text: ${chunk.text}`);
+  console.log(`  Tokens: ${chunk.tokenCount}`);
+}
+```
+
+### Analyzing chunk statistics
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50
+});
+
+const text = "Your long document...";
+const chunks = await chunker(text);
+
+// Calculate statistics
+const tokenCounts = chunks.map(c => c.tokenCount);
+const avgTokens = tokenCounts.reduce((a, b) => a + b, 0) / chunks.length;
+const maxTokens = Math.max(...tokenCounts);
+const minTokens = Math.min(...tokenCounts);
+
+console.log(`Chunks: ${chunks.length}`);
+console.log(`Avg tokens: ${avgTokens.toFixed(2)}`);
+console.log(`Max tokens: ${maxTokens}`);
+console.log(`Min tokens: ${minTokens}`);
+console.log(`Total tokens: ${tokenCounts.reduce((a, b) => a + b, 0)}`);
+
+// Distribution
+const histogram = {};
+for (const chunk of chunks) {
+  const bucket = Math.floor(chunk.tokenCount / 100) * 100;
+  histogram[bucket] = (histogram[bucket] || 0) + 1;
+}
+
+console.log("\nToken distribution:");
+for (const [bucket, count] of Object.entries(histogram)) {
+  console.log(`  ${bucket}-${parseInt(bucket) + 99}: ${'*'.repeat(count)}`);
+}
+```
+
+### Inspecting level distribution (recursive)
+
+```typescript
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024
+});
+
+const text = "Your document...";
+const chunks = await chunker(text);
+
+// Count chunks by level
+const levelCounts = {};
+for (const chunk of chunks) {
+  levelCounts[chunk.level || 0] = (levelCounts[chunk.level || 0] || 0) + 1;
+}
+
+console.log("Chunk distribution by level:");
+for (const [level, count] of Object.entries(levelCounts)) {
+  const levelName = ["Paragraphs", "Sentences", "Pauses", "Words", "Tokens"][level];
+  console.log(`  Level ${level} (${levelName}): ${count} chunks`);
+}
+```
+
+### Using with ExuluContext
+
+```typescript
+import { ExuluContext, ExuluChunkers, ExuluEmbedder } from "@exulu/backend";
+
+// Create chunker
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 75
+});
+
+// Create embedder
+const embedder = new ExuluEmbedder({
+  id: "openai_embedder",
+  name: "OpenAI Embeddings",
+  provider: "openai",
+  model: "text-embedding-3-small",
+  vectorDimensions: 1536
+});
+
+// Create context with chunker
+const context = new ExuluContext({
+  id: "documentation",
+  name: "Product Documentation",
+  description: "Searchable product documentation",
+  embedder: embedder,
+  chunker: chunker, // Documents will be chunked automatically
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true },
+    { name: "url", type: "text", required: false }
+  ],
+  sources: []
+});
+
+// Add document - it's automatically chunked and embedded
+await context.createItem(
+  {
+    title: "Getting Started Guide",
+    content: "Very long documentation content...",
+    url: "https://example.com/docs/getting-started"
+  },
+  { generateEmbeddings: true }
+);
+
+// Search returns relevant chunks
+const results = await context.search({
+  query: "How do I install?",
+  limit: 5
+});
+
+for (const result of results) {
+  console.log(`Score: ${result.score}`);
+  console.log(`Chunk: ${result.chunk.text.slice(0, 100)}...`);
+}
+```
+
+## Type definitions
+
+```typescript
+// Sentence chunker options
+interface SentenceChunkerOptions {
+  chunkSize: number;
+  chunkOverlap?: number;
+  minSentencesPerChunk?: number;
+  minCharactersPerSentence?: number;
+}
+
+// Recursive chunker options
+interface RecursiveChunkerOptions {
+  chunkSize: number;
+  rules?: RecursiveRules;
+  minCharactersPerChunk?: number;
+}
+
+// Recursive rules data
+interface RecursiveRulesData {
+  levels?: RecursiveLevelData[];
+}
+
+// Recursive level data
+interface RecursiveLevelData {
+  delimiters?: string | string[];
+  whitespace?: boolean;
+  includeDelim?: "prev" | "next";
+}
+
+// Chunk data
+interface ChunkData {
+  text: string;
+  startIndex: number;
+  endIndex: number;
+  tokenCount: number;
+  embedding?: number[];
+}
+
+// Recursive chunk data
+interface RecursiveChunkData extends ChunkData {
+  level?: number;
+}
+```
+
+## Best practices
+
+<Tip>
+  **Use appropriate chunk size**: Match your embedding model's token limit. Leave 10-20% headroom for metadata.
+</Tip>
+
+<Note>
+  **Enable overlap for natural language**: Use 10-20% overlap to preserve context at chunk boundaries.
+</Note>
+
+<Warning>
+  **Monitor chunk count**: More chunks = higher embedding costs. Balance granularity with cost.
+</Warning>
+
+<Info>
+  **Choose the right chunker**: SentenceChunker for most text, RecursiveChunker for structured documents.
+</Info>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration guide" icon="gear" href="/core/exulu-chunkers/configuration">
+    Learn about configuration options
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-chunkers/introduction">
+    Understand chunking concepts
+  </Card>
+</CardGroup>

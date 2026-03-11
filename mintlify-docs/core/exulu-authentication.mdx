@@ -1,0 +1,810 @@
+---
+title: "ExuluAuthentication"
+description: "Authentication function for API keys, auth tokens, and internal service communication"
+---
+
+## Overview
+
+`ExuluAuthentication` is an authentication function that verifies users through three methods: API keys, session tokens (NextAuth/JWT), or internal service keys. It returns authenticated user information with role-based permissions.
+
+## Authentication methods
+
+<CardGroup cols={3}>
+  <Card title="API Keys" icon="key">
+    For programmatic access to Exulu APIs
+  </Card>
+  <Card title="Session Tokens" icon="shield">
+    For web application authentication via NextAuth
+  </Card>
+  <Card title="Internal Keys" icon="lock">
+    For secure service-to-service communication
+  </Card>
+</CardGroup>
+
+## What is ExuluAuthentication?
+
+ExuluAuthentication provides a unified authentication interface that:
+
+- **Validates API keys**: Securely compares bcrypt-hashed API keys
+- **Verifies session tokens**: Validates NextAuth JWT tokens from web applications
+- **Authorizes internal services**: Allows trusted service-to-service communication
+- **Retrieves user data**: Returns user information with role permissions
+- **Updates usage tracking**: Records last API key usage timestamp
+
+## Quick start
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+
+// Authenticate with API key
+const result = await ExuluAuthentication.authenticate({
+  apikey: "exl_abc123.../my-key-name",
+  db
+});
+
+if (result.error) {
+  console.error(`Auth failed: ${result.message}`);
+  // Handle error (return 401, etc.)
+} else {
+  console.log(`Authenticated as: ${result.user?.email}`);
+  // Proceed with authenticated request
+}
+```
+
+## Authentication methods
+
+### 1. API Key authentication
+
+API keys are used for programmatic access to Exulu APIs.
+
+**Format:** `{hashed_key}/{key_name}`
+
+**Example:** `exl_abc123def456.../production-api-key`
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+
+const result = await ExuluAuthentication.authenticate({
+  apikey: "exl_abc123def456.../production-api-key",
+  db
+});
+
+if (result.error) {
+  return { status: result.code, message: result.message };
+}
+
+const user = result.user;
+console.log(`Authenticated: ${user?.email}`);
+console.log(`Role: ${user?.role.name}`);
+console.log(`Permissions:`, user?.role);
+```
+
+**How it works:**
+
+1. Extracts key name from format: `{key}/{name}`
+2. Queries database for API users with matching key name
+3. Compares hashed portion using bcrypt
+4. Updates `last_used` timestamp on successful match
+5. Returns user with role information
+
+**API key structure:**
+
+- **Before `/`**: Hashed key value (bcrypt)
+- **After `/`**: Human-readable key name
+
+### 2. Session token authentication
+
+Session tokens are JWT tokens issued by NextAuth for web application authentication.
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+
+// Token from NextAuth session
+const authToken = {
+  email: "user@example.com",
+  name: "John Doe",
+  // ... other session data
+};
+
+const result = await ExuluAuthentication.authenticate({
+  authtoken: authToken,
+  db
+});
+
+if (result.error) {
+  return { status: 401, message: "Unauthorized" };
+}
+
+const user = result.user;
+console.log(`User: ${user?.firstname} ${user?.lastname}`);
+```
+
+**How it works:**
+
+1. Extracts email from session token
+2. Queries database for user by email
+3. Loads user's role information
+4. Returns user object with role
+
+**Usage in Express middleware:**
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+import { getToken } from "next-auth/jwt";
+import express from "express";
+
+const app = express();
+
+app.use(async (req, res, next) => {
+  const token = await getToken({ req });
+
+  const { db } = await postgresClient();
+  const result = await ExuluAuthentication.authenticate({
+    authtoken: token,
+    db
+  });
+
+  if (result.error) {
+    return res.status(result.code || 401).json({
+      error: result.message
+    });
+  }
+
+  req.user = result.user;
+  next();
+});
+```
+
+### 3. Internal key authentication
+
+Internal keys enable secure communication between internal Exulu services (e.g., backend and file upload service).
+
+**Environment variable:** `INTERNAL_SECRET`
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+
+const result = await ExuluAuthentication.authenticate({
+  internalkey: process.env.INTERNAL_SECRET,
+  db
+});
+
+if (result.error) {
+  throw new Error("Internal authentication failed");
+}
+
+// Returns a synthetic "internal" user
+const user = result.user;
+console.log(user?.email); // "internal@exulu.com"
+console.log(user?.role.name); // "Internal"
+```
+
+**How it works:**
+
+1. Checks if `INTERNAL_SECRET` environment variable is set
+2. Compares provided internal key with `INTERNAL_SECRET`
+3. Returns a synthetic "internal" user with read-only role permissions
+
+**Synthetic internal user:**
+
+```typescript
+{
+  type: "api",
+  id: 192837465,
+  email: "internal@exulu.com",
+  firstname: "API",
+  lastname: "User",
+  role: {
+    id: "internal",
+    name: "Internal",
+    agents: "read",
+    workflows: "read",
+    variables: "read",
+    users: "read",
+    evals: "read"
+  }
+}
+```
+
+**Use case:**
+
+When the backend and file upload service (Uppy) run on different networks or environments, internal key authentication allows them to communicate securely without requiring user credentials.
+
+## Function signature
+
+```typescript
+ExuluAuthentication.authenticate({
+  apikey?: string;
+  authtoken?: any;
+  internalkey?: string;
+  db: Knex;
+}): Promise<{
+  error: boolean;
+  message?: string;
+  code?: number;
+  user?: User;
+}>
+```
+
+### Parameters
+
+<ParamField path="apikey" type="string">
+  API key in format `{hashed_key}/{key_name}`
+</ParamField>
+
+<ParamField path="authtoken" type="any">
+  NextAuth session token object (must contain `email` field)
+</ParamField>
+
+<ParamField path="internalkey" type="string">
+  Internal service key matching `INTERNAL_SECRET` environment variable
+</ParamField>
+
+<ParamField path="db" type="Knex" required>
+  Knex database connection instance
+</ParamField>
+
+### Return value
+
+<ResponseField name="error" type="boolean">
+  Whether authentication failed
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Error message (only present if `error: true`)
+</ResponseField>
+
+<ResponseField name="code" type="number">
+  HTTP status code (200 for success, 401 for failure)
+</ResponseField>
+
+<ResponseField name="user" type="User">
+  Authenticated user object with role information
+  ```typescript
+  {
+    id: number;
+    firstname?: string;
+    lastname?: string;
+    email: string;
+    type?: "api" | "user";
+    role: {
+      id: string;
+      name: string;
+      agents: "read" | "write";
+      evals: "read" | "write";
+      workflows: "read" | "write";
+      variables: "read" | "write";
+      users: "read" | "write";
+    };
+  }
+  ```
+</ResponseField>
+
+## Usage patterns
+
+### Express middleware
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+import express from "express";
+
+const app = express();
+
+// Authentication middleware
+app.use(async (req, res, next) => {
+  const { db } = await postgresClient();
+
+  // Extract credentials from headers
+  const apiKey = req.headers["x-api-key"] as string;
+  const internalKey = req.headers["internal"] as string;
+  const authHeader = req.headers["authorization"];
+
+  // Session token from Bearer token
+  let authToken;
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    authToken = await decodeJWT(token); // Decode JWT
+  }
+
+  const result = await ExuluAuthentication.authenticate({
+    apikey: apiKey,
+    authtoken: authToken,
+    internalkey: internalKey,
+    db
+  });
+
+  if (result.error) {
+    return res.status(result.code || 401).json({
+      error: result.message
+    });
+  }
+
+  // Attach user to request
+  req.user = result.user;
+  next();
+});
+
+// Protected route
+app.get("/api/agents", async (req, res) => {
+  // User is available from middleware
+  const user = req.user;
+
+  if (user.role.agents !== "read" && user.role.agents !== "write") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  // Fetch agents
+  const agents = await db.from("agents").select("*");
+  res.json(agents);
+});
+```
+
+### Role-based access control
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+async function checkPermission(
+  apiKey: string,
+  resource: "agents" | "evals" | "workflows" | "variables" | "users",
+  requiredPermission: "read" | "write"
+) {
+  const { db } = await postgresClient();
+
+  const result = await ExuluAuthentication.authenticate({ apikey: apiKey, db });
+
+  if (result.error) {
+    throw new Error(`Authentication failed: ${result.message}`);
+  }
+
+  const userPermission = result.user?.role[resource];
+
+  if (userPermission !== requiredPermission && userPermission !== "write") {
+    throw new Error(
+      `Insufficient permissions. User has ${userPermission} but ${requiredPermission} is required.`
+    );
+  }
+
+  return result.user;
+}
+
+// Use
+try {
+  const user = await checkPermission(apiKey, "agents", "write");
+  // Proceed with agent creation
+} catch (error) {
+  console.error(error.message);
+  // Return 403 Forbidden
+}
+```
+
+### Multi-method authentication
+
+Support multiple authentication methods in the same endpoint:
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+import { getToken } from "next-auth/jwt";
+
+async function authenticateRequest(req: Request) {
+  const { db } = await postgresClient();
+
+  // Try API key
+  const apiKey = req.headers.get("x-api-key");
+  if (apiKey) {
+    return await ExuluAuthentication.authenticate({ apikey: apiKey, db });
+  }
+
+  // Try session token
+  const token = await getToken({ req });
+  if (token) {
+    return await ExuluAuthentication.authenticate({ authtoken: token, db });
+  }
+
+  // Try internal key
+  const internalKey = req.headers.get("internal");
+  if (internalKey) {
+    return await ExuluAuthentication.authenticate({ internalkey: internalKey, db });
+  }
+
+  // No credentials provided
+  return {
+    error: true,
+    message: "No authentication credentials provided",
+    code: 401
+  };
+}
+
+// Use in API route
+export async function GET(req: Request) {
+  const authResult = await authenticateRequest(req);
+
+  if (authResult.error) {
+    return new Response(
+      JSON.stringify({ error: authResult.message }),
+      { status: authResult.code }
+    );
+  }
+
+  const user = authResult.user;
+  // Process request with authenticated user
+}
+```
+
+### Caching authenticated users
+
+For high-traffic APIs, cache user lookups:
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+class AuthCache {
+  private cache = new Map<string, { user: User; expires: number }>();
+  private ttl = 5 * 60 * 1000; // 5 minutes
+
+  async authenticate(apiKey: string) {
+    const cached = this.cache.get(apiKey);
+
+    if (cached && cached.expires > Date.now()) {
+      return { error: false, code: 200, user: cached.user };
+    }
+
+    const { db } = await postgresClient();
+    const result = await ExuluAuthentication.authenticate({ apikey: apiKey, db });
+
+    if (!result.error && result.user) {
+      this.cache.set(apiKey, {
+        user: result.user,
+        expires: Date.now() + this.ttl
+      });
+    }
+
+    return result;
+  }
+
+  invalidate(apiKey: string) {
+    this.cache.delete(apiKey);
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+const authCache = new AuthCache();
+
+// Use
+const result = await authCache.authenticate(apiKey);
+```
+
+## Generating API keys
+
+API keys must be generated and stored in the database:
+
+```typescript
+import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
+import { postgresClient } from "@exulu/backend";
+
+async function generateApiKey(name: string, email: string) {
+  const { db } = await postgresClient();
+
+  // Generate random key
+  const keyValue = `exl_${randomBytes(32).toString("hex")}`;
+
+  // Hash the key
+  const hashedKey = await bcrypt.hash(keyValue, 10);
+
+  // Create API key string
+  const apiKey = `${hashedKey}/${name}`;
+
+  // Create API user
+  await db.into("users").insert({
+    email,
+    type: "api",
+    apikey: apiKey,
+    role: "api_user", // Role ID
+    created_at: new Date()
+  });
+
+  // Return the unhashed key (only time user sees it)
+  return `${keyValue}/${name}`;
+}
+
+// Generate
+const apiKey = await generateApiKey("production-key", "api@example.com");
+console.log("API Key (save this!):", apiKey);
+// exl_abc123def456.../production-key
+```
+
+<Warning>
+  The unhashed API key is only available at generation time. Store it securely, as it cannot be retrieved later.
+</Warning>
+
+## Database schema
+
+### Users table
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  firstname VARCHAR(255),
+  lastname VARCHAR(255),
+  email VARCHAR(255) UNIQUE NOT NULL,
+  type VARCHAR(10), -- 'api' or 'user'
+  apikey TEXT, -- Format: {hashed_key}/{key_name}
+  role VARCHAR(255), -- Role ID
+  last_used TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Roles table
+
+```sql
+CREATE TABLE roles (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  agents VARCHAR(10), -- 'read' or 'write'
+  evals VARCHAR(10),
+  workflows VARCHAR(10),
+  variables VARCHAR(10),
+  users VARCHAR(10)
+);
+```
+
+### Example role
+
+```sql
+INSERT INTO roles (id, name, agents, evals, workflows, variables, users)
+VALUES (
+  'api_user',
+  'API User',
+  'write',
+  'write',
+  'read',
+  'read',
+  'read'
+);
+```
+
+## Error handling
+
+ExuluAuthentication returns different error messages for different failure scenarios:
+
+### API key errors
+
+```typescript
+// No API key name
+{
+  error: true,
+  message: "Provided api key does not include postfix with key name ({key}/{name}).",
+  code: 401
+}
+
+// Invalid format
+{
+  error: true,
+  message: "Provided api key is not in the correct format.",
+  code: 401
+}
+
+// No API users in database
+{
+  error: true,
+  message: "No API users found.",
+  code: 401
+}
+
+// No matching key
+{
+  error: true,
+  message: "No matching api key found.",
+  code: 401
+}
+```
+
+### Session token errors
+
+```typescript
+// No email in token
+{
+  error: true,
+  message: "No email provided in session {...}",
+  code: 401
+}
+
+// User not found
+{
+  error: true,
+  message: "No user found for email: user@example.com",
+  code: 401
+}
+
+// Invalid token
+{
+  error: true,
+  message: "Invalid token.",
+  code: 401
+}
+```
+
+### Internal key errors
+
+```typescript
+// INTERNAL_SECRET not set
+{
+  error: true,
+  message: 'Header "internal" provided, but no INTERNAL_SECRET was provided in the environment variables.',
+  code: 401
+}
+
+// Key mismatch
+{
+  error: true,
+  message: "Internal key was provided in header but did not match the INTERNAL_SECRET environment variable.",
+  code: 401
+}
+```
+
+### General error
+
+```typescript
+// No credentials
+{
+  error: true,
+  message: "Either an api key or authorization key must be provided.",
+  code: 401
+}
+```
+
+## Security best practices
+
+<Tip>
+  **API key rotation**: Regularly rotate API keys and revoke old ones by deleting the user record.
+</Tip>
+
+<Note>
+  **HTTPS only**: Always use HTTPS in production to protect API keys and tokens in transit.
+</Note>
+
+<Warning>
+  **Never log keys**: Never log API keys or internal secrets in application logs or error messages.
+</Warning>
+
+<Info>
+  **Rate limiting**: Implement rate limiting per API key to prevent abuse.
+</Info>
+
+## Common patterns
+
+### Permission checking helper
+
+```typescript
+function hasPermission(
+  user: User,
+  resource: keyof User["role"],
+  requiredLevel: "read" | "write"
+): boolean {
+  const userPermission = user.role[resource];
+
+  if (requiredLevel === "read") {
+    return userPermission === "read" || userPermission === "write";
+  }
+
+  return userPermission === "write";
+}
+
+// Use
+if (!hasPermission(user, "agents", "write")) {
+  return res.status(403).json({ error: "Forbidden" });
+}
+```
+
+### Audit logging
+
+```typescript
+async function logAuthAttempt(
+  method: "apikey" | "authtoken" | "internalkey",
+  success: boolean,
+  userId?: number,
+  error?: string
+) {
+  const { db } = await postgresClient();
+
+  await db.into("auth_logs").insert({
+    method,
+    success,
+    user_id: userId,
+    error_message: error,
+    timestamp: new Date()
+  });
+}
+
+// Use
+const result = await ExuluAuthentication({ apikey, db });
+
+await logAuthAttempt(
+  "apikey",
+  !result.error,
+  result.user?.id,
+  result.message
+);
+```
+
+### API key revocation
+
+```typescript
+async function revokeApiKey(userId: number) {
+  const { db } = await postgresClient();
+
+  await db
+    .from("users")
+    .where({ id: userId, type: "api" })
+    .delete();
+
+  console.log(`Revoked API key for user ${userId}`);
+}
+```
+
+## Integration with ExuluApp
+
+Use ExuluAuthentication to protect ExuluApp API endpoints:
+
+```typescript
+import { ExuluApp, ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    express: {
+      enabled: true,
+      middleware: async (expressApp) => {
+        // Add authentication middleware
+        expressApp.use(async (req, res, next) => {
+          const { db } = await postgresClient();
+          const apiKey = req.headers["x-api-key"] as string;
+
+          const result = await ExuluAuthentication.authenticate({ apikey: apiKey, db });
+
+          if (result.error) {
+            return res.status(401).json({ error: "Unauthorized" });
+          }
+
+          req.user = result.user;
+          next();
+        });
+      }
+    }
+  },
+  contexts: {},
+  agents: {}
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluApp" icon="box" href="/core/exulu-app/introduction">
+    Integrate authentication with ExuluApp
+  </Card>
+  <Card title="ExuluVariables" icon="key" href="/core/exulu-variables/introduction">
+    Store INTERNAL_SECRET securely
+  </Card>
+  <Card title="ExuluProvider" icon="robot" href="/core/exulu-agent/introduction">
+    Protect provider endpoints with authentication
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/introduction">
+    View API documentation
+  </Card>
+</CardGroup>

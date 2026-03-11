@@ -1,0 +1,736 @@
+---
+title: "Configuration"
+description: "Complete guide to setting up and managing ExuluVariables"
+---
+
+## Database setup
+
+ExuluVariables requires a PostgreSQL table to store variables.
+
+### Table schema
+
+```sql
+CREATE TABLE variables (
+  name VARCHAR(255) PRIMARY KEY,
+  value TEXT NOT NULL,
+  encrypted BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+<ParamField path="name" type="VARCHAR(255)" required>
+  Unique variable identifier (primary key)
+</ParamField>
+
+<ParamField path="value" type="TEXT" required>
+  The variable value (encrypted if `encrypted` is true)
+</ParamField>
+
+<ParamField path="encrypted" type="BOOLEAN" default={false}>
+  Whether the value is encrypted at rest (default: false)
+</ParamField>
+
+<ParamField path="created_at" type="TIMESTAMP">
+  Timestamp when the variable was created
+</ParamField>
+
+<ParamField path="updated_at" type="TIMESTAMP">
+  Timestamp when the variable was last updated
+</ParamField>
+
+### Creating the table
+
+Run this migration in your PostgreSQL database:
+
+```sql
+-- Create variables table
+CREATE TABLE IF NOT EXISTS variables (
+  name VARCHAR(255) PRIMARY KEY,
+  value TEXT NOT NULL,
+  encrypted BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Add indexes for performance
+CREATE INDEX idx_variables_encrypted ON variables(encrypted);
+CREATE INDEX idx_variables_created_at ON variables(created_at);
+
+-- Optional: Add audit columns
+ALTER TABLE variables ADD COLUMN created_by VARCHAR(255);
+ALTER TABLE variables ADD COLUMN updated_by VARCHAR(255);
+```
+
+## Environment setup
+
+### Required environment variables
+
+<ParamField path="NEXTAUTH_SECRET" type="string" required>
+  Secret key used for AES encryption/decryption of variable values
+</ParamField>
+
+```bash
+# .env file
+NEXTAUTH_SECRET=your-long-random-secret-key-here
+```
+
+<Warning>
+  **Critical**: This secret must be:
+  - At least 32 characters long
+  - Randomly generated (use `openssl rand -base64 32`)
+  - Kept secure and never committed to version control
+  - Consistent across all deployments (production, staging, etc.)
+</Warning>
+
+**Generate a secure secret:**
+
+```bash
+# Using OpenSSL
+openssl rand -base64 32
+
+# Using Node.js
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+### Database connection
+
+ExuluVariables uses your PostgreSQL connection configured in `postgresClient`:
+
+```typescript
+// Ensure your database connection is configured
+import { postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+```
+
+Connection settings are typically configured via environment variables:
+
+```bash
+# .env file
+DATABASE_URL=postgresql://user:password@localhost:5432/database
+# or
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=user
+POSTGRES_PASSWORD=password
+POSTGRES_DATABASE=database
+```
+
+## Creating variables
+
+### Via SQL
+
+```sql
+-- Create an encrypted variable
+INSERT INTO variables (name, value, encrypted)
+VALUES ('openai_api_key', 'sk-...', true);
+
+-- Create a non-encrypted variable
+INSERT INTO variables (name, value, encrypted)
+VALUES ('app_name', 'My App', false);
+
+-- Bulk insert
+INSERT INTO variables (name, value, encrypted) VALUES
+  ('openai_api_key', 'sk-...', true),
+  ('anthropic_api_key', 'sk-ant-...', true),
+  ('google_api_key', 'AIza...', true),
+  ('app_version', '1.0.0', false);
+```
+
+<Note>
+  When inserting via SQL with `encrypted: true`, you must manually encrypt the value first using the same encryption method (AES with `NEXTAUTH_SECRET`).
+</Note>
+
+### Via API
+
+Create a REST API endpoint to manage variables:
+
+```typescript
+import { postgresClient, ExuluVariables } from "@exulu/backend";
+import CryptoJS from "crypto-js";
+import express from "express";
+
+const app = express();
+app.use(express.json());
+
+// Create variable
+app.post("/api/variables", async (req, res) => {
+  const { name, value, encrypted = true } = req.body;
+
+  const { db } = await postgresClient();
+
+  // Encrypt if needed
+  const finalValue = encrypted
+    ? CryptoJS.AES.encrypt(value, process.env.NEXTAUTH_SECRET).toString()
+    : value;
+
+  await db.into("variables").insert({
+    name,
+    value: finalValue,
+    encrypted
+  });
+
+  res.json({ success: true, name });
+});
+
+// Update variable
+app.put("/api/variables/:name", async (req, res) => {
+  const { name } = req.params;
+  const { value, encrypted } = req.body;
+
+  const { db } = await postgresClient();
+
+  const finalValue = encrypted
+    ? CryptoJS.AES.encrypt(value, process.env.NEXTAUTH_SECRET).toString()
+    : value;
+
+  await db("variables")
+    .where({ name })
+    .update({
+      value: finalValue,
+      encrypted,
+      updated_at: new Date()
+    });
+
+  res.json({ success: true, name });
+});
+
+// Delete variable
+app.delete("/api/variables/:name", async (req, res) => {
+  const { name } = req.params;
+  const { db } = await postgresClient();
+
+  await db("variables").where({ name }).delete();
+
+  res.json({ success: true, name });
+});
+
+// List variables (without values)
+app.get("/api/variables", async (req, res) => {
+  const { db } = await postgresClient();
+
+  const variables = await db
+    .from("variables")
+    .select("name", "encrypted", "created_at", "updated_at");
+
+  res.json(variables);
+});
+```
+
+<Warning>
+  Never expose variable values through a public API. The above example shows creation/update but should be protected with authentication and authorization.
+</Warning>
+
+### Via UI
+
+Build a UI for managing variables:
+
+```typescript
+// Frontend component (React example)
+import { useState } from "react";
+
+function VariableManager() {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [encrypted, setEncrypted] = useState(true);
+
+  const handleCreate = async () => {
+    const response = await fetch("/api/variables", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, value, encrypted })
+    });
+
+    if (response.ok) {
+      alert("Variable created successfully!");
+      setName("");
+      setValue("");
+    }
+  };
+
+  return (
+    <div>
+      <h2>Create Variable</h2>
+      <input
+        type="text"
+        placeholder="Variable name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <textarea
+        placeholder="Variable value"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
+      <label>
+        <input
+          type="checkbox"
+          checked={encrypted}
+          onChange={(e) => setEncrypted(e.target.checked)}
+        />
+        Encrypt value
+      </label>
+      <button onClick={handleCreate}>Create</button>
+    </div>
+  );
+}
+```
+
+## Variable configuration patterns
+
+### API keys (encrypted)
+
+```sql
+-- OpenAI
+INSERT INTO variables (name, value, encrypted)
+VALUES ('openai_api_key', 'sk-proj-...', true);
+
+-- Anthropic
+INSERT INTO variables (name, value, encrypted)
+VALUES ('anthropic_api_key', 'sk-ant-api03-...', true);
+
+-- Google
+INSERT INTO variables (name, value, encrypted)
+VALUES ('google_api_key', 'AIza...', true);
+
+-- Cohere
+INSERT INTO variables (name, value, encrypted)
+VALUES ('cohere_api_key', 'abc123...', true);
+```
+
+### Database credentials (encrypted)
+
+```sql
+-- Full connection string
+INSERT INTO variables (name, value, encrypted)
+VALUES ('postgres_url', 'postgresql://user:pass@host:5432/db', true);
+
+-- Redis connection
+INSERT INTO variables (name, value, encrypted)
+VALUES ('redis_url', 'redis://:password@localhost:6379', true);
+```
+
+### Service tokens (encrypted)
+
+```sql
+-- GitHub
+INSERT INTO variables (name, value, encrypted)
+VALUES ('github_token', 'ghp_...', true);
+
+-- Stripe
+INSERT INTO variables (name, value, encrypted)
+VALUES ('stripe_secret_key', 'sk_live_...', true);
+
+-- SendGrid
+INSERT INTO variables (name, value, encrypted)
+VALUES ('sendgrid_api_key', 'SG....', true);
+```
+
+### Configuration values (non-encrypted)
+
+```sql
+-- App metadata
+INSERT INTO variables (name, value, encrypted)
+VALUES ('app_name', 'My Application', false);
+
+INSERT INTO variables (name, value, encrypted)
+VALUES ('app_version', '1.0.0', false);
+
+-- Feature flags
+INSERT INTO variables (name, value, encrypted)
+VALUES ('feature_analytics', 'true', false);
+
+-- Limits and quotas
+INSERT INTO variables (name, value, encrypted)
+VALUES ('max_requests_per_minute', '100', false);
+```
+
+### Multi-environment variables
+
+```sql
+-- Development
+INSERT INTO variables (name, value, encrypted)
+VALUES ('dev_openai_api_key', 'sk-...', true);
+
+-- Staging
+INSERT INTO variables (name, value, encrypted)
+VALUES ('staging_openai_api_key', 'sk-...', true);
+
+-- Production
+INSERT INTO variables (name, value, encrypted)
+VALUES ('prod_openai_api_key', 'sk-...', true);
+```
+
+Usage:
+
+```typescript
+const env = process.env.NODE_ENV || "dev";
+const apiKey = await ExuluVariables.get(`${env}_openai_api_key`);
+```
+
+### Multi-tenant variables
+
+```sql
+-- Per-tenant API keys
+INSERT INTO variables (name, value, encrypted) VALUES
+  ('tenant_acme_openai_key', 'sk-...', true),
+  ('tenant_globex_openai_key', 'sk-...', true),
+  ('tenant_initech_openai_key', 'sk-...', true);
+```
+
+Usage:
+
+```typescript
+async function getTenantApiKey(tenantId: string) {
+  return await ExuluVariables.get(`tenant_${tenantId}_openai_key`);
+}
+```
+
+## Encryption management
+
+### Manual encryption (when inserting via SQL)
+
+If you need to insert encrypted variables directly via SQL:
+
+```typescript
+import CryptoJS from "crypto-js";
+
+// Encrypt a value
+const plaintext = "sk-proj-abc123...";
+const encrypted = CryptoJS.AES.encrypt(
+  plaintext,
+  process.env.NEXTAUTH_SECRET
+).toString();
+
+console.log(encrypted);
+// Use this encrypted value in your INSERT statement
+```
+
+```sql
+INSERT INTO variables (name, value, encrypted)
+VALUES ('openai_api_key', 'U2FsdGVkX1...', true);
+```
+
+### Manual decryption (for testing)
+
+```typescript
+import CryptoJS from "crypto-js";
+
+const encrypted = "U2FsdGVkX1...";
+const bytes = CryptoJS.AES.decrypt(encrypted, process.env.NEXTAUTH_SECRET);
+const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+
+console.log(decrypted); // "sk-proj-abc123..."
+```
+
+### Rotating the encryption key
+
+If you need to change your `NEXTAUTH_SECRET`:
+
+<Steps>
+  <Step title="Retrieve all encrypted variables">
+    ```typescript
+    import { postgresClient, ExuluVariables } from "@exulu/backend";
+
+    const { db } = await postgresClient();
+    const encrypted = await db.from("variables").where({ encrypted: true });
+
+    // Decrypt all with old key
+    const decrypted = await Promise.all(
+      encrypted.map(async (v) => ({
+        name: v.name,
+        value: await ExuluVariables.get(v.name) // Uses old key
+      }))
+    );
+    ```
+  </Step>
+
+  <Step title="Update NEXTAUTH_SECRET">
+    ```bash
+    # Update your .env file
+    NEXTAUTH_SECRET=new-secret-key-here
+    ```
+  </Step>
+
+  <Step title="Re-encrypt variables">
+    ```typescript
+    import CryptoJS from "crypto-js";
+
+    for (const { name, value } of decrypted) {
+      const encrypted = CryptoJS.AES.encrypt(
+        value,
+        process.env.NEXTAUTH_SECRET // New key
+      ).toString();
+
+      await db("variables")
+        .where({ name })
+        .update({ value: encrypted });
+    }
+    ```
+  </Step>
+
+  <Step title="Verify">
+    ```typescript
+    // Test retrieval with new key
+    const testValue = await ExuluVariables.get("openai_api_key");
+    console.log("Success:", testValue);
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Rotating encryption keys is risky. Test thoroughly and have backups before proceeding.
+</Warning>
+
+## Migration from .env files
+
+### Step 1: Identify secrets
+
+List all secrets currently in `.env`:
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://...
+```
+
+### Step 2: Create variables
+
+```typescript
+import { postgresClient } from "@exulu/backend";
+import CryptoJS from "crypto-js";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+async function migrateFromEnv() {
+  const { db } = await postgresClient();
+
+  const secrets = [
+    { name: "openai_api_key", envKey: "OPENAI_API_KEY" },
+    { name: "anthropic_api_key", envKey: "ANTHROPIC_API_KEY" },
+    { name: "database_url", envKey: "DATABASE_URL" },
+    { name: "redis_url", envKey: "REDIS_URL" }
+  ];
+
+  for (const { name, envKey } of secrets) {
+    const value = process.env[envKey];
+    if (!value) continue;
+
+    const encrypted = CryptoJS.AES.encrypt(
+      value,
+      process.env.NEXTAUTH_SECRET
+    ).toString();
+
+    await db.into("variables").insert({
+      name,
+      value: encrypted,
+      encrypted: true
+    });
+
+    console.log(`Migrated ${name}`);
+  }
+}
+
+migrateFromEnv();
+```
+
+### Step 3: Update code
+
+Replace `process.env` with `ExuluVariables.get()`:
+
+```typescript
+// Before
+const apiKey = process.env.OPENAI_API_KEY;
+
+// After
+import { ExuluVariables } from "@exulu/backend";
+const apiKey = await ExuluVariables.get("openai_api_key");
+```
+
+### Step 4: Remove from .env
+
+After verifying everything works, remove secrets from `.env`:
+
+```bash
+# .env (keep only NEXTAUTH_SECRET and non-secret config)
+NEXTAUTH_SECRET=your-secret
+NODE_ENV=production
+PORT=3000
+```
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Always encrypt sensitive data">
+    Set `encrypted: true` for API keys, tokens, passwords, connection strings, and any other secrets.
+
+    ```sql
+    -- ✅ Good
+    INSERT INTO variables (name, value, encrypted)
+    VALUES ('api_key', 'sk-...', true);
+
+    -- ❌ Bad
+    INSERT INTO variables (name, value, encrypted)
+    VALUES ('api_key', 'sk-...', false);
+    ```
+  </Accordion>
+
+  <Accordion title="Use descriptive, namespaced names">
+    Variable names should be clear and avoid conflicts.
+
+    ```sql
+    -- ✅ Good
+    'openai_api_key'
+    'tenant_123_stripe_key'
+    'prod_database_url'
+
+    -- ❌ Bad
+    'key1'
+    'api'
+    'secret'
+    ```
+  </Accordion>
+
+  <Accordion title="Document required variables">
+    Maintain a list of required variables for your application.
+
+    ```typescript
+    // config/variables.ts
+    export const REQUIRED_VARIABLES = [
+      "openai_api_key",
+      "anthropic_api_key",
+      "database_url",
+      "redis_url"
+    ];
+
+    // Validate on startup
+    async function validateVariables() {
+      for (const name of REQUIRED_VARIABLES) {
+        try {
+          await ExuluVariables.get(name);
+        } catch (error) {
+          throw new Error(`Missing required variable: ${name}`);
+        }
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Backup encrypted variables">
+    Regularly backup the `variables` table and keep your `NEXTAUTH_SECRET` secure.
+
+    ```bash
+    # Backup variables table
+    pg_dump -U user -d database -t variables > variables_backup.sql
+
+    # Store NEXTAUTH_SECRET separately in secure location
+    echo "NEXTAUTH_SECRET=..." > .secret.backup
+    ```
+  </Accordion>
+
+  <Accordion title="Limit access to variables table">
+    Restrict database access to the `variables` table.
+
+    ```sql
+    -- Create read-only user for application
+    CREATE USER app_user WITH PASSWORD 'secure_password';
+    GRANT SELECT ON variables TO app_user;
+
+    -- Admin user can create/update/delete
+    GRANT ALL PRIVILEGES ON variables TO admin_user;
+    ```
+  </Accordion>
+
+  <Accordion title="Validate on retrieval">
+    Always wrap `ExuluVariables.get()` in try/catch.
+
+    ```typescript
+    try {
+      const apiKey = await ExuluVariables.get("openai_api_key");
+      // Use apiKey
+    } catch (error) {
+      console.error("Failed to retrieve API key:", error);
+      // Handle error (use fallback, alert admin, etc.)
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+### Variable not found
+
+```typescript
+// Error: Variable my_api_key not found.
+```
+
+**Solution**: Ensure the variable exists in the database:
+
+```sql
+SELECT * FROM variables WHERE name = 'my_api_key';
+```
+
+If missing, create it:
+
+```sql
+INSERT INTO variables (name, value, encrypted)
+VALUES ('my_api_key', 'value', true);
+```
+
+### Decryption fails
+
+```typescript
+// Error: Malformed UTF-8 data
+```
+
+**Causes:**
+- Wrong `NEXTAUTH_SECRET` (different from when variable was encrypted)
+- Variable was not actually encrypted but `encrypted: true` is set
+- Corrupted encrypted value
+
+**Solution**: Re-encrypt the variable with the correct secret.
+
+### Database connection error
+
+```typescript
+// Error: Connection refused
+```
+
+**Solution**: Verify your database connection settings:
+
+```bash
+# Check environment variables
+echo $DATABASE_URL
+
+# Test connection
+psql $DATABASE_URL -c "SELECT 1"
+```
+
+### Encryption key too short
+
+If using a short `NEXTAUTH_SECRET`:
+
+```typescript
+// Weak encryption with short key
+```
+
+**Solution**: Use a properly generated secret:
+
+```bash
+openssl rand -base64 32
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/core/exulu-variables/api-reference">
+    Explore methods and usage
+  </Card>
+  <Card title="Overview" icon="book" href="/core/exulu-variables/introduction">
+    Learn about variable concepts
+  </Card>
+</CardGroup>
