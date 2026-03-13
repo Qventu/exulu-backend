@@ -8,7 +8,7 @@ export const ENTITLEMENTS: {
     "template-conversations": boolean,
     "agent-feedback": boolean,
     "multi-agent-tooling": boolean,
-    "advanced-document-processing": boolean
+    "advanced-document-processing": boolean,
 } = {
     "rbac": false,
     "advanced-markdown-chunker": false,
