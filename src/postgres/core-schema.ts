@@ -388,6 +388,10 @@ const promptLibrarySchema: ExuluTableDefinition = {
       name: "assigned_agents",
       type: "json",
     },
+    {
+      name: "history",
+      type: "json",
+    }
   ],
 };
 
