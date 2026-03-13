@@ -221,9 +221,6 @@ export const finalizeRequestedFields = async ({
       });
     });
   } else {
-    console.log("[EXULU] table name singular", table.name.singular);
-    console.log("[EXULU] requestedFields", requestedFields);
-    console.log("[EXULU] result", result);
     if (table.name.singular === "workflow_template") {
       if (requestedFields.includes("variables")) {
         const variables: Record<string, any> = [];

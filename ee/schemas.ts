@@ -1,5 +1,6 @@
 // Ee edition specific schemas
 
+import { STATISTICS_TYPE_ENUM } from "@EXULU_TYPES/enums/statistics";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 
 export const feedbackSchema: ExuluTableDefinition = {
@@ -49,7 +50,7 @@ export const rolesSchema: ExuluTableDefinition = {
             type: "text",
         },
         {
-            name: agentsSchema.name.plural,
+            name: "agents",
             type: "text", // write | read access to agents
         },
         {
@@ -61,11 +62,11 @@ export const rolesSchema: ExuluTableDefinition = {
             type: "text", // write | read access to workflows
         },
         {
-            name: variablesSchema.name.plural,
+            name: "variables",
             type: "text", // write | read access to variables
         },
         {
-            name: usersSchema.name.plural,
+            name: "users",
             type: "text", // write | read access to users
         },
         {
