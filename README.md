@@ -1,3 +1,5 @@
+**Exulu IMP** (Intelligence Management Platform) is an open-source TypeScript framework for building production-ready AI agent applications. It provides the backend infrastructure for managing agents, semantic search contexts, background job processing, and tool integrations.
+
 <a href="https://exulu.com/"><img width="100%" src="https://mintlify.s3.us-west-1.amazonaws.com/exulu/images/create_agents.png" alt="Exulu IMP - Create, deploy and manage AI agents" /></a>
 
 <br />
@@ -25,8 +27,6 @@
 
 > [!IMPORTANT]
 > ⭐ Star this repo to follow development and updates
-
-**Exulu IMP** (Intelligence Management Platform) is an open-source TypeScript framework for building production-ready AI agent applications. It provides the backend infrastructure for managing agents, semantic search contexts, background job processing, and tool integrations.
 
 <h3>✨ Why Exulu IMP?</h3>
 

@@ -10,6 +10,8 @@ import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "@EE/queues/queues.ts";
 import { RecursiveChunker } from "./chunking/recursive";
 export { ExuluEmbedder } from "./exulu/embedder.ts"
+export { ExuluProvider } from "./exulu/provider.ts"
+export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluTool } from "./exulu/tool"
 export { ExuluReranker } from "./exulu/reranker"
