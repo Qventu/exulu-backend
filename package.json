@@ -5,7 +5,7 @@
   "main": "./dist/index.js",
   "private": false,
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Qventu/exulu-backend"
+    "url": "https://github.com/Qventu/exulu-backend.git"
   },
   "scripts": {
     "preinstall": "node -e \"if (process.version !== 'v22.18.0') { console.error('❌ Wrong Node.js version. Expected v22.18.0, got ' + process.version); process.exit(1); }\"",

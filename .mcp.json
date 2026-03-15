@@ -13,6 +13,13 @@
       "headers": {
         "Authorization": "Bearer ${EXULU_TOKEN}"
       }
+    },
+    "exulu-mcp-server-coding-agent": {
+      "type": "http",
+      "url": "https://backend.exulu.com/mcp/d721c4cb-5db0-4dc1-9500-cc16aeff5403",
+      "headers": {
+        "Authorization": "Bearer ${EXULU_TOKEN}"
+      }
     }
   }
 }
