@@ -19,6 +19,7 @@
   },
   "scripts": {
     "preinstall": "node -e \"if (process.version !== 'v22.18.0') { console.error('❌ Wrong Node.js version. Expected v22.18.0, got ' + process.version); process.exit(1); }\"",
+    "postinstall": "node scripts/postinstall.cjs",
     "build": "tsup",
     "dev": "npm link && tsup --watch",
     "prepare": "husky",
@@ -38,7 +39,12 @@
     "audit:fix": "npm audit fix",
     "cpd": "jscpd src --reporters console",
     "cpd:report": "jscpd src --reporters console,html",
-    "cpd:view": "serve cpd-report/html -l 3001"
+    "cpd:view": "serve cpd-report/html -l 3001",
+    "python:setup": "cd ee/python && ./setup.sh",
+    "python:install": "source ee/python/.venv/bin/activate && pip install -r ee/python/requirements.txt",
+    "python:validate": "source ee/python/.venv/bin/activate && python -c 'import docling; import transformers; print(\"✓ Python environment is working correctly\")'",
+    "python:clean": "rm -rf ee/python/.venv ee/python/__pycache__ ee/python/**/__pycache__ ee/python/**/*.pyc",
+    "python:rebuild": "npm run python:clean && npm run python:setup"
   },
   "keywords": [
     "exulu"
@@ -141,5 +147,10 @@
     "zod": "^3.25.76",
     "zod-to-json-schema": "^3.25.1",
     "zodex": "^0.18.2"
-  }
+  },
+  "files": [
+    "dist",
+    "ee",
+    "scripts/postinstall.cjs"
+  ]
 }

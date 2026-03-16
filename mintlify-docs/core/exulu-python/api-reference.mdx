@@ -1,0 +1,153 @@
+---
+title: 'API Reference'
+description: 'Complete API reference for ExuluPython'
+---
+
+## ExuluPython
+
+The main export for Python integration utilities.
+
+### Methods
+
+<ResponseField name="setup" type="(options?: PythonSetupOptions) => Promise<PythonSetupResult>">
+  Set up the Python virtual environment
+
+  **Parameters:**
+  - `options.force` (boolean): Force rebuild even if environment exists
+  - `options.verbose` (boolean): Show detailed output
+  - `options.timeout` (number): Setup timeout in milliseconds
+  - `options.packageRoot` (string): Package root directory
+
+  **Returns:**
+  - `success` (boolean): Whether setup was successful
+  - `message` (string): Description of the result
+  - `alreadyExists` (boolean): Whether environment already existed
+  - `pythonVersion` (string): Python version installed
+  - `output` (string): Full output from setup script
+
+  ```typescript
+  const result = await ExuluPython.setup({ verbose: true });
+  if (result.success) {
+    console.log('Python version:', result.pythonVersion);
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="check" type="(packageRoot?: string) => boolean">
+  Check if Python environment is set up
+
+  **Parameters:**
+  - `packageRoot` (string): Package root directory (auto-detected)
+
+  **Returns:** `true` if environment is ready, `false` otherwise
+
+  ```typescript
+  if (ExuluPython.check()) {
+    console.log('Environment ready');
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="validate" type="(packageRoot?: string) => Promise<ValidationResult>">
+  Validate Python environment and get detailed status
+
+  **Parameters:**
+  - `packageRoot` (string): Package root directory (auto-detected)
+
+  **Returns:**
+  - `valid` (boolean): Whether environment is valid
+  - `message` (string): Validation message or instructions
+
+  ```typescript
+  const validation = await ExuluPython.validate();
+  if (!validation.valid) {
+    console.error(validation.message);
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="instructions" type="() => string">
+  Get helpful setup instructions for users
+
+  **Returns:** String with setup instructions
+
+  ```typescript
+  const help = ExuluPython.instructions();
+  console.log(help);
+  ```
+</ResponseField>
+
+## isPythonEnvironmentReady
+
+Check if Python environment is set up and ready to use.
+
+### Usage
+
+```typescript
+import { isPythonEnvironmentReady } from '@exulu/backend';
+
+const isReady = await isPythonEnvironmentReady();
+if (isReady) {
+  console.log('Python environment is ready');
+}
+```
+
+### Parameters
+
+<ParamField path="packageRoot" type="string">
+  Package root directory (auto-detected if not provided)
+</ParamField>
+
+### Returns
+
+Returns `Promise<boolean>` - `true` if environment is ready, `false` otherwise.
+
+## Types
+
+### PythonSetupOptions
+
+```typescript
+interface PythonSetupOptions {
+  packageRoot?: string;
+  force?: boolean;
+  verbose?: boolean;
+  timeout?: number;
+}
+```
+
+### PythonSetupResult
+
+```typescript
+interface PythonSetupResult {
+  success: boolean;
+  message: string;
+  alreadyExists: boolean;
+  pythonVersion?: string;
+  output?: string;
+}
+```
+
+### PythonScriptConfig
+
+```typescript
+interface PythonScriptConfig {
+  scriptPath: string;
+  args?: string[];
+  packageRoot?: string;
+  cwd?: string;
+  timeout?: number;
+  env?: Record<string, string>;
+  validateEnvironment?: boolean;
+}
+```
+
+### PythonScriptResult
+
+```typescript
+interface PythonScriptResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  success: boolean;
+}
+```
