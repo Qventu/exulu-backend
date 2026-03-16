@@ -94,21 +94,59 @@ print_success "Found Python $PYTHON_VERSION at $(which $PYTHON_CMD)"
 echo ""
 echo "Step 2: Checking pip installation..."
 if ! $PYTHON_CMD -m pip --version &> /dev/null; then
-    print_error "pip is not installed"
-    echo ""
-    echo "Please install pip:"
-    echo "  curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py"
-    echo "  $PYTHON_CMD get-pip.py"
-    echo ""
-    exit 1
+    print_warning "pip is not installed, attempting to bootstrap..."
+
+    # Try to use ensurepip to bootstrap pip
+    if $PYTHON_CMD -m ensurepip --version &> /dev/null; then
+        print_info "Using ensurepip to install pip..."
+        $PYTHON_CMD -m ensurepip --default-pip || {
+            print_error "Failed to bootstrap pip using ensurepip"
+            echo ""
+            echo "Please install pip manually:"
+            echo "  Ubuntu/Debian: sudo apt-get install python3-pip"
+            echo "  Alpine: apk add py3-pip"
+            echo "  Or using get-pip.py:"
+            echo "    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py"
+            echo "    $PYTHON_CMD get-pip.py"
+            echo ""
+            exit 1
+        }
+        print_success "pip bootstrapped successfully using ensurepip"
+    else
+        print_error "pip is not installed and ensurepip is not available"
+        echo ""
+        echo "Please install pip manually:"
+        echo "  Ubuntu/Debian: sudo apt-get install python3-pip"
+        echo "  Alpine: apk add py3-pip"
+        echo "  Or using get-pip.py:"
+        echo "    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py"
+        echo "    $PYTHON_CMD get-pip.py"
+        echo ""
+        exit 1
+    fi
 fi
 
 PIP_VERSION=$($PYTHON_CMD -m pip --version | awk '{print $2}')
 print_success "Found pip $PIP_VERSION"
 
-# Step 3: Create or update virtual environment
+# Step 3: Check for venv module
 echo ""
-echo "Step 3: Setting up virtual environment..."
+echo "Step 3: Checking venv module..."
+if ! $PYTHON_CMD -m venv --help &> /dev/null; then
+    print_error "venv module is not available"
+    echo ""
+    echo "The venv module is required to create virtual environments."
+    echo "Please install it:"
+    echo "  Ubuntu/Debian: sudo apt-get install python3-venv"
+    echo "  Alpine: apk add python3-dev"
+    echo ""
+    exit 1
+fi
+print_success "venv module is available"
+
+# Step 4: Create or update virtual environment
+echo ""
+echo "Step 4: Setting up virtual environment..."
 if [ -d "$VENV_DIR" ]; then
     # Check if virtual environment is valid
     if [ -f "$VENV_DIR/bin/activate" ] && [ -f "$VENV_DIR/bin/python" ]; then
@@ -117,18 +155,32 @@ if [ -d "$VENV_DIR" ]; then
     else
         print_warning "Virtual environment is corrupted, recreating..."
         rm -rf "$VENV_DIR"
-        $PYTHON_CMD -m venv "$VENV_DIR"
+        $PYTHON_CMD -m venv "$VENV_DIR" || {
+            print_error "Failed to create virtual environment"
+            echo ""
+            echo "This usually means the venv module is not properly installed."
+            echo "Try installing: sudo apt-get install python3-venv python3-dev"
+            echo ""
+            exit 1
+        }
         print_success "Virtual environment created"
     fi
 else
     print_info "Creating virtual environment at $VENV_DIR"
-    $PYTHON_CMD -m venv "$VENV_DIR"
+    $PYTHON_CMD -m venv "$VENV_DIR" || {
+        print_error "Failed to create virtual environment"
+        echo ""
+        echo "This usually means the venv module is not properly installed."
+        echo "Try installing: sudo apt-get install python3-venv python3-dev"
+        echo ""
+        exit 1
+    }
     print_success "Virtual environment created"
 fi
 
-# Step 4: Activate virtual environment and upgrade pip
+# Step 5: Activate virtual environment and upgrade pip
 echo ""
-echo "Step 4: Activating virtual environment..."
+echo "Step 5: Activating virtual environment..."
 source "$VENV_DIR/bin/activate"
 print_success "Virtual environment activated"
 
@@ -137,9 +189,9 @@ print_info "Upgrading pip in virtual environment..."
 pip install --upgrade pip > /dev/null 2>&1
 print_success "pip upgraded to latest version"
 
-# Step 5: Install dependencies
+# Step 6: Install dependencies
 echo ""
-echo "Step 5: Installing Python dependencies..."
+echo "Step 6: Installing Python dependencies..."
 if [ ! -f "$REQUIREMENTS_FILE" ]; then
     print_error "Requirements file not found: $REQUIREMENTS_FILE"
     exit 1
@@ -151,16 +203,16 @@ pip install -r "$REQUIREMENTS_FILE"
 
 print_success "All dependencies installed successfully"
 
-# Step 6: Validate installation
+# Step 7: Validate installation
 echo ""
-echo "Step 6: Validating installation..."
+echo "Step 7: Validating installation..."
 
 # Test critical imports
 print_info "Testing critical imports..."
 $PYTHON_CMD -c "import docling" 2>/dev/null && print_success "docling imported successfully" || print_error "Failed to import docling"
 $PYTHON_CMD -c "import transformers" 2>/dev/null && print_success "transformers imported successfully" || print_error "Failed to import transformers"
 
-# Step 7: Display summary
+# Step 8: Display summary
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Setup Complete!${NC}"
