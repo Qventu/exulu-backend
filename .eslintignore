@@ -1,0 +1,7 @@
+# ESLint ignore file
+node_modules/
+dist/
+.venv/
+ee/python/
+bin/
+scripts/
