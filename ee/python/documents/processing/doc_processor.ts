@@ -1,5 +1,3 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import { generateText, Output } from 'ai';
@@ -14,6 +12,7 @@ import WordExtractor from 'word-extractor';
 import { parseOfficeAsync } from "officeparser";
 import { checkLicense } from '@EE/entitlements';
 import { executePythonScript } from '@SRC/utils/python-executor';
+import { setupPythonEnvironment, validatePythonEnvironment } from '@SRC/utils/python-setup';
 
 type DocumentProcessorConfig = {
   vlm?: {
@@ -431,6 +430,29 @@ async function processPdf(
     let json: ProcessedDocument;
     // Call the PDF processor script
     if (config?.docling) {
+
+      // Validate Python environment and setup if needed
+      console.log(`[EXULU] Validating Python environment...`);
+      const validation = await validatePythonEnvironment(undefined, true);
+
+      if (!validation.valid) {
+        console.log(`[EXULU] Python environment not ready, setting up automatically...`);
+        console.log(`[EXULU] Reason: ${validation.message}`);
+
+        const setupResult = await setupPythonEnvironment({
+          verbose: true,
+          force: false, // Only setup if not already done
+        });
+
+        
+        if (!setupResult.success) {
+          throw new Error(`Failed to setup Python environment: ${setupResult.message}\n\n${setupResult.output || ''}`);
+        }
+
+        console.log(`[EXULU] Python environment setup completed successfully`);
+      } else {
+        console.log(`[EXULU] Python environment is valid`);
+      }
 
       console.log(`[EXULU] Processing document with document_to_markdown.py`);
 

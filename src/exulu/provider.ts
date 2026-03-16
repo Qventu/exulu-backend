@@ -492,6 +492,7 @@ export class ExuluProvider {
               {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
   
               IMPORTANT formatting rules:
+              - Do NOT reference just chunks like "Looking at chunk_index 5 and chunk_index 0 from the search result", always use the JSON format above.
               - Use the exact format shown above, all on ONE line
               - Do NOT use quotes around field names or values
               - Use the context ID from the tool result

@@ -257,7 +257,7 @@ export async function executePythonScript(
         // Ensure Python doesn't write bytecode files
         PYTHONDONTWRITEBYTECODE: '1',
       },
-      maxBuffer: 10 * 1024 * 1024, // 10MB buffer for output
+      maxBuffer: 50 * 1024 * 1024, // 50MB buffer for output (increased from 10MB)
     });
 
     return {
@@ -271,8 +271,22 @@ export async function executePythonScript(
     const stderr = error.stderr?.toString() ?? '';
     const exitCode = error.code ?? 1;
 
+    // Create a detailed error message that includes both stdout and stderr
+    let errorMessage = `Python script execution failed: ${error.message}`;
+
+    if (stderr) {
+      errorMessage += `\n\nStderr:\n${stderr}`;
+    }
+
+    if (stdout) {
+      errorMessage += `\n\nStdout:\n${stdout}`;
+    }
+
+    // Add the command that was executed for debugging
+    errorMessage += `\n\nCommand executed:\n${command}`;
+
     throw new PythonExecutionError(
-      `Python script execution failed: ${error.message}`,
+      errorMessage,
       stdout,
       stderr,
       exitCode

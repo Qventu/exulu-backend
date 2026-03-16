@@ -122,6 +122,8 @@ function getVenvPath(packageRoot: string): string {
 
 /**
  * Check if Python environment is already set up
+ * Note: This only checks if the venv exists, not if packages are installed.
+ * Use validatePythonEnvironment() for a more thorough check.
  */
 export function isPythonEnvironmentSetup(packageRoot?: string): boolean {
   const root = packageRoot ?? getPackageRoot();
@@ -239,7 +241,7 @@ export async function setupPythonEnvironment(
  */
 export function getPythonSetupInstructions(): string {
   return `
-Python environment not set up. Please run one of the following:
+Python environment not set up. Please run one of the following commands:
 
 Option 1 (Automatic):
   import { setupPythonEnvironment } from '@exulu/backend';
@@ -251,14 +253,23 @@ Option 2 (Manual - for package consumers):
 Option 3 (Manual - for contributors):
   npm run python:setup
 
+These commands will automatically create a Python virtual environment (.venv)
+in the @exulu/backend package and install all required dependencies.
+
 Requirements:
   - Python 3.10 or higher must be installed
   - pip must be available
+  - venv module must be available (for creating virtual environments)
 
-Installing Python:
+If Python dependencies are not installed, install them first, then run one of the commands above:
   - macOS: brew install python@3.12
-  - Ubuntu/Debian: sudo apt-get install python3.12
+  - Ubuntu/Debian: sudo apt-get install python3.12 python3-pip python3-venv
+  - Alpine Linux: apk add python3 py3-pip python3-dev
   - Windows: Download from https://www.python.org/downloads/
+
+Note: In Docker containers, ensure you install all three components:
+  Ubuntu/Debian: apt-get install -y python3 python3-pip python3-venv
+  Alpine: apk add python3 py3-pip python3-dev
 `.trim();
 }
 
@@ -266,9 +277,13 @@ Installing Python:
  * Validate Python environment and provide helpful error messages
  *
  * @param packageRoot - Package root directory
+ * @param checkPackages - Whether to verify critical packages are installed
  * @returns Object with validation status and message
  */
-export async function validatePythonEnvironment(packageRoot?: string): Promise<{
+export async function validatePythonEnvironment(
+  packageRoot?: string,
+  checkPackages: boolean = true
+): Promise<{
   valid: boolean;
   message: string;
 }> {
@@ -296,10 +311,6 @@ export async function validatePythonEnvironment(packageRoot?: string): Promise<{
   // Verify Python can execute
   try {
     await execAsync(`"${pythonPath}" --version`, { cwd: root });
-    return {
-      valid: true,
-      message: 'Python environment is valid',
-    };
   } catch {
     return {
       valid: false,
@@ -307,4 +318,41 @@ export async function validatePythonEnvironment(packageRoot?: string): Promise<{
                '  await setupPythonEnvironment({ force: true })',
     };
   }
+
+  // Verify critical packages are installed if requested
+  if (checkPackages) {
+    const criticalPackages = ['docling', 'transformers'];
+    const missingPackages: string[] = [];
+
+    for (const pkg of criticalPackages) {
+      try {
+        // Try to import the package
+        await execAsync(`"${pythonPath}" -c "import ${pkg}"`, {
+          cwd: root,
+          timeout: 10000 // 10 second timeout per import check
+        });
+      } catch {
+        missingPackages.push(pkg);
+      }
+    }
+
+    if (missingPackages.length > 0) {
+      return {
+        valid: false,
+        message: `Python environment exists but required packages are not installed: ${missingPackages.join(', ')}\n\n` +
+                 'This usually happens when:\n' +
+                 '1. The .venv folder was copied but dependencies were not installed\n' +
+                 '2. The package was installed via npm but setup script was not run\n\n' +
+                 'Please run:\n' +
+                 '  await setupPythonEnvironment({ force: true })\n\n' +
+                 'Or manually run the setup script:\n' +
+                 '  bash ' + getSetupScriptPath(root),
+      };
+    }
+  }
+
+  return {
+    valid: true,
+    message: 'Python environment is valid',
+  };
 }
