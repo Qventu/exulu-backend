@@ -9,6 +9,9 @@
   },
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "setup-python": "./bin/setup-python.cjs"
+  },
   "homepage": "https://exulu.com",
   "engines": {
     "node": "22.18.0"
@@ -151,6 +154,7 @@
   "files": [
     "dist",
     "ee",
+    "bin",
     "scripts/postinstall.cjs"
   ]
 }
