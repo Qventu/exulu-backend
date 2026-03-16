@@ -13,8 +13,7 @@ import TurndownService from 'turndown';
 import WordExtractor from 'word-extractor';
 import { parseOfficeAsync } from "officeparser";
 import { checkLicense } from '@EE/entitlements';
-
-const execAsync = promisify(exec);
+import { executePythonScript } from '@SRC/utils/python-executor';
 
 type DocumentProcessorConfig = {
   vlm?: {
@@ -430,19 +429,28 @@ async function processPdf(
 ): Promise<ProcessorOutput> {
   try {
     let json: ProcessedDocument;
-    // Call the PDF processor executable
+    // Call the PDF processor script
     if (config?.docling) {
-      /* `python3 pdf_to_markdown.py "${paths.source}" --output "${paths.json}" --images-dir "${paths.images}"` */
-      const script = `modal run modal_script.py --pdf-path "${paths.source}" --output "${paths.json}" --images-dir "${paths.images}"`
-      console.log(`[EXULU] Running python script: ${script}`);
-      const { stderr } = await execAsync(
-        // todo replace python3 with the compiled executable
-        script,
-        { maxBuffer: 2000 * 1024 * 1024 } // 2000 MB buffer for large outputs
-      );
-      // Log stderr (processing info, not errors)
-      if (stderr) {
-        console.log('Processing info:', stderr.trim());
+
+      console.log(`[EXULU] Processing document with document_to_markdown.py`);
+
+      const result = await executePythonScript({
+        scriptPath: 'ee/python/documents/processing/document_to_markdown.py',
+        args: [
+          paths.source,
+          '-o', paths.json,
+          '--images-dir', paths.images
+        ],
+        timeout: 30 * 60 * 1000, // 30 minutes for large documents
+      });
+
+      // Log processing info from stderr
+      if (result.stderr) {
+        console.log('Processing info:', result.stderr.trim());
+      }
+
+      if (!result.success) {
+        throw new Error(`Document processing failed: ${result.stderr}`);
       }
 
       // Read the generated JSON file
@@ -460,9 +468,9 @@ async function processPdf(
       }];
     }
 
-    console.log(`\n✓ Document processing completed successfully`);
-    console.log(`  Total pages: ${json.length}`);
-    console.log(`  Output file: ${paths.json}`);
+    console.log(`[EXULU] \n✓ Document processing completed successfully`);
+    console.log(`[EXULU] Total pages: ${json.length}`);
+    console.log(`[EXULU] Output file: ${paths.json}`);
 
     if (!config?.docling && config?.vlm?.model) {
       console.error('[EXULU] VLM validation is only supported when docling is enabled, skipping validation.');

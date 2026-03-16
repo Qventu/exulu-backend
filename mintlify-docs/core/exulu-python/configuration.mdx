@@ -1,0 +1,169 @@
+---
+title: 'Configuration'
+description: 'Configure and manage the Python environment'
+---
+
+## Environment Setup
+
+### Check Environment Status
+
+Verify if the Python environment is ready:
+
+```typescript
+import { ExuluPython } from '@exulu/backend';
+
+if (ExuluPython.check()) {
+  console.log('Python environment is ready');
+} else {
+  console.log('Python environment needs setup');
+}
+```
+
+### Validate Environment
+
+Get detailed validation information:
+
+```typescript
+import { ExuluPython } from '@exulu/backend';
+
+const validation = await ExuluPython.validate();
+
+if (validation.valid) {
+  console.log('✓ Environment is valid');
+} else {
+  console.error('✗ Environment issue:', validation.message);
+}
+```
+
+### Force Rebuild
+
+Rebuild the Python environment from scratch:
+
+```typescript
+import { ExuluPython } from '@exulu/backend';
+
+const result = await ExuluPython.setup({
+  force: true,
+  verbose: true
+});
+```
+
+## Setup Options
+
+The `setup()` method accepts the following options:
+
+<ParamField path="force" type="boolean" default="false">
+  Force reinstall even if environment already exists
+</ParamField>
+
+<ParamField path="verbose" type="boolean" default="false">
+  Show detailed output during setup
+</ParamField>
+
+<ParamField path="timeout" type="number" default="600000">
+  Setup timeout in milliseconds (10 minutes)
+</ParamField>
+
+<ParamField path="packageRoot" type="string">
+  Package root directory (auto-detected if not provided)
+</ParamField>
+
+## CI/CD Integration
+
+### GitHub Actions Example
+
+```yaml
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install
+        env:
+          # Enable Python setup in CI
+          SETUP_PYTHON_IN_CI: 1
+
+      - name: Run tests
+        run: npm test
+```
+
+### Cache Python Environment
+
+```yaml
+- name: Cache Python venv
+  uses: actions/cache@v3
+  with:
+    path: node_modules/@exulu/backend/ee/python/.venv
+    key: ${{ runner.os }}-python-${{ hashFiles('**/requirements.txt') }}
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Python environment not found">
+    **Solution**: Run the setup manually
+    ```typescript
+    import { ExuluPython } from '@exulu/backend';
+    await ExuluPython.setup();
+    ```
+  </Accordion>
+
+  <Accordion title="Python version too old">
+    **Solution**: Install Python 3.10 or higher
+    ```bash
+    # macOS
+    brew install python@3.12
+
+    # Ubuntu/Debian
+    sudo apt-get install python3.12
+    ```
+    Then rebuild:
+    ```typescript
+    await ExuluPython.setup({ force: true });
+    ```
+  </Accordion>
+
+  <Accordion title="Script execution timeout">
+    **Solution**: Increase timeout for long-running scripts
+    ```typescript
+    const result = await executePythonScript({
+      scriptPath: 'ee/python/my_script.py',
+      timeout: 1200000 // 20 minutes
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Import errors in Python">
+    **Solution**: Rebuild the environment
+    ```typescript
+    await ExuluPython.setup({ force: true });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Get Setup Instructions
+
+Get helpful instructions for users:
+
+```typescript
+import { ExuluPython } from '@exulu/backend';
+
+const instructions = ExuluPython.instructions();
+console.log(instructions);
+```

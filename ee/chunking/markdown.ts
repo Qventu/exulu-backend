@@ -1,5 +1,5 @@
-import { ExuluTokenizer } from "./tokenizer.ts";
-import { checkLicense } from "./entitlements";
+import { ExuluTokenizer } from "../tokenizer.ts";
+import { checkLicense } from "../entitlements";
 
 type CurrentHeaders = {
     h1?: {

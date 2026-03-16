@@ -25,8 +25,8 @@ import { ExuluContext } from "./exulu/context.ts";
 import CryptoJS from "crypto-js";
 import { postgresClient } from "./postgres/client";
 import { type Variable } from "@EXULU_TYPES/models/variable";
-import { MarkdownChunker } from "@EE/markdown";
-import {
+import { MarkdownChunker } from "@EE/chunking/markdown";
+import {  
   gpt5MiniProvider,
   gpt5Provider,
   gpt5proProvider,
@@ -49,8 +49,16 @@ import {
 } from "./templates/providers/google/vertex";
 import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
 import type { Item } from "@EXULU_TYPES/models/item";
-import { documentProcessor } from "@EE/documents/processing/doc_processor.ts";
 export type { Item as ExuluItem };
+
+// Python integration exports
+import {
+  setupPythonEnvironment,
+  isPythonEnvironmentSetup,
+  validatePythonEnvironment,
+  getPythonSetupInstructions,
+} from './utils/python-setup';
+import { documentProcessor } from "@EE/python/documents/processing/doc_processor.ts";
 
 export const ExuluJobs = {
   redis: redisClient,
@@ -159,3 +167,10 @@ export const ExuluChunkers = {
     rules: RecursiveRules,
   },
 };
+
+export const ExuluPython = {
+  setup: setupPythonEnvironment,
+  check: isPythonEnvironmentSetup,
+  validate: validatePythonEnvironment,
+  instructions: getPythonSetupInstructions,
+}
