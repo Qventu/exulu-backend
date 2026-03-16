@@ -12,3 +12,14 @@ logs/jobs/
 ./claude
 # jscpd duplicate code reports
 cpd-report/
+# Python environment and artifacts
+ee/python/.venv/
+ee/python/**/__pycache__/
+ee/python/**/*.pyc
+ee/python/**/*.pyo
+ee/python/**/*.pyd
+ee/python/**/.pytest_cache/
+ee/python/**/*.egg-info/
+# PyInstaller build artifacts
+ee/python/documents/processing/build/
+ee/python/documents/processing/dist/

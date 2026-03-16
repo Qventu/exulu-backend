@@ -1,0 +1,102 @@
+---
+title: 'ExuluPython'
+description: 'Python integration for advanced document processing'
+---
+
+## Overview
+
+ExuluPython provides seamless integration with Python-powered features in the Exulu backend, including advanced document processing with Docling. The integration handles Python environment setup automatically, requiring minimal configuration.
+
+## Features
+
+- **Automatic Setup**: Python environment configured on package installation
+- **Zero Configuration**: Works out of the box for most users
+- **Type-Safe**: Full TypeScript support with proper types
+- **Error Handling**: Clear error messages guide you through any issues
+- **Enterprise-Grade**: Uses Docling for high-quality document parsing
+
+## Quick Start
+
+### Automatic Installation
+
+When you install `@exulu/backend`, the Python environment is set up automatically:
+
+```bash
+npm install @exulu/backend
+```
+
+The postinstall script will:
+- Check for Python 3.10+
+- Create a virtual environment
+- Install required dependencies
+- Validate the installation
+
+### Manual Setup (Optional)
+
+If automatic setup was skipped or failed, you can set it up manually:
+
+```typescript
+import { ExuluPython } from '@exulu/backend';
+
+const result = await ExuluPython.setup();
+
+if (result.success) {
+  console.log('✓ Python environment ready!');
+} else {
+  console.error('Setup failed:', result.message);
+}
+```
+
+## Environment Variables
+
+### Skip Automatic Setup
+
+To skip automatic Python setup during installation:
+
+```bash
+SKIP_PYTHON_SETUP=1 npm install @exulu/backend
+```
+
+### Enable Setup in CI
+
+By default, setup is skipped in CI environments. To enable it:
+
+```bash
+SETUP_PYTHON_IN_CI=1 npm install @exulu/backend
+```
+
+## Requirements
+
+- **Python**: 3.10 or higher
+- **pip**: Latest version (auto-upgraded during setup)
+- **Disk Space**: ~500MB for Python packages
+
+### Installing Python
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install python@3.12
+    ```
+  </Tab>
+  <Tab title="Ubuntu/Debian">
+    ```bash
+    sudo apt-get update
+    sudo apt-get install python3.12 python3.12-venv python3-pip
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Download from [python.org](https://www.python.org/downloads/)
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/core/exulu-python/configuration">
+    Learn how to configure and manage the Python environment
+  </Card>
+  <Card title="API Reference" icon="code" href="/core/exulu-python/api-reference">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

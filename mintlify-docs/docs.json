@@ -122,6 +122,14 @@
                   "core/exulu-eval/api-reference"
                 ]
               },
+              {
+                "group": "ExuluPython",
+                "pages": [
+                  "core/exulu-python/introduction",
+                  "core/exulu-python/configuration",
+                  "core/exulu-python/api-reference"
+                ]
+              },
               "core/exulu-default-agents",
               "core/exulu-otel",
               "core/exulu-logging",

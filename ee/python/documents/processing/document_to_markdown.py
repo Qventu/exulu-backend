@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-PDF to Markdown Converter using Docling
-Converts a PDF to JSON with page-separated markdown and images.
+Document to Markdown Converter using Docling
+Converts a document to JSON with page-separated markdown and images.
 
 Usage:
-    pdf_to_markdown.py <pdf_file_path> [-o OUTPUT_PATH] [--max-tokens MAX_TOKENS]
+    document_to_markdown.py <document_file_path> [-o OUTPUT_PATH] [--images-dir IMAGES_DIR]
 """
 
 import sys
@@ -344,13 +344,6 @@ def main():
         type=str,
         dest='images_dir',
         help='Directory to save page images (default: <pdf_name>_images/)'
-    )
-
-    parser.add_argument(
-        '--max-tokens',
-        type=int,
-        dest='max_tokens',
-        help='Maximum number of tokens (currently not used, reserved for future use)'
     )
 
     # Parse arguments
