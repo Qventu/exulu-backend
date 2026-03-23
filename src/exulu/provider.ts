@@ -176,7 +176,7 @@ export class ExuluProvider {
           .string()
           .describe("A summary of relevant context / information from the current session"),
       }),
-      description: `This tool calls an AI agent named: ${agent.name}. The agent does the following: ${agent.description}.`,
+      description: `This tool calls an agent named: ${agent.name}. The agent does the following: ${agent.description}.`,
       config: [],
       execute: async ({ prompt, information, user, allExuluTools }: any) => {
         const hasAccessToAgent = await checkRecordAccess(agent, "read", user);

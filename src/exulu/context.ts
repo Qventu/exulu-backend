@@ -467,11 +467,34 @@ export class ExuluContext {
 
     // then insert the new / updated chunks
     if (chunks?.length) {
+      // Helper function to sanitize strings by removing null bytes
+      const sanitizeString = (str: string | null | undefined): string => {
+        if (!str) return '';
+        return str.replace(/\0/g, '');
+      };
+
+      // Helper function to sanitize metadata object
+      const sanitizeMetadata = (metadata: Record<string, any> | null | undefined): Record<string, any> => {
+        if (!metadata) return {};
+        const sanitized: Record<string, any> = {};
+        for (const [key, value] of Object.entries(metadata)) {
+          if (typeof value === 'string') {
+            sanitized[key] = sanitizeString(value);
+          } else {
+            sanitized[key] = value;
+          }
+        }
+        return sanitized;
+      };
+
       await db.from(getChunksTableName(this.id)).insert(
         chunks.map((chunk) => ({
-          source,
-          metadata: chunk.metadata,
-          content: chunk.content,
+          // Sanitize source to remove null bytes
+          source: sanitizeString(source),
+          // Sanitize metadata to remove null bytes from string values
+          metadata: sanitizeMetadata(chunk.metadata),
+          // Remove null bytes (0x00) which are invalid in PostgreSQL UTF8 encoding
+          content: sanitizeString(chunk.content),
           chunk_index: chunk.index,
           embedding: pgvector.toSql(chunk.vector),
         })),

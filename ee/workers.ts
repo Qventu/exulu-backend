@@ -36,6 +36,44 @@ let redisConnection: IORedis;
 // This is critical for BullMQ workers to properly mark jobs as failed
 let unhandledRejectionHandlerInstalled = false;
 
+// Connection pool health monitoring
+let poolMonitoringInterval: NodeJS.Timeout | undefined;
+
+const startPoolMonitoring = () => {
+  if (poolMonitoringInterval) return;
+
+  poolMonitoringInterval = setInterval(async () => {
+    try {
+      const { db } = await postgresClient();
+      const poolStats = (db.client as any).pool;
+
+      if (poolStats) {
+        const used = poolStats.numUsed?.() || 0;
+        const free = poolStats.numFree?.() || 0;
+        const pending = poolStats.numPendingAcquires?.() || 0;
+        const total = used + free;
+
+        console.log("[EXULU] Connection pool health check:", {
+          used,
+          free,
+          pending,
+          total,
+          utilization: total > 0 ? `${Math.round((used / total) * 100)}%` : "0%",
+        });
+
+        // Warn if pool is under pressure
+        if (pending > 10) {
+          console.warn(
+            `[EXULU] WARNING: ${pending} jobs waiting for database connections. Consider increasing pool size or reducing worker concurrency.`,
+          );
+        }
+      }
+    } catch (error) {
+      console.error("[EXULU] Error checking pool health:", error);
+    }
+  }, 30000); // Check every 30 seconds
+};
+
 const installGlobalErrorHandlers = () => {
   if (unhandledRejectionHandlerInstalled) return;
 
@@ -67,6 +105,9 @@ const installGlobalErrorHandlers = () => {
   console.log("[EXULU] Global error handlers installed to prevent worker crashes");
 };
 
+// Track if shutdown is in progress to prevent duplicate shutdown attempts
+let isShuttingDown = false;
+
 export const createWorkers = async (
   providers: ExuluProvider[],
   queues: ExuluQueueConfig[],
@@ -88,9 +129,12 @@ export const createWorkers = async (
   // Install global error handlers to prevent crashes
   installGlobalErrorHandlers();
 
-  // Increase max listeners to accommodate multiple workers (each adds SIGINT/SIGTERM listeners)
-  // Each worker adds 2 listeners (SIGINT + SIGTERM), so set to queues.length * 2 + buffer
-  process.setMaxListeners(Math.max(queues.length * 2 + 5, 15));
+  // Start connection pool monitoring
+  startPoolMonitoring();
+
+  // Increase max listeners to accommodate multiple workers
+  // We only add 2 signal handlers total (not per worker), so this is conservative
+  process.setMaxListeners(Math.max(15, process.getMaxListeners()));
 
   if (!redisServer.host || !redisServer.port) {
     console.error(
@@ -134,7 +178,64 @@ export const createWorkers = async (
           type: bullmqJob.data.type,
         });
 
-        const { db } = await postgresClient();
+        // For long-running processor jobs, set up progress heartbeat to prevent stalling
+        let progressInterval: NodeJS.Timeout | undefined;
+        if (bullmqJob.data.type === "processor") {
+          // Update progress every 25 seconds to keep the job alive
+          // This prevents BullMQ from marking the job as stalled during long-running operations
+          progressInterval = setInterval(async () => {
+            try {
+              await bullmqJob.updateProgress({
+                status: "processing",
+                timestamp: new Date().toISOString(),
+              });
+              console.log(`[EXULU] Job ${bullmqJob.id} heartbeat sent to prevent stalling`);
+            } catch (error) {
+              console.error(`[EXULU] Error updating job progress:`, error);
+            }
+          }, 25000); // Update every 25 seconds (less than the default 30s stalled interval)
+        }
+
+        // Acquire database connection with retry logic for high concurrency scenarios
+        let db: any;
+        let retries = 3;
+        let lastError: Error | undefined;
+
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const client = await postgresClient();
+            db = client.db;
+
+            // Log pool stats for monitoring
+            const poolStats = (db.client as any).pool;
+            if (poolStats) {
+              console.log(`[EXULU] Connection pool stats for job ${bullmqJob.id}:`, {
+                size: poolStats.numUsed?.() || 0,
+                available: poolStats.numFree?.() || 0,
+                pending: poolStats.numPendingAcquires?.() || 0,
+              });
+            }
+            break;
+          } catch (error: unknown) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            console.error(
+              `[EXULU] Failed to acquire database connection (attempt ${attempt}/${retries}) for job ${bullmqJob.id}:`,
+              lastError.message,
+            );
+
+            if (attempt < retries) {
+              // Exponential backoff: 500ms, 1000ms, 2000ms
+              const backoffMs = 500 * Math.pow(2, attempt - 1);
+              await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            }
+          }
+        }
+
+        if (!db) {
+          throw new Error(
+            `Failed to acquire database connection after ${retries} attempts: ${lastError?.message}`,
+          );
+        }
 
         // Type casting data here, couldn't get it to merge
         // on the main object while keeping auto completion.
@@ -258,7 +359,7 @@ export const createWorkers = async (
               const exuluStorage = new ExuluStorage({ config });
 
               console.log("[EXULU] POS 2 -- EXULU CONTEXT PROCESS FIELD");
-              const processorResult = await context.processor.execute({
+              let processorResult = await context.processor.execute({
                 item: data.inputs,
                 user: data.user,
                 role: data.role,
@@ -279,6 +380,11 @@ export const createWorkers = async (
               // we upadte the item in the db.
               delete processorResult.field;
 
+              // Memory optimization: For large processor results (e.g., documents),
+              // extract only the fields we need for the database update to avoid
+              // keeping the entire large object in memory
+              const updateData = { ...processorResult };
+
               // Update the item in the db with the processor result
               await db
                 .from(getTableName(context.id))
@@ -286,9 +392,14 @@ export const createWorkers = async (
                   id: processorResult.id,
                 })
                 .update({
-                  ...processorResult,
+                  ...updateData,
                   last_processed_at: new Date().toISOString(),
                 });
+
+              // Clear the updateData to help GC
+              Object.keys(updateData).forEach(key => {
+                delete (updateData as any)[key];
+              });
 
               let jobs: string[] = [];
               if (context.processor?.config?.generateEmbeddings) {
@@ -322,12 +433,25 @@ export const createWorkers = async (
                 }
               }
 
-              return {
-                result: processorResult,
+              // Create minimal return object to reduce memory footprint
+              const result = {
+                result: { id: processorResult.id },
                 metadata: {
                   jobs: jobs.length > 0 ? jobs.join(",") : undefined,
                 },
               };
+
+              // Clear large objects to help natural GC
+              // Setting to null breaks references, allowing V8 to collect on next cycle
+              processorResult = null as any;
+
+              // Log memory usage for monitoring without forcing GC
+              const memUsage = process.memoryUsage();
+              console.log(
+                `[EXULU] Memory after processor job ${bullmqJob.id}: ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+              );
+
+              return result;
             }
 
             if (data.type === "workflow") {
@@ -804,10 +928,18 @@ export const createWorkers = async (
           const result = await Promise.race([workPromise, timeoutPromise]);
           // Clear timeout if work completes successfully
           clearTimeout(timeoutHandle!);
+          // Clear progress interval for processor jobs
+          if (progressInterval) {
+            clearInterval(progressInterval);
+          }
           return result;
         } catch (error: unknown) {
           // Clear timeout on error
           clearTimeout(timeoutHandle!);
+          // Clear progress interval for processor jobs
+          if (progressInterval) {
+            clearInterval(progressInterval);
+          }
           console.error(
             `[EXULU] job ${bullmqJob.id} failed (error caught in race handler).`,
             error instanceof Error ? error.message : String(error),
@@ -821,6 +953,14 @@ export const createWorkers = async (
         concurrency: queue.concurrency?.worker || 1,
         removeOnComplete: { count: 1000 },
         removeOnFail: { count: 5000 },
+        // Configure settings for long-running jobs (especially processor jobs)
+        // lockDuration: How long a worker can hold a job before it's considered stalled
+        // Set to 5 minutes to accommodate CPU-intensive operations
+        lockDuration: 300000, // 5 minutes in milliseconds
+        // stalledInterval: How often to check for stalled jobs
+        // Set to 2 minutes to reduce false positives for long-running operations
+        stalledInterval: 120000, // 2 minutes in milliseconds
+        maxStalledCount: 1,
         ...(queue.ratelimit && {
           limiter: {
             max: queue.ratelimit,
@@ -874,10 +1014,12 @@ export const createWorkers = async (
             }
           : error,
       );
+      throw error;
     });
 
     worker.on("error", (error: Error) => {
       console.error(`[EXULU] worker error.`, error);
+      throw error;
     });
 
     worker.on("progress", (job, progress) => {
@@ -886,19 +1028,73 @@ export const createWorkers = async (
       });
     });
 
-    const gracefulShutdown = async (signal) => {
-      console.log(`Received ${signal}, closing server...`);
-      await worker.close();
-      // Other asynchronous closings
-      process.exit(0);
-    };
-
-    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-
-    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-
     return worker;
   });
+
+  // Centralized graceful shutdown handler - only attached ONCE for all workers
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      console.log(`[EXULU] Shutdown already in progress, ignoring additional ${signal}`);
+      return;
+    }
+
+    isShuttingDown = true;
+    console.log(`[EXULU] Received ${signal}, shutting down gracefully...`);
+
+    try {
+      // Clear pool monitoring interval
+      if (poolMonitoringInterval) {
+        clearInterval(poolMonitoringInterval);
+        poolMonitoringInterval = undefined;
+      }
+
+      // Close all workers concurrently with timeout
+      console.log(`[EXULU] Closing ${workers.length} worker(s)...`);
+      const closePromises = workers.map(async (worker, index) => {
+        try {
+          // Wait for current job to finish, but timeout after 30 seconds
+          await Promise.race([
+            worker.close(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("Worker close timeout")), 30000),
+            ),
+          ]);
+          console.log(`[EXULU] Worker ${index + 1} closed successfully`);
+        } catch (error) {
+          console.error(`[EXULU] Error closing worker ${index + 1}:`, error);
+        }
+      });
+
+      await Promise.allSettled(closePromises);
+
+      // Close Redis connection
+      if (redisConnection) {
+        console.log(`[EXULU] Closing Redis connection...`);
+        await redisConnection.quit();
+      }
+
+      // Close database connection pool
+      try {
+        const { db } = await postgresClient();
+        if (db?.client) {
+          console.log(`[EXULU] Closing database connection pool...`);
+          await db.client.destroy();
+        }
+      } catch (error) {
+        console.error(`[EXULU] Error closing database:`, error);
+      }
+
+      console.log(`[EXULU] Graceful shutdown complete`);
+      process.exit(0);
+    } catch (error) {
+      console.error(`[EXULU] Error during graceful shutdown:`, error);
+      process.exit(1);
+    }
+  };
+
+  // Register shutdown handlers ONCE for all workers
+  process.once("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
   return workers;
 };

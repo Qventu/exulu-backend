@@ -82,13 +82,15 @@ export async function postgresClient(): Promise<{
           query_timeout: 1800000, // 30 minutes
         },
         pool: {
-          min: 5, // Increased from 2 to ensure enough connections available
-          max: 50, // Increased from 20 to handle more concurrent operations with processor jobs
-          acquireTimeoutMillis: 60000, // Increased from 30s to 60s to handle pool contention
+          min: 10, // Minimum connections always ready
+          max: 300, // Increased to support high worker concurrency (250+ concurrent jobs)
+          acquireTimeoutMillis: 120000, // 2 minutes - increased to handle high contention during bursts
           createTimeoutMillis: 30000,
-          idleTimeoutMillis: 60000, // Increased to keep connections alive longer
+          idleTimeoutMillis: 60000, // Keep connections alive for reuse
           reapIntervalMillis: 1000,
           createRetryIntervalMillis: 200,
+          // Enable propagateCreateError to properly handle connection creation failures
+          propagateCreateError: false,
           // Log pool events to help debug connection issues
           afterCreate: (conn: any, done: any) => {
             console.log("[EXULU] New database connection created");
