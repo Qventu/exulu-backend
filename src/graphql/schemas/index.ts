@@ -1752,6 +1752,7 @@ type AgentEvalFunctionConfig {
 
 type ItemChunks {
     chunk_id: String!
+    chunk_metadata: JSON!
     chunk_index: Int!
     chunk_content: String!
     chunk_source: String!

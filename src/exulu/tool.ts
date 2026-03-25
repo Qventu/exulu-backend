@@ -22,6 +22,7 @@ export class ExuluTool {
   public inputSchema?: z.ZodType;
   public type: "context" | "function" | "agent" | "web_search";
   public tool: Tool;
+  public needsApproval: boolean;
   public config: {
     name: string;
     description: string;
@@ -38,6 +39,7 @@ export class ExuluTool {
     type,
     execute,
     config,
+    needsApproval,
   }: {
     id: string;
     name: string;
@@ -51,6 +53,7 @@ export class ExuluTool {
       type: "boolean" | "string" | "number" | "variable";
       default?: string | boolean | number;
     }[];
+    needsApproval?: boolean;
     execute: (inputs: any) =>
       | Promise<{
           result?: string;
@@ -65,6 +68,7 @@ export class ExuluTool {
   }) {
     this.id = id;
     this.config = config;
+    this.needsApproval = needsApproval ?? true;
     this.category = category || "default";
     this.name = name;
     this.description = description;

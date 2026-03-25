@@ -11,7 +11,7 @@ import type { ExuluContext } from "./context.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
 import {
   convertToModelMessages,
-  generateObject,
+  Output,
   generateText,
   type LanguageModel,
   streamText,
@@ -176,7 +176,7 @@ export class ExuluProvider {
           .string()
           .describe("A summary of relevant context / information from the current session"),
       }),
-      description: `This tool calls an AI agent named: ${agent.name}. The agent does the following: ${agent.description}.`,
+      description: `This tool calls an agent named: ${agent.name}. The agent does the following: ${agent.description}.`,
       config: [],
       execute: async ({ prompt, information, user, allExuluTools }: any) => {
         const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
@@ -325,7 +325,7 @@ export class ExuluProvider {
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
     instructions?: string;
-    outputSchema?: z.ZodType;
+    outputSchema?: z.ZodTypeAny;
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -347,10 +347,6 @@ export class ExuluProvider {
 
     if (!prompt && !inputMessages?.length) {
       throw new Error("Prompt or message is required for generating.");
-    }
-
-    if (outputSchema && !prompt) {
-      throw new Error("Prompt is required for generating with an output schema.");
     }
 
     const model = this.model.create({
@@ -527,14 +523,17 @@ export class ExuluProvider {
       let inputTokens: number = 0;
       let outputTokens: number = 0;
       if (outputSchema) {
-        const { object, usage } = await generateObject({
+        const { output, usage } = await generateText({
           model: model,
           system,
-          prompt: prompt,
           maxRetries: 3,
-          schema: outputSchema,
+          output: Output.object({
+            schema: outputSchema,
+          }),
+          prompt: prompt,
+          stopWhen: [stepCountIs(5)] // make configurable
         });
-        result.object = object;
+        result.object = output;
         inputTokens = usage.inputTokens || 0;
         outputTokens = usage.outputTokens || 0;
       } else {
@@ -565,7 +564,7 @@ export class ExuluProvider {
             model,
             agent,
           ),
-          stopWhen: [stepCountIs(5)],
+          stopWhen: [stepCountIs(5)] // make configurable
         });
         result.text = text;
         inputTokens = totalUsage?.inputTokens || 0;

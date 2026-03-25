@@ -285,7 +285,7 @@ export const finalizeRequestedFields = async ({
         const query = db
           .from(getChunksTableName(context.id))
           .where({ source: result.id })
-          .select("id", "content", "source", "chunk_index", "createdAt", "updatedAt");
+          .select("id", "content", "source", "chunk_index", "createdAt", "updatedAt", "metadata");
 
         const chunks = await query;
 
@@ -301,6 +301,7 @@ export const finalizeRequestedFields = async ({
           item_id: chunk.item_id,
           item_external_id: chunk.item_external_id,
           item_name: chunk.item_name,
+          chunk_metadata: chunk.metadata,
         }));
       }
     }
