@@ -42,6 +42,8 @@ import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts"
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
+import { convertJsonSchemaToZod } from 'zod-from-json-schema';
+import type { ZodAny, ZodType } from "zod/v4";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -603,6 +605,18 @@ Mood: friendly and intelligent.
         user,
       );
 
+      if (req.body.outputSchema && !!headers.stream) {
+        throw new Error("Providing a outputSchema in the POST body is not allowed when using the streaming API, set 'stream' to false in the headers when defining a response schema.")
+      }
+
+      let outputSchema: ZodType | undefined;
+      if (req.body.outputSchema) {
+        if (typeof req.body.outputSchema === "string") {
+          req.body.outputSchema = JSON.parse(req.body.outputSchema);
+        }
+        outputSchema = convertJsonSchemaToZod(req.body.outputSchema);
+      }
+
       let providerapikey: string | undefined;
       const variableName = agent.providerapikey;
 
@@ -783,6 +797,7 @@ Mood: friendly and intelligent.
         const response = await provider.generateSync({
           contexts: contexts,
           rerankers: rerankers || [],
+          outputSchema: outputSchema,
           agent: agent,
           user,
           req: req,

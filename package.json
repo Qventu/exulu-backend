@@ -96,6 +96,8 @@
     "@aws-sdk/client-s3": "^3.338.0",
     "@aws-sdk/client-sts": "^3.338.0",
     "@aws-sdk/s3-request-presigner": "^3.338.0",
+    "@llamaindex/liteparse": "^1.0.1",
+    "@mistralai/mistralai": "^2.1.1",
     "@modelcontextprotocol/sdk": "^1.14.0",
     "@opentelemetry/api-logs": "^0.203.0",
     "@opentelemetry/auto-instrumentations-node": "^0.62.1",
@@ -148,6 +150,7 @@
     "winston": "^3.17.0",
     "word-extractor": "^1.0.4",
     "zod": "^3.25.76",
+    "zod-from-json-schema": "^0.5.2",
     "zod-to-json-schema": "^3.25.1",
     "zodex": "^0.18.2"
   },

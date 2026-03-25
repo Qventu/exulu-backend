@@ -311,6 +311,28 @@ export class MarkdownChunker {
     }
 
     /**
+     * Checks if a position in the text falls within a <diagram> tag.
+     * Returns the adjusted position (before the diagram) if inside a diagram, otherwise returns the original position.
+     */
+    private adjustForDiagramTags(text: string, position: number): number {
+        // Find all diagram tags in the text
+        const diagramRegex = /<diagram>[\s\S]*?<\/diagram>/gi;
+        let match: RegExpExecArray | null;
+
+        while ((match = diagramRegex.exec(text)) !== null) {
+            const diagramStart = match.index;
+            const diagramEnd = match.index + match[0].length;
+
+            // If the position falls within a diagram tag, return the position before the diagram
+            if (position > diagramStart && position < diagramEnd) {
+                return diagramStart;
+            }
+        }
+
+        return position;
+    }
+
+    /**
      * Find the nearest logical breakpoint working backwards from the end of the text.
      * Logical breakpoints are prioritized as follows:
      * 1. Before markdown headers (##) or HTML headers (<h1>-<h6>)
@@ -321,6 +343,7 @@ export class MarkdownChunker {
      *
      * Only considers breakpoints in the last 50% of the text to avoid creating very small chunks.
      * Returns the position of the breakpoint, or null if none found
+     * IMPORTANT: Never splits content within <diagram> tags
      */
     private findLogicalBreakpoint(text: string): number | null {
         if (text.length === 0) return null;
@@ -349,7 +372,8 @@ export class MarkdownChunker {
         }
 
         if (lastHeaderPosition > 0) {
-            return lastHeaderPosition; // Break BEFORE the header (at the \n)
+            // Ensure we don't break inside a diagram tag
+            return this.adjustForDiagramTags(text, lastHeaderPosition);
         }
 
         // Priority 2: Look for paragraph breaks (double newlines) in the latter half
@@ -365,13 +389,16 @@ export class MarkdownChunker {
         }
 
         if (lastParagraphBreak > 0) {
-            return lastParagraphBreak + 2; // Include both newlines
+            // Ensure we don't break inside a diagram tag
+            const adjusted = this.adjustForDiagramTags(text, lastParagraphBreak + 2);
+            return adjusted;
         }
 
         // Priority 3: Look for single newlines in the latter half
         const newlineIndex = text.lastIndexOf('\n');
         if (newlineIndex >= minPosition) {
-            return newlineIndex + 1; // Include the newline
+            // Ensure we don't break inside a diagram tag
+            return this.adjustForDiagramTags(text, newlineIndex + 1);
         }
 
         // Priority 4: Look for end of sentence (. ! ? followed by space or newline)
@@ -385,7 +412,8 @@ export class MarkdownChunker {
         }
 
         if (lastSentenceEnd > 0) {
-            return lastSentenceEnd;
+            // Ensure we don't break inside a diagram tag
+            return this.adjustForDiagramTags(text, lastSentenceEnd);
         }
 
         // Priority 5: Look for any whitespace in the latter half
@@ -393,7 +421,8 @@ export class MarkdownChunker {
         while (lastSpace > minPosition) {
             const pos = text.lastIndexOf(' ', lastSpace - 1);
             if (pos >= minPosition) {
-                return pos + 1; // Include the space
+                // Ensure we don't break inside a diagram tag
+                return this.adjustForDiagramTags(text, pos + 1);
             }
             lastSpace = pos;
         }
@@ -585,6 +614,55 @@ export class MarkdownChunker {
                     // Update the slice to only include the decoded content
                     currentSlice = decoded;
                     targetPosition = currentPosition + decoded.length;
+                }
+            }
+
+            // Check if the current slice ends in the middle of a diagram tag
+            // If so, we need to adjust to include the entire diagram or exclude it entirely
+            const diagramCheck = /<diagram>/gi;
+            const diagramCloseCheck = /<\/diagram>/gi;
+            let openDiagramsInSlice = 0;
+
+            while (diagramCheck.exec(currentSlice) !== null) {
+                openDiagramsInSlice++;
+            }
+
+            let closeDiagramsInSlice = 0;
+            while (diagramCloseCheck.exec(currentSlice) !== null) {
+                closeDiagramsInSlice++;
+            }
+
+            // If we have more opening tags than closing tags, we're cutting a diagram in half
+            if (openDiagramsInSlice > closeDiagramsInSlice) {
+                // Find the last opening diagram tag in the slice
+                const lastDiagramOpenIndex = currentSlice.lastIndexOf('<diagram>');
+                if (lastDiagramOpenIndex !== -1) {
+                    // Try to extend the slice to include the closing tag
+                    const remainingText = text.slice(currentPosition + lastDiagramOpenIndex);
+                    const closingTagMatch = /<\/diagram>/i.exec(remainingText);
+
+                    if (closingTagMatch) {
+                        const closingTagPosition = lastDiagramOpenIndex + closingTagMatch.index + closingTagMatch[0].length;
+
+                        // Check if including the full diagram would still be reasonable
+                        // If the diagram is massive, we'll exclude it from this chunk instead
+                        const extendedSlice = text.slice(currentPosition, currentPosition + closingTagPosition);
+                        const extendedTokens = tokenizer.encode(extendedSlice);
+
+                        if (extendedTokens.length <= adjustedChunkSize * 1.5) {
+                            // Include the full diagram in this chunk
+                            currentSlice = extendedSlice;
+                            targetPosition = currentPosition + closingTagPosition;
+                        } else {
+                            // Diagram is too large, exclude it from this chunk
+                            currentSlice = currentSlice.slice(0, lastDiagramOpenIndex);
+                            targetPosition = currentPosition + lastDiagramOpenIndex;
+                        }
+                    } else {
+                        // Closing tag not found, exclude the opening tag from this chunk
+                        currentSlice = currentSlice.slice(0, lastDiagramOpenIndex);
+                        targetPosition = currentPosition + lastDiagramOpenIndex;
+                    }
                 }
             }
 
