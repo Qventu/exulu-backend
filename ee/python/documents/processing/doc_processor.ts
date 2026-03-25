@@ -15,6 +15,7 @@ import { executePythonScript } from '@SRC/utils/python-executor';
 import { setupPythonEnvironment, validatePythonEnvironment } from '@SRC/utils/python-setup';
 import { LiteParse } from '@llamaindex/liteparse';
 import { Mistral } from '@mistralai/mistralai';
+import { ExuluVariables } from '@SRC/index';
 
 type DocumentProcessorConfig = {
   vlm?: {
@@ -586,6 +587,14 @@ async function processDocument(
   };
 }
 
+const getMistralApiKey = async () => {
+  if (process.env.MISTRAL_API_KEY) {
+    return process.env.MISTRAL_API_KEY;
+  } else {
+    return await ExuluVariables.get("MISTRAL_API_KEY");
+  }
+}
+
 async function processPdf(
   buffer: Buffer,
   paths: ProcessingPaths,
@@ -656,15 +665,17 @@ async function processPdf(
       }];
 
     } else if (config?.processor.name === "mistral") {
-      if (!process.env.MISTRAL_API_KEY) {
-        throw new Error('[EXULU] MISTRAL_API_KEY is not set, please set it in the environment variables.');
+
+      const MISTRAL_API_KEY = await getMistralApiKey();
+      if (MISTRAL_API_KEY) {
+        throw new Error('[EXULU] MISTRAL_API_KEY is not set, please set it in the environment variable via process.env or via an Exulu variable named "MISTRAL_API_KEY".');
       }
 
       // Wait a randomn time between 1 and 5 seconds to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 4000) + 1000));
 
       const base64Pdf = buffer.toString('base64');
-      const client = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
+      const client = new Mistral({ apiKey: MISTRAL_API_KEY });
 
       const ocrResponse = await withRetry(async () => {
         type MistralOCRResponse = Awaited<ReturnType<typeof client.ocr.process>>;
