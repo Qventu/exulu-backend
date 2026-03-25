@@ -150,6 +150,7 @@
     "winston": "^3.17.0",
     "word-extractor": "^1.0.4",
     "zod": "^3.25.76",
+    "zod-from-json-schema": "^0.5.2",
     "zod-to-json-schema": "^3.25.1",
     "zodex": "^0.18.2"
   },

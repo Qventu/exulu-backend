@@ -1079,6 +1079,7 @@ export class ExuluContext {
       name: `${this.name}_context_search`,
       type: "context",
       category: "contexts",
+      needsApproval: true, // todo make configurable
       inputSchema: z.object({
         query: z.string().describe("The original question that the user asked"),
         keywords: z

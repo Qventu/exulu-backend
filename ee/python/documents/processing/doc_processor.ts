@@ -48,8 +48,9 @@ interface VLMValidationResult {
   needs_correction: boolean;
   corrected_text?: string;
   confidence: 'high' | 'medium' | 'low';
-  previous_table?: {
+  current_page_table?: {
     headers: string[];
+    is_continuation: boolean; // true if this table appears to be missing headers
   }
   reasoning: string;
 }
@@ -174,10 +175,7 @@ function reconstructHeadings(
 async function validatePageWithVLM(
   page: ProcessedPage,
   imagePath: string,
-  model: LanguageModel,
-  previous_table?: {
-    headers: string[];
-  }
+  model: LanguageModel
 ): Promise<VLMValidationResult> {
   // Read the image as base64
   const imageBuffer = await fs.promises.readFile(imagePath);
@@ -239,15 +237,8 @@ Work through these checks in order:
 - Green or black checkmark → \`+\` (active); Red or black cross → \`-\` (inactive)
 
 ### 4. Multi-Page Table Continuity
-- If a table runs to the bottom of the page (it may continue on the next page, with possible footnotes in between), extract its header row and include it in the \`latest_table.headers\` field of your response.
-${previous_table
-      ? `- The current page may be a continuation of a table from the previous page. If the table on this page is missing a header row, reconstruct it using these previous headers:
-  | ${previous_table.headers.join(' | ')} |
-  
-  If the table on this page is likely to continue on the next page, provide the same headers in the latest_table.headers field so we can continue reconstructing the table on the next page.
-  `
-      : ''
-    }
+- If this page contains a table with a header row that runs to the bottom of the page (suggesting it may continue on the next page), extract the header row and include it in the \`current_page_table.headers\` field.
+- If this page contains a table WITHOUT a header row (suggesting it's a continuation from a previous page), set \`current_page_table.is_continuation\` to true and try to identify what the headers might be based on the data structure. Include your best guess for headers in \`current_page_table.headers\`.
 
 ### 5. Technical Diagrams & Schematics
 If the page contains a flow-chart, schematic, technical drawing or control board layout that is **absent or poorly described** in the OCR output do the following:
@@ -273,9 +264,10 @@ If the page contains a flow-chart, schematic, technical drawing or control board
       schema: z.object({
         needs_correction: z.boolean(),
         corrected_text: z.string().nullable(),
-        latest_table: z.array(z.object({
+        current_page_table: z.object({
           headers: z.array(z.string()),
-        })).nullable(),
+          is_continuation: z.boolean(),
+        }).nullable(),
         confidence: z.enum(['high', 'medium', 'low']),
         reasoning: z.string(),
       }),
@@ -299,8 +291,9 @@ If the page contains a flow-chart, schematic, technical drawing or control board
     needs_correction: boolean;
     corrected_text: string | null;
     confidence: 'high' | 'medium' | 'low';
-    latest_table?: {
+    current_page_table?: {
       headers: string[];
+      is_continuation: boolean;
     } | null;
     reasoning: string;
   };
@@ -309,7 +302,7 @@ If the page contains a flow-chart, schematic, technical drawing or control board
     needs_correction: parsedOutput.needs_correction,
     corrected_text: parsedOutput.corrected_text || undefined,
     confidence: parsedOutput.confidence,
-    previous_table: parsedOutput.latest_table || undefined,
+    current_page_table: parsedOutput.current_page_table || undefined,
     reasoning: parsedOutput.reasoning,
   };
 
@@ -317,7 +310,79 @@ If the page contains a flow-chart, schematic, technical drawing or control board
 }
 
 /**
- * Identifies pages that need VLM validation and validates them
+ * Reconstructs table headers across pages sequentially after parallel VLM processing
+ */
+function reconstructTableHeaders(
+  document: ProcessedDocument,
+  validationResults: Map<number, VLMValidationResult>,
+  verbose: boolean = false
+): void {
+  let lastTableHeaders: string[] | undefined = undefined;
+
+  for (const page of document) {
+    const validation = validationResults.get(page.page);
+    if (!validation) continue;
+
+    const tableInfo = validation.current_page_table;
+
+    // If this page has a table
+    if (tableInfo && tableInfo.headers.length > 0) {
+      // If it's a continuation and we have previous headers, reconstruct
+      if (tableInfo.is_continuation && lastTableHeaders) {
+        if (verbose) {
+          console.log(`[EXULU] Page ${page.page}: Reconstructing table headers from previous page`);
+          console.log(`[EXULU] Previous headers: ${lastTableHeaders.join(' | ')}`);
+        }
+
+        // Get the content to modify (corrected or original)
+        const contentToModify = page.vlm_corrected_text || page.content;
+
+        // Find the first table in the content and add headers
+        const lines = contentToModify.split('\n');
+        const firstTableLineIndex = lines.findIndex(line => line.trim().startsWith('|'));
+
+        if (firstTableLineIndex !== -1) {
+          // Create header row and separator
+          const headerRow = `| ${lastTableHeaders.join(' | ')} |`;
+          const separatorRow = `| ${lastTableHeaders.map(() => '---').join(' | ')} |`;
+
+          // Insert headers before the first table row
+          lines.splice(firstTableLineIndex, 0, headerRow, separatorRow);
+
+          // Update the content
+          const reconstructedContent = lines.join('\n');
+          if (page.vlm_corrected_text) {
+            page.vlm_corrected_text = reconstructedContent;
+          } else {
+            page.content = reconstructedContent;
+          }
+
+          if (verbose) {
+            console.log(`[EXULU] Page ${page.page}: Added table headers successfully`);
+          }
+        }
+
+        // Update lastTableHeaders if this table also has headers (it might continue further)
+        if (!tableInfo.is_continuation) {
+          lastTableHeaders = tableInfo.headers;
+        }
+      } else {
+        // This is a new table with headers, store them for next page
+        lastTableHeaders = tableInfo.headers;
+        if (verbose) {
+          console.log(`[EXULU] Page ${page.page}: Storing table headers for potential continuation`);
+          console.log(`[EXULU] Headers: ${lastTableHeaders.join(' | ')}`);
+        }
+      }
+    } else {
+      // No table on this page, reset the tracking
+      lastTableHeaders = undefined;
+    }
+  }
+}
+
+/**
+ * Identifies pages that need VLM validation and validates them in parallel
  */
 async function validateWithVLM(
   document: ProcessedDocument,
@@ -326,103 +391,116 @@ async function validateWithVLM(
   concurrency: number = 10
 ): Promise<ProcessedDocument> {
   console.log(`[EXULU] Starting VLM validation for docling output, ${document.length} pages...`);
-  console.log(
-    `[EXULU] Concurrency limit: ${concurrency}`
-  );
+  console.log(`[EXULU] Concurrency limit: ${concurrency}`);
 
-  // Validate each page that needs it
+  // Create a concurrency limiter
+  const limit = pLimit(concurrency);
+
+  // Store validation results for post-processing
+  const validationResults = new Map<number, VLMValidationResult>();
+
+  // Track metrics
   let validatedCount = 0;
   let correctedCount = 0;
 
-  let previous_table: {
-    headers: string[];
-  } | undefined = undefined;
-  // Create validation tasks for all pages
+  // Create parallel validation tasks for all pages
+  const validationTasks = document.map(page =>
+    limit(async () => {
+      // Yield control to the event loop to prevent stalling
+      // This is critical for BullMQ to renew job locks during long-running operations
+      await new Promise(resolve => setImmediate(resolve));
 
-  // We go through the pages in order, so we can keep
-  // track of document structures that span multiple
-  // pages, for example tables, so we can reconstruct
-  // data such as headers.
-  for (const page of document) {
-    // Yield control to the event loop every iteration to prevent stalling
-    // This is critical for BullMQ to renew job locks during long-running operations
-    await new Promise(resolve => setImmediate(resolve));
+      const imagePath = page.image;
 
-    const imagePath = page.image;
-
-    if (!page.content) {
-      console.warn(`[EXULU] Page ${page.page}: No content found, skipping validation`);
-      continue;
-    }
-
-    if (!imagePath) {
-      console.warn(`[EXULU] Page ${page.page}: No image found, skipping validation`);
-      continue;
-    }
-
-    // Check if page.content has a .jpeg, .jpg, .png, .gif, .webp image
-    const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
-    // Check if the content has multiple occurences of |
-    const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
-
-    if (!hasImage && !hasTable) {
-      console.log(`[EXULU] Page ${page.page}: Content: ${page.content}`);
-      console.log(`[EXULU] Page ${page.page}: No image or table found, SKIPPING VLM validation`);
-      continue;
-    }
-
-    // Validate the page
-    let validation: VLMValidationResult;
-    try {
-      validation = await withRetry(async () => {
-        return await validatePageWithVLM(page, imagePath, model);
-      }, 3);
-      previous_table = validation.previous_table;
-      if (verbose) {
-        console.log(`[EXULU] Previous table: ${JSON.stringify(previous_table)}`);
+      if (!page.content) {
+        console.warn(`[EXULU] Page ${page.page}: No content found, skipping validation`);
+        return;
       }
-    } catch (error) {
-      console.error(`[EXULU] Error validating page ${page.page} with VLM more than 3 times, skipping:`, error);
-      // Throw so the job fails
-      throw error;
-    }
 
-    // Apply corrections to the page
-    if (validation.needs_correction && validation.corrected_text) {
-      page.vlm_validated = true;
+      if (!imagePath) {
+        console.warn(`[EXULU] Page ${page.page}: No image found, skipping validation`);
+        return;
+      }
 
-      // Normalize markdown content to remove excessive whitespace
-      const normalizedText = normalizeMarkdownContent(validation.corrected_text);
+      // Check if page.content has a .jpeg, .jpg, .png, .gif, .webp image
+      const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
+      // Check if the content has multiple occurences of |
+      const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
 
-      // Reconstruct headings in the corrected text using the headings hierarchy
-      const correctedWithHeadings = reconstructHeadings(
-        normalizedText,
-        page.headings
-      );
+      if (!hasImage && !hasTable) {
+        if (verbose) {
+          console.log(`[EXULU] Page ${page.page}: No image or table found, SKIPPING VLM validation`);
+        }
+        return;
+      }
 
-      page.vlm_corrected_text = correctedWithHeadings;
-      correctedCount++;
+      // Validate the page
+      let validation: VLMValidationResult;
+      try {
+        validation = await withRetry(async () => {
+          return await validatePageWithVLM(page, imagePath, model);
+        }, 3);
 
-      if (verbose) {
-        console.log(
-          `[EXULU] Page ${page.page}: Corrected (${validation.confidence} confidence)`
+        // Store validation result for post-processing
+        validationResults.set(page.page, validation);
+
+        if (verbose && validation.current_page_table) {
+          console.log(`[EXULU] Page ${page.page} table info:`, {
+            headers: validation.current_page_table.headers,
+            is_continuation: validation.current_page_table.is_continuation
+          });
+        }
+      } catch (error) {
+        console.error(`[EXULU] Error validating page ${page.page} with VLM more than 3 times, skipping:`, error);
+        // Throw so the job fails
+        throw error;
+      }
+
+      // Apply corrections to the page
+      if (validation.needs_correction && validation.corrected_text) {
+        page.vlm_validated = true;
+
+        // Normalize markdown content to remove excessive whitespace
+        const normalizedText = normalizeMarkdownContent(validation.corrected_text);
+
+        // Reconstruct headings in the corrected text using the headings hierarchy
+        const correctedWithHeadings = reconstructHeadings(
+          normalizedText,
+          page.headings
         );
-        console.log(`[EXULU] Reason: ${validation.reasoning}`);
-      }
-    } else {
-      if (verbose) {
-        console.log(
-          `[EXULU] Page ${page.page}: No correction needed (${validation.confidence} confidence)`
-        );
-      }
-    }
 
-    validatedCount++;
-  }
+        page.vlm_corrected_text = correctedWithHeadings;
+        correctedCount++;
 
-  console.log(`[EXULU] VLM validation complete:`);
-  console.log(`[EXULU] Validated: ${validatedCount} chunks`);
-  console.log(`[EXULU] Corrected: ${correctedCount} chunks`);
+        if (verbose) {
+          console.log(
+            `[EXULU] Page ${page.page}: Corrected (${validation.confidence} confidence)`
+          );
+          console.log(`[EXULU] Reason: ${validation.reasoning}`);
+        }
+      } else {
+        if (verbose) {
+          console.log(
+            `[EXULU] Page ${page.page}: No correction needed (${validation.confidence} confidence)`
+          );
+        }
+      }
+
+      validatedCount++;
+    })
+  );
+
+  // Wait for all parallel validations to complete
+  await Promise.all(validationTasks);
+
+  console.log(`[EXULU] VLM validation complete (parallel processing):`);
+  console.log(`[EXULU] Validated: ${validatedCount} pages`);
+  console.log(`[EXULU] Corrected: ${correctedCount} pages`);
+
+  // Post-process: Reconstruct table headers sequentially
+  console.log(`[EXULU] Starting sequential table header reconstruction...`);
+  reconstructTableHeaders(document, validationResults, verbose);
+  console.log(`[EXULU] Table header reconstruction complete`);
 
   return document;
 }
