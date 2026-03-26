@@ -1,0 +1,56 @@
+Use this tool to read questions you've asked and check if they've been answered by the user. This tool helps you track the status of questions and retrieve the user's selected answers.
+
+## When to Use This Tool
+
+Use this tool proactively in these situations:
+- After asking a question to check if the user has responded
+- To retrieve the user's answer before proceeding with implementation
+- To review all questions and answers in the current session
+- When you need to reference a previous answer
+
+## How It Works
+
+- This tool takes no parameters (leave the input blank or empty)
+- Returns an array of all questions in the session
+- Each question includes:
+  - `id`: Unique identifier for the question
+  - `question`: The question text
+  - `answerOptions`: Array of answer options with their IDs and text
+  - `status`: Either "pending" (not answered) or "answered"
+  - `selectedAnswerId`: The ID of the chosen answer (only present if answered)
+
+## Usage Pattern
+
+Typically you'll:
+1. Use Question Ask to pose a question
+2. Wait for the user to respond
+3. Use Question Read to check the answer
+4. Find the selected answer by matching the `selectedAnswerId` with an option in `answerOptions`
+5. Proceed with implementation based on the user's choice
+
+## Example Response
+
+```json
+[
+  {
+    "id": "question123",
+    "question": "Which authentication method would you like to implement?",
+    "answerOptions": [
+      { "id": "ans1", "text": "JWT tokens" },
+      { "id": "ans2", "text": "OAuth 2.0" },
+      { "id": "ans3", "text": "Session-based auth" },
+      { "id": "ans4", "text": "None of the above..." }
+    ],
+    "status": "answered",
+    "selectedAnswerId": "ans1"
+  }
+]
+```
+
+In this example, the user selected "JWT tokens" (id: ans1).
+
+## Important Notes
+
+- If no questions exist in the session, an empty array will be returned
+- Questions remain in the session even after being answered for reference
+- Use the `selectedAnswerId` to find which answer option the user chose by matching it against the `id` field in `answerOptions`

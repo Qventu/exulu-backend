@@ -1,0 +1,81 @@
+Use this tool to ask the user a question with multiple choice answer options during your session. This helps you gather user input, clarify requirements, and make informed decisions based on user preferences.
+
+## When to Use This Tool
+
+Use this tool when you need to:
+
+1. Get user input on implementation choices - When there are multiple valid approaches and you need the user to decide
+2. Clarify ambiguous requirements - When the user's request could be interpreted in different ways
+3. Gather preferences - When you need to know the user's preference for styling, naming, architecture, etc.
+4. Validate assumptions - When you want to confirm your understanding before proceeding
+5. Offer options - When presenting multiple solutions and letting the user choose
+
+## When NOT to Use This Tool
+
+Skip using this tool when:
+1. The answer is clear from context or previous messages
+2. You're asking a yes/no question (use a simpler approach)
+3. The question requires a free-form text answer (this tool is for multiple choice only)
+4. You're asking for information that should be obvious from the codebase
+
+## How It Works
+
+- Provide a question and an array of answer option strings
+- The tool automatically adds "None of the above..." as a final option
+- Each answer option is assigned a unique ID
+- The question is stored with a "pending" status until the user answers
+- Use the Question Read tool to check if the question has been answered
+
+## Examples
+
+<example>
+User: Add authentication to my app
+Assistant: I need to ask the user which authentication method they prefer.
+*Uses Question Ask tool with:*
+question: "Which authentication method would you like to implement?"
+answerOptions: ["JWT tokens", "OAuth 2.0", "Session-based auth", "Firebase Auth"]
+
+<reasoning>
+The assistant used the question tool because there are multiple valid authentication approaches and the user's preference will significantly impact the implementation.
+</reasoning>
+</example>
+
+<example>
+User: Style this button
+Assistant: I need to know the user's styling preference.
+*Uses Question Ask tool with:*
+question: "What styling approach should I use for the button?"
+answerOptions: ["Tailwind CSS", "CSS Modules", "Styled Components", "Plain CSS"]
+
+<reasoning>
+The assistant used the question tool because the codebase could support multiple styling approaches and the user's preference matters for consistency.
+</reasoning>
+</example>
+
+<example>
+User: Add error handling
+Assistant: I'll implement comprehensive error handling with try-catch blocks and proper error messages.
+*Does not use the question tool*
+
+<reasoning>
+The assistant did not use the question tool because error handling is a standard practice and there's a clear best approach that doesn't require user input.
+</reasoning>
+</example>
+
+## Answer Format
+
+When you call this tool, answer options are automatically converted to this format:
+```json
+[
+  { "id": "randomId1", "text": "First option" },
+  { "id": "randomId2", "text": "Second option" },
+  { "id": "randomId3", "text": "Third option" },
+  { "id": "randomId4", "text": "None of the above..." }
+]
+```
+
+The "None of the above..." option is always added automatically, so you don't need to include it in your answerOptions array.
+
+## Reading Answers
+
+After asking a question, use the Question Read tool to check if the user has answered. The question status will change from "pending" to "answered" and the selectedAnswerId field will contain the ID of the chosen answer.

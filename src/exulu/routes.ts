@@ -675,12 +675,23 @@ Mood: friendly and intelligent.
             : req.body.approvedTools
           : [];
 
+        // Support custom instructions from the request body
+        const customInstructions = req.body.customInstructions
+          ? typeof req.body.customInstructions === "string"
+            ? req.body.customInstructions
+            : JSON.stringify(req.body.customInstructions)
+          : "";
+
+        const instructions = customInstructions
+          ? `${agent.instructions}\n\n${customInstructions}`
+          : agent.instructions;
+
         const result = await provider.generateStream({
           contexts: contexts,
           rerankers: rerankers || [],
           agent: agent,
           user,
-          instructions: agent.instructions,
+          instructions: instructions,
           session: headers.session as string,
           message,
           previousMessages,
@@ -794,6 +805,17 @@ Mood: friendly and intelligent.
 
         return;
       } else {
+        // Support custom instructions from the request body
+        const customInstructions = req.body.customInstructions
+          ? typeof req.body.customInstructions === "string"
+            ? req.body.customInstructions
+            : JSON.stringify(req.body.customInstructions)
+          : "";
+
+        const instructions = customInstructions
+          ? `${agent.instructions}\n\n${customInstructions}`
+          : agent.instructions;
+
         const response = await provider.generateSync({
           contexts: contexts,
           rerankers: rerankers || [],
@@ -801,7 +823,7 @@ Mood: friendly and intelligent.
           agent: agent,
           user,
           req: req,
-          instructions: agent.instructions,
+          instructions: instructions,
           session: headers.session as string,
           inputMessages: [req.body.message],
           currentTools: enabledTools,
@@ -1003,6 +1025,17 @@ Mood: friendly and intelligent.
           user,
         );
 
+        // Support custom instructions from the request body
+        const customInstructions = req.body.customInstructions
+          ? typeof req.body.customInstructions === "string"
+            ? req.body.customInstructions
+            : JSON.stringify(req.body.customInstructions)
+          : "";
+
+        const agentInstructions = customInstructions
+          ? `${agent?.instructions}\n\n${customInstructions}`
+          : agent?.instructions;
+
         let system:
           | string
           | {
@@ -1019,7 +1052,7 @@ Mood: friendly and intelligent.
                   type: "text",
                   text: `
                             You are an agent named: ${agent?.name}
-                            Here are some additional instructions for you: ${agent?.instructions}`,
+                            Here are some additional instructions for you: ${agentInstructions}`,
                 },
               ]
               : []),
@@ -1039,7 +1072,7 @@ Mood: friendly and intelligent.
           system = `${req.body.system}\n\n
                 ${agent
               ? `You are an agent named: ${agent?.name}
-                Here are some additional instructions for you: ${agent?.instructions}`
+                Here are some additional instructions for you: ${agentInstructions}`
               : ""
             }
 
