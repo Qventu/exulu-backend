@@ -715,6 +715,7 @@ export class MarkdownChunker {
             if (currentSlice.length === 0) {
                 currentPosition++;
                 targetPosition = currentPosition + (chunkSize * this._CHARS_PER_TOKEN);
+                contentLeft = text.length - currentPosition;
             }
         }
 
