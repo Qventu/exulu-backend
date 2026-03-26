@@ -591,7 +591,8 @@ const getMistralApiKey = async () => {
   if (process.env.MISTRAL_API_KEY) {
     return process.env.MISTRAL_API_KEY;
   } else {
-    return await ExuluVariables.get("MISTRAL_API_KEY");
+    const variable = await ExuluVariables.get("MISTRAL_API_KEY");
+    return variable;
   }
 }
 
@@ -667,7 +668,7 @@ async function processPdf(
     } else if (config?.processor.name === "mistral") {
 
       const MISTRAL_API_KEY = await getMistralApiKey();
-      if (MISTRAL_API_KEY) {
+      if (!MISTRAL_API_KEY) {
         throw new Error('[EXULU] MISTRAL_API_KEY is not set, please set it in the environment variable via process.env or via an Exulu variable named "MISTRAL_API_KEY".');
       }
 
