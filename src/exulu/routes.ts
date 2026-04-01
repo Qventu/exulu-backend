@@ -43,7 +43,6 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { convertJsonSchemaToZod } from 'zod-from-json-schema';
-import { z } from "zod";
 
 const getExuluVersionNumber = async () => {
   try {

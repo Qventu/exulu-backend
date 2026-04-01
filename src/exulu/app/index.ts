@@ -33,6 +33,7 @@ import { redisServer } from "@EE/queues/server.ts";
 import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
 import { queues as ExuluQueues } from "@EE/queues/queues";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
+import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
@@ -48,16 +49,34 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { createWorkers } from "@EE/workers.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
+
+// Custom format to limit log output to 50 lines
+const lineLimitFormat = winston.format((info) => {
+  if (typeof info.message === 'string') {
+    const lines = info.message.split('\n');
+    if (lines.length > 50) {
+      const truncatedLines = lines.slice(0, 50);
+      truncatedLines.push(`... (${lines.length - 50} more lines omitted)`);
+      info.message = truncatedLines.join('\n');
+    }
+  }
+  return info;
+});
+
 const consoleTransport = new winston.transports.Console({
   format: isDev
     ? winston.format.combine(
+      lineLimitFormat(),
       winston.format.colorize(),
       winston.format.timestamp({ format: "HH:mm:ss" }),
       winston.format.printf(({ timestamp, level, message }) => {
         return `${timestamp as string} [${level as string}] ${message as string}`;
       }),
     )
-    : winston.format.json(),
+    : winston.format.combine(
+      lineLimitFormat(),
+      winston.format.json(),
+    ),
 });
 
 // Monkey-patch console to use Winston with metadata support
@@ -202,6 +221,7 @@ export class ExuluApp {
     this._tools = [
       ...(tools ?? []),
       ...todoTools,
+      ...questionTools,
       ...perplexityTools,
       // Add contexts as tools
       ...(Object.values(contexts || {})
