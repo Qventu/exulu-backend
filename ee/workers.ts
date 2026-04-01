@@ -358,7 +358,33 @@ export const createWorkers = async (
 
               const exuluStorage = new ExuluStorage({ config });
 
-              console.log("[EXULU] POS 2 -- EXULU CONTEXT PROCESS FIELD");
+              if (context.processor.filter) {
+                const result = await context.processor.filter({
+                  item: data.inputs,
+                  user: data.user,
+                  role: data.role,
+                  utils: {
+                    storage: exuluStorage,
+                  },
+                  exuluConfig: config,
+                });
+          
+                if (!result) {
+                  console.log("[EXULU] Item filtered out by processor, skipping processing execution...");
+                  return {
+                    result: "Item filtered out by processor, skipping processing execution...", // last message
+                    metadata: {
+                      item: {
+                        name: data.inputs?.name,
+                        id: data.inputs?.id,
+                        external_id: data.inputs?.external_id
+                      }
+                    },
+                  };
+                }
+              }
+
+              console.log("[EXULU] POS 2 -- EXULU CONTEXT PROCESS FIELD", data.inputs);
               let processorResult = await context.processor.execute({
                 item: data.inputs,
                 user: data.user,

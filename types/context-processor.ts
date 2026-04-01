@@ -6,7 +6,7 @@ import type { ExuluQueueConfig } from "./queue-config";
 export type ExuluContextProcessor = {
     name: string;
     description: string;
-    filter: ({
+    filter?: ({
         item,
         user,
         role,
