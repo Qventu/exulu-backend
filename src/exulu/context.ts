@@ -226,6 +226,7 @@ export class ExuluContext {
       });
 
       if (!result) {
+        console.log("[EXULU] Item filtered out by processor, skipping processing execution...");
         return {
           result: undefined,
           job: undefined,
@@ -543,6 +544,7 @@ export class ExuluContext {
       }
     });
 
+    console.log("[EXULU] Creating item", item);
     const mutation = db
       .from(getTableName(this.id))
       .insert({
@@ -551,6 +553,7 @@ export class ExuluContext {
       })
       .returning("id");
 
+    console.log("[EXULU] Upsert", upsert);
     if (upsert) {
       if (item.external_id) {
         mutation.onConflict("external_id").merge();
@@ -581,8 +584,6 @@ export class ExuluContext {
     if (this.processor) {
       const processor = this.processor;
 
-      console.log("[EXULU] Processor found", processor);
-
       if (
         processor &&
         (processor?.config?.trigger === "onInsert" ||
@@ -604,7 +605,7 @@ export class ExuluContext {
           jobs.push(processorJob);
         }
 
-        if (!processorJob) {
+        if (!processorJob && processorResult) {
           // Update the item in the db with the processor result
           await db
             .from(getTableName(this.id))
@@ -725,7 +726,7 @@ export class ExuluContext {
           jobs.push(processorJob);
         }
 
-        if (!processorJob) {
+        if (!processorJob && processorResult) {
           // Update the item in the db with the processor result
           await db
             .from(getTableName(this.id))
