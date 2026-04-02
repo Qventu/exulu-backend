@@ -18,6 +18,7 @@ import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { Request } from "express";
+import { createNewMemoryItemTool } from "./memory-tool";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 /**
@@ -99,10 +100,10 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
     if (!variable) {
       throw new Error(
         "Variable " +
-          variableName +
-          " not found in hydrateVariables method, with type " +
-          type +
-          ".",
+        variableName +
+        " not found in hydrateVariables method, with type " +
+        type +
+        ".",
       );
     }
 
@@ -162,6 +163,26 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
+  if (agent?.memory && contexts?.length) {
+
+    const context = contexts.find((context) => context.id === agent?.memory);
+    if (!context) {
+      throw new Error(
+        "Context was set for agent memory but not found in the contexts: " +
+        agent?.memory +
+        " please double check with a developer to see if the context was removed from code.",
+      );
+    }
+
+    const createNewMemoryTool = createNewMemoryItemTool(agent, context);
+    if (createNewMemoryTool) {
+      if (!currentTools) {
+        currentTools = [];
+      }
+      currentTools.push(createNewMemoryTool);
+    }
+  }
+
   console.log("[EXULU] Convert tools array to object, session items", items);
   if (items) {
     const sessionItemsRetrievalTool = await createSessionItemsRetrievalTool({
@@ -206,9 +227,9 @@ export const convertExuluToolsToAiSdkTools = async (
 
   const sanitizedTools = currentTools
     ? currentTools.map((tool) => ({
-        ...tool,
-        name: sanitizeToolName(tool.name),
-      }))
+      ...tool,
+      name: sanitizeToolName(tool.name),
+    }))
     : [];
 
   console.log(
@@ -269,11 +290,11 @@ export const convertExuluToolsToAiSdkTools = async (
             let upload:
               | undefined
               | ((file: {
-                  name: string;
-                  data: string | Uint8Array | Buffer;
-                  type: allFileTypes;
-                  tags?: string[];
-                }) => Promise<Item | undefined>) = undefined;
+                name: string;
+                data: string | Uint8Array | Buffer;
+                type: allFileTypes;
+                tags?: string[];
+              }) => Promise<Item | undefined>) = undefined;
 
             if (
               exuluConfig?.fileUploads?.s3endpoint &&
@@ -344,9 +365,9 @@ export const convertExuluToolsToAiSdkTools = async (
 
             const toolVariablesConfigData = toolVariableConfig
               ? toolVariableConfig.config.reduce((acc, curr) => {
-                  acc[curr.name] = curr.value;
-                  return acc;
-                }, {})
+                acc[curr.name] = curr.value;
+                return acc;
+              }, {})
               : {};
 
             const response = await cur.tool.execute(
