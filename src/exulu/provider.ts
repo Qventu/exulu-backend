@@ -33,7 +33,6 @@ import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import { parseOfficeAsync } from "officeparser";
 import type { ExuluConfig } from "./app/index.ts";
-import { createNewMemoryItemTool } from "@SRC/templates/tools/memory-tool.ts";
 import type { Request } from "express";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -426,14 +425,6 @@ export class ExuluProvider {
   
                   ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
       }
-
-      const createNewMemoryTool = createNewMemoryItemTool(agent, context);
-      if (createNewMemoryTool) {
-        if (!currentTools) {
-          currentTools = [];
-        }
-        currentTools.push(createNewMemoryTool);
-      }
     }
 
     const personalizationInformation =
@@ -517,6 +508,9 @@ export class ExuluProvider {
               Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
               `;
     }
+
+    system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
+    'Inform the user that the action was not performed.`
 
     if (prompt) {
       let result: { object?: any; text?: string } = { object: null, text: "" };
@@ -894,14 +888,6 @@ export class ExuluProvider {
   
                   ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
       }
-
-      const createNewMemoryTool = createNewMemoryItemTool(agent, context);
-      if (createNewMemoryTool) {
-        if (!currentTools) {
-          currentTools = [];
-        }
-        currentTools.push(createNewMemoryTool);
-      }
     }
 
     // filter out messages with duplicate ids
@@ -992,6 +978,9 @@ export class ExuluProvider {
               Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
               `;
     }
+
+    system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
+    'Inform the user that the action was not performed.`
 
     const result = streamText({
       model: model, // Should be a LanguageModelV1
