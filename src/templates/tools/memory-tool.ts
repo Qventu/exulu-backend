@@ -2,6 +2,8 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { z, ZodSchema } from "zod";
+import fs from "fs";
+import { sanitizeName } from "@SRC/utils/sanitize-name";
 
 export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext): ExuluTool => {
   const fields: Record<string, ZodSchema> = {
@@ -48,9 +50,11 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     }
   }
 
+  const toolName =  "create_" + sanitizeName(context.name) + "_memory_item"
+
   return new ExuluTool({
-    id: "create_" + agent.name + "_memory_item",
-    name: "Create " + agent.name + " Memory Item",
+    id: toolName,
+    name: "Create " + context.name + " Memory Item",
     category: agent.name + "_memory",
     description: "Create a new memory item in the " + agent.name + " memory context",
     type: "function",
@@ -58,40 +62,45 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     config: [],
     execute: async ({ name, description, mode, information, exuluConfig, user }) => {
       let result: { result: string } = { result: "" };
-      switch (mode) {
-        case "learnings":
-          break;
-        case "knowledge":
-          const newItem = {
-            name: name,
-            description: description,
-            information: information,
-            rights_mode: "public",
-          };
-          const { item: createdItem, job: createdJob } = await context.createItem(
-            newItem,
-            exuluConfig,
-            user?.id,
-            user?.role?.id,
-            false,
-          );
 
-          if (createdJob) {
-            result = {
-              result: `Created a Job to create the memory item with the following ID: ${createdJob}`,
-            };
-          } else if (createdItem) {
-            result = {
-              result: `Created memory item with the following ID: ${createdItem.id}`,
-            };
-          } else {
-            result = {
-              result: `Failed to create memory item`,
-            };
-          }
-          break;
-        default:
-          throw new Error(`Invalid mode: ${mode}`);
+      fs.writeFileSync("memory-tool.json", JSON.stringify({ name, description, information }, null, 2));
+
+      try {
+        const newItem = {
+          name: name,
+          description: description,
+          information: information,
+          rights_mode: "public",
+        };
+        const { item: createdItem, job: createdJob } = await context.createItem(
+          newItem,
+          exuluConfig,
+          user?.id,
+          user?.role?.id,
+          false,
+        );
+
+        fs.writeFileSync("memory-tool-created.json", JSON.stringify({ createdItem, createdJob }, null, 2));
+        
+        if (createdJob) {
+          result = {
+            result: `Created a Job to create the memory item with the following ID: ${createdJob}`,
+          };
+        } else if (createdItem) {
+          result = {
+            result: `Created memory item with the following ID: ${createdItem.id}`,
+          };
+        } else {
+          result = {
+            result: `Failed to create memory item`,
+          };
+        }
+      } catch (error) {
+        fs.writeFileSync("memory-tool-error.json", JSON.stringify({ name, description, information, error }, null, 2));
+        console.error("[EXULU] Error creating memory item", error);
+        result = {
+          result: `Failed to create memory item: ${error instanceof Error ? error.message : String(error)}`,
+        };
       }
 
       return result;
