@@ -140,7 +140,7 @@
     "mammoth": "^1.11.0",
     "natural": "^8.1.0",
     "officeparser": "^5.2.2",
-    "openai": "^5.21.0",
+    "openai": "^6.34.0",
     "p-limit": "^7.3.0",
     "papaparse": "^5.5.2",
     "pg": "^8.16.3",
