@@ -500,11 +500,14 @@ export const vectorSearch = async ({
       medianScore: medianScore?.toFixed(4),
     });
 
-    // Adaptive threshold: keep results within 60% of the best match
-    const adaptiveThreshold = topScore ? topScore * 0.6 : 0;
-    const beforeFilterCount = results.length;
+    // Adaptive threshold: keep results within 60% of the best match.
+    // For tool-triggered searches the agent reasons about relevance itself,
+    // so use a more permissive 30% threshold to avoid filtering valid results.
+    // const thresholdRatio = trigger === "tool" ? 0.3 : 0.6;
+    // const adaptiveThreshold = topScore ? topScore * thresholdRatio : 0;
+    // const beforeFilterCount = results.length;
 
-    results = results.filter((chunk) => {
+    /* results = results.filter((chunk) => {
       const score = chunk[scoreKey];
       return score !== undefined && score >= adaptiveThreshold;
     });
@@ -514,7 +517,7 @@ export const vectorSearch = async ({
       console.log(
         `[EXULU] Filtered ${filteredCount} low-quality results (threshold: ${adaptiveThreshold.toFixed(4)})`,
       );
-    }
+    } */
   }
 
   // todo if query && resultReranker, rerank the results

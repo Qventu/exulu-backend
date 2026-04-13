@@ -36,6 +36,9 @@ import type { ExuluConfig } from "./app/index.ts";
 import type { Request } from "express";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
+import { setSessionCurrentTask } from "./task-description.ts";
+
+import fs from "fs";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -297,6 +300,7 @@ export class ExuluProvider {
     user,
     session,
     inputMessages,
+    approvedTools,
     currentTools,
     allExuluTools,
     statistics,
@@ -308,12 +312,15 @@ export class ExuluProvider {
     outputSchema,
     agent,
     instructions,
+    maxStepCount,
   }: {
     prompt?: string;
     user?: User;
+    maxStepCount?: number;
     req?: Request;
     session?: string;
     agent?: ExuluAgent;
+    approvedTools?: string[];
     inputMessages?: UIMessage[];
     currentTools?: ExuluTool[];
     allExuluTools?: ExuluTool[];
@@ -389,6 +396,15 @@ export class ExuluProvider {
     }
 
     const query = prompt;
+
+    // Non-blocking: generate and persist a privacy-safe task description for the dashboard
+    if (session && query) {
+      setSessionCurrentTask({
+        session,
+        userMessage: query,
+        model: model,
+      }).catch(() => {});
+    }
 
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
@@ -518,6 +534,7 @@ export class ExuluProvider {
       let outputTokens: number = 0;
       if (outputSchema) {
         const { output, usage } = await generateText({
+          temperature: 0, // TODO Make this configurable
           model: model,
           system,
           maxRetries: 3,
@@ -525,7 +542,7 @@ export class ExuluProvider {
             schema: outputSchema,
           }),
           prompt: prompt,
-          stopWhen: [stepCountIs(5)] // make configurable
+          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
         });
         result.object = output;
         inputTokens = usage.inputTokens || 0;
@@ -536,14 +553,15 @@ export class ExuluProvider {
           "with prompt: " + prompt?.slice(0, 100) + "...",
         );
 
-        const { text, totalUsage } = await generateText({
+        const output = await generateText({
+          temperature: 0, // TODO Make this configurable
           model: model,
           system,
           prompt: prompt,
           maxRetries: 2,
           tools: await convertExuluToolsToAiSdkTools(
             currentTools,
-            [],
+            approvedTools,
             allExuluTools,
             toolConfigs,
             providerapikey,
@@ -558,8 +576,13 @@ export class ExuluProvider {
             model,
             agent,
           ),
-          stopWhen: [stepCountIs(5)] // make configurable
+          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
         });
+        console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
+        const {
+          text,
+          totalUsage,
+        } = output;
         result.text = text;
         inputTokens = totalUsage?.inputTokens || 0;
         outputTokens = totalUsage?.outputTokens || 0;
@@ -609,6 +632,7 @@ export class ExuluProvider {
         "with messages: " + messages.length,
       );
       const { text, totalUsage } = await generateText({
+        temperature: 0, // TODO Make this configurable
         model: model, // Should be a LanguageModelV1
         system,
         messages: await convertToModelMessages(messages, {
@@ -617,7 +641,7 @@ export class ExuluProvider {
         maxRetries: 2,
         tools: await convertExuluToolsToAiSdkTools(
           currentTools,
-          [],
+          approvedTools,
           allExuluTools,
           toolConfigs,
           providerapikey,
@@ -632,7 +656,7 @@ export class ExuluProvider {
           model,
           agent,
         ),
-        stopWhen: [stepCountIs(5)],
+        stopWhen: [stepCountIs(maxStepCount || 5)],
       });
 
       if (statistics) {
@@ -787,10 +811,12 @@ export class ExuluProvider {
     exuluConfig,
     instructions,
     req,
+    maxStepCount
   }: {
     user?: User;
     session?: string;
     agent?: ExuluAgent;
+    maxStepCount?: number;
     message?: UIMessage;
     previousMessages?: UIMessage[];
     currentTools?: ExuluTool[];
@@ -855,6 +881,15 @@ export class ExuluProvider {
 
     const query = message.parts?.[0]?.type === "text" ? message.parts[0].text : undefined;
 
+    // Non-blocking: generate and persist a privacy-safe task description for the dashboard
+    if (session && query) {
+      setSessionCurrentTask({
+        session,
+        userMessage: query,
+        model: model,
+      }).catch(() => {});
+    }
+
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
     let memoryContext = "";
@@ -881,12 +916,20 @@ export class ExuluProvider {
         page: 1,
       });
 
+      fs.writeFileSync("pre-fetched-relevant-information.json", JSON.stringify(result, null, 2));
+
       if (result?.chunks?.length) {
         // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
         memoryContext = `
-                  Pre-fetched relevant information for this query:
+                  <pre-fetched relevant information for this query>:
   
-                  ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
+                  ${result.chunks.map((chunk, index) => `
+                    <general_information index="${index}">
+                      ${chunk.chunk_content}
+                    </general_information>
+                    `).join("\n\n")}
+                  
+                  </pre-fetched relevant information for this query>`;
       }
     }
 
@@ -982,7 +1025,10 @@ export class ExuluProvider {
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
+    fs.writeFileSync("system-prompt.txt", system);
+
     const result = streamText({
+      temperature: 0, // TODO Make this configurable
       model: model, // Should be a LanguageModelV1
       messages: await convertToModelMessages(messages, {
         ignoreIncompleteToolCalls: true,
@@ -1019,7 +1065,7 @@ export class ExuluProvider {
           `Chat stream error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
         );
       },
-      stopWhen: [stepCountIs(5)],
+      stopWhen: [stepCountIs(maxStepCount || 5)],
     });
 
     return {
