@@ -12,7 +12,7 @@ import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
-import { createAgenticRetrievalTool } from "@EE/agentic-retrieval";
+import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -198,13 +198,12 @@ export const convertExuluToolsToAiSdkTools = async (
 
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
   if (contexts?.length && model) {
-    const agenticSearchTool = createAgenticRetrievalTool({
+    const agenticSearchTool = createAgenticRetrievalToolV3({
       contexts: contexts.filter((context) => context.id !== agent?.memory), // dont include the agents memory in the agentic search tool!
       rerankers: rerankers || [],
       user: user,
       role: user?.role?.id,
-      model: model,
-      projectRetrievalTool: projectRetrievalTool,
+      model: model
     });
     if (agenticSearchTool) {
       // Replace the agentic search tool with the new one.

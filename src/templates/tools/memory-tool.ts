@@ -63,8 +63,6 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     execute: async ({ name, description, mode, information, exuluConfig, user }) => {
       let result: { result: string } = { result: "" };
 
-      fs.writeFileSync("memory-tool.json", JSON.stringify({ name, description, information }, null, 2));
-
       try {
         const newItem = {
           name: name,
@@ -80,8 +78,6 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
           false,
         );
 
-        fs.writeFileSync("memory-tool-created.json", JSON.stringify({ createdItem, createdJob }, null, 2));
-        
         if (createdJob) {
           result = {
             result: `Created a Job to create the memory item with the following ID: ${createdJob}`,
@@ -96,7 +92,6 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
           };
         }
       } catch (error) {
-        fs.writeFileSync("memory-tool-error.json", JSON.stringify({ name, description, information, error }, null, 2));
         console.error("[EXULU] Error creating memory item", error);
         result = {
           result: `Failed to create memory item: ${error instanceof Error ? error.message : String(error)}`,

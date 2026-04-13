@@ -2,7 +2,7 @@ import { getChunksTableName, type ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
-import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
+import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
@@ -51,7 +51,7 @@ const addProviderFields = async (
             let hydrated: ExuluTool | null | undefined;
 
             if (tool.id === "agentic_context_search") {
-              const instance = createAgenticRetrievalTool({
+              const instance = createAgenticRetrievalToolV3({
                 contexts: [],
                 rerankers: [],
                 user: user,

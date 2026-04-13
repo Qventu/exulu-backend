@@ -8,6 +8,7 @@ export interface ExuluAgent {
     source: "code" | "database";
     memory?: string;
     welcomemessage?: string;
+    defaultagent?: boolean;
     type: "agent";
     name: string;
     image?: string;
