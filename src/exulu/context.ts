@@ -988,7 +988,7 @@ export class ExuluContext {
     const { db } = await postgresClient();
     const tableName = getTableName(this.id);
     console.log("[EXULU] Creating table: " + tableName);
-    return await db.schema.createTable(tableName, (table) => {
+    await db.schema.createTable(tableName, (table) => {
       console.log("[EXULU] Creating fields for table.", this.fields);
       table.uuid("id").primary().defaultTo(db.fn.uuid());
       table.text("name");
@@ -1016,7 +1016,27 @@ export class ExuluContext {
       }
       table.timestamp("createdAt").defaultTo(db.fn.now());
       table.timestamp("updatedAt").defaultTo(db.fn.now());
+
+      // Generated tsvector column for FTS on name, description, and external_id (PG 12+)
+      // Includes both original text and normalized versions (special characters removed)
+      // to support matching IDs like "FST_2XT" when searching for "FST2XT"
+      const languages = this.configuration.languages?.length
+        ? this.configuration.languages
+        : ["english"];
+      const tsvectorExpression = languages
+        .map((lang) => `to_tsvector('${lang}', coalesce(name, '') || ' ' || coalesce(description, '') || ' ' || coalesce(external_id, '') || ' ' || regexp_replace(coalesce(name, ''), '[_\\-\\s]+', '', 'g') || ' ' || regexp_replace(coalesce(external_id, ''), '[_\\-\\s]+', '', 'g'))`)
+        .join(" || ");
+
+      table.specificType(
+        "fts",
+        `tsvector GENERATED ALWAYS AS (${tsvectorExpression}) STORED`,
+      );
+
+      // GIN index on the tsvector for natural language search and fuzzy ID matching
+      table.index(["fts"], `${tableName}_fts_gin_idx`, "gin");
     });
+
+    return;
   };
 
   public createChunksTable = async () => {

@@ -21,7 +21,7 @@ import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
-import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
+import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
@@ -324,7 +324,7 @@ export function createSDL(
     `;
     if (table.type === "items") {
       typeDefs += `
-      ${tableNamePlural}VectorSearch(query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
+      ${tableNamePlural}VectorSearch(limit: Int, query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
       ${tableNameSingular}ChunkById(id: ID!): ${tableNameSingular}VectorSearchChunk
     `;
     }
@@ -1525,7 +1525,7 @@ type PageInfo {
     let allTools = [...filtered, ...tools];
 
     if (contexts?.length) {
-      agenticRetrievalTool = createAgenticRetrievalTool({
+      agenticRetrievalTool = createAgenticRetrievalToolV3({
         contexts: contexts,
         rerankers: rerankers,
         user: context.user,
@@ -1704,6 +1704,38 @@ type PageInfo {
         pageInfo: PageInfo!
     }
     `;
+
+  typeDefs += `
+   agentWorldAgents: [AgentWorldAgent!]!
+  `;
+
+  resolvers.Query["agentWorldAgents"] = async (_, _args, context) => {
+    const { db } = context;
+    // Fetch sessions active in the last 30 minutes that have a currenttask set
+    const sessions = await db("agent_sessions as s")
+      .select([
+        "s.id as sessionId",
+        "s.agent as agentId",
+        "s.currenttask as currentTask",
+        "s.createdAt as lastActivityAt",
+        "s.created_by as userId",
+      ])
+      .whereNotNull("s.currenttask")
+      .limit(20)
+      .orderBy("s.createdAt", "desc");
+
+    return sessions.map((row) => {
+      const agent = providers.find((p) => p.id === row.agentId);
+      return {
+        sessionId: row.sessionId,
+        agentId: row.agentId ?? "",
+        agentName: agent?.name ?? row.agentId ?? "Agent",
+        agentImage: (agent as any)?.image ?? null,
+        currentTask: row.currentTask,
+        lastActivityAt: row.lastActivityAt,
+      };
+    });
+  };
 
   typeDefs += "}\n";
   mutationDefs += "}\n";
@@ -1917,6 +1949,15 @@ enum JobStateEnum {
 type StatisticsResult {
   group: String!
   count: Int!
+}
+
+type AgentWorldAgent {
+  sessionId: ID!
+  agentId: ID!
+  agentName: String!
+  agentImage: String
+  currentTask: String
+  lastActivityAt: String
 }
 `;
 

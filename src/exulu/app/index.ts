@@ -283,8 +283,8 @@ export class ExuluApp {
       ExuluQueues.register(
         global_queues.eval_runs,
         {
-          worker: 10,
-          queue: 10,
+          worker: 20,
+          queue: 20,
         },
         1,
       );

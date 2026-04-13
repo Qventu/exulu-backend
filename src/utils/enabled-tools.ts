@@ -1,4 +1,4 @@
-import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/index.ts";
+import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
@@ -23,7 +23,7 @@ export const getEnabledTools = async (
       agent.tools.map(async ({ id, type }) => {
         let hydrated: ExuluTool | null | undefined;
         if (id === "agentic_context_search") {
-          return createAgenticRetrievalTool({
+          return createAgenticRetrievalToolV3({
             // This tool is reinstantiated in the convertExuluToolsToAiSdkTools function, where
             // we can access the activated contexts and model that is calling it but we also
             // return it here so we know it was generally enabled as a tool.

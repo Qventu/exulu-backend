@@ -81,6 +81,11 @@ const agentSessionsSchema: ExuluTableDefinition = {
       name: "metadata",
       type: "json",
     },
+    {
+      name: "currenttask",
+      type: "text",
+      required: false,
+    },
   ],
 };
 
@@ -156,6 +161,11 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "image",
       type: "text",
+    },
+
+    {
+      name: "defaultagent",
+      type: "boolean",
     },
     {
       name: "category",

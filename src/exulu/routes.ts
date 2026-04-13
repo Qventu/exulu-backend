@@ -38,6 +38,7 @@ import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
+import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
@@ -753,6 +754,7 @@ Mood: friendly and intelligent.
                 user: user.id,
                 messages: messages,
               });
+              clearSessionCurrentTask(headers.session as string).catch(() => {});
             }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);

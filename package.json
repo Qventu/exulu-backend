@@ -87,6 +87,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.23",
+    "@ai-sdk/azure": "^3.0.53",
     "@ai-sdk/cerebras": "^2.0.29",
     "@ai-sdk/google-vertex": "^4.0.28",
     "@ai-sdk/openai": "^3.0.18",
@@ -111,6 +112,7 @@
     "@opentelemetry/winston-transport": "^0.14.1",
     "@perplexity-ai/perplexity_ai": "^0.25.0",
     "ai": "^6.0.49",
+    "bash-tool": "^1.3.16",
     "bcryptjs": "^3.0.2",
     "body-parser": "^2.2.0",
     "bullmq": "^5.48.1",
@@ -132,6 +134,7 @@
     "jose": "^6.0.10",
     "json-schema-to-zod": "^2.6.1",
     "jsonwebtoken": "^9.0.2",
+    "just-bash": "^2.14.0",
     "knex": "^3.1.0",
     "link": "^2.1.1",
     "mammoth": "^1.11.0",
@@ -150,7 +153,7 @@
     "wink-nlp": "^2.4.0",
     "winston": "^3.17.0",
     "word-extractor": "^1.0.4",
-    "zod": "^3.25.76",
+    "zod": "^4.3.6",
     "zod-from-json-schema": "^0.5.2",
     "zod-to-json-schema": "^3.25.1",
     "zodex": "^0.18.2"

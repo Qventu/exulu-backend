@@ -1311,7 +1311,7 @@ const pollJobResult = async ({
       break;
     }
     // Wait for 2 seconds before polling again
-    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
+    await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
   }
   return result;
 };

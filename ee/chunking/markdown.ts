@@ -516,7 +516,9 @@ export class MarkdownChunker {
         return newHeaders;
     }
 
-    public async chunk(text: string, chunkSize: number, prefix?: string): Promise<{
+    public async chunk(text: string, chunkSize: number, prefix?: string, config?: {
+        pageBreakTags?: boolean;
+    }): Promise<{
         text: string;
         page: number;
     }[]> {
@@ -684,7 +686,7 @@ export class MarkdownChunker {
                     finalText = headerPrefixText + '\n\n' + currentSlice;
                 }
 
-                if (currentPage) {
+                if (currentPage && config?.pageBreakTags) {
                     finalText = `<!-- Current page: ${currentPage} -->\n\n` + finalText;
                 }
 
