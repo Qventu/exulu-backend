@@ -92,7 +92,7 @@
     "@ai-sdk/google-vertex": "^4.0.28",
     "@ai-sdk/openai": "^3.0.18",
     "@ai-sdk/openai-compatible": "^2.0.37",
-    "@anthropic-ai/sdk": "^0.56.0",
+    "@anthropic-ai/sdk": "^0.88.0",
     "@apollo/server": "^5.4.0",
     "@as-integrations/express5": "^1.0.0",
     "@aws-sdk/client-s3": "^3.338.0",
