@@ -34,6 +34,7 @@ const QuestionAskTool = new ExuluTool({
   description: "Use this tool to ask a question to the user with multiple choice answers",
   type: "function",
   category: "question",
+  needsApproval: false,
   config: [
     {
       name: "description",
@@ -122,6 +123,7 @@ const QuestionAskTool = new ExuluTool({
 const QuestionReadTool = new ExuluTool({
   id: "question_read",
   name: "Question Read",
+  needsApproval: false,
   description: "Use this tool to read questions and their answers",
   inputSchema: z.object({}),
   type: "function",

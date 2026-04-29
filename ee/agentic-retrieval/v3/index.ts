@@ -26,6 +26,7 @@ async function* executeV3({
   user,
   role,
   customInstructions,
+  logTrajectory,
 }: {
   query: string;
   contexts: ExuluContext[];
@@ -34,6 +35,7 @@ async function* executeV3({
   user?: User;
   role?: string;
   customInstructions?: string;
+  logTrajectory?: boolean;
 }): AsyncGenerator<AgenticRetrievalOutput> {
   // ── 1. Sample example records from each context (cached) ──────────────────
   console.log("[EXULU] v3 — sampling contexts");
@@ -107,6 +109,7 @@ async function* executeV3({
       customInstructions,
       classification,
       onStepComplete: (step) => trajectory.recordStep(step),
+      onTrajectoryStep: (data) => trajectory.recordRichStep(data),
     })) {
       finalOutput = output;
       yield output;
@@ -117,7 +120,7 @@ async function* executeV3({
     throw err;
   } finally {
     if (finalOutput) {
-      const trajectoryFile = await trajectory.finalize(finalOutput, !executionError, executionError);
+      const trajectoryFile = await trajectory.finalize(finalOutput, !executionError, executionError, logTrajectory);
       if (trajectoryFile) {
         finalOutput.trajectoryFile = trajectoryFile;
       }
@@ -189,6 +192,12 @@ export function createAgenticRetrievalToolV3({
         type: "string",
         default: "",
       },
+      {
+        name: "log_trajectories",
+        description: "Save a detailed markdown + JSON log of every retrieval execution to disk. Useful for debugging and evaluation.",
+        type: "boolean",
+        default: false,
+      },
       ...contexts.map((ctx) => ({
         name: ctx.id,
         description: `Enable search in "${ctx.name}". ${ctx.description}`,
@@ -202,14 +211,23 @@ export function createAgenticRetrievalToolV3({
         .string()
         .optional()
         .describe("Additional instructions from the user to guide retrieval"),
+      confirmedContextIds: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Knowledge base IDs explicitly confirmed by the user to be used in the retrieval. " +
+          "When presen only searches these contexts. "
+        ),
     }),
     execute: async function* ({
       query,
       userInstructions,
+      confirmedContextIds,
       toolVariablesConfig,
     }: {
       query: string;
       userInstructions?: string;
+      confirmedContextIds?: string[];
       toolVariablesConfig?: Record<string, any>;
     }) {
       
@@ -239,9 +257,13 @@ export function createAgenticRetrievalToolV3({
       let activeContexts = contexts;
       let configuredReranker: ExuluReranker | undefined;
       let configInstructions = "";
+      let logTrajectory = false;
 
       if (toolVariablesConfig) {
         configInstructions = toolVariablesConfig["instructions"] ?? "";
+        logTrajectory =
+          toolVariablesConfig["log_trajectories"] === true ||
+          toolVariablesConfig["log_trajectories"] === "true";
 
         activeContexts = contexts.filter(
           (ctx) =>
@@ -255,6 +277,12 @@ export function createAgenticRetrievalToolV3({
         if (rerankerId && rerankerId !== "none") {
           configuredReranker = rerankers.find((r) => r.id === rerankerId);
         }
+      }
+
+      if (confirmedContextIds?.length) {
+        const confirmed = new Set(confirmedContextIds);
+        const filtered = activeContexts.filter((c) => confirmed.has(c.id));
+        if (filtered.length > 0) activeContexts = filtered;
       }
 
       const combinedInstructions = [
@@ -273,6 +301,7 @@ export function createAgenticRetrievalToolV3({
         user,
         role,
         customInstructions: combinedInstructions || undefined,
+        logTrajectory,
       })) {
         yield { result: JSON.stringify(output) };
       }

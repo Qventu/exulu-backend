@@ -3,6 +3,7 @@ import type { ExuluContextProcessor } from "./context-processor";
 
 export type ExuluTableDefinition = {
     type?:
+    | "skills"
     | "feedback"
     | "test_cases"
     | "eval_sets"
@@ -28,6 +29,7 @@ export type ExuluTableDefinition = {
     id?: string;
     name: {
       plural:
+      | "skills"
       | "feedback"
       | "test_cases"
       | "eval_sets"
@@ -50,6 +52,7 @@ export type ExuluTableDefinition = {
       | "prompt_favorites"
       | "embedder_settings";
       singular:
+      | "skill"
       | "feedback"
       | "test_case"
       | "eval_set"

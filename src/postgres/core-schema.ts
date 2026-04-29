@@ -89,6 +89,54 @@ const agentSessionsSchema: ExuluTableDefinition = {
   ],
 };
 
+const skillsSchema: ExuluTableDefinition = {
+  type: "skills",
+  name: {
+    plural: "skills",
+    singular: "skill",
+  },
+  RBAC: true,
+  fields: [
+    {
+      name: "name",
+      type: "text",
+      index: true,
+      unique: true,
+    },
+    {
+      name: "description",
+      type: "text",
+    },
+    {
+      name: "s3folder",
+      type: "text",
+    },
+    {
+      name: "tags",
+      type: "json",
+    },
+    {
+      name: "usage_count",
+      type: "number",
+      default: 0,
+    },
+    {
+      name: "favorite_count",
+      type: "number",
+      default: 0,
+    },
+    {
+      name: "history",
+      type: "json",
+    },
+    {
+      name: "current_version",
+      type: "number",
+      default: 1,
+    },
+  ]
+}
+
 const variablesSchema: ExuluTableDefinition = {
   type: "variables",
   name: {
@@ -474,6 +522,7 @@ export const coreSchemas = {
       agentSessionsSchema: (): ExuluTableDefinition => addCoreFields(agentSessionsSchema),
       projectsSchema: (): ExuluTableDefinition => addCoreFields(projectsSchema),
       usersSchema: (): ExuluTableDefinition => addCoreFields(usersSchema),
+      skillsSchema: (): ExuluTableDefinition => addCoreFields(skillsSchema),
       statisticsSchema: (): ExuluTableDefinition => addCoreFields(statisticsSchema),
       variablesSchema: (): ExuluTableDefinition => addCoreFields(variablesSchema),
       platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),

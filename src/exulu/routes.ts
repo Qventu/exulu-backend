@@ -12,7 +12,17 @@ import { applyAccessControl } from "@SRC/graphql/utilities/access-control.ts";
 import type { Knex } from "knex";
 import { expressMiddleware } from "@as-integrations/express5";
 import { coreSchemas } from "../postgres/core-schema.ts";
-import { createUppyRoutes, uploadFile } from "../uppy/index.ts";
+import {
+  createUppyRoutes,
+  uploadFile,
+  listS3ObjectsByPrefix,
+  copyS3Object,
+  deleteS3Object,
+  getS3ObjectContent,
+  getS3SignedUploadUrl,
+  getPresignedUrl,
+  type S3FileObject,
+} from "../uppy/index.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -76,6 +86,7 @@ const {
   agentMessagesSchema,
   rolesSchema,
   usersSchema,
+  skillsSchema,
   variablesSchema,
   workflowTemplatesSchema,
   rbacSchema,
@@ -147,6 +158,7 @@ export const createExpressRoutes = async (
   const schema = createSDL(
     [
       usersSchema(),
+      skillsSchema(),
       rolesSchema(),
       agentsSchema(),
       feedbackSchema(),
@@ -1243,10 +1255,593 @@ Mood: friendly and intelligent.
     },
   );
 
+  // ─── Skills File Management ──────────────────────────────────────────────────
+
+  type SkillFileNode = {
+    name: string;
+    path: string;
+    key: string;
+    type: "file" | "folder";
+    size?: number;
+    lastModified?: Date;
+    children?: SkillFileNode[];
+  };
+
+  /**
+   * Reconstruct a virtual folder tree from a flat list of S3 file objects.
+   * S3 keys are relative to a given prefix which is stripped before building
+   * the tree, so each node's `path` is relative to the skill version root.
+   */
+  function buildFileTree(files: S3FileObject[], stripPrefix: string): SkillFileNode {
+    const root: SkillFileNode = { name: "/", path: "/", key: "", type: "folder", children: [] };
+
+    for (const file of files) {
+      const relativePath = file.key.startsWith(stripPrefix)
+        ? file.key.slice(stripPrefix.length)
+        : file.key;
+
+      const parts = relativePath.split("/").filter(Boolean);
+      let current = root;
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        const isFile = i === parts.length - 1;
+        const existingChild = current.children?.find((c) => c.name === part);
+
+        if (existingChild) {
+          current = existingChild;
+        } else {
+          const nodePath = "/" + parts.slice(0, i + 1).join("/");
+          const node: SkillFileNode = isFile
+            ? {
+                name: part,
+                path: nodePath,
+                key: file.key,
+                type: "file",
+                size: file.size,
+                lastModified: file.lastModified,
+              }
+            : { name: part, path: nodePath, key: "", type: "folder", children: [] };
+
+          current.children = current.children ?? [];
+          current.children.push(node);
+          current = node;
+        }
+      }
+    }
+
+    return root;
+  }
+
+  /**
+   * POST /skills/:skillId/init
+   * Called immediately after skillsCreateOne. Creates SKILL.md in S3 and
+   * initialises the skill's s3folder, current_version, and history fields.
+   */
+  app.post("/skills/:skillId/init", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { name = "Skill", description = "" } = req.body;
+
+    const skillMdContent = [
+      `# ${name}`,
+      "",
+      description || "Describe what this skill does and when to use it.",
+      "",
+      "## Overview",
+      "",
+      "...",
+      "",
+      "## Usage",
+      "",
+      "...",
+    ].join("\n");
+
+    const s3Key = `skills/${skillId}/v1/SKILL.md`;
+
+    try {
+      await uploadFile(Buffer.from(skillMdContent, "utf-8"), s3Key, config, { contentType: "text/markdown" }, undefined, undefined, true);
+    } catch (err: any) {
+      console.error("[SKILLS] Failed to create SKILL.md in S3", err);
+      res.status(500).json({ detail: "Failed to initialise skill folder in S3." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    await db("skills").where({ id: skillId }).update({
+      s3folder: `skills/${skillId}`,
+      current_version: 1,
+      history: JSON.stringify([
+        { version: 1, created_at: new Date().toISOString(), label: "Initial" },
+      ]),
+    });
+
+    res.json({ version: 1, skillMdKey: s3Key });
+  });
+
+  /**
+   * GET /skills/:skillId/files?version=N
+   * Lists all files in a skill version and returns a virtual folder tree.
+   */
+  app.get("/skills/:skillId/files", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const version = req.query.version ? Number(req.query.version) : (skill.current_version ?? 1);
+    const prefix = `skills/${skillId}/v${version}/`;
+
+    const files = await listS3ObjectsByPrefix(prefix, config);
+    const tree = buildFileTree(files, config.fileUploads?.s3prefix ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/` + prefix : prefix);
+
+    res.json({ version, tree, fileCount: files.length });
+  });
+
+  /**
+   * POST /skills/:skillId/sign
+   * Returns a presigned PUT URL for uploading a file at an exact path within
+   * the current version of the skill.
+   * Body: { filePath: "scripts/analyze.py", contentType: "text/x-python" }
+   */
+  app.post("/skills/:skillId/sign", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { filePath, contentType = "application/octet-stream" } = req.body;
+
+    if (!filePath || typeof filePath !== "string") {
+      res.status(400).json({ detail: "Missing filePath in request body." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const version = skill.current_version ?? 1;
+    // Sanitize: strip leading slash and prevent path traversal
+    const safePath = filePath.replace(/^\/+/, "").replace(/\.\.\//g, "");
+    const s3Key = `skills/${skillId}/v${version}/${safePath}`;
+    const fullKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${s3Key}`
+      : s3Key;
+
+    const url = await getS3SignedUploadUrl(fullKey, contentType, config);
+
+    res.json({ key: s3Key, url, method: "PUT" });
+  });
+
+  /**
+   * GET /skills/:skillId/file?key=<s3key>
+   * Returns a presigned download URL. For small text files (≤ 200 KB) also
+   * returns the raw content inline so the editor can avoid a second round trip.
+   */
+  app.get("/skills/:skillId/file", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { key } = req.query;
+
+    if (!key || typeof key !== "string") {
+      res.status(400).json({ detail: "Missing key query parameter." });
+      return;
+    }
+
+    if (!key.startsWith(`skills/${skillId}/`)) {
+      res.status(403).json({ detail: "Key does not belong to this skill." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const fullKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${key}`
+      : key;
+
+    const TEXT_EXTENSIONS = new Set([".md", ".txt", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".sh", ".env", ".toml", ".xml", ".html", ".css"]);
+    const ext = key.slice(key.lastIndexOf(".")).toLowerCase();
+    const isText = TEXT_EXTENSIONS.has(ext);
+
+    const MAX_INLINE_BYTES = 200 * 1024;
+
+    let content: string | undefined;
+    if (isText) {
+      try {
+        const raw = await getS3ObjectContent(fullKey, config);
+        if (raw.length <= MAX_INLINE_BYTES) {
+          content = raw;
+        }
+      } catch {
+        // Non-fatal: presigned URL will still be returned
+      }
+    }
+
+    const bucket = config.fileUploads?.s3Bucket ?? "";
+    const url = await getPresignedUrl(bucket, fullKey, config);
+
+    res.json({ url, content, key });
+  });
+
+  /**
+   * DELETE /skills/:skillId/file?key=<s3key>
+   * Deletes a single file. Pass ?prefix=<prefix> to delete an entire folder.
+   */
+  app.delete("/skills/:skillId/file", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { key, prefix } = req.query;
+
+    if (!key && !prefix) {
+      res.status(400).json({ detail: "Provide either key or prefix query parameter." });
+      return;
+    }
+
+    const guard = (s: string): boolean => !s.startsWith(`skills/${skillId}/`);
+
+    if (key && typeof key === "string") {
+      if (guard(key)) {
+        res.status(403).json({ detail: "Key does not belong to this skill." });
+        return;
+      }
+    }
+    if (prefix && typeof prefix === "string") {
+      if (guard(prefix)) {
+        res.status(403).json({ detail: "Prefix does not belong to this skill." });
+        return;
+      }
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const s3Prefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+
+    if (key && typeof key === "string") {
+      const fullKey = s3Prefix + key;
+      await deleteS3Object(fullKey, config);
+      res.json({ deleted: 1 });
+      return;
+    }
+
+    if (prefix && typeof prefix === "string") {
+      const files = await listS3ObjectsByPrefix(prefix, config);
+      await Promise.all(files.map((f) => deleteS3Object(f.key, config)));
+      res.json({ deleted: files.length });
+      return;
+    }
+  });
+
+  /**
+   * POST /skills/:skillId/version
+   * Freezes the current version by copying all its files into the next version
+   * folder. Going forward, the skill's current_version points to the new slot.
+   * Body: { label?: string }
+   */
+  app.post("/skills/:skillId/version", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { label } = req.body;
+    const { db } = await postgresClient();
+
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const currentVersion: number = skill.current_version ?? 1;
+    const newVersion = currentVersion + 1;
+    const currentPrefix = `skills/${skillId}/v${currentVersion}/`;
+    const newPrefix = `skills/${skillId}/v${newVersion}/`;
+
+    const files = await listS3ObjectsByPrefix(currentPrefix, config);
+    if (files.length === 0) {
+      res.status(400).json({ detail: "No files found in current version to snapshot." });
+      return;
+    }
+
+    const s3GeneralPrefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+
+    for (const file of files) {
+      const destKey = file.key.replace(s3GeneralPrefix + currentPrefix, s3GeneralPrefix + newPrefix);
+      await copyS3Object(file.key, destKey, config);
+    }
+
+    const existingHistory = Array.isArray(skill.history) ? skill.history : [];
+    const newHistory = [
+      ...existingHistory,
+      { version: newVersion, created_at: new Date().toISOString(), label: label ?? `v${newVersion}` },
+    ];
+
+    await db("skills").where({ id: skillId }).update({
+      current_version: newVersion,
+      history: JSON.stringify(newHistory),
+    });
+
+    res.json({ newVersion, fileCount: files.length });
+  });
+
+  /**
+   * POST /skills/:skillId/rename
+   * Moves a file within the current version by copying to the new path and
+   * deleting the original.
+   * Body: { sourceKey: "skills/<id>/v1/old.md", destPath: "new-name.md" }
+   */
+  app.post("/skills/:skillId/rename", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { sourceKey, destPath } = req.body;
+
+    if (!sourceKey || !destPath) {
+      res.status(400).json({ detail: "sourceKey and destPath are required." });
+      return;
+    }
+
+    if (!sourceKey.startsWith(`skills/${skillId}/`)) {
+      res.status(403).json({ detail: "sourceKey does not belong to this skill." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const version = skill.current_version ?? 1;
+    const safeDest = destPath.replace(/^\/+/, "").replace(/\.\.\//g, "");
+    const destKey = `skills/${skillId}/v${version}/${safeDest}`;
+
+    const s3Prefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+
+    const fullSourceKey = s3Prefix + sourceKey;
+    const fullDestKey = s3Prefix + destKey;
+
+    await copyS3Object(fullSourceKey, fullDestKey, config);
+    await deleteS3Object(fullSourceKey, config);
+
+    res.json({ newKey: destKey });
+  });
+
+  /**
+   * GET /skills/:skillId/diff?fromVersion=1&toVersion=2
+   * Compares two versions of a skill, returning per-file status
+   * (added / removed / modified) and unified diff strings for changed text files.
+   */
+  app.get("/skills/:skillId/diff", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const fromVersion = Number(req.query.fromVersion);
+    const toVersion = Number(req.query.toVersion);
+
+    if (!fromVersion || !toVersion) {
+      res.status(400).json({ detail: "fromVersion and toVersion query params are required." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const s3Prefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+
+    const fromPrefix = `skills/${skillId}/v${fromVersion}/`;
+    const toPrefix = `skills/${skillId}/v${toVersion}/`;
+
+    const [fromFiles, toFiles] = await Promise.all([
+      listS3ObjectsByPrefix(fromPrefix, config),
+      listS3ObjectsByPrefix(toPrefix, config),
+    ]);
+
+    // Relativise keys so we can compare paths across versions
+    const relativise = (files: S3FileObject[], prefix: string): Map<string, S3FileObject> => {
+      const full = s3Prefix + prefix;
+      return new Map(files.map((f) => [f.key.replace(full, ""), f]));
+    };
+
+    const fromMap = relativise(fromFiles, fromPrefix);
+    const toMap = relativise(toFiles, toPrefix);
+
+    const allPaths = new Set([...fromMap.keys(), ...toMap.keys()]);
+
+    const TEXT_EXTENSIONS = new Set([".md", ".txt", ".py", ".js", ".ts", ".json", ".yaml", ".yml", ".sh", ".toml"]);
+    const MAX_DIFF_BYTES = 500 * 1024;
+
+    const fileDiffs = await Promise.all(
+      [...allPaths].map(async (path) => {
+        const inFrom = fromMap.has(path);
+        const inTo = toMap.has(path);
+        const status = !inFrom ? "added" : !inTo ? "removed" : "modified";
+
+        if (status === "modified") {
+          const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+          if (!TEXT_EXTENSIONS.has(ext)) {
+            return { path, status };
+          }
+          try {
+            const [fromContent, toContent] = await Promise.all([
+              getS3ObjectContent(s3Prefix + fromPrefix + path, config),
+              getS3ObjectContent(s3Prefix + toPrefix + path, config),
+            ]);
+            if (fromContent === toContent) {
+              return { path, status: "unchanged" as const };
+            }
+            if (fromContent.length + toContent.length > MAX_DIFF_BYTES) {
+              return { path, status };
+            }
+            // Build a simple unified diff
+            const fromLines = fromContent.split("\n");
+            const toLines = toContent.split("\n");
+            const diff = buildUnifiedDiff(fromLines, toLines, `v${fromVersion}/${path}`, `v${toVersion}/${path}`);
+            return { path, status, diff };
+          } catch {
+            return { path, status };
+          }
+        }
+
+        return { path, status };
+      }),
+    );
+
+    res.json({
+      fromVersion,
+      toVersion,
+      files: fileDiffs.filter((f) => f.status !== "unchanged"),
+    });
+  });
+
+  // ─── End Skills File Management ───────────────────────────────────────────────
+
   app.use(express.static("public"));
 
   return app;
 };
+
+/**
+ * Produce a minimal unified diff string from two arrays of lines.
+ * Uses a greedy LCS-based approach suitable for small-to-medium text files.
+ */
+function buildUnifiedDiff(
+  fromLines: string[],
+  toLines: string[],
+  fromLabel: string,
+  toLabel: string,
+): string {
+  // Simple Myers-diff-inspired implementation: compute edit script via LCS
+  function lcs(a: string[], b: string[]): number[][] {
+    const m = a.length;
+    const n = b.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i]![j] = a[i - 1] === b[j - 1] ? (dp[i - 1]![j - 1] ?? 0) + 1 : Math.max(dp[i - 1]![j] ?? 0, dp[i]![j - 1] ?? 0);
+      }
+    }
+    return dp;
+  }
+
+  type Hunk = { op: "=" | "-" | "+"; line: string };
+
+  function diff(a: string[], b: string[]): Hunk[] {
+    const table = lcs(a, b);
+    const result: Hunk[] = [];
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+        result.unshift({ op: "=", line: a[i - 1]! });
+        i--;
+        j--;
+      } else if (j > 0 && (i === 0 || (table[i]![j - 1] ?? 0) >= (table[i - 1]![j] ?? 0))) {
+        result.unshift({ op: "+", line: b[j - 1]! });
+        j--;
+      } else {
+        result.unshift({ op: "-", line: a[i - 1]! });
+        i--;
+      }
+    }
+    return result;
+  }
+
+  const CONTEXT = 3;
+  const hunks = diff(fromLines, toLines);
+  const lines: string[] = [`--- ${fromLabel}`, `+++ ${toLabel}`];
+
+  // Group into context windows
+  let hunkStart = -1;
+  for (let idx = 0; idx < hunks.length; idx++) {
+    const h = hunks[idx]!;
+    if (h.op !== "=") {
+      if (hunkStart < 0) {
+        hunkStart = Math.max(0, idx - CONTEXT);
+      }
+    } else if (hunkStart >= 0 && idx - hunkStart > CONTEXT * 2) {
+      // Flush hunk
+      const slice = hunks.slice(hunkStart, Math.min(idx, hunkStart + (idx - hunkStart)));
+      lines.push(`@@ -${hunkStart + 1} +${hunkStart + 1} @@`);
+      for (const s of slice) {
+        lines.push((s.op === "=" ? " " : s.op) + s.line);
+      }
+      hunkStart = -1;
+    }
+  }
+  if (hunkStart >= 0) {
+    const slice = hunks.slice(hunkStart, Math.min(hunks.length, hunkStart + hunks.length));
+    lines.push(`@@ -${hunkStart + 1} +${hunkStart + 1} @@`);
+    for (const s of slice) {
+      lines.push((s.op === "=" ? " " : s.op) + s.line);
+    }
+  }
+
+  return lines.join("\n");
+}
 
 const createCustomAnthropicStreamingMessage = (message: string) => {
   const responseData = {

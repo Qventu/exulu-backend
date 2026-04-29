@@ -6,6 +6,7 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { AgenticRetrievalOutput, ChunkResult, ClassificationResult } from "./types";
 import type { StrategyConfig } from "./strategies";
 import { createDynamicTools } from "./dynamic-tools";
+import type { TrajectoryStepData } from "./trajectory";
 
 const FINISH_TOOL_NAME = "finish_retrieval";
 
@@ -72,8 +73,9 @@ export async function* runAgentLoop(params: {
   customInstructions?: string;
   classification: ClassificationResult;
   onStepComplete?: (step: AgenticRetrievalOutput["steps"][0]) => void;
+  onTrajectoryStep?: (data: TrajectoryStepData) => void;
 }): AsyncGenerator<AgenticRetrievalOutput> {
-  const { query, strategy, tools, model, reranker, contextGuidance, customInstructions, onStepComplete } = params;
+  const { query, strategy, tools, model, reranker, contextGuidance, customInstructions, onStepComplete, onTrajectoryStep } = params;
 
   const output: AgenticRetrievalOutput = {
     steps: [],
@@ -221,6 +223,28 @@ export async function* runAgentLoop(params: {
     output.usage.push(result.usage);
 
     onStepComplete?.(stepRecord);
+
+    if (onTrajectoryStep) {
+      const toolResultMap = new Map<string, any>();
+      for (const tr of (result.toolResults as any[]) ?? []) {
+        toolResultMap.set(tr.toolCallId, tr.output ?? tr.result);
+      }
+      onTrajectoryStep({
+        stepNumber: step + 1,
+        systemPrompt: stepSystemPrompt,
+        text: result.text ?? "",
+        toolCalls:
+          (result.toolCalls as any[])?.map((tc) => ({
+            name: tc.toolName,
+            id: tc.toolCallId,
+            input: tc.input,
+            output: toolResultMap.get(tc.toolCallId),
+          })) ?? [],
+        chunks: stepChunks,
+        dynamicToolsCreated: Object.keys(newDynamic),
+        tokens: result.usage?.totalTokens ?? 0,
+      });
+    }
 
     yield { ...output };
 

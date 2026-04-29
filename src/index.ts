@@ -61,7 +61,6 @@ import {
 } from './utils/python-setup';
 import { documentProcessor } from "@EE/python/documents/processing/doc_processor.ts";
 import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index.ts";
-import { createAgenticRetrievalToolV4 } from "@EE/agentic-retrieval/v4/index.ts";
 
 export const ExuluJobs = {
   redis: redisClient,
@@ -71,8 +70,7 @@ export const ExuluDefaultTools = {
   agentic: {
     retrieval: {
       create: {
-        v3: createAgenticRetrievalToolV3,
-        v4: createAgenticRetrievalToolV4,
+        v3: createAgenticRetrievalToolV3
       }
     },
   },

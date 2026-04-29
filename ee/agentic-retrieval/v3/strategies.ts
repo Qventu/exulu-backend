@@ -81,9 +81,19 @@ Search language:
 - Always write search queries in the SAME LANGUAGE as the user's query.
 - Do NOT translate the query to English — the documents are indexed in their original language.
 
-Step 1 — wide hybrid search (includeContent: true, limit 10):
-- Search broadly across all sources per the system instructions — do not limit to 1 context.
-- This gives you the best results from every relevant source at once.
+Step 1 — match the opening move to what the query actually needs:
+
+  User wants to know IF something EXISTS or WHAT documents are available on a topic:
+  → search_items_by_name  OR  search_content with includeContent: false
+  → Finds matching document names/metadata without loading content — efficient and precise.
+  → Load content with dynamic get_{item}_page_{n}_content tools only if needed in step 2.
+
+  User wants the CONTENT itself (procedures, parameters, explanations, how-to):
+  → search_content with includeContent: true, limit 10, searchMethod: "hybrid"
+  → Search broadly — do NOT limit to one context on the first call.
+
+  User provides an EXACT TERM (error code, product code, ID, parameter name):
+  → search_content with searchMethod: "keyword"
 
 Step 2+ — depth and follow-up:
 - For any relevant document found with fewer than 5 chunks, use get_more_content_from_{item}
@@ -93,19 +103,9 @@ Step 2+ — depth and follow-up:
 - Try alternative phrasings if the first query doesn't surface the right answer.
 
 Product-specific filtering:
-- When the query mentions a specific product (e.g., "FST-3", "ECO"), you MAY use
-  item_names: ["<product>"] on a follow-up search to narrow results — but only after an initial
+- When the query mentions a specific named entity (product, model, version), you MAY use
+  item_names: ["<entity>"] on a follow-up search to narrow results — but only after an initial
   wide search. Never start with item_names filtering alone.
-
-Two-step approach — use includeContent: false first:
-- Only when you expect many results (>20) and need to identify the right document first.
-- Step 1: search_content with includeContent: false → see which documents/chunks match.
-- Step 2: use dynamic get_{item}_page_{n}_content tools to load specific pages.
-
-Search method selection:
-- hybrid (default): best for most queries
-- keyword: exact product codes, document IDs, error codes
-- semantic: conceptual questions, synonyms, paraphrasing
 `.trim();
 
 export const EXPLORATORY_INSTRUCTIONS = `

@@ -18,6 +18,7 @@ const {
   agentMessagesSchema,
   rolesSchema,
   usersSchema,
+  skillsSchema,
   statisticsSchema,
   variablesSchema,
   workflowTemplatesSchema,
@@ -79,6 +80,7 @@ const up = async function (knex: Knex) {
     agentsSchema(),
     feedbackSchema(),
     variablesSchema(),
+    skillsSchema(),
     workflowTemplatesSchema(),
   ];
 
