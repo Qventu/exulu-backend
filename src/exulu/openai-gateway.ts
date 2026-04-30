@@ -170,9 +170,8 @@ export const registerOpenAIGatewayRoutes = async (
 ): Promise<void> => {
   const { agentsSchema, projectsSchema } = coreSchemas.get();
 
-  // Lists all agents in the project as OpenAI-compatible models.
   app.get(
-    "/gateway/open-ai/:project/v1/models",
+    "/gateway/open-ai/v1/models",
     async (req: Request, res: Response) => {
       try {
         const authResult = await requestValidators.authenticate(req);
@@ -185,17 +184,22 @@ export const registerOpenAIGatewayRoutes = async (
 
         const { db } = await postgresClient();
 
+        let projectsQuery = db("projects").select("id", "name");
+        projectsQuery = applyAccessControl(projectsSchema(), projectsQuery, authResult.user);
+        const projects: Pick<Project, "id" | "name">[] = await projectsQuery;
+
         let agentsQuery = db("agents").select("id", "name");
         agentsQuery = applyAccessControl(agentsSchema(), agentsQuery, authResult.user);
         const agents: Pick<ExuluAgent, "id" | "name">[] = await agentsQuery;
 
-        const data = agents.map((a) => ({
-          id: a.id,
-          object: "model",
-          created: 0,
-          owned_by: "exulu",
-          name: a.name,
-        }));
+        const data = projects.flatMap((p) =>
+          agents.map((a) => ({
+            id: `${p.name}/${a.name}`,
+            object: "model",
+            created: 0,
+            owned_by: "exulu",
+          })),
+        );
 
         res.json({ object: "list", data });
       } catch (error: any) {
@@ -206,7 +210,7 @@ export const registerOpenAIGatewayRoutes = async (
   );
 
   app.get(
-    "/gateway/open-ai/:project/v1/models/:id",
+    "/gateway/open-ai/v1/models/:projectId/:agentId",
     async (req: Request, res: Response) => {
       try {
         const authResult = await requestValidators.authenticate(req);
@@ -218,17 +222,28 @@ export const registerOpenAIGatewayRoutes = async (
         }
 
         const { db } = await postgresClient();
+
+        let projectQuery = db("projects").select("id", "name");
+        projectQuery = applyAccessControl(projectsSchema(), projectQuery, authResult.user);
+        projectQuery.where({ id: req.params.projectId });
+        const project: Pick<Project, "id" | "name"> | undefined = await projectQuery.first();
+
         let agentQuery = db("agents").select("id", "name");
         agentQuery = applyAccessControl(agentsSchema(), agentQuery, authResult.user);
-        agentQuery.where({ id: req.params.id });
+        agentQuery.where({ id: req.params.agentId });
         const agent: Pick<ExuluAgent, "id" | "name"> | undefined = await agentQuery.first();
 
-        if (!agent) {
+        if (!project || !agent) {
           res.status(404).json({ error: { message: "Model not found", type: "invalid_request_error" } });
           return;
         }
 
-        res.json({ id: agent.id, object: "model", created: 0, owned_by: "exulu", name: agent.name });
+        res.json({
+          id: `${project.name}/${agent.name}`,
+          object: "model",
+          created: 0,
+          owned_by: "exulu",
+        });
       } catch (error: any) {
         console.error("[OPENAI GATEWAY] /v1/models/:id error:", error);
         res.status(500).json({ error: { message: error.message, type: "server_error" } });
@@ -237,7 +252,7 @@ export const registerOpenAIGatewayRoutes = async (
   );
 
   app.post(
-    "/gateway/open-ai/:project/v1/chat/completions",
+    "/gateway/open-ai/v1/chat/completions",
     express.json({ limit: REQUEST_SIZE_LIMIT }),
     async (req: Request, res: Response) => {
       try {
@@ -252,23 +267,33 @@ export const registerOpenAIGatewayRoutes = async (
         }
         const user = authResult.user;
 
-        const agentId: string | undefined = req.body.model;
-        if (!agentId) {
+        const modelId: string | undefined = req.body.model;
+        if (!modelId) {
           res.status(400).json({
             error: { message: "Missing required field: model", type: "invalid_request_error" },
           });
           return;
         }
 
+        const separatorIndex = modelId.indexOf("/");
+        if (separatorIndex === -1) {
+          res.status(400).json({
+            error: { message: "Invalid model format. Expected: 'projectname/agentname'", type: "invalid_request_error" },
+          });
+          return;
+        }
+        const projectName = modelId.substring(0, separatorIndex);
+        const agentName = modelId.substring(separatorIndex + 1);
+
         let agentQuery = db("agents").select("*");
         agentQuery = applyAccessControl(agentsSchema(), agentQuery, user);
-        agentQuery.where({ id: agentId });
+        agentQuery.where({ name: agentName });
         const agent: ExuluAgent | undefined = await agentQuery.first();
 
         if (!agent) {
           res.status(404).json({
             error: {
-              message: `Agent ${agentId} not found or you do not have access to it.`,
+              message: `Agent '${agentName}' not found or you do not have access to it.`,
               type: "invalid_request_error",
             },
           });
@@ -276,10 +301,10 @@ export const registerOpenAIGatewayRoutes = async (
         }
 
         let project: Project | null = null;
-        if (req.params.project && req.params.project !== "DEFAULT") {
+        if (projectName) {
           let projectQuery = db("projects").select("*");
           projectQuery = applyAccessControl(projectsSchema(), projectQuery, user);
-          projectQuery.where({ id: req.params.project });
+          projectQuery.where({ name: projectName });
           project = await projectQuery.first();
         }
 
@@ -313,9 +338,7 @@ export const registerOpenAIGatewayRoutes = async (
         const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
         const providerapikey = bytes.toString(CryptoJS.enc.Utf8);
 
-        const provider =
-          providers.find((p) => p.id === agent.providerName) ??
-          providers.find((p) => p.provider === agent.provider);
+        const provider = providers.find((p) => p.id === agent.provider);
 
         if (!provider?.config?.model?.create) {
           res.status(400).json({
@@ -392,14 +415,12 @@ export const registerOpenAIGatewayRoutes = async (
             },
           });
 
-          result.consumeStream();
-
           res.write(
             `data: ${JSON.stringify({
               id: completionId,
               object: "chat.completion.chunk",
               created,
-              model: agentId,
+              model: modelId,
               choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
             })}\n\n`,
           );
@@ -414,17 +435,17 @@ export const registerOpenAIGatewayRoutes = async (
                   id: completionId,
                   object: "chat.completion.chunk",
                   created,
-                  model: agentId,
-                  choices: [{ index: 0, delta: { content: chunk.textDelta }, finish_reason: null }],
+                  model: modelId,
+                  choices: [{ index: 0, delta: { content: chunk.text }, finish_reason: null }],
                 })}\n\n`,
               );
-            } else if (chunk.type === "tool-call-streaming-start") {
+            } else if (chunk.type === "tool-input-start") {
               res.write(
                 `data: ${JSON.stringify({
                   id: completionId,
                   object: "chat.completion.chunk",
                   created,
-                  model: agentId,
+                  model: modelId,
                   choices: [
                     {
                       index: 0,
@@ -432,7 +453,7 @@ export const registerOpenAIGatewayRoutes = async (
                         tool_calls: [
                           {
                             index: 0,
-                            id: chunk.toolCallId,
+                            id: chunk.id,
                             type: "function",
                             function: { name: chunk.toolName, arguments: "" },
                           },
@@ -443,32 +464,32 @@ export const registerOpenAIGatewayRoutes = async (
                   ],
                 })}\n\n`,
               );
-            } else if (chunk.type === "tool-call-delta") {
+            } else if (chunk.type === "tool-input-delta") {
               res.write(
                 `data: ${JSON.stringify({
                   id: completionId,
                   object: "chat.completion.chunk",
                   created,
-                  model: agentId,
+                  model: modelId,
                   choices: [
                     {
                       index: 0,
-                      delta: { tool_calls: [{ index: 0, function: { arguments: chunk.argsTextDelta } }] },
+                      delta: { tool_calls: [{ index: 0, function: { arguments: chunk.delta } }] },
                       finish_reason: null,
                     },
                   ],
                 })}\n\n`,
               );
             } else if (chunk.type === "finish") {
-              inputTokens = chunk.usage?.promptTokens ?? 0;
-              outputTokens = chunk.usage?.completionTokens ?? 0;
+              inputTokens = chunk.usage?.inputTokens ?? 0;
+              outputTokens = chunk.usage?.outputTokens ?? 0;
               const finishReason = chunk.finishReason === "tool-calls" ? "tool_calls" : "stop";
               res.write(
                 `data: ${JSON.stringify({
                   id: completionId,
                   object: "chat.completion.chunk",
                   created,
-                  model: agentId,
+                  model: modelId,
                   choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
                   usage: {
                     prompt_tokens: inputTokens,

@@ -154,7 +154,7 @@ export const requestValidators = {
         message: "Missing body.",
       };
     }
-    
+
     if (!req.body.message && !req.body.messages) {
       return {
         error: true,
