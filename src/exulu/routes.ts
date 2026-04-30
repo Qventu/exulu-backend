@@ -40,6 +40,7 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
+import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -1244,6 +1245,8 @@ Mood: friendly and intelligent.
   );
 
   app.use(express.static("public"));
+
+  await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config, rerankers);
 
   return app;
 };
