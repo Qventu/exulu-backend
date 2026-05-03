@@ -13,6 +13,7 @@ import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
 import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
+import { getSessionTools } from "@EE/agentic-retrieval/v3/session-tools-registry";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -136,7 +137,7 @@ export const convertExuluToolsToAiSdkTools = async (
   sessionID?: string,
   req?: Request,
   project?: string,
-  items?: string[],
+  sessionItems?: string[],
   model?: LanguageModel,
   agent?: ExuluAgent,
 ): Promise<Record<string, Tool>> => {
@@ -183,13 +184,13 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  console.log("[EXULU] Convert tools array to object, session items", items);
-  if (items) {
+  console.log("[EXULU] Convert tools array to object, session items", sessionItems);
+  if (sessionItems) {
     const sessionItemsRetrievalTool = await createSessionItemsRetrievalTool({
       user: user,
       role: user?.role?.id,
       contexts: contexts,
-      items: items,
+      items: sessionItems,
     });
     if (sessionItemsRetrievalTool) {
       currentTools.push(sessionItemsRetrievalTool);
@@ -203,7 +204,8 @@ export const convertExuluToolsToAiSdkTools = async (
       rerankers: rerankers || [],
       user: user,
       role: user?.role?.id,
-      model: model
+      model: model,
+      preselectedItemIds: sessionItems,
     });
     if (agenticSearchTool) {
       // Replace the agentic search tool with the new one.
@@ -238,7 +240,18 @@ export const convertExuluToolsToAiSdkTools = async (
 
   console.log("[EXULU] Approved tools", approvedTools);
 
+  // Session-scoped dynamic tools created by agentic retrieval (e.g. get_more_content_from_X).
+  // These are registered during retrieval runs so the outer agent can call them directly
+  // on follow-up questions without re-running the full retrieval loop.
+  const sessionDynamicTools = sessionID
+    ? Object.entries(getSessionTools(sessionID)).reduce<Record<string, any>>((acc, [name, t]) => {
+        acc[name] = { ...t, needsApproval: false };
+        return acc;
+      }, {})
+    : {};
+
   return {
+    ...sessionDynamicTools,
     ...sanitizedTools?.reduce((prev, cur) => {
       let toolVariableConfig = configs?.find((config) => config.id === cur.id);
 

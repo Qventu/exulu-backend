@@ -6,6 +6,7 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { AgenticRetrievalOutput, ChunkResult, ClassificationResult } from "./types";
 import type { StrategyConfig } from "./strategies";
 import { createDynamicTools } from "./dynamic-tools";
+import { registerSessionTools } from "./session-tools-registry";
 import type { TrajectoryStepData } from "./trajectory";
 
 const FINISH_TOOL_NAME = "finish_retrieval";
@@ -72,10 +73,11 @@ export async function* runAgentLoop(params: {
   contextGuidance?: string;
   customInstructions?: string;
   classification: ClassificationResult;
+  sessionId?: string;
   onStepComplete?: (step: AgenticRetrievalOutput["steps"][0]) => void;
   onTrajectoryStep?: (data: TrajectoryStepData) => void;
 }): AsyncGenerator<AgenticRetrievalOutput> {
-  const { query, strategy, tools, model, reranker, contextGuidance, customInstructions, onStepComplete, onTrajectoryStep } = params;
+  const { query, strategy, tools, model, reranker, contextGuidance, customInstructions, sessionId, onStepComplete, onTrajectoryStep } = params;
 
   const output: AgenticRetrievalOutput = {
     steps: [],
@@ -149,6 +151,16 @@ export async function* runAgentLoop(params: {
     // Extract chunks from tool results
     let stepChunks: any[] = extractChunksFromToolResults(result.toolResults as any[]);
 
+    // Deduplicate by chunk_id within this step (parallel tool calls can return the same chunk
+    // if the agent searches the same context twice, or the same chunk is indexed in two contexts).
+    const seenChunkIds = new Set<string>();
+    stepChunks = stepChunks.filter((c) => {
+      if (!c.chunk_id) return true;
+      if (seenChunkIds.has(c.chunk_id)) return false;
+      seenChunkIds.add(c.chunk_id);
+      return true;
+    });
+
     // Check if any search_content call excluded content (triggers page-load dynamic tools)
     // AI SDK v6 uses `input` (not `args`) for tool call arguments
     const hadExcludedContent = (result.toolCalls as any[])?.some(
@@ -166,6 +178,9 @@ export async function* runAgentLoop(params: {
     // Create dynamic tools (browse adjacent pages, load specific pages)
     const newDynamic = await createDynamicTools(stepChunks as ChunkResult[], hadExcludedContent);
     Object.assign(dynamicTools, newDynamic);
+    if (sessionId && Object.keys(newDynamic).length > 0) {
+      registerSessionTools(sessionId, newDynamic);
+    }
 
     // If relevant content was found but fewer than 5 chunks, withhold finish_retrieval
     // on the next step to force depth exploration via dynamic tools.
@@ -177,9 +192,14 @@ export async function* runAgentLoop(params: {
       Object.keys(newDynamic).length > 0 &&
       step < strategy.stepBudget - 2;
 
-    // Track which suggested contexts have been searched this step
+    // Track which suggested contexts have been searched this step.
+    // search_content and save_search_results now use knowledge_base_id (singular);
+    // count_items_or_chunks and search_items_by_name still use knowledge_base_ids (plural array).
     for (const tc of (result.toolCalls as any[]) ?? []) {
       if (SEARCH_TOOL_NAMES.has(tc.toolName)) {
+        if (tc.input?.knowledge_base_id) {
+          searchedContextIds.add(tc.input.knowledge_base_id);
+        }
         for (const id of (tc.input?.knowledge_base_ids ?? [])) {
           searchedContextIds.add(id);
         }
@@ -219,7 +239,9 @@ export async function* runAgentLoop(params: {
         output: stepChunks,
       })) ?? [],
     });
-    output.chunks.push(...stepChunks);
+    // Deduplicate against chunks already accumulated from prior steps
+    const existingChunkIds = new Set(output.chunks.map((c) => c.chunk_id).filter(Boolean));
+    output.chunks.push(...stepChunks.filter((c) => !c.chunk_id || !existingChunkIds.has(c.chunk_id)));
     output.usage.push(result.usage);
 
     onStepComplete?.(stepRecord);

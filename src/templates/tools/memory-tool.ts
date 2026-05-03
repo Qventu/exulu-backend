@@ -2,7 +2,6 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { z, ZodSchema } from "zod";
-import fs from "fs";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 
 export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext): ExuluTool => {

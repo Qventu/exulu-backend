@@ -1,9 +1,11 @@
 export function sanitizeToolName(name: string): string {
   if (typeof name !== "string") return "";
 
-  // Step 1: Replace invalid characters with underscores
-  // Keep a-z, A-Z, 0-9, underscores (_), dots (.), colons (:), and dashes (-)
-  let sanitized = name.replace(/[^a-zA-Z0-9_.\:-]+/g, "_");
+  // Step 1: Replace invalid characters with underscores.
+  // Dots are intentionally excluded — they act as namespace separators in some
+  // providers (e.g. OpenAI) and would cause the model to split "foo.pdf" into
+  // namespace "foo" / method "pdf", resulting in hallucinated tool calls.
+  let sanitized = name.replace(/[^a-zA-Z0-9_\:-]+/g, "_");
 
   // Step 2: Ensure it starts with a letter or underscore (Vertex AI requirement)
   // If it starts with a number, dash, dot, or colon, prepend an underscore

@@ -25,6 +25,7 @@ interface TrajectoryData {
   timestamp: string;
   query: string;
   classification: ClassificationResult;
+  preselectedItemIds?: string[];
   steps: {
     step_number: number;
     text: string;
@@ -53,12 +54,14 @@ export class TrajectoryLogger {
     query: string,
     classification: ClassificationResult,
     logDir = path.join(process.cwd(), "ee/agentic-retrieval/logs"),
+    preselectedItemIds?: string[],
   ) {
     this.logDir = logDir;
     this.data = {
       timestamp: new Date().toISOString(),
       query,
       classification,
+      preselectedItemIds: preselectedItemIds?.length ? preselectedItemIds : undefined,
       steps: [],
       final: {
         total_chunks: 0,
@@ -109,6 +112,11 @@ export class TrajectoryLogger {
     lines.push(
       `- **Suggested contexts:** ${suggested.length > 0 ? suggested.map((id) => `\`${id}\``).join(", ") : "*(all)*"}`,
     );
+    if (this.data.preselectedItemIds?.length) {
+      lines.push(
+        `- **Preselected item IDs:** ${this.data.preselectedItemIds.map((id) => `\`${id}\``).join(", ")}`,
+      );
+    }
     lines.push("");
     lines.push("---");
     lines.push("");
