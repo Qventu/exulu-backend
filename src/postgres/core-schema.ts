@@ -257,6 +257,10 @@ const agentsSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      name: "skills",
+      type: "json",
+    },
+    {
       name: "animation_idle",
       type: "text",
     },

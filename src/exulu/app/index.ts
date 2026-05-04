@@ -225,10 +225,6 @@ export class ExuluApp {
       ...questionTools,
       ...perplexityTools,
       emailTool,
-      // Add contexts as tools
-      ...(Object.values(contexts || {})
-        .map((context) => context.tool())
-        .filter(Boolean) as ExuluTool[]),
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.

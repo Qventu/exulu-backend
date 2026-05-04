@@ -19,10 +19,6 @@ import { vectorSearch, type VectorSearchChunkResult } from "@SRC/graphql/resolve
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
 import { mapType } from "@SRC/utils/map-types";
-import { ExuluTool } from "./tool";
-import { z } from "zod";
-import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
-import { updateStatistic } from "./statistics";
 import { bullmqDecorator } from "@EE/queues/decorator";
 
 export type ExuluContextFieldDefinition = {
@@ -111,7 +107,6 @@ export class ExuluContext {
     calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always";
     maxRetrievalResults?: number; // max number of results to return for retrieval
     defaultRightsMode?: ExuluRightsMode;
-    enableAsTool?: boolean;
     cutoffs?: {
       cosineDistance?: number;
       tsvector?: number;
@@ -154,7 +149,6 @@ export class ExuluContext {
     configuration?: {
       calculateVectors?: "manual" | "onUpdate" | "onInsert" | "always";
       defaultRightsMode?: ExuluRightsMode;
-      enableAsTool?: boolean;
       languages?: ("german" | "english")[];
       maxRetrievalResults?: number;
       expand?: {
@@ -1088,83 +1082,5 @@ export class ExuluContext {
           `);
 
     return;
-  };
-
-  // Exports the context as a tool that can be used by an agent
-  public tool = (): ExuluTool | null => {
-    if (this.configuration.enableAsTool === false) {
-      return null;
-    }
-    return new ExuluTool({
-      id: this.id,
-      name: `${this.name}_context_search`,
-      type: "context",
-      category: "contexts",
-      needsApproval: true, // todo make configurable
-      inputSchema: z.object({
-        query: z.string().describe("The original question that the user asked"),
-        keywords: z
-          .array(z.string())
-          .describe(
-            "The keywords that are relevant to the user's question, for example names of specific products, systems or parts, IDs, etc.",
-          ),
-        method: z
-          .enum(["keyword", "semantic", "hybrid"])
-          .default("hybrid")
-          .describe(
-            "Search method: 'hybrid' (best for most queries - combines semantic understanding with exact term matching), 'keyword' (best for exact terms, technical names, IDs, or specific phrases), 'semantic' (best for conceptual queries where synonyms and paraphrasing matter)",
-          ),
-      }),
-      config: [],
-      description: `Gets information from the context called: ${this.name}. The context description is: ${this.description}.`,
-      execute: async ({ query, keywords, user, role, method }: any) => {
-        const { db } = await postgresClient();
-        // todo make trigger more specific with the agent name
-        // todo roadmap, auto add the normal filter criteria of a context as input schema so the agent can
-        //   next to semantic search also add regular filters.
-        const result = await vectorSearch({
-          page: 1,
-          limit: this.configuration.maxRetrievalResults ?? 10,
-          query: query,
-          keywords: keywords,
-          itemFilters: [],
-          chunkFilters: [],
-          user,
-          role,
-          method:
-            method === "hybrid"
-              ? "hybridSearch"
-              : method === "keyword"
-                ? "tsvector"
-                : "cosineDistance",
-          context: this,
-          db,
-          sort: undefined,
-          trigger: "agent",
-        });
-
-        await updateStatistic({
-          name: "count",
-          label: this.name,
-          type: STATISTICS_TYPE_ENUM.TOOL_CALL as STATISTICS_TYPE,
-          trigger: "tool",
-          count: 1,
-          user: user?.id,
-          role: user?.role?.id,
-        });
-
-        return {
-          result: JSON.stringify(
-            result.chunks.map((chunk: VectorSearchChunkResult) => ({
-              ...chunk,
-              context: {
-                name: this.name,
-                id: this.id,
-              },
-            })),
-          ),
-        };
-      },
-    });
   };
 }
