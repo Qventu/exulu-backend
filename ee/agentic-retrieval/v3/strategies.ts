@@ -25,9 +25,10 @@ another component will do that based on what you retrieve.
 Always respond in the SAME LANGUAGE as the user's query.
 Always write search queries in the SAME LANGUAGE as the user's query — do NOT translate to English.
 
-SEARCH APPROACH — go wide first, then deep:
-1. First step: search broadly across all sources the system instructions indicate — do NOT
-   pre-filter to a single context on step 1.
+SEARCH APPROACH — one knowledge base at a time, then go deep:
+1. search_content and save_search_results accept ONE knowledge base per call. Make a separate
+   call for each knowledge base you need to cover — never skip one. Search all relevant
+   knowledge bases before concluding, even if the first one already returned good results.
 2. After finding a relevant document, use get_more_content_from_{item} dynamic tools to load
    additional pages/sections. The specific answer is often NOT in the first retrieved chunk —
    always explore adjacent content before concluding.
@@ -44,9 +45,8 @@ export const AGGREGATE_INSTRUCTIONS = `
 ${BASE_INSTRUCTIONS}
 
 STRATEGY: This is a COUNTING or AGGREGATION query.
-- Use count_items_or_chunks exclusively
+- Use count_items_or_chunks exclusively — it accepts multiple knowledge bases in one call for efficiency
 - Do NOT use search_content — it loads unnecessary data
-- Search ALL contexts in parallel in a single tool call
 - Return immediately after counting — one step is sufficient
 - If the count needs a content filter, use content_query parameter
 `.trim();
@@ -81,9 +81,23 @@ Search language:
 - Always write search queries in the SAME LANGUAGE as the user's query.
 - Do NOT translate the query to English — the documents are indexed in their original language.
 
-Step 1 — wide hybrid search (includeContent: true, limit 10):
-- Search broadly across all sources per the system instructions — do not limit to 1 context.
-- This gives you the best results from every relevant source at once.
+Step 1 — match the opening move to what the query actually needs:
+
+  Query references a SPECIFIC NAMED DOCUMENT (product manual, titled report, named file):
+  → ALWAYS start with search_items_by_name — searches document name/title directly
+  → Only proceed to load content if the document is found
+
+  Query asks WHETHER a topic EXISTS or WHAT documents cover a topic (no specific title given):
+  → search_content with includeContent: false
+  → Returns matching document names without loading chunk text — efficient and precise
+  → Load content with dynamic get_{item}_page_{n}_content tools only if needed in step 2
+
+  Query asks for CONTENT itself (procedures, parameters, explanations, how-to):
+  → search_content with includeContent: true, limit 20, searchMethod: "hybrid"
+  → Make one call per knowledge base — search each separately before concluding
+
+  Query provides an EXACT TERM (error code, product code, ID, parameter name):
+  → search_content with searchMethod: "keyword"
 
 Step 2+ — depth and follow-up:
 - For any relevant document found with fewer than 5 chunks, use get_more_content_from_{item}
@@ -93,19 +107,9 @@ Step 2+ — depth and follow-up:
 - Try alternative phrasings if the first query doesn't surface the right answer.
 
 Product-specific filtering:
-- When the query mentions a specific product (e.g., "FST-3", "ECO"), you MAY use
-  item_names: ["<product>"] on a follow-up search to narrow results — but only after an initial
+- When the query mentions a specific named entity (product, model, version), you MAY use
+  item_names: ["<entity>"] on a follow-up search to narrow results — but only after an initial
   wide search. Never start with item_names filtering alone.
-
-Two-step approach — use includeContent: false first:
-- Only when you expect many results (>20) and need to identify the right document first.
-- Step 1: search_content with includeContent: false → see which documents/chunks match.
-- Step 2: use dynamic get_{item}_page_{n}_content tools to load specific pages.
-
-Search method selection:
-- hybrid (default): best for most queries
-- keyword: exact product codes, document IDs, error codes
-- semantic: conceptual questions, synonyms, paraphrasing
 `.trim();
 
 export const EXPLORATORY_INSTRUCTIONS = `
@@ -114,13 +118,13 @@ ${BASE_INSTRUCTIONS}
 STRATEGY: This is an EXPLORATORY query — general question requiring broad search.
 
 Recommended approach:
-1. Start with a wide hybrid search across all relevant contexts (includeContent: true, limit: 10)
+1. Search each relevant knowledge base separately with hybrid search (includeContent: true, limit: 20) — one call per knowledge base
 2. If results are insufficient: try alternative search terms or different search method
 3. Use save_search_results + bash grep when you need to scan many results without context bloat
 4. Use dynamic get_more_content_from_{item} tools to read adjacent pages when a relevant item is found
 
 When to declare done:
-- You have retrieved chunks that cover the key aspects of the query
+- You have retrieved chunks that cover the key aspects of the query from all relevant knowledge bases
 - OR you have tried 3+ different search strategies and found nothing relevant
 
 Do NOT use count_items_or_chunks for exploratory queries — the user wants content, not statistics.
@@ -140,7 +144,7 @@ export const STRATEGIES: Record<QueryType, StrategyConfig> = {
   },
   list: {
     queryType: "list",
-    stepBudget: 2,
+    stepBudget: 3,
     retrieval_tools: ["count_items_or_chunks", "search_items_by_name", "search_content"],
     include_bash: false,
     instructions: LIST_INSTRUCTIONS,
@@ -154,7 +158,7 @@ export const STRATEGIES: Record<QueryType, StrategyConfig> = {
   },
   exploratory: {
     queryType: "exploratory",
-    stepBudget: 4,
+    stepBudget: 5,
     retrieval_tools: [
       "count_items_or_chunks",
       "search_items_by_name",

@@ -4,7 +4,7 @@ import Perplexity from "@perplexity-ai/perplexity_ai";
 
 const internetSearchTool = new ExuluTool({
   id: "internet_search",
-  name: "Perplexity Live Internet Search",
+  name: "Internet Search",
   description: "Search the internet for information.",
   inputSchema: z.object({
     query: z.string().describe("The query to the tool."),

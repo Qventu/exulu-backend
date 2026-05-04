@@ -95,6 +95,84 @@ async function processWord(file: Buffer): Promise<ProcessorOutput> {
 }
 
 /**
+ * Processes a standalone image file by optionally extracting content using VLM
+ */
+async function processImage(
+  buffer: Buffer,
+  paths: ProcessingPaths,
+  config?: DocumentProcessorConfig,
+  verbose: boolean = false,
+): Promise<ProcessorOutput> {
+  try {
+    // Create images directory
+    await fs.promises.mkdir(paths.images, { recursive: true });
+
+    // Save the image
+    const imagePath = path.join(paths.images, '1.png');
+    await fs.promises.writeFile(imagePath, buffer);
+
+    console.log(`[EXULU] Image saved to: ${imagePath}`);
+
+    // Create initial ProcessedDocument with minimal content
+    let json: ProcessedDocument = [{
+      page: 1,
+      content: '', // Empty initially, will be populated by VLM if enabled
+      image: imagePath,
+      headings: [],
+    }];
+
+    // If VLM is enabled, use it to extract content from the image
+    if (config?.vlm?.model) {
+      console.log('[EXULU] Extracting content from image using VLM...');
+
+      json = await validateWithVLM(
+        json,
+        config.vlm.model,
+        verbose,
+        config.vlm.concurrency
+      );
+
+      // Save the processed result
+      await fs.promises.writeFile(
+        paths.json,
+        JSON.stringify(json, null, 2),
+        'utf-8'
+      );
+
+      console.log('[EXULU] VLM content extraction complete');
+
+      const correctedCount = json.filter(p => p.vlm_corrected_text).length;
+      console.log(`[EXULU] Content extracted: ${correctedCount > 0 ? 'Yes' : 'No'}`);
+    } else {
+      console.log('[EXULU] No VLM configured, image saved without content extraction');
+      console.log('[EXULU] Note: Enable VLM in config to extract text/content from images');
+
+      // Save empty result
+      await fs.promises.writeFile(
+        paths.json,
+        JSON.stringify(json, null, 2),
+        'utf-8'
+      );
+    }
+
+    // Build markdown from content
+    const markdown = json.map(p => p.vlm_corrected_text ?? p.content).join('\n\n\n<!-- END_OF_PAGE -->\n\n\n');
+
+    // Save markdown
+    await fs.promises.writeFile(paths.markdown, markdown, 'utf-8');
+
+    return {
+      markdown: markdown,
+      json: json,
+    };
+
+  } catch (error) {
+    console.error('[EXULU] Error processing image:', error);
+    throw error;
+  }
+}
+
+/**
  * Normalizes markdown content by removing excessive whitespace,
  * especially in table formatting.
  */
@@ -307,6 +385,8 @@ If the page contains a flow-chart, schematic, technical drawing or control board
     reasoning: parsedOutput.reasoning,
   };
 
+  console.log(`[EXULU] VLM validation result: ${JSON.stringify(validation)}`);
+
   return validation;
 }
 
@@ -413,31 +493,36 @@ async function validateWithVLM(
 
       const imagePath = page.image;
 
-      if (!page.content) {
-        console.warn(`[EXULU] Page ${page.page}: No content found, skipping validation`);
-        return;
-      }
-
       if (!imagePath) {
         console.warn(`[EXULU] Page ${page.page}: No image found, skipping validation`);
         return;
       }
 
-      // Check if page.content has a .jpeg, .jpg, .png, .gif, .webp image
-      const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
-      // Check if the content has multiple occurences of |
-      const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
+      // For standalone images, page.content will be empty initially
+      // For PDFs/documents, we check if VLM validation is needed based on content
+      if (page.content) {
+        // Check if page.content has a .jpeg, .jpg, .png, .gif, .webp image
+        const hasImage = page.content.match(/\.(jpeg|jpg|png|gif|webp)/i);
+        // Check if the content has multiple occurences of |
+        const hasTable = (page.content.match(/\|/g)?.length || 0) > 1;
 
-      if (!hasImage && !hasTable) {
-        if (verbose) {
-          console.log(`[EXULU] Page ${page.page}: No image or table found, SKIPPING VLM validation`);
+        if (!hasImage && !hasTable) {
+          if (verbose) {
+            console.log(`[EXULU] Page ${page.page}: No image or table found, SKIPPING VLM validation`);
+          }
+          return;
         }
-        return;
+      } else {
+        // Empty content means this is likely a standalone image that needs content extraction
+        if (verbose) {
+          console.log(`[EXULU] Page ${page.page}: Standalone image, proceeding with VLM content extraction`);
+        }
       }
 
       // Validate the page
       let validation: VLMValidationResult;
       try {
+        console.log(`[EXULU] Validating page ${page.page} with VLM`);
         validation = await withRetry(async () => {
           return await validatePageWithVLM(page, imagePath, model);
         }, 3);
@@ -572,6 +657,13 @@ async function processDocument(
       break;
     case 'doc':
       result = await processWord(buffer);
+      break;
+    case 'jpg':
+    case 'jpeg':
+    case 'png':
+    case 'gif':
+    case 'webp':
+      result = await processImage(buffer, paths, config, verbose);
       break;
 
     // Todo other file types with docx and officeparser
@@ -922,7 +1014,7 @@ export async function documentProcessor({
     let supportedTypes: string[] = [];
     switch (config?.processor.name) {
       case "docling":
-        supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md'];
+        supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
         break;
       case "officeparser":
         supportedTypes = [];
@@ -931,7 +1023,7 @@ export async function documentProcessor({
         supportedTypes = ['pdf', 'doc', 'docx', 'docm', 'odt', 'rtf', 'ppt', 'pptx', 'pptm', 'odp', 'xls', 'xlsx', 'xlsm', 'ods', 'csv', 'tsv'];
         break;
       case "mistral":
-        supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md'];
+        supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
         break;
     }
 

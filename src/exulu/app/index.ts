@@ -35,6 +35,7 @@ import { queues as ExuluQueues } from "@EE/queues/queues";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
+import { emailTool } from "@SRC/templates/tools/email.ts";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
@@ -223,10 +224,7 @@ export class ExuluApp {
       ...todoTools,
       ...questionTools,
       ...perplexityTools,
-      // Add contexts as tools
-      ...(Object.values(contexts || {})
-        .map((context) => context.tool())
-        .filter(Boolean) as ExuluTool[]),
+      emailTool,
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.

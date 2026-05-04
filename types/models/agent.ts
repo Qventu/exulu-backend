@@ -40,6 +40,10 @@ export interface ExuluAgent {
         name: string;
         description: string;
     }[];
+    skills?: {
+        id: string;
+        name: string;
+    }[];
     maxContextLength?: number;
     authenticationInformation?: string;
     systemInstructions?: string;

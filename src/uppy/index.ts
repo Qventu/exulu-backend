@@ -7,6 +7,7 @@ import {
   S3Client,
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateMultipartUploadCommand,
   GetObjectCommand,
   ListPartsCommand,
@@ -199,6 +200,137 @@ export const uploadFile = async (
   }
 
   return addBucketPrefixToKey(key, customBucket || defaultBucket);
+};
+
+export interface S3FileObject {
+  key: string;
+  size: number;
+  lastModified: Date;
+}
+
+/**
+ * List all objects under a given S3 prefix (handles pagination automatically).
+ */
+export const listS3ObjectsByPrefix = async (
+  prefix: string,
+  config: ExuluConfig,
+): Promise<S3FileObject[]> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const fullPrefix = addGeneralPrefixToKey(prefix, config);
+
+  const results: S3FileObject[] = [];
+  let continuationToken: string | undefined;
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: fullPrefix,
+      ...(continuationToken && { ContinuationToken: continuationToken }),
+    });
+    const response = await client.send(command);
+    for (const obj of response.Contents ?? []) {
+      if (obj.Key && obj.Size !== undefined && obj.LastModified) {
+        results.push({
+          key: obj.Key,
+          size: obj.Size,
+          lastModified: obj.LastModified,
+        });
+      }
+    }
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  return results;
+};
+
+/**
+ * Copy an S3 object from one key to another within the same bucket.
+ * Keys should NOT include the bucket prefix.
+ */
+export const copyS3Object = async (
+  sourceKey: string,
+  destKey: string,
+  config: ExuluConfig,
+): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const command = new CopyObjectCommand({
+    Bucket: bucket,
+    CopySource: `${bucket}/${sourceKey}`,
+    Key: destKey,
+  });
+  await client.send(command);
+};
+
+/**
+ * Read the full text content of an S3 object.
+ * Intended for small text files (markdown, scripts) used in diffs and previews.
+ */
+export const getS3ObjectContent = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<string> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+  const response = await client.send(command);
+  if (!response.Body) {
+    throw new Error(`Empty body for S3 key: ${key}`);
+  }
+  return response.Body.transformToString("utf-8");
+};
+
+/**
+ * Delete a single object from S3 by its full key (no bucket prefix).
+ */
+export const deleteS3Object = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<void> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
+  await client.send(command);
+};
+
+/**
+ * Generate a presigned PUT URL for uploading a file to an exact S3 key.
+ * Unlike /s3/sign (which generates UUID-based keys), this preserves the
+ * caller-specified path — used for skill file uploads.
+ */
+export const getS3SignedUploadUrl = async (
+  key: string,
+  contentType: string,
+  config: ExuluConfig,
+): Promise<string> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const url = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: contentType,
+    }),
+    { expiresIn },
+  );
+  return url;
 };
 
 export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {

@@ -6,6 +6,13 @@
       "headers": {
         "Authorization": "Bearer ${EXULU_TOKEN}"
       }
+    },
+    "exulu-mcp-server-claude-code": {
+      "type": "http",
+      "url": "http://localhost:9001/mcp/6b548265-5e7d-48a5-8ad8-5962efa8bf97",
+      "headers": {
+        "Authorization": "Bearer ${EXULU_TOKEN}"
+      }
     }
   }
 }
