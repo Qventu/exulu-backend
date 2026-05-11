@@ -6,13 +6,14 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
 import { checkLicense } from "@EE/entitlements";
-import { ContextSampler } from "./context-sampler";
 import { classifyQuery } from "./classifier";
 import { createRetrievalTools, parseGlobalItemIds } from "./tools";
 import { STRATEGIES } from "./strategies";
 import { runAgentLoop } from "./agent-loop";
 import { TrajectoryLogger } from "./trajectory";
 import type { AgenticRetrievalOutput, QueryType } from "./types";
+import type { ExuluItem } from "@SRC/index";
+import { ContextSampler } from "./context-sampler";
 
 // Module-level sampler — shared across all tool instances so the cache is warm
 // across requests within the same process.
@@ -23,6 +24,7 @@ async function* executeV3({
   contexts,
   reranker,
   model,
+  toolVariablesConfig,
   user,
   role,
   customInstructions,
@@ -33,6 +35,7 @@ async function* executeV3({
   query: string;
   contexts: ExuluContext[];
   reranker?: ExuluReranker;
+  toolVariablesConfig?: Record<string, any>;
   model: LanguageModel;
   user?: User;
   role?: string;
@@ -72,21 +75,44 @@ async function* executeV3({
 
   // ── 4. Select strategy ────────────────────────────────────────────────────
   const strategy = STRATEGIES[classification.queryType];
-
+  const contextSpecificInstructions = activeContexts.map(ctx => {
+    const instructions = toolVariablesConfig?.[`${ctx.id}_|_instructions`] ?? "";
+    if (instructions) {
+      return `
+      <${ctx.id}>
+      ${instructions}
+      </${ctx.id}>
+    `;
+    } else {
+      return null;
+    }
+  }).filter(Boolean).join("\n");
   // Build context guidance: the classifier is a priority hint, not a hard filter.
   // All contexts remain available so the agent can fall back if suggested ones miss.
   const suggestedIds = classification.suggestedContextIds;
   const fallbackIds = activeContexts
     .filter((c) => !suggestedIds.includes(c.id))
     .map((c) => c.id);
-  const contextBase =
+  let contextBase =
     suggestedIds.length > 0
-      ? `Suggested priority contexts: [${suggestedIds.join(", ")}]. Also available: [${fallbackIds.join(", ")}]. Custom instructions may require searching additional or all contexts — follow them.`
+      ? `
+      Suggested priority contexts: [${suggestedIds.join(", ")}]. 
+      
+      Also available: [${fallbackIds.join(", ")}]. 
+      
+      Custom instructions may require searching additional or all contexts — follow them.`
       : `All contexts available: [${activeContexts.map((c) => c.id).join(", ")}].`;
 
   const preselectedNote = preselectedByContext?.size
     ? `\nSCOPE CONSTRAINT: Retrieval is scoped to preselected items/contexts. Per context: ${[...preselectedByContext.entries()].map(([ctx, ids]) => ids === null ? `${ctx} (full context)` : `${ctx} (${ids.length} item${ids.length === 1 ? "" : "s"})`).join(", ")}. All tools enforce this scope automatically. For full-context entries you may search freely; for item-restricted entries do NOT use search_items_by_name for discovery — go directly to search_content or save_search_results.`
     : "";
+
+  if (contextSpecificInstructions?.length) {
+    contextBase += `
+      Context specific instructions:
+      ${contextSpecificInstructions}
+      `;
+  }
 
   const contextGuidance = contextBase + preselectedNote;
 
@@ -95,6 +121,7 @@ async function* executeV3({
 
   const retrievalTools = createRetrievalTools({
     contexts: activeContexts,
+    toolVariablesConfig,
     user,
     role,
     updateVirtualFiles: (files) => bashToolkit.sandbox.writeFiles(files),
@@ -166,7 +193,8 @@ export function createAgenticRetrievalToolV3({
   user,
   role,
   model,
-  preselectedItemIds,
+  preselected,
+  memoryItems
 }: {
   contexts: ExuluContext[];
   rerankers: ExuluReranker[];
@@ -174,7 +202,8 @@ export function createAgenticRetrievalToolV3({
   role?: string;
   model?: LanguageModel;
   instructions?: string;
-  preselectedItemIds?: string[];
+  preselected?: string[];
+  memoryItems?: ExuluItem[];
 }): ExuluTool | undefined {
   const license = checkLicense();
   if (!license["agentic-retrieval"]) {
@@ -229,20 +258,51 @@ export function createAgenticRetrievalToolV3({
         default: false,
       },
       {
-        name: "log_trajectories",
+        name: "logging",
         description: "Save a detailed markdown + JSON log of every retrieval execution to disk. Useful for debugging and evaluation.",
         type: "boolean",
         default: false,
       },
       ...contexts.map((ctx) => ({
-        name: ctx.id,
+        name: ctx.id + "_|_enabled",
         description: `Enable search in "${ctx.name}". ${ctx.description}`,
         type: "boolean" as const,
         default: true,
+      }
+      )),
+      ...contexts.map((ctx) => ({
+        name: `${ctx.id}_|_instructions`,
+        description: `Instructions for the retrieval agent about how to search in the ${ctx.name} context`,
+        type: "string" as const,
+        default: "",
       })),
+      ...contexts.map((ctx) => ({
+        name: `${ctx.id}_|_priority`,
+        description: `Defines in which order the context should be searched in, the higher the number the higher the priority, if contexts have the same priority they are searched in parallel`,
+        type: "number" as const,
+        default: 0,
+      })),
+      ...contexts.map((ctx) => ({
+        name: `${ctx.id}_|_max_results`,
+        description: `Defines the maximum number of results to return for the ${ctx.name} context`,
+        type: "number" as const,
+        default: 0,
+      })),
+      ...contexts.map((ctx) => ({
+        name: `${ctx.id}_|_max_steps`,
+        description: `Defines the maximum number of steps the agent is allowed to take when searching the ${ctx.name} context`,
+        type: "number" as const,
+        default: 0,
+      })),
+      ...contexts.map((ctx) => ({
+        name: `${ctx.id}_|_expand_chunks`,
+        description: `Defines if the agent automatically retrieves nearby chunks around the matched chunks, usefull if relevant content might be split up`,
+        type: "number" as const,
+        default: 0,
+      }))
     ],
     inputSchema: z.object({
-      query: z.string().describe("The question or query to answer"),
+      userQuery: z.string().describe("The original unaltered question from the user"),
       userInstructions: z
         .string()
         .optional()
@@ -256,24 +316,24 @@ export function createAgenticRetrievalToolV3({
         )
     }),
     execute: async function* ({
-      query,
+      userQuery,
       userInstructions,
       confirmedContextIds,
       toolVariablesConfig,
       sessionID,
     }: {
-      query: string;
+      userQuery: string;
       userInstructions?: string;
       confirmedContextIds?: string[];
       toolVariablesConfig?: Record<string, any>;
       sessionID?: string;
     }) {
-      
+
       /* ROADMAP:
       const app = exuluApp.get();
       let reasoningModel: LanguageModel | undefined = model;
       let searchModel: LanguageModel | undefined = model;
-
+  
       
        if (toolVariablesConfig?.reasoning_model) {
         reasoningModel = app.provider(toolVariablesConfig.reasoning_model)?.model?.create({});
@@ -281,7 +341,7 @@ export function createAgenticRetrievalToolV3({
           throw new Error("Reasoning model not found");
         }
       }
-
+  
       if (toolVariablesConfig?.search_model) {
         searchModel = app.provider(toolVariablesConfig.search_model);
         if (!searchModel) {
@@ -304,38 +364,38 @@ export function createAgenticRetrievalToolV3({
       if (toolVariablesConfig) {
         configInstructions = toolVariablesConfig["instructions"] ?? "";
         logTrajectory =
-          toolVariablesConfig["log_trajectories"] === true ||
-          toolVariablesConfig["log_trajectories"] === "true";
+          toolVariablesConfig["logging"] === true ||
+          toolVariablesConfig["logging"] === "true";
 
         managedContextEnabled = toolVariablesConfig["managed_context"] === true || toolVariablesConfig["managed_context"] === "true";
 
         activeContexts = contexts.filter(
           (ctx) =>
-            toolVariablesConfig[ctx.id] === true ||
-            toolVariablesConfig[ctx.id] === "true" ||
-            toolVariablesConfig[ctx.id] === 1,
+            toolVariablesConfig[ctx.id + "_|_enabled"] === true ||
+            toolVariablesConfig[ctx.id + "_|_enabled"] === "true" ||
+            toolVariablesConfig[ctx.id + "_|_enabled"] === 1,
         );
         if (activeContexts.length === 0) activeContexts = contexts;
 
         requiresPreselectedContexts = toolVariablesConfig["require_preselected_contexts"] === true || toolVariablesConfig["require_preselected_contexts"] === "true";
 
         const rerankerId = toolVariablesConfig["reranker"];
-        
+
         if (rerankerId && rerankerId !== "none") {
           configuredReranker = rerankers.find((r) => r.id === rerankerId);
         }
       }
 
       console.log("[EXULU] Managed context enabled:", managedContextEnabled);
-      console.log("[EXULU] Preselected item IDs:", preselectedItemIds);
+      console.log("[EXULU] Preselected item IDs:", preselected);
 
-      if (managedContextEnabled && !preselectedItemIds?.length) {
+      if (managedContextEnabled && !preselected?.length) {
         console.log("[EXULU] Managed context was enabled for the agentic retrieval tool. This means that the user must preselect items that the agentic retrieval tool will search in, please notify the user to preselect items before executing the tool.");
         yield { result: "Managed context was enabled for the agentic retrieval tool. This means that the user must preselect items that the agentic retrieval tool will search in, please notify the user to preselect items before executing the tool." };
         return;
       }
 
-      if (requiresPreselectedContexts && !confirmedContextIds?.length && !preselectedItemIds?.length) {
+      if (requiresPreselectedContexts && !confirmedContextIds?.length && !preselected?.length) {
         console.log("[EXULU] The user must choose between the available contexts before executing the tool. The available contexts are: " + activeContexts.map((c) => c.id).join(", ") + ". If the question_ask tool is available use that to ask the user which contexts they want to search in, otherwise just ask them in plain text.");
         yield { result: "The user must choose between the available contexts before executing the tool, the available contexts are: " + activeContexts.map((c) => c.id).join(", ") + ". If the question_ask tool is available use that to ask the user which contexts they want to search in, otherwise just ask them in plain text." };
         return;
@@ -348,24 +408,46 @@ export function createAgenticRetrievalToolV3({
       }
 
       const combinedInstructions = [
-        configInstructions ? `Configuration instructions: ${configInstructions}` : "",
-        adminInstructions ? `Admin instructions: ${adminInstructions}` : "",
-        userInstructions ? `User instructions: ${userInstructions}` : "",
+        configInstructions ? `
+        Configuration instructions: 
+        <configuration_instructions>
+        ${configInstructions}
+        </configuration_instructions>
+        ` : "",
+        adminInstructions ? `
+        Admin instructions: 
+        <admin_instructions>
+        ${adminInstructions}
+        </admin_instructions>
+        ` : "",
+        userInstructions ? `
+        User instructions: 
+        <user_instructions>
+        ${userInstructions}
+        </user_instructions>
+        ` : "",
+        memoryItems ? `
+        Relevant memories (these are items that the agent has retrieved from the memory context and are relevant to the query):
+        <relevant_memories>
+        ${memoryItems?.map(item => JSON.stringify(item)).join("\n")}
+        </relevant_memories>
+        ` : "",
       ]
         .filter(Boolean)
         .join("\n");
 
       for await (const output of executeV3({
-        query,
+        query: userQuery,
         contexts: activeContexts,
         reranker: configuredReranker,
+        toolVariablesConfig,
         model,
         user,
         role,
         customInstructions: combinedInstructions || undefined,
         logTrajectory,
         sessionId: sessionID,
-        preselectedItemIds,
+        preselectedItemIds: preselected,
       })) {
         yield { result: JSON.stringify(output) };
       }

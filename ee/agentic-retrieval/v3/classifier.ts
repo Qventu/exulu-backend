@@ -20,11 +20,25 @@ export async function classifyQuery(
     .map((ctx) => {
       const sample = samples.find((s) => s.contextId === ctx.id);
       const fieldList = sample?.fields.join(", ") ?? "name, external_id";
-      const exampleStr =
-        sample?.exampleItems.length
-          ? `\n    Example records: ${JSON.stringify(sample.exampleItems.slice(0, 2))}`
-          : "";
-      return `  - ${ctx.id}: ${ctx.name}\n    Description: ${ctx.description}\n    Fields: ${fieldList}${exampleStr}`;
+      return `
+      <context>
+        <id>
+          ${ctx.id}
+        </id>
+        <name>
+          ${ctx.name}
+        </name>
+        <description>
+          ${ctx.description}
+        </description>
+        <fields>
+          ${fieldList}
+        </fields>
+        <example_items>
+          ${sample?.exampleItems.map((item) => JSON.stringify(item)).join("\n")}
+        </example_items>
+       </context>
+       `;
     })
     .join("\n\n");
 

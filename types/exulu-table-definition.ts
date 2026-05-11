@@ -4,6 +4,7 @@ import type { ExuluContextProcessor } from "./context-processor";
 export type ExuluTableDefinition = {
     type?:
     | "skills"
+    | "context_presets"
     | "feedback"
     | "test_cases"
     | "eval_sets"
@@ -30,6 +31,7 @@ export type ExuluTableDefinition = {
     name: {
       plural:
       | "skills"
+      | "context_presets"
       | "feedback"
       | "test_cases"
       | "eval_sets"
@@ -53,6 +55,7 @@ export type ExuluTableDefinition = {
       | "embedder_settings";
       singular:
       | "skill"
+      | "context_preset"
       | "feedback"
       | "test_case"
       | "eval_set"
