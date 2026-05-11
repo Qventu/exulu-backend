@@ -39,6 +39,7 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { setSessionCurrentTask } from "./task-description.ts";
 
 import fs from "fs";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -409,6 +410,7 @@ export class ExuluProvider {
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
     let memoryContext = "";
+    let memoryItems: VectorSearchChunkResult[] | undefined;
     if (agent?.memory && contexts?.length && query) {
 
       const context = contexts.find((context) => context.id === agent?.memory);
@@ -436,6 +438,7 @@ export class ExuluProvider {
 
       if (result?.chunks?.length) {
         // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
+        memoryItems = result.chunks;
         memoryContext = `
                   Pre-fetched relevant information for this query:
   
@@ -575,6 +578,7 @@ export class ExuluProvider {
             sessionItems,
             model,
             agent,
+            memoryItems
           ),
           stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
         });
@@ -655,6 +659,7 @@ export class ExuluProvider {
           sessionItems,
           model,
           agent,
+          memoryItems
         ),
         stopWhen: [stepCountIs(maxStepCount || 5)],
       });
@@ -893,6 +898,7 @@ export class ExuluProvider {
     // If memory context was configured for the agent, we retrieve
     // relevant memory items and add it to the genericContext
     let memoryContext = "";
+    let memoryItems: VectorSearchChunkResult[] | undefined;
     if (agent?.memory && contexts?.length && query) {
       const context = contexts.find((context) => context.id === agent?.memory);
       if (!context) {
@@ -919,6 +925,7 @@ export class ExuluProvider {
       fs.writeFileSync("pre-fetched-relevant-information.json", JSON.stringify(result, null, 2));
 
       if (result?.chunks?.length) {
+        memoryItems = result.chunks;
         // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
         memoryContext = `
                   <pre-fetched relevant information for this query>:
@@ -962,9 +969,9 @@ export class ExuluProvider {
       "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
     system += "\n\n" + genericContext;
 
-    if (memoryContext) {
+    /* if (memoryContext) {
       system += "\n\n" + memoryContext;
-    }
+    } */
 
     const includesContextSearchTool = currentTools?.some(
       (tool) =>
@@ -1058,6 +1065,7 @@ export class ExuluProvider {
         sessionItems,
         model,
         agent,
+        memoryItems
       ),
       onError: (error) => {
         console.error("[EXULU] chat stream error.", error);

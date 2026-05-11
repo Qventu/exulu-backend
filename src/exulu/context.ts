@@ -648,6 +648,7 @@ export class ExuluContext {
     user?: number,
     role?: string,
     generateEmbeddingsOverwrite?: boolean,
+    runProcessorOverwrite?: boolean,
   ): Promise<{ item: Item; job?: string }> => {
     console.log("[EXULU] updating item", item);
     const { db } = await postgresClient();
@@ -701,7 +702,9 @@ export class ExuluContext {
 
       if (
         processor &&
-        (processor?.config?.trigger === "onInsert" ||
+        runProcessorOverwrite !== false &&
+        (runProcessorOverwrite ||
+          processor?.config?.trigger === "onInsert" ||
           processor?.config?.trigger === "onUpdate" ||
           processor?.config?.trigger === "always")
       ) {
