@@ -77,6 +77,7 @@ export function parseGlobalItemIds(globalIds: string[]): Map<string, string[] | 
 
 export type RetrievalToolParams = {
   contexts: ExuluContext[];
+  toolVariablesConfig?: Record<string, any>;
   user?: User;
   role?: string;
   updateVirtualFiles: (files: Array<{ path: string; content: string }>) => Promise<void>;
@@ -94,7 +95,7 @@ export type RetrievalToolParams = {
  * and filtered per strategy.
  */
 export function createRetrievalTools(params: RetrievalToolParams) {
-  const { contexts, user, role, updateVirtualFiles, preselectedItemsByContext } = params;
+  const { contexts, toolVariablesConfig, user, role, updateVirtualFiles, preselectedItemsByContext } = params;
   const ctxEnum = buildContextEnum(contexts);
 
   // ──────────────────────────────────────────────────────────
@@ -278,7 +279,7 @@ Use includeContent: true when you need the ACTUAL text to answer a question.
 
 For listing queries: always start with includeContent: false, then use dynamic tools to fetch specific pages.`,
     inputSchema: z.object({
-      query: z.string().describe("Search query about the content you're looking for"),
+      userQuery: z.string().describe("The original unaltered question from the user"),
       knowledge_base_id: z
         .enum(contexts.map((c) => c.id) as [string, ...string[]])
         .describe(
@@ -318,7 +319,7 @@ For listing queries: always start with includeContent: false, then use dynamic t
         .describe("Max chunks with content (max 20). Without content, up to 200 are returned."),
     }),
     execute: async ({
-      query,
+      userQuery,
       knowledge_base_id,
       keywords,
       searchMethod,
@@ -329,7 +330,8 @@ For listing queries: always start with includeContent: false, then use dynamic t
       limit,
     }) => {
       const [ctx] = resolveContexts([knowledge_base_id], contexts) as [ExuluContext];
-      const effectiveLimit = includeContent ? Math.min(limit ?? 20, 20) : Math.min((limit ?? 20) * 20, 400);
+      const maxResults = toolVariablesConfig?.[`${ctx.id}_|_max_results`] || 20;
+      const effectiveLimit = includeContent ? Math.min(limit ?? maxResults, maxResults) : Math.min((limit ?? maxResults) * maxResults, 400);
 
       const itemFilters: SearchFilters = [];
 
@@ -361,7 +363,7 @@ For listing queries: always start with includeContent: false, then use dynamic t
         itemFilters.push({ name: { or: item_names.map((n) => ({ contains: n })) } });
       if (item_external_ids) itemFilters.push({ external_id: { in: item_external_ids } });
 
-      const effectiveQuery = query || keywords?.join(" ") || "";
+      const effectiveQuery = userQuery || keywords?.join(" ") || "";
 
       let method = mapSearchMethod(searchMethod ?? "hybrid");
 
@@ -371,6 +373,8 @@ For listing queries: always start with includeContent: false, then use dynamic t
           method = "tsvector";
         }
       }
+
+      const expandChunks = toolVariablesConfig?.[`${ctx.id}_|_expand_chunks`] || 0;
 
       try {
         const { chunks } = await ctx.search({
@@ -385,6 +389,10 @@ For listing queries: always start with includeContent: false, then use dynamic t
           user,
           role,
           trigger: "tool",
+          expand: expandChunks > 0 ? {
+            before: expandChunks,
+            after: expandChunks,
+          } : undefined,
         });
 
         return JSON.stringify(

@@ -479,6 +479,46 @@ const promptFavoritesSchema: ExuluTableDefinition = {
   ],
 };
 
+const contextPresetsSchema: ExuluTableDefinition = {
+  type: "context_presets",
+  name: {
+    plural: "context_presets",
+    singular: "context_preset",
+  },
+  RBAC: true,
+  fields: [
+    {
+      name: "name",
+      type: "text",
+      required: true,
+      index: true,
+    },
+    {
+      name: "description",
+      type: "text",
+    },
+    {
+      name: "preset_items",
+      type: "json",
+      required: true,
+    },
+    {
+      name: "tags",
+      type: "json",
+    },
+    {
+      name: "usage_count",
+      type: "number",
+      default: 0,
+    },
+    {
+      name: "favorite_count",
+      type: "number",
+      default: 0,
+    },
+  ],
+};
+
 export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinition => {
   schema.fields.forEach((field) => {
     if (field.type === "file") {
@@ -533,6 +573,7 @@ export const coreSchemas = {
       promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
       embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
+      contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
     }
 
     if (license["agent-feedback"]) {

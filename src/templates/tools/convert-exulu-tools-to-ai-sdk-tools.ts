@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 /**
@@ -140,6 +141,7 @@ export const convertExuluToolsToAiSdkTools = async (
   sessionItems?: string[],
   model?: LanguageModel,
   agent?: ExuluAgent,
+  memoryItems?: VectorSearchChunkResult[]
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -205,7 +207,8 @@ export const convertExuluToolsToAiSdkTools = async (
       user: user,
       role: user?.role?.id,
       model: model,
-      preselectedItemIds: sessionItems,
+      preselected: sessionItems,
+      memoryItems: memoryItems,
     });
     if (agenticSearchTool) {
       // Replace the agentic search tool with the new one.
@@ -387,6 +390,8 @@ export const convertExuluToolsToAiSdkTools = async (
                 ...inputs,
                 model: model,
                 sessionID: sessionID,
+                sessionItems: sessionItems,
+                memory: memoryItems,
                 req: req,
                 // Convert config to object format if a config object
                 // is available, after we added the .value property
