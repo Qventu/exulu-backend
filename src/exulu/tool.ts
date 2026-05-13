@@ -20,7 +20,7 @@ export class ExuluTool {
   public description: string;
   public category: string;
   public inputSchema?: z.ZodType;
-  public type: "context" | "function" | "agent" | "web_search";
+  public type: "context" | "function" | "agent" | "web_search" | "skill";
   public tool: Tool;
   public needsApproval: boolean;
   public config: {
@@ -46,7 +46,7 @@ export class ExuluTool {
     description: string;
     category?: string;
     inputSchema?: z.ZodType;
-    type: "context" | "function" | "agent" | "web_search";
+    type: "context" | "function" | "agent" | "web_search" | "skill";
     config: {
       name: string;
       description: string;
@@ -146,6 +146,7 @@ export class ExuluTool {
 
     const tools = await convertExuluToolsToAiSdkTools(
       [this],
+      [],
       [],
       [],
       agent.tools,

@@ -276,6 +276,9 @@ export class ExuluContext {
     // not part of the database, so remove it here before
     // we upadte the item in the db.
     delete processorResult.field;
+    // fts is a generated column (tsvector GENERATED ALWAYS AS ... STORED)
+    // and Postgres rejects any explicit update to it.
+    delete processorResult.fts;
 
     // Update the item in the db with the processor result
     await db

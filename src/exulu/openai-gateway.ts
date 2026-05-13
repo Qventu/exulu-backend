@@ -363,6 +363,7 @@ export const registerOpenAIGatewayRoutes = async (
         const convertedTools = await convertExuluToolsToAiSdkTools(
           enabledTools,
           [],
+          [],
           tools,
           agent.tools,
           providerapikey,

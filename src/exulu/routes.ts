@@ -55,6 +55,8 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { convertJsonSchemaToZod } from 'zod-from-json-schema';
+import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
+import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -553,7 +555,7 @@ Mood: friendly and intelligent.
 
       if (!agent) {
         res.status(404).json({
-          message: "Agent with id " + instance + " not found.",
+          message: "Agent with id " + instance + " not found.", 
         });
         return;
       }
@@ -610,6 +612,13 @@ Mood: friendly and intelligent.
       );
 
       const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
+      const disabledSkills = req.body.disabledSkills ? req.body.disabledSkills : [];
+
+      let enabledSkills: ExuluSkill[] = await getEnabledSkills(
+        agent,
+        disabledSkills,
+      );
+
       let enabledTools: ExuluTool[] = await getEnabledTools(
         agent,
         tools,
@@ -711,6 +720,7 @@ Mood: friendly and intelligent.
           message,
           previousMessages,
           currentTools: enabledTools,
+          currentSkills: enabledSkills,
           approvedTools: approvedTools,
           allExuluTools: tools,
           providerapikey,
@@ -843,6 +853,7 @@ Mood: friendly and intelligent.
           session: headers.session as string,
           inputMessages: [req.body.message],
           currentTools: enabledTools,
+          currentSkills: enabledSkills,
           allExuluTools: tools,
           providerapikey,
           exuluConfig: config,
