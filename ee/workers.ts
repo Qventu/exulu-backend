@@ -405,6 +405,9 @@ export const createWorkers = async (
               // not part of the database, so remove it here before
               // we upadte the item in the db.
               delete processorResult.field;
+              // fts is a generated column (tsvector GENERATED ALWAYS AS ... STORED)
+              // and Postgres rejects any explicit update to it.
+              delete processorResult.fts;
 
               // Memory optimization: For large processor results (e.g., documents),
               // extract only the fields we need for the database update to avoid

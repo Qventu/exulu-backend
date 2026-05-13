@@ -40,6 +40,7 @@ import { setSessionCurrentTask } from "./task-description.ts";
 
 import fs from "fs";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
+import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -303,6 +304,7 @@ export class ExuluProvider {
     inputMessages,
     approvedTools,
     currentTools,
+    currentSkills,
     allExuluTools,
     statistics,
     toolConfigs,
@@ -324,6 +326,7 @@ export class ExuluProvider {
     approvedTools?: string[];
     inputMessages?: UIMessage[];
     currentTools?: ExuluTool[];
+    currentSkills?: ExuluSkill[];
     allExuluTools?: ExuluTool[];
     statistics?: ExuluStatisticParams;
     toolConfigs?: ExuluAgentToolConfig[];
@@ -564,6 +567,7 @@ export class ExuluProvider {
           maxRetries: 2,
           tools: await convertExuluToolsToAiSdkTools(
             currentTools,
+            currentSkills,
             approvedTools,
             allExuluTools,
             toolConfigs,
@@ -645,6 +649,7 @@ export class ExuluProvider {
         maxRetries: 2,
         tools: await convertExuluToolsToAiSdkTools(
           currentTools,
+          currentSkills,
           approvedTools,
           allExuluTools,
           toolConfigs,
@@ -807,6 +812,7 @@ export class ExuluProvider {
     message,
     previousMessages,
     currentTools,
+    currentSkills,
     approvedTools,
     allExuluTools,
     toolConfigs,
@@ -825,6 +831,7 @@ export class ExuluProvider {
     message?: UIMessage;
     previousMessages?: UIMessage[];
     currentTools?: ExuluTool[];
+    currentSkills?: ExuluSkill[];
     approvedTools?: string[];
     allExuluTools?: ExuluTool[];
     toolConfigs?: ExuluAgentToolConfig[];
@@ -1051,6 +1058,7 @@ export class ExuluProvider {
       },
       tools: await convertExuluToolsToAiSdkTools(
         currentTools,
+        currentSkills,
         approvedTools,
         allExuluTools,
         toolConfigs,

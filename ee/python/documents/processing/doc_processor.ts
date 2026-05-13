@@ -630,7 +630,7 @@ async function processDocument(
     source: filePath,
   }
 
-  const stripped = filePath.split('.').pop()?.trim();
+  const stripped = filePath.split('.').pop()?.trim().toLowerCase();
   let result: ProcessorOutput;
   switch (stripped) {
     case 'txt':
@@ -1027,8 +1027,8 @@ export async function documentProcessor({
         break;
     }
 
-    if (!supportedTypes.includes(fileType)) {
-      throw new Error(`[EXULU] Unsupported file type: ${fileType} for Exulu document processor, the ${config?.processor.name} processor only supports the following file types: ${supportedTypes.join(', ')}.`);
+    if (!supportedTypes.includes(fileType.toLowerCase())) {
+      throw new Error(`[EXULU] Unsupported file type: ${fileType.toLowerCase()} for Exulu document processor, the ${config?.processor.name} processor only supports the following file types: ${supportedTypes.join(', ')}.`);
     }
 
     // Process document with VLM validation enabled
@@ -1042,7 +1042,6 @@ export async function documentProcessor({
     );
 
     return content.json;
-
 
   } catch (error) {
     console.error('Error during chunking:', error);

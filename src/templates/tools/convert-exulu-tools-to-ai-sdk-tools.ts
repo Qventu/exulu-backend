@@ -1,5 +1,5 @@
 import { S3Client, PutObjectCommand, S3ServiceException } from "@aws-sdk/client-s3";
-import type { ExuluTool } from "@SRC/exulu/tool";
+import { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { updateStatistic } from "@SRC/exulu/statistics";
@@ -21,7 +21,11 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
+import type { ExuluSkill } from "@EXULU_TYPES/skill";
+import { createSkillSandbox } from "@EE/invoke-skills/create-sandbox";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
+import { stepCountIs, ToolLoopAgent } from "ai";
+import { z } from "zod";
 
 /**
  * @type {S3Client}
@@ -127,6 +131,7 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
 
 export const convertExuluToolsToAiSdkTools = async (
   currentTools: ExuluTool[] | undefined,
+  currentSkills: ExuluSkill[] | undefined,
   approvedTools: string[] | undefined,
   allExuluTools: ExuluTool[] | undefined,
   configs: ExuluAgentToolConfig[] | undefined,
@@ -151,6 +156,67 @@ export const convertExuluToolsToAiSdkTools = async (
 
   if (!contexts) {
     contexts = [];
+  }
+
+  let skillTools: ExuluTool[] = [];
+
+  if (currentSkills?.length && sessionID && exuluConfig && model) {
+    for (const skill of currentSkills) {
+      skillTools.push(new ExuluTool({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        type: "skill",
+        inputSchema: z.object({
+          task: z.string().describe("The task to execute using the skill."),
+        }),
+        config: [],
+        // generator function for execute
+        execute: async function* (inputs: any) {
+
+          // Create skill sandbox + tools (the tools provide a way to execute
+          // commands inside the session specific sandbox environment).
+          // todo inject any files or context items into the sandbox environment!
+          // todo inject any context search tools into the tool loop agent that works
+          // inside the sandbox environment
+          const skillSandbox = await createSkillSandbox(sessionID, [skill], exuluConfig);
+
+          // todo figure out a way for this internal agent loop to be stopped by the user
+          // in the chat interface
+          const agent = new ToolLoopAgent({
+            model: model,
+            // multiline
+            instructions: `
+            You are a helpful assistant, you have been asked to execute the following skill: ${skill.name}.
+            
+            `,
+            stopWhen: [stepCountIs(20)], // todo make configurable per skill?
+            // todo inject skills to upload artifacts to s3
+            tools: { ...skillSandbox.tools },
+          });
+
+          const stream = await agent.stream({
+            prompt: `
+            You are a helpful assistant, you have been asked to execute the following skill: ${skill.name}.
+            
+            `
+          })
+
+          for await (const chunk of stream.textStream) {
+            yield {
+              result: chunk,
+            };
+          }
+
+          yield {
+            result: "Skill executed successfully",
+          };
+
+          // Close the skill sandbox
+          await skillSandbox.cleanup();
+        }
+      }));
+    }
   }
 
   let projectRetrievalTool: ExuluTool | undefined;
@@ -248,9 +314,9 @@ export const convertExuluToolsToAiSdkTools = async (
   // on follow-up questions without re-running the full retrieval loop.
   const sessionDynamicTools = sessionID
     ? Object.entries(getSessionTools(sessionID)).reduce<Record<string, any>>((acc, [name, t]) => {
-        acc[name] = { ...t, needsApproval: false };
-        return acc;
-      }, {})
+      acc[name] = { ...t, needsApproval: false };
+      return acc;
+    }, {})
     : {};
 
   return {
