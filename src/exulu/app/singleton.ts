@@ -2,7 +2,7 @@
 // that gets set when the ExuluApp.create is
 // called.
 
-import { ExuluApp } from "./index";
+import type { ExuluApp } from "./index";
 
 let instance: ExuluApp | null = null;
 

@@ -6,7 +6,6 @@ import type { ExuluConfig } from "./app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { postgresClient } from "@SRC/postgres/client";
 import CryptoJS from "crypto-js";
-import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
@@ -143,6 +142,10 @@ export class ExuluTool {
         providerapikey = bytes.toString(CryptoJS.enc.Utf8);
       }
     }
+
+    const { convertExuluToolsToAiSdkTools } = await import(
+      "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools"
+    );
 
     const tools = await convertExuluToolsToAiSdkTools(
       [this],

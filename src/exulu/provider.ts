@@ -1041,6 +1041,30 @@ export class ExuluProvider {
 
     fs.writeFileSync("system-prompt.txt", system);
 
+    console.log("[EXULU] Tools", currentTools?.map(x => x.name));
+    console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
+
+    const tools = await convertExuluToolsToAiSdkTools(
+      currentTools,
+      currentSkills,
+      approvedTools,
+      allExuluTools,
+      toolConfigs,
+      providerapikey,
+      contexts,
+      rerankers,
+      user,
+      exuluConfig,
+      session,
+      req,
+      project,
+      sessionItems,
+      model,
+      agent,
+      memoryItems
+    )
+    console.log("[EXULU] Converted tools", Object.keys(tools));
+
     const result = streamText({
       temperature: 0, // TODO Make this configurable
       model: model, // Should be a LanguageModelV1
@@ -1056,25 +1080,7 @@ export class ExuluProvider {
           reasoningSummary: "auto",
         },
       },
-      tools: await convertExuluToolsToAiSdkTools(
-        currentTools,
-        currentSkills,
-        approvedTools,
-        allExuluTools,
-        toolConfigs,
-        providerapikey,
-        contexts,
-        rerankers,
-        user,
-        exuluConfig,
-        session,
-        req,
-        project,
-        sessionItems,
-        model,
-        agent,
-        memoryItems
-      ),
+      tools: tools,
       onError: (error) => {
         console.error("[EXULU] chat stream error.", error);
         throw new Error(
