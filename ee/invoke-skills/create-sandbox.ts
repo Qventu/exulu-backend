@@ -4,13 +4,14 @@ import {
 } from '@anthropic-ai/sandbox-runtime'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join, dirname, resolve, relative } from 'node:path'
+import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { listS3ObjectsByPrefix, getS3ObjectContent, uploadFile, type S3FileObject } from '@SRC/uppy/index.ts'
+import { listS3ObjectsByPrefix, getS3ObjectContent, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
-import { createBashTool, type BashToolkit, type Sandbox } from "bash-tool";
-import type { Tool } from "ai";
+import { createBashTool, type Sandbox } from "bash-tool";
+import { tool, type Tool } from "ai";
+import { z } from "zod";
 
 const execAsync = promisify(exec);
 // Sandbox commands can be very long (long deny lists) — bump default buffer.
@@ -31,7 +32,14 @@ export interface SkillRef {
 export interface SkillSandboxHandle {
     /** Absolute path to the session's temporary directory, containing all downloaded skill files. */
     sessionDir: string
-    tools: BashToolkit['tools']
+    /**
+     * AI SDK tools exposed to the skill agent. bash-tool's defaults plus a
+     * wrapped writeFile that surfaces { url, key } when the path qualifies as
+     * a session artifact. Typed as a generic tool record because the wrapped
+     * writeFile's output shape diverges from bash-tool's hardcoded
+     * { success: boolean }.
+     */
+    tools: Record<string, Tool<any, any>>
     /** Wraps a shell command string so it runs inside the sandbox. */
     wrapCommand: (command: string) => Promise<string>
     /** Tears down the sandbox and deletes the session directory. */
@@ -304,53 +312,100 @@ export async function createSkillSandbox(
             return stdout;
         },
         async writeFiles(files) {
-            // Pipe content via stdin so arbitrary file content (quotes, $, etc.)
-            // doesn't need to be escaped into the shell command.
-            for (const file of files) {
-                const wrapped = await SandboxManager.wrapWithSandbox(
-                    `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
-                );
-                await new Promise<void>((resolve, reject) => {
-                    const child = spawn('/bin/bash', ['-c', wrapped]);
-                    let stderr = '';
-                    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-                    child.on('error', reject);
-                    child.on('exit', (code) => {
-                        if (code === 0) resolve();
-                        else reject(new Error(`writeFile ${file.path} failed (exit ${code}): ${stderr}`));
-                    });
-                    child.stdin.write(file.content);
-                    child.stdin.end();
-                });
-
-                // Mirror artifact writes to S3 for cross-session restore. Skill
-                // source files (under sessionDir/skills/) are excluded. Upload
-                // failures are non-fatal: the local write already succeeded, so
-                // we log and continue rather than poison the agent's tool call.
-                if (persistenceEnabled && isArtifactPath(file.path, sessionDir)) {
-                    const rel = relative(sessionDir, resolve(file.path))
-                    const key = artifactS3Key(sessionId, rel)
-                    try {
-                        await uploadFile(
-                            Buffer.from(file.content),
-                            key,
-                            config,
-                            {},
-                            // uploadFile's user param is typed as number, but
-                            // addUserPrefixToKey it delegates to accepts
-                            // number | string at runtime — pass through as-is.
-                            userId as unknown as number,
-                        )
-                    } catch (err) {
-                        console.error(
-                            `[SKILLS] Failed to upload artifact ${key} for session ${sessionId} (user ${userId}); continuing.`,
-                            err,
-                        )
-                    }
-                }
-            }
+            // Sandbox interface requires Promise<void>. The rich return shape
+            // (with presigned URLs) is consumed by the wrapped writeFile tool
+            // below, which calls writeFilesInternal directly.
+            await writeFilesInternal(files)
         },
     };
+
+    // Single source of truth for "write a batch of files". Does the local
+    // write, optionally uploads each artifact to S3, and resolves a presigned
+    // URL per uploaded file. Failures in the S3 leg are non-fatal: the local
+    // write already succeeded, so we log and return without url/key for that
+    // entry rather than failing the whole tool call.
+    type WriteResult = {
+        /** Absolute path inside the sandbox. */
+        path: string
+        /** Short-lived presigned URL for the uploaded artifact, when applicable. */
+        url?: string
+        /** Full S3 key (bucket-prefixed) of the uploaded artifact, when applicable. */
+        key?: string
+    }
+
+    async function writeFilesInternal(
+        files: Array<{ path: string; content: string | Buffer }>,
+    ): Promise<WriteResult[]> {
+        const results: WriteResult[] = []
+
+        for (const file of files) {
+            // Pipe content via stdin so arbitrary file content (quotes, $, etc.)
+            // doesn't need to be escaped into the shell command.
+            const wrapped = await SandboxManager.wrapWithSandbox(
+                `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
+            )
+            await new Promise<void>((resolveSpawn, rejectSpawn) => {
+                const child = spawn('/bin/bash', ['-c', wrapped])
+                let stderr = ''
+                child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
+                child.on('error', rejectSpawn)
+                child.on('exit', (code) => {
+                    if (code === 0) resolveSpawn()
+                    else rejectSpawn(new Error(`writeFile ${file.path} failed (exit ${code}): ${stderr}`))
+                })
+                child.stdin.write(file.content)
+                child.stdin.end()
+            })
+
+            const result: WriteResult = { path: file.path }
+
+            // Mirror artifact writes to S3 + generate a presigned URL so the
+            // tool output can surface a viewable link to the user. Skill source
+            // files (under sessionDir/skills/) are excluded.
+            if (persistenceEnabled && isArtifactPath(file.path, sessionDir)) {
+                const rel = relative(sessionDir, resolve(file.path))
+                const s3Key = artifactS3Key(sessionId, rel)
+                try {
+                    const fullKey = await uploadFile(
+                        Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
+                        s3Key,
+                        config,
+                        {},
+                        // uploadFile's user param is typed as number, but the
+                        // addUserPrefixToKey helper it delegates to accepts
+                        // number | string at runtime — pass through as-is.
+                        userId as unknown as number,
+                    )
+                    result.key = fullKey
+                    // uploadFile returns "<bucket>/<key>" — split to call
+                    // getPresignedUrl, which expects bucket and key separately.
+                    const slashIdx = fullKey.indexOf('/')
+                    if (slashIdx > 0) {
+                        const bucket = fullKey.slice(0, slashIdx)
+                        const keyOnly = fullKey.slice(slashIdx + 1)
+                        try {
+                            result.url = await getPresignedUrl(bucket, keyOnly, config)
+                        } catch (err) {
+                            console.error(
+                                `[SKILLS] Upload succeeded but presign failed for ${fullKey}; continuing without URL.`,
+                                err,
+                            )
+                        }
+                    }
+                } catch (err) {
+                    console.error(
+                        `[SKILLS] Failed to upload artifact ${s3Key} for session ${sessionId} (user ${userId}); continuing.`,
+                        err,
+                    )
+                }
+            }
+
+            results.push(result)
+        }
+
+        return results
+    }
+
     const { tools } = await createBashTool({
         sandbox: customSandbox,
         // The bash-tool defaults to /workspace and prepends `cd /workspace &&`
@@ -359,9 +414,44 @@ export async function createSkillSandbox(
         destination: sessionDir,
     });
 
+    // Replace bash-tool's writeFile tool. Its built-in version discards the
+    // sandbox return value and emits a hardcoded { success: true }, which
+    // strips the presigned URL we generated. The wrapper re-implements the
+    // same shape (path/content schema, posix.resolve against the session dir)
+    // and surfaces { path, url, key } from writeFilesInternal so the frontend
+    // can render a viewable link to the artifact.
+    const writeFileTool = tool({
+        description:
+            'Write content to a file in the sandbox. Creates parent directories if needed. ' +
+            'When the path is under the session artifact tree, the file is also uploaded to S3 ' +
+            'and a short-lived presigned URL is returned in the tool output.',
+        inputSchema: z.object({
+            path: z.string().describe('The path where the file should be written'),
+            content: z.string().describe('The content to write to the file'),
+        }),
+        execute: async ({ path, content }) => {
+            const resolvedPath = posix.resolve(sessionDir, path)
+            const results = await writeFilesInternal([{ path: resolvedPath, content }])
+            const result = results[0]
+            if (!result) {
+                // writeFilesInternal always returns one entry per input file;
+                // this branch is unreachable but keeps TS happy without `!`.
+                throw new Error(`writeFile ${resolvedPath} produced no result`)
+            }
+            return {
+                success: true,
+                path: result.path,
+                ...(result.url ? { url: result.url } : {}),
+                ...(result.key ? { key: result.key } : {}),
+            }
+        },
+    })
+
+    const wrappedTools = { ...tools, writeFile: writeFileTool }
+
     const handle: SkillSandboxHandle = {
         sessionDir,
-        tools,
+        tools: wrappedTools,
         wrapCommand: (command: string) => SandboxManager.wrapWithSandbox(command),
         cleanup: async () => {
             sandboxCache.delete(sessionId)
