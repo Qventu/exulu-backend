@@ -24,8 +24,11 @@ import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-sear
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSkillSandbox } from "@EE/invoke-skills/create-sandbox";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
-import { stepCountIs, ToolLoopAgent } from "ai";
+import { hasToolCall, Output, stepCountIs, ToolLoopAgent } from "ai";
 import { z } from "zod";
+import { QuestionAskTool } from "./question/question-ask";
+import type { AgenticRetrievalOutput } from "@EE/agentic-retrieval/v3/types";
+import { join, dirname } from 'node:path'
 
 /**
  * @type {S3Client}
@@ -158,13 +161,11 @@ export const convertExuluToolsToAiSdkTools = async (
     contexts = [];
   }
 
-  let skillTools: ExuluTool[] = [];
-
   if (currentSkills?.length && sessionID && exuluConfig && model) {
     for (const skill of currentSkills) {
-      skillTools.push(new ExuluTool({
+      currentTools.push(new ExuluTool({
         id: skill.id,
-        name: skill.name,
+        name: sanitizeToolName(skill.name),
         description: skill.description,
         type: "skill",
         inputSchema: z.object({
@@ -172,48 +173,259 @@ export const convertExuluToolsToAiSdkTools = async (
         }),
         config: [],
         // generator function for execute
-        execute: async function* (inputs: any) {
+        execute: async function* (inputs) {
 
           // Create skill sandbox + tools (the tools provide a way to execute
           // commands inside the session specific sandbox environment).
           // todo inject any files or context items into the sandbox environment!
           // todo inject any context search tools into the tool loop agent that works
           // inside the sandbox environment
-          const skillSandbox = await createSkillSandbox(sessionID, [skill], exuluConfig);
+          const skillSandbox = await createSkillSandbox(sessionID, [skill], exuluConfig, user?.id);
+
+          // Bridge onStepFinish callback -> generator: callback pushes into a
+          // queue, generator awaits/yields from it while agent.generate() runs.
+          const buffer: any[] = [];
+          let resolveNext: ((v: IteratorResult<any>) => void) | null = null;
+          let closed = false;
+          const push = (step: any) => {
+            if (resolveNext) {
+              resolveNext({ value: step, done: false });
+              resolveNext = null;
+            } else {
+              buffer.push(step);
+            }
+          };
+          const close = () => {
+            closed = true;
+            if (resolveNext) {
+              resolveNext({ value: undefined, done: true });
+              resolveNext = null;
+            }
+          };
+
+
+          const yields: AgenticRetrievalOutput = {
+            steps: [],
+            reasoning: [],
+            chunks: [],
+            usage: [],
+            totalTokens: 0,
+          };
+
+          // Tracks in-flight tool calls so a tool-result content item arriving
+          // in a later step can be attributed back to the original tool-call
+          // entry (input + output rendered together by the frontend).
+          type ToolEntry = { name: string; id: string; input: any; output: any };
+          const pendingToolCalls = new Map<string, ToolEntry>();
 
           // todo figure out a way for this internal agent loop to be stopped by the user
           // in the chat interface
           const agent = new ToolLoopAgent({
             model: model,
             // multiline
-            instructions: `
-            You are a helpful assistant, you have been asked to execute the following skill: ${skill.name}.
-            
-            `,
-            stopWhen: [stepCountIs(20)], // todo make configurable per skill?
+            instructions: ``,
+            output: Output.object({
+              schema: z.object({
+                result: z.string(),
+                type: z.enum(["file", "text", "question"]),
+              }),
+              // todo allow setting token limit for the output
+            }),
+            onStepFinish: (step) => {
+              console.log("[EXULU] Skill tool loop agent step finish:", step);
+
+              let stepText = "";
+              const stepTools: ToolEntry[] = [];
+
+              if (step.content) {
+                for (const content of step.content as any[]) {
+                  if (content.type === "text") {
+                    stepText += (stepText ? "\n" : "") + content.text;
+                  } else if (content.type === "tool-call") {
+                    const entry: ToolEntry = {
+                      name: content.toolName,
+                      id: content.toolCallId,
+                      input: content.input,
+                      output: undefined,
+                    };
+                    pendingToolCalls.set(content.toolCallId, entry);
+                    stepTools.push(entry);
+                  } else if (content.type === "tool-result") {
+                    const existing = pendingToolCalls.get(content.toolCallId);
+                    if (existing) {
+                      // Mutate the original entry so the next yielded snapshot
+                      // backfills the output into the step that made the call.
+                      existing.output = content.output;
+                      pendingToolCalls.delete(content.toolCallId);
+                    } else {
+                      // Orphan result (no matching call seen) — surface it on
+                      // its own so it isn't silently dropped.
+                      stepTools.push({
+                        name: content.toolName,
+                        id: content.toolCallId,
+                        input: undefined,
+                        output: content.output,
+                      });
+                    }
+                  }
+                }
+              }
+
+              // Skip steps that contributed no text and no new tool calls
+              // (e.g. a step that only delivered a tool-result already
+              // attributed to its originating step above).
+              if (stepText || stepTools.length > 0) {
+                yields.steps.push({
+                  stepNumber: yields.steps.length + 1,
+                  text: stepText,
+                  toolCalls: stepTools,
+                  chunks: [],
+                  dynamicToolsCreated: [],
+                  tokens: 0,
+                });
+                yields.reasoning.push({
+                  text: stepText,
+                  tools: stepTools,
+                });
+              }
+
+              // Frontend expects { result: { reasoning, ... } } shape (see
+              // message-renderer.tsx UntypedToolPartComponent block). New
+              // array refs prevent later .push()s from leaking into this
+              // frame; item-level mutations (tool output backfill above)
+              // intentionally do propagate.
+              push({
+                result: {
+                  ...yields,
+                  steps: [...yields.steps],
+                  reasoning: [...yields.reasoning],
+                },
+              });
+            },
+            // Use the sanitized name — that's the key the tool is actually
+            // registered under and the name that shows up in tool-call events.
+            // Passing the raw "Question Ask" never matches.
+            stopWhen: [stepCountIs(20), hasToolCall(sanitizeToolName(QuestionAskTool.name))], // todo make configurable per skill?
             // todo inject skills to upload artifacts to s3
-            tools: { ...skillSandbox.tools },
+            tools: {
+              ...skillSandbox.tools,
+              [sanitizeToolName(QuestionAskTool.name)]: {
+                ...QuestionAskTool.tool,
+                // The AI SDK calls execute(inputs, options). QuestionAskTool reads
+                // sessionID / user from inside `inputs` (see its execute body), so
+                // inject them there rather than via bind (which would shift the
+                // arg positions and lose the model's actual inputs).
+                execute: async (inputs: any, options: any) => {
+                  if (!QuestionAskTool?.tool?.execute) {
+                    throw new Error("QuestionAskTool.tool.execute is undefined");
+                  }
+                  return QuestionAskTool.tool.execute(
+                    { ...inputs, sessionID, user },
+                    options,
+                  );
+                },
+              },
+            },
           });
 
-          const stream = await agent.stream({
-            prompt: `
-            You are a helpful assistant, you have been asked to execute the following skill: ${skill.name}.
-            
-            `
-          })
+          const skillDir = join(skillSandbox.sessionDir, 'skills', skill.name);
+          const prompt = `
+            You are a helpful assistant, you have been asked to execute the following skill: ${skill.name}
 
-          for await (const chunk of stream.textStream) {
-            yield {
-              result: chunk,
-            };
+            For this task:
+
+            <task>
+            ${inputs.task}
+            </task>
+
+            You have the following tools available to you:
+
+            <tools>
+            - bash: run shell commands. The working directory is "${skillSandbox.sessionDir}".
+            - readFile: read a file by absolute path. Use this to read skill instructions.
+            - writeFile: write a file by absolute path. USE THIS when the task asks you to save, store, or produce a file. Do not claim files cannot be saved — call writeFile.
+            - ${sanitizeToolName(QuestionAskTool.name)}: ask the user a multiple-choice question. After calling this tool you MUST stop and wait for the answer; do not continue reasoning or produce a final result.
+            </tools>
+
+            The skill files are available in the following directory:
+            ${skillDir}
+
+            Start by reading the skill instructions (typically ${skillDir}/SKILL.md) and follow them.
+
+            If the task asks for a file (e.g. "save as .md", "store the result as a file"), write the result to a file under "${skillSandbox.sessionDir}" using writeFile, then return type="file" with the absolute path as the result.
+
+            If you need to ask the user a question, call ${sanitizeToolName(QuestionAskTool.name)} and then stop — do not also generate a final answer. The user will respond and the skill will be re-invoked.
+
+            Otherwise, return type="text" with your answer as the result.
+            `
+          console.log("[EXULU] Skill tool loop agent prompt:", prompt);
+
+          const finalPromise = agent.generate({
+            prompt: prompt,
+          }).finally(close);
+
+          // Drain step events as they arrive from onStepFinish.
+          while (true) {
+            if (buffer.length) {
+              yield buffer.shift();
+              continue;
+            }
+            if (closed) break;
+            const next = await new Promise<IteratorResult<any>>((r) => {
+              resolveNext = r;
+            });
+            if (next.done) break;
+            yield next.value
+          }
+
+          const result = await finalPromise;
+
+          console.log("[EXULU] Skill tool loop agent result:", result);
+
+          // Determine how the loop ended. If we stopped because the model
+          // asked the user a question, there is no structured Output.object —
+          // accessing result.output would throw NoOutputGeneratedError.
+          // In that case, surface the question itself as the final value.
+          const questionToolName = sanitizeToolName(QuestionAskTool.name);
+          const lastStep = result.steps?.[result.steps.length - 1];
+          const questionCall = lastStep?.content?.find(
+            (c: any) => c.type === "tool-call" && c.toolName === questionToolName,
+          );
+          const questionResult = lastStep?.content?.find(
+            (c: any) => c.type === "tool-result" && c.toolName === questionToolName,
+          );
+
+          let finalResult: string | undefined;
+          let finalType: "file" | "text" | "question" | undefined;
+
+          if (questionCall) {
+            // The question_ask tool's result already contains the persisted
+            // question payload (id, question, answerOptions, status). Pass it
+            // through so the frontend can render the question UI.
+            const raw = (questionResult as any)?.output?.result;
+            finalResult = typeof raw === "string" ? raw : JSON.stringify(raw ?? (questionCall as any).input);
+            finalType = "question";
+          } else {
+            // Normal completion — Output.object should be populated. Guard
+            // against the rare case where it still isn't.
+            try {
+              finalResult = result.output?.result;
+              finalType = result.output?.type;
+            } catch (err) {
+              console.warn("[EXULU] Skill agent finished without structured output:", err);
+              finalResult = result.text ?? "";
+              finalType = "text";
+            }
           }
 
           yield {
-            result: "Skill executed successfully",
+            result: JSON.stringify({
+              result: finalResult,
+              type: finalType,
+              reasoning: yields.reasoning,
+              steps: yields.steps,
+            }),
           };
-
-          // Close the skill sandbox
-          await skillSandbox.cleanup();
         }
       }));
     }
