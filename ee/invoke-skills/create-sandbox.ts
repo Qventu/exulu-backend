@@ -2,12 +2,13 @@ import {
     SandboxManager,
     type SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile, readFile as fsReadFile, readdir, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectContent, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
+import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
@@ -115,6 +116,46 @@ function isArtifactPath(absPath: string, sessionDir: string): boolean {
 
 function artifactS3Key(sessionId: string, relPath: string): string {
     return `sessions/${sessionId}/${relPath}`
+}
+
+/**
+ * Resolve an agent-supplied path against the session sandbox root.
+ *
+ * Agents routinely pass paths in three shapes:
+ *   1. Relative:                "skills/Review Contract/SKILL.md"
+ *   2. Session-root-prefixed:   "/skills/Review Contract/SKILL.md" (LLMs love the leading slash)
+ *   3. Already-absolute:        "/tmp/exulu-sessions/<sid>/skills/Review Contract/SKILL.md"
+ *
+ * All three should target the same file. Without normalization, shape (2) goes
+ * to the host filesystem root and fails. This helper:
+ *   - Returns shape (3) untouched.
+ *   - Strips the leading slash from shape (2) and resolves it under sessionDir.
+ *   - Resolves shape (1) under sessionDir.
+ *   - Throws on any path that escapes sessionDir via "..", absolute redirection,
+ *     or otherwise — defense in depth on top of the SRT sandbox.
+ */
+function resolveSessionPath(inputPath: string, sessionDir: string): string {
+    const normalized = posix.normalize(inputPath)
+
+    // Already correctly anchored under sessionDir.
+    if (normalized === sessionDir || normalized.startsWith(sessionDir + '/')) {
+        return normalized
+    }
+
+    // Strip a leading slash so absolute-looking paths get re-anchored under
+    // sessionDir instead of pointing at the host filesystem root.
+    const sessionRelative = normalized.startsWith('/') ? normalized.slice(1) : normalized
+    const resolved = posix.resolve(sessionDir, sessionRelative)
+
+    // Reject any path that still escapes sessionDir (e.g. "../../etc/passwd").
+    if (resolved !== sessionDir && !resolved.startsWith(sessionDir + '/')) {
+        throw new Error(
+            `Path "${inputPath}" resolves outside the session directory. ` +
+            `Use a path inside "${sessionDir}" (relative paths recommended, e.g. "skills/<name>/SKILL.md").`,
+        )
+    }
+
+    return resolved
 }
 
 async function restoreArtifactsFromS3(
@@ -244,23 +285,63 @@ export async function createSkillSandbox(
         await restoreArtifactsFromS3(sessionDir, sessionId, userId, config)
     }
 
-    const sandboxConfig: SandboxRuntimeConfig = {
+    // SRT's `SandboxManager.initialize()` is a one-shot singleton (see
+    // node_modules/@anthropic-ai/sandbox-runtime/.../sandbox-manager.js:187-191);
+    // the first config wins and later calls are no-ops. That's incompatible
+    // with the per-session policy we want, so we initialize the singleton
+    // ONCE with empty allowRead/allowWrite (a safe, restrictive baseline) and
+    // rely on `wrapWithSandbox(cmd, _, customConfig)` to override the policy
+    // per call. Every command this session runs passes the session-scoped
+    // `sessionSandboxConfig` below, so the kernel only ever sees this
+    // session's dir in the allow list — concurrent sessions stay isolated.
+    const baselineSandboxConfig: SandboxRuntimeConfig = {
+        network: {
+            allowedDomains: [], // block all network by default
+            deniedDomains: [],
+        },
+        filesystem: {
+            denyRead: ['~'],
+            allowRead: [], // no reads allowed without per-call customConfig
+            allowWrite: [], // no writes allowed without per-call customConfig
+            denyWrite: [],
+        },
+    }
+
+    await SandboxManager.initialize(baselineSandboxConfig)
+
+    // Resolve the global node_modules directory so skill-generated scripts
+    // can `require()` packages installed via `npm install -g <pkg>` (e.g. the
+    // docx skill imports the `docx` package). We need both:
+    //   1. Read access to that path inside the sandbox policy, and
+    //   2. NODE_PATH set in the bash env so Node's resolver looks there.
+    // Resolved once and memoized in system-dependencies.ts; null when npm
+    // isn't on PATH (skill scripts that depend on global packages will then
+    // fail with a clear MODULE_NOT_FOUND, matching what the user would see
+    // outside the sandbox).
+    const npmGlobalRoot = await getNpmGlobalRoot()
+
+    // Per-session policy. Passed to every wrapWithSandbox() invocation made
+    // from within this closure. customConfig wins over the singleton's
+    // baseline, so each session ends up with a kernel policy that only
+    // allows its own sessionDir.
+    const sessionSandboxConfig: Partial<SandboxRuntimeConfig> = {
         network: {
             allowedDomains: [], // todo
             deniedDomains: [], // todo
         },
         filesystem: {
-            // Deny reads to home directory but re-allow only the session folder.
-            // System paths (/usr, /lib, etc.) remain readable for process execution.
             denyRead: ['~'],
-            allowRead: [sessionDir],
-            // Write access is scoped exclusively to the session folder.
+            allowRead: [
+                sessionDir,
+                // Allow Node to read globally-installed packages from inside
+                // the sandbox. Without this, `require('docx')` fails with
+                // EPERM even when NODE_PATH points the resolver here.
+                ...(npmGlobalRoot ? [npmGlobalRoot] : []),
+            ],
             allowWrite: [sessionDir],
             denyWrite: [],
         },
     }
-
-    await SandboxManager.initialize(sandboxConfig)
 
     // Todo proper instructions to use skills
 
@@ -281,15 +362,29 @@ export async function createSkillSandbox(
         });
     } */
 
+    // Environment for sandboxed bash invocations. NODE_PATH points at the
+    // global node_modules so scripts produced by skills (e.g. docx) can
+    // `require('docx')` without needing a local install. We merge with
+    // process.env so PATH and other essentials are preserved; if NODE_PATH
+    // was already set on the parent process, our injection takes precedence
+    // since the skill scripts depend on global packages being reachable.
+    const sandboxedExecEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
+    }
+
     // wrapWithSandbox only constructs the sandbox-exec invocation string —
     // it does NOT run it. We have to shell out ourselves and capture the
-    // real stdout/stderr/exitCode.
+    // real stdout/stderr/exitCode. The third arg passes the per-session
+    // policy so the kernel only allows this session's dir, not whatever
+    // baseline the singleton was initialized with.
     const runWrapped = async (command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
-        const wrapped = await SandboxManager.wrapWithSandbox(command);
+        const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig);
         try {
             const { stdout, stderr } = await execAsync(wrapped, {
                 maxBuffer: EXEC_MAX_BUFFER,
                 shell: '/bin/bash',
+                env: sandboxedExecEnv,
             });
             return { stdout, stderr, exitCode: 0 };
         } catch (error: any) {
@@ -344,6 +439,63 @@ export async function createSkillSandbox(
         key?: string
     }
 
+    /**
+     * Upload a single artifact to S3 and return its presigned download URL.
+     * Returns an empty object when persistence is disabled, when the path is
+     * outside the artifact tree (e.g. under skills/), or when the upload /
+     * presign step fails (failures are logged and treated as non-fatal so the
+     * caller — writeFile, bash, etc. — still succeeds locally).
+     *
+     * Shared by writeFilesInternal (for explicit writeFile calls) and the
+     * bash wrapper (which scans for files the agent created via shell
+     * commands like `node create_doc.js`).
+     */
+    async function persistArtifactToS3(
+        absPath: string,
+        content: Buffer,
+    ): Promise<{ key?: string; url?: string }> {
+        if (!persistenceEnabled || !isArtifactPath(absPath, sessionDir)) {
+            return {}
+        }
+        const rel = relative(sessionDir, resolve(absPath))
+        const s3Key = artifactS3Key(sessionId, rel)
+        const out: { key?: string; url?: string } = {}
+        try {
+            const fullKey = await uploadFile(
+                content,
+                s3Key,
+                config,
+                {},
+                // uploadFile's user param is typed as number, but the
+                // addUserPrefixToKey helper it delegates to accepts
+                // number | string at runtime — pass through as-is.
+                userId as unknown as number,
+            )
+            out.key = fullKey
+            // uploadFile returns "<bucket>/<key>" — split to call
+            // getPresignedUrl, which expects bucket and key separately.
+            const slashIdx = fullKey.indexOf('/')
+            if (slashIdx > 0) {
+                const bucket = fullKey.slice(0, slashIdx)
+                const keyOnly = fullKey.slice(slashIdx + 1)
+                try {
+                    out.url = await getPresignedUrl(bucket, keyOnly, config)
+                } catch (err) {
+                    console.error(
+                        `[SKILLS] Upload succeeded but presign failed for ${fullKey}; continuing without URL.`,
+                        err,
+                    )
+                }
+            }
+        } catch (err) {
+            console.error(
+                `[SKILLS] Failed to upload artifact ${s3Key} for session ${sessionId} (user ${userId}); continuing.`,
+                err,
+            )
+        }
+        return out
+    }
+
     async function writeFilesInternal(
         files: Array<{ path: string; content: string | Buffer }>,
     ): Promise<WriteResult[]> {
@@ -354,6 +506,8 @@ export async function createSkillSandbox(
             // doesn't need to be escaped into the shell command.
             const wrapped = await SandboxManager.wrapWithSandbox(
                 `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
+                undefined,
+                sessionSandboxConfig,
             )
             await new Promise<void>((resolveSpawn, rejectSpawn) => {
                 const child = spawn('/bin/bash', ['-c', wrapped])
@@ -371,50 +525,55 @@ export async function createSkillSandbox(
             const result: WriteResult = { path: file.path }
 
             // Mirror artifact writes to S3 + generate a presigned URL so the
-            // tool output can surface a viewable link to the user. Skill source
-            // files (under sessionDir/skills/) are excluded.
-            if (persistenceEnabled && isArtifactPath(file.path, sessionDir)) {
-                const rel = relative(sessionDir, resolve(file.path))
-                const s3Key = artifactS3Key(sessionId, rel)
-                try {
-                    const fullKey = await uploadFile(
-                        Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
-                        s3Key,
-                        config,
-                        {},
-                        // uploadFile's user param is typed as number, but the
-                        // addUserPrefixToKey helper it delegates to accepts
-                        // number | string at runtime — pass through as-is.
-                        userId as unknown as number,
-                    )
-                    result.key = fullKey
-                    // uploadFile returns "<bucket>/<key>" — split to call
-                    // getPresignedUrl, which expects bucket and key separately.
-                    const slashIdx = fullKey.indexOf('/')
-                    if (slashIdx > 0) {
-                        const bucket = fullKey.slice(0, slashIdx)
-                        const keyOnly = fullKey.slice(slashIdx + 1)
-                        try {
-                            result.url = await getPresignedUrl(bucket, keyOnly, config)
-                        } catch (err) {
-                            console.error(
-                                `[SKILLS] Upload succeeded but presign failed for ${fullKey}; continuing without URL.`,
-                                err,
-                            )
-                        }
-                    }
-                } catch (err) {
-                    console.error(
-                        `[SKILLS] Failed to upload artifact ${s3Key} for session ${sessionId} (user ${userId}); continuing.`,
-                        err,
-                    )
-                }
-            }
+            // tool output can surface a viewable link to the user.
+            const persisted = await persistArtifactToS3(
+                file.path,
+                Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content),
+            )
+            if (persisted.key) result.key = persisted.key
+            if (persisted.url) result.url = persisted.url
 
             results.push(result)
         }
 
         return results
+    }
+
+    /**
+     * Walk the session directory and return a Map of absolute file paths →
+     * mtimeMs. Used by the bash wrapper to detect files created or modified
+     * by a shell command, so we can mirror them to S3 the same way writeFile
+     * does. The skills/ subdir is excluded — those are source-of-truth from
+     * S3 and shouldn't round-trip back as artifacts.
+     */
+    async function snapshotSessionArtifacts(): Promise<Map<string, number>> {
+        const map = new Map<string, number>()
+        const skillsDir = join(sessionDir, 'skills')
+        const walk = async (dir: string): Promise<void> => {
+            let entries
+            try {
+                entries = await readdir(dir, { withFileTypes: true })
+            } catch {
+                return
+            }
+            for (const entry of entries) {
+                const full = join(dir, entry.name)
+                if (full === skillsDir) continue
+                if (entry.isDirectory()) {
+                    await walk(full)
+                } else if (entry.isFile()) {
+                    try {
+                        const s = await stat(full)
+                        map.set(full, s.mtimeMs)
+                    } catch {
+                        // File could have disappeared between readdir and stat.
+                        // Ignoring is fine — it just won't appear in the diff.
+                    }
+                }
+            }
+        }
+        await walk(sessionDir)
+        return map
     }
 
     const { tools } = await createBashTool({
@@ -428,20 +587,24 @@ export async function createSkillSandbox(
     // Replace bash-tool's writeFile tool. Its built-in version discards the
     // sandbox return value and emits a hardcoded { success: true }, which
     // strips the presigned URL we generated. The wrapper re-implements the
-    // same shape (path/content schema, posix.resolve against the session dir)
-    // and surfaces { path, url, key } from writeFilesInternal so the frontend
-    // can render a viewable link to the artifact.
+    // same shape and surfaces { path, url, key } from writeFilesInternal so
+    // the frontend can render a viewable link to the artifact. Uses
+    // resolveSessionPath so leading-slash paths from the agent (e.g.
+    // "/skills/foo/SKILL.md") get re-anchored under sessionDir instead of
+    // pointing at the host root.
     const writeFileTool = tool({
         description:
             'Write content to a file in the sandbox. Creates parent directories if needed. ' +
+            'Paths are always resolved against the session sandbox root — both relative paths ' +
+            '("skills/foo.md") and leading-slash paths ("/skills/foo.md") work and reach the same file. ' +
             'When the path is under the session artifact tree, the file is also uploaded to S3 ' +
             'and a short-lived presigned URL is returned in the tool output.',
         inputSchema: z.object({
-            path: z.string().describe('The path where the file should be written'),
+            path: z.string().describe('The path where the file should be written. Relative paths and leading-slash paths are both resolved against the session sandbox root.'),
             content: z.string().describe('The content to write to the file'),
         }),
         execute: async ({ path, content }) => {
-            const resolvedPath = posix.resolve(sessionDir, path)
+            const resolvedPath = resolveSessionPath(path, sessionDir)
             const results = await writeFilesInternal([{ path: resolvedPath, content }])
             const result = results[0]
             if (!result) {
@@ -458,12 +621,128 @@ export async function createSkillSandbox(
         },
     })
 
-    const wrappedTools = { ...tools, writeFile: writeFileTool }
+    // Replace bash-tool's readFile tool with one that normalizes paths through
+    // resolveSessionPath. bash-tool's default uses posix.resolve(cwd, path)
+    // which leaves leading-slash paths anchored at the host filesystem root —
+    // the SRT sandbox then denies the read and the agent sees "No such file or
+    // directory" even though the file exists under sessionDir.
+    const readFileTool = tool({
+        description:
+            'Read the contents of a file from the sandbox. ' +
+            'Paths are always resolved against the session sandbox root — both relative paths ' +
+            '("skills/foo.md") and leading-slash paths ("/skills/foo.md") work and reach the same file. ' +
+            'If the file does not exist, the error message is surfaced verbatim.',
+        inputSchema: z.object({
+            path: z.string().describe('The path of the file to read. Relative paths and leading-slash paths are both resolved against the session sandbox root.'),
+        }),
+        execute: async ({ path }) => {
+            const resolvedPath = resolveSessionPath(path, sessionDir)
+            const content = await customSandbox.readFile(resolvedPath)
+            return { content }
+        },
+    })
+
+    // Wrap bash so files created by shell commands (e.g. `node create_doc.js`
+    // producing output.docx) get mirrored to S3 the same way explicit
+    // writeFile calls do. bash-tool's built-in bash tool just shells out and
+    // returns stdout/stderr/exitCode; without this wrapper the file lands in
+    // the session dir on disk but never gets persisted or surfaced as a
+    // download link, so the agent has no way to share its output with the
+    // user. The wrapper:
+    //   1. Snapshots file mtimes under sessionDir (excluding skills/) before
+    //      the command runs.
+    //   2. Calls the original bash tool's execute.
+    //   3. Snapshots again, diffs to find new or modified files.
+    //   4. Uploads each via persistArtifactToS3 (shared with writeFile).
+    //   5. Returns an `artifacts` array on the tool result AND appends an
+    //      [exulu-artifacts] block to stdout so the model surfaces the URLs
+    //      naturally in its reply.
+    const originalBashTool = tools.bash
+    const bashTool = tool({
+        description: originalBashTool.description ?? '',
+        inputSchema: z.object({
+            command: z.string().describe('The bash command to execute.'),
+        }),
+        execute: async (args, opts) => {
+            const before = persistenceEnabled
+                ? await snapshotSessionArtifacts()
+                : null
+            // Defer to bash-tool's bash tool so we keep its truncation, cwd
+            // pinning, and any future bash-tool behaviour for free.
+            const originalExecute = originalBashTool.execute as
+                | ((input: { command: string }, options: any) => Promise<any>)
+                | undefined
+            if (!originalExecute) {
+                throw new Error('bash tool execute is undefined')
+            }
+            const result = await originalExecute(args, opts)
+
+            // Determine new/modified files since the snapshot. mtimeMs strictly
+            // greater than the before-value catches "modified"; absence in
+            // `before` catches "new".
+            const artifacts: Array<{
+                path: string
+                relativePath: string
+                key?: string
+                url?: string
+            }> = []
+            if (persistenceEnabled && before) {
+                const after = await snapshotSessionArtifacts()
+                const changedPaths: string[] = []
+                for (const [path, mtime] of after) {
+                    const beforeMtime = before.get(path)
+                    if (beforeMtime === undefined || beforeMtime < mtime) {
+                        changedPaths.push(path)
+                    }
+                }
+                for (const path of changedPaths) {
+                    try {
+                        const content = await fsReadFile(path)
+                        const persisted = await persistArtifactToS3(path, content)
+                        artifacts.push({
+                            path,
+                            relativePath: relative(sessionDir, path),
+                            key: persisted.key,
+                            url: persisted.url,
+                        })
+                    } catch (err) {
+                        console.error(
+                            `[SKILLS] Failed to mirror bash-produced artifact ${path} to S3; continuing.`,
+                            err,
+                        )
+                    }
+                }
+            }
+
+            // Surface URLs in stdout so the agent sees them and includes them
+            // in its reply. We append after bash-tool's truncation pass so the
+            // marker block isn't truncated. Only files with a presigned URL
+            // appear here; locally-only entries would just confuse the user.
+            let stdout = result?.stdout ?? ''
+            const withUrls = artifacts.filter((a) => a.url)
+            if (withUrls.length > 0) {
+                const lines = ['', '[exulu-artifacts]']
+                for (const a of withUrls) {
+                    lines.push(`  ${a.relativePath}: ${a.url}`)
+                }
+                stdout = `${stdout}\n${lines.join('\n')}`
+            }
+
+            return {
+                ...result,
+                stdout,
+                artifacts,
+            }
+        },
+    })
+
+    const wrappedTools = { ...tools, bash: bashTool, readFile: readFileTool, writeFile: writeFileTool }
 
     const handle: SkillSandboxHandle = {
         sessionDir,
         tools: wrappedTools,
-        wrapCommand: (command: string) => SandboxManager.wrapWithSandbox(command),
+        wrapCommand: (command: string) =>
+            SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig),
         cleanup: async () => {
             sandboxCache.delete(sessionId)
             await SandboxManager.reset()

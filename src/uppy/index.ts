@@ -291,6 +291,28 @@ export const getS3ObjectContent = async (
 };
 
 /**
+ * Read the full binary content of an S3 object as a Buffer.
+ * Use for archives, images, and any non-text payload (e.g. skill bundle zips).
+ */
+export const getS3ObjectBytes = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<Buffer> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+  const response = await client.send(command);
+  if (!response.Body) {
+    throw new Error(`Empty body for S3 key: ${key}`);
+  }
+  const byteArray = await response.Body.transformToByteArray();
+  return Buffer.from(byteArray);
+};
+
+/**
  * Delete a single object from S3 by its full key (no bucket prefix).
  */
 export const deleteS3Object = async (

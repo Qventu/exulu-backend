@@ -19,10 +19,12 @@ import {
   copyS3Object,
   deleteS3Object,
   getS3ObjectContent,
+  getS3ObjectBytes,
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
 } from "../uppy/index.ts";
+import { extractBundleToS3, BundleValidationError } from "../skills/bundle-extractor.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -1376,6 +1378,174 @@ Mood: friendly and intelligent.
     });
 
     res.json({ version: 1, skillMdKey: s3Key });
+  });
+
+  /**
+   * POST /skills/:skillId/upload-sign
+   * Returns a presigned PUT URL for uploading a skill bundle (.zip or .md) to
+   * a per-user staging area in S3. The frontend uploads directly to the URL
+   * (via the existing Uppy AwsS3 flow), then calls /init-from-upload below to
+   * trigger extraction.
+   *
+   * Body: { extension: ".zip" | ".md", contentType: string }
+   * Response: { uploadUrl: string, stagingKey: string }
+   */
+  app.post("/skills/:skillId/upload-sign", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { extension, contentType } = req.body ?? {};
+
+    if (extension !== ".zip" && extension !== ".md") {
+      res.status(400).json({ detail: 'extension must be ".zip" or ".md".' });
+      return;
+    }
+    if (!contentType || typeof contentType !== "string") {
+      res.status(400).json({ detail: "Missing contentType in request body." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    // Per-user staging path. The init-from-upload handler verifies the same
+    // user owns the staging key, so users can't trigger extraction of someone
+    // else's upload.
+    const stagingKey = `user_${authResult.user.id}/skills/_staging/${randomUUID()}${extension}`;
+    const fullKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${stagingKey}`
+      : stagingKey;
+
+    const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
+    res.json({ uploadUrl, stagingKey });
+  });
+
+  /**
+   * POST /skills/:skillId/init-from-upload
+   * Fetches a staged bundle from S3, extracts it (validates SKILL.md presence,
+   * path safety, size + count caps), and uploads the contents to
+   * skills/<skillId>/v1/. Updates the skill row with s3folder, current_version,
+   * and history — mirroring what /init does for blank-create.
+   *
+   * Body: { stagingKey: string, isZip: boolean }
+   * Response: { version: 1, filesCount: number }
+   */
+  app.post("/skills/:skillId/init-from-upload", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const skillId = req.params.skillId;
+    if (!skillId) {
+      res.status(400).json({ detail: "Missing skillId in path." });
+      return;
+    }
+    const { stagingKey, isZip } = req.body ?? {};
+
+    if (!stagingKey || typeof stagingKey !== "string") {
+      res.status(400).json({ detail: "Missing stagingKey in request body." });
+      return;
+    }
+    if (typeof isZip !== "boolean") {
+      res.status(400).json({ detail: "Missing or invalid isZip in request body." });
+      return;
+    }
+
+    // Authorization: the staging key must belong to the calling user. Without
+    // this check, a malicious caller could trigger extraction of another
+    // user's staged upload into their own skill.
+    const expectedPrefix = `user_${authResult.user.id}/skills/_staging/`;
+    if (!stagingKey.startsWith(expectedPrefix)) {
+      res.status(403).json({ detail: "stagingKey does not belong to the authenticated user." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    // Fetch the staged bundle. getS3ObjectBytes prepends the s3prefix the
+    // same way uploadFile / getS3ObjectContent do, so we pass the
+    // pre-prefix stagingKey directly.
+    const fullStagingKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${stagingKey}`
+      : stagingKey;
+
+    let bytes: Buffer;
+    try {
+      bytes = await getS3ObjectBytes(fullStagingKey, config);
+    } catch (err: any) {
+      console.error("[SKILLS] Failed to fetch staged bundle", err);
+      res.status(500).json({ detail: "Failed to fetch staged bundle from S3." });
+      return;
+    }
+
+    let result: { filesCount: number };
+    try {
+      result = await extractBundleToS3({ bytes, skillId, isZip, config });
+    } catch (err: any) {
+      // Extraction failed. Delete the skill row so the user can retry with
+      // the same name (the alternative is hitting a unique-constraint error
+      // on the second attempt). The row was created moments ago and contains
+      // no real state — files haven't landed yet (extraction is pre-validated
+      // so no partial S3 writes occur). Best-effort cleanup of the staging
+      // key too.
+      try {
+        await db("skills").where({ id: skillId }).delete();
+      } catch (cleanupErr: any) {
+        console.warn(
+          `[SKILLS] Failed to delete orphan skill row ${skillId} after extraction failure; user may need to delete it manually.`,
+          cleanupErr,
+        );
+      }
+      try {
+        await deleteS3Object(fullStagingKey, config);
+      } catch (cleanupErr: any) {
+        console.warn(
+          `[SKILLS] Failed to delete staging key ${fullStagingKey} after extraction failure; continuing.`,
+          cleanupErr,
+        );
+      }
+
+      if (err instanceof BundleValidationError) {
+        res.status(400).json({ detail: err.message });
+        return;
+      }
+      console.error("[SKILLS] Failed to extract bundle", err);
+      res.status(500).json({ detail: "Failed to extract bundle." });
+      return;
+    }
+
+    await db("skills").where({ id: skillId }).update({
+      s3folder: `skills/${skillId}`,
+      current_version: 1,
+      history: JSON.stringify([
+        { version: 1, created_at: new Date().toISOString(), label: "Uploaded bundle" },
+      ]),
+    });
+
+    // Best-effort cleanup of the staging key. Failure to delete shouldn't
+    // fail the request — the bundle has already landed in the skill folder.
+    try {
+      await deleteS3Object(fullStagingKey, config);
+    } catch (err: any) {
+      console.warn(`[SKILLS] Failed to delete staging key ${fullStagingKey}; continuing.`, err);
+    }
+
+    res.json({ version: 1, filesCount: result.filesCount });
   });
 
   /**
