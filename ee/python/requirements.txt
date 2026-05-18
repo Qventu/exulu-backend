@@ -2,3 +2,4 @@ docling
 transformers
 pyinstaller
 docling-hierarchical-pdf
+defusedxml
