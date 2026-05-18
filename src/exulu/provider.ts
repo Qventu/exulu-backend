@@ -1036,6 +1036,59 @@ export class ExuluProvider {
               `;
     }
 
+    if (currentSkills?.length) {
+      // Render each skill as a bulleted name + description block. Listing only
+      // names (the previous shape) hides what each skill is FOR — the model
+      // could see a skill named "Docx" but not realise it knows how to produce
+      // valid .docx files, and would fall back to writeFile with raw markdown.
+      const skillsList = currentSkills
+        .map((skill) => {
+          const description = (skill.description ?? "").trim();
+          return description
+            ? `        - ${skill.name}: ${description}`
+            : `        - ${skill.name}`;
+        })
+        .join("\n");
+
+      system += "\n\n" + `
+        Skills are enabled for this session.
+
+        CRITICAL — Skills are NOT tools. You cannot invoke a skill by calling its name as a tool.
+        Skills are folders of instructions and scripts on the session filesystem. To "use a skill"
+        means: read its SKILL.md with the readFile tool, follow the instructions inside it, and run
+        any scripts it references with the bash tool. The list of skills below is reference material,
+        not a tool catalogue — your callable tools are ONLY the ones declared in the tools list of
+        this request (readFile, writeFile, bash, plus whatever else is registered). Trying to call a
+        skill name as a tool will fail with "Model tried to call unavailable tool".
+
+        Skills are stored in the skills/ folder of the session sandbox and are always structured like:
+
+        skills/<skill_name>/SKILL.md
+        skills/<skill_name>/scripts/
+        skills/<skill_name>/assets/
+        skills/<skill_name>/ ... any other files needed to follow the skill's instructions
+
+        Available skills (name: description):
+${skillsList}
+
+        How to use a skill (the only correct workflow):
+          1. Decide which skill matches the user's request based on the descriptions above. The user
+             does not always name the skill explicitly — match on intent.
+          2. Call readFile with path "skills/<skill_name>/SKILL.md" and read the instructions.
+          3. Follow those instructions step by step. They may direct you to readFile other files in
+             the skill folder, write working files with writeFile, and run scripts via bash.
+          4. Produce the final output the user asked for.
+
+        Specifically:
+        - When the user asks for output in a specialized file format (.docx, .xlsx, .pdf, .pptx,
+          etc.), check the list above for a skill that produces that format and follow its workflow.
+          writeFile alone only writes raw bytes; it cannot construct the binary structure these
+          formats require, so the file will not open in the target application.
+        - When the user mentions a workflow or domain that matches a skill name or description,
+          read that skill's SKILL.md instead of reasoning from scratch.
+      `;
+    }
+
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
@@ -1087,7 +1140,9 @@ export class ExuluProvider {
           `Chat stream error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
         );
       },
-      stopWhen: [stepCountIs(maxStepCount || 5)],
+      // provide more loops for skills because they are more complex to execute
+      // todo allow configuring this per skill
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)], 
     });
 
     return {

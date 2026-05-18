@@ -307,7 +307,7 @@ export class ExuluApp {
     // default; throws when config.requireSystemDependencies is true so that
     // production deployments fail fast on a misconfigured image.
     await reportSystemDependencies({
-      requireSystemDependencies: config.requireSystemDependencies === true,
+      requireSystemDependencies: config.requireSystemDependencies !== false,
     });
 
     console.log("[EXULU] App initialized.");
