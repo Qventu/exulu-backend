@@ -308,7 +308,18 @@ export async function createSkillSandbox(
             return await runWrapped(command);
         },
         async readFile(path) {
-            const { stdout } = await runWrapped(`cat ${shellQuote(path)}`);
+            // Surface cat's stderr + exit code as a thrown error. Returning
+            // empty stdout silently is dangerous — a typo'd path looks
+            // indistinguishable from an empty file, and the agent will
+            // rationally conclude the file is empty and skip it. Throwing
+            // forces the agent to see the real failure (e.g. "No such file
+            // or directory") and self-correct.
+            const { stdout, stderr, exitCode } = await runWrapped(`cat ${shellQuote(path)}`);
+            if (exitCode !== 0) {
+                throw new Error(
+                    `readFile ${path} failed (exit ${exitCode}): ${stderr.trim() || 'no stderr captured'}`,
+                );
+            }
             return stdout;
         },
         async writeFiles(files) {
