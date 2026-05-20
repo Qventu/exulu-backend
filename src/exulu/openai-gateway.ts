@@ -252,8 +252,15 @@ export const registerOpenAIGatewayRoutes = async (
   );
 
   app.post(
-    "/gateway/open-ai/v1/chat/completions",
+    ["/gateway/open-ai/v1/chat/completions", "/gateway/open-ai/v1/completions"],
     express.json({ limit: REQUEST_SIZE_LIMIT }),
+    (req: Request, _res: Response, next) => {
+      if (typeof req.body.prompt === "string") {
+        req.body.messages = [{ role: "user", content: req.body.prompt }];
+        delete req.body.prompt;
+      }
+      next();
+    },
     async (req: Request, res: Response) => {
       try {
         const { db } = await postgresClient();
