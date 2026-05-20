@@ -22,7 +22,8 @@ import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
-import { createSkillSandbox } from "@EE/invoke-skills/create-sandbox";
+import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { getPresignedUrl } from "@SRC/uppy";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 /**
@@ -159,15 +160,15 @@ export const convertExuluToolsToAiSdkTools = async (
   // When skills are configured, eagerly create the shared session sandbox so
   // both the inner skill agent AND the outer agent can read/write files in
   // the same per-session tree. The skill tool's execute below still calls
-  // createSkillSandbox, but those become cache hits and reuse this handle.
-  let sharedSkillSandbox:
-    | Awaited<ReturnType<typeof createSkillSandbox>>
+  // createSessionSandbox, but those become cache hits and reuse this handle.
+  let sharedSessionSandbox:
+    | Awaited<ReturnType<typeof createSessionSandbox>>
     | undefined;
-  if (currentSkills?.length && sessionID && exuluConfig) {
+  if (sessionID && exuluConfig) {
     try {
-      sharedSkillSandbox = await createSkillSandbox(
+      sharedSessionSandbox = await createSessionSandbox(
         sessionID,
-        currentSkills,
+        currentSkills || [],
         exuluConfig,
         user?.id,
       );
@@ -284,17 +285,17 @@ export const convertExuluToolsToAiSdkTools = async (
   // delegating to a skill. Files written here land under the same session dir
   // as skill artifacts and benefit from the same S3 persistence + presigned
   // URL pipeline. Bash is intentionally NOT exposed to the outer agent.
-  const outerSandboxTools: Record<string, any> = sharedSkillSandbox
+  const sandboxTools: Record<string, any> = sharedSessionSandbox
     ? {
-        readFile: { ...sharedSkillSandbox.tools.readFile, needsApproval: false },
-        writeFile: { ...sharedSkillSandbox.tools.writeFile, needsApproval: false },
-        bash: { ...sharedSkillSandbox.tools.bash, needsApproval: false },
+        readFile: { ...sharedSessionSandbox.tools.readFile, needsApproval: false },
+        writeFile: { ...sharedSessionSandbox.tools.writeFile, needsApproval: false },
+        bash: { ...sharedSessionSandbox.tools.bash, needsApproval: false },
       }
     : {};
 
   return {
     ...sessionDynamicTools,
-    ...outerSandboxTools,
+    ...sandboxTools,
     ...sanitizedTools?.reduce((prev, cur) => {
       let toolVariableConfig = configs?.find((config) => config.id === cur.id);
 

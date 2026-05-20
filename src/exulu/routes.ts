@@ -20,11 +20,14 @@ import {
   deleteS3Object,
   getS3ObjectContent,
   getS3ObjectBytes,
+  getS3ObjectEtag,
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
 } from "../uppy/index.ts";
 import { extractBundleToS3, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
+import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -1942,6 +1945,378 @@ Mood: friendly and intelligent.
   });
 
   // ─── End Skills File Management ───────────────────────────────────────────────
+
+  // ─── Session Files ────────────────────────────────────────────────────────────
+  // Five routes that power the session files side panel on the chat page.
+  // All files live under <s3prefix>/user_<userId>/sessions/<sessionId>/, the
+  // same prefix the agent's writeFile and bash artifact mirroring use. User-
+  // uploaded files become visible to the agent next turn (cold-start restore
+  // or the explicit sync-to-sandbox route below).
+
+  /**
+   * Map a file extension to a content type. Inlined to avoid a mime-types
+   * dependency; only covers the formats we actually surface in the side
+   * panel (text/markdown/code/images/PDF + Office binaries). Anything else
+   * falls through to application/octet-stream and the frontend offers a
+   * download instead of a preview.
+   */
+  const SESSION_FILE_CONTENT_TYPES: Record<string, string> = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".py": "text/x-python",
+    ".js": "application/javascript",
+    ".ts": "application/typescript",
+    ".tsx": "application/typescript",
+    ".html": "text/html",
+    ".css": "text/css",
+    ".sh": "application/x-sh",
+    ".xml": "application/xml",
+    ".toml": "application/toml",
+    ".csv": "text/csv",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+  };
+
+  function inferContentType(name: string): string {
+    const dotIdx = name.lastIndexOf(".");
+    if (dotIdx < 0) return "application/octet-stream";
+    const ext = name.slice(dotIdx).toLowerCase();
+    return SESSION_FILE_CONTENT_TYPES[ext] ?? "application/octet-stream";
+  }
+
+  /**
+   * Build the prefix-shape strings we use for session-file lookups. The
+   * "userSessionPrefix" is what we list against (without s3prefix; the helper
+   * prepends it). "fullSessionPrefix" is what S3 returns inside object keys
+   * and what we use for the auth-by-prefix check.
+   */
+  function buildSessionPrefixes(userId: number | string, sessionId: string) {
+    const userSessionPrefix = `user_${userId}/sessions/${sessionId}/`;
+    const generalPrefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+    const fullSessionPrefix = `${generalPrefix}${userSessionPrefix}`;
+    return { userSessionPrefix, fullSessionPrefix };
+  }
+
+  /**
+   * Sanitize a user-supplied filename. Reject anything that escapes the
+   * intended directory; mostly defensive — Uppy normally posts to the
+   * presigned URL whose key we already control, so the filename arrives
+   * here only as a label.
+   */
+  function sanitizeFilename(name: string): string {
+    const trimmed = name.trim();
+    if (!trimmed) return "";
+    if (trimmed.includes("..")) return "";
+    if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return "";
+    // Replace path separators in the basename — uploads are flat per session,
+    // no subdir creation through this route.
+    return trimmed.replace(/[\\/]/g, "_");
+  }
+
+  /**
+   * GET /sessions/:sessionId/files
+   * Lists all files under the calling user's session prefix. Returns
+   * presigned download URLs inline so the frontend can render previews
+   * (image, PDF) without a second round trip per file.
+   */
+  app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      res.status(400).json({ detail: "Missing sessionId in path." });
+      return;
+    }
+    if (!config.fileUploads) {
+      res.status(500).json({ detail: "File uploads are not configured." });
+      return;
+    }
+
+    const { userSessionPrefix } = buildSessionPrefixes(
+      authResult.user.id,
+      sessionId,
+    );
+
+    let objects: S3FileObject[];
+    try {
+      objects = await listS3ObjectsByPrefix(userSessionPrefix, config);
+    } catch (err: any) {
+      console.error("[SESSION-FILES] Failed to list S3 objects", err);
+      res.status(500).json({ detail: "Failed to list session files." });
+      return;
+    }
+
+    const bucket = config.fileUploads.s3Bucket;
+    const files = await Promise.all(
+      objects
+        // Skip the directory marker (key ending with /).
+        .filter((obj) => !obj.key.endsWith("/"))
+        .map(async (obj) => {
+          const name = obj.key.split("/").pop() ?? obj.key;
+          const presignedUrl = await getPresignedUrl(bucket, obj.key, config);
+          return {
+            key: obj.key,
+            name,
+            size: obj.size,
+            lastModified: obj.lastModified.toISOString(),
+            contentType: inferContentType(name),
+            presignedUrl,
+          };
+        }),
+    );
+
+    // Most-recent first.
+    files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+
+    res.json({ files });
+  });
+
+  /**
+   * POST /sessions/:sessionId/files/upload-sign
+   * Returns a presigned PUT URL for uploading a single file into the
+   * session prefix. Frontend uploads via Uppy, then calls
+   * /sync-to-sandbox below to push it into the live sandbox dir.
+   *
+   * Body: { filename: string, contentType: string }
+   * Response: { uploadUrl: string, key: string }
+   */
+  app.post(
+    "/sessions/:sessionId/files/upload-sign",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      if (!config.fileUploads) {
+        res.status(500).json({ detail: "File uploads are not configured." });
+        return;
+      }
+
+      const { filename, contentType } = req.body ?? {};
+      if (!filename || typeof filename !== "string") {
+        res.status(400).json({ detail: "Missing filename in request body." });
+        return;
+      }
+      const safeName = sanitizeFilename(filename);
+      if (!safeName) {
+        res
+          .status(400)
+          .json({ detail: "Invalid filename (no path separators, no '..')." });
+        return;
+      }
+      if (!contentType || typeof contentType !== "string") {
+        res.status(400).json({ detail: "Missing contentType in request body." });
+        return;
+      }
+
+      const { userSessionPrefix, fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      const fullKey = `${fullSessionPrefix}${safeName}`;
+      const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
+
+      // The frontend round-trips `key` back to the sync-to-sandbox and delete
+      // routes; we return the full prefixed key so those routes can do the
+      // prefix-check + S3 ops without any client-side reconstruction.
+      res.json({ uploadUrl, key: fullKey });
+    },
+  );
+
+  /**
+   * POST /sessions/:sessionId/files/sync-to-sandbox
+   * After Uppy reports a successful upload, the frontend calls this so the
+   * agent's next readFile/bash sees the file. No-op if the sandbox isn't
+   * currently materialized (cold-start restore handles that case).
+   */
+  app.post(
+    "/sessions/:sessionId/files/sync-to-sandbox",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      const { key } = req.body ?? {};
+      if (!key || typeof key !== "string") {
+        res.status(400).json({ detail: "Missing key in request body." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      try {
+        const result = await downloadKeyIntoSandbox({
+          sessionId,
+          userId: authResult.user.id,
+          fullS3Key: key,
+          config,
+        });
+        res.json(result);
+      } catch (err: any) {
+        console.error("[SESSION-FILES] sync-to-sandbox failed", err);
+        res.status(500).json({ detail: "Failed to sync file into sandbox." });
+      }
+    },
+  );
+
+  /**
+   * DELETE /sessions/:sessionId/files
+   * Deletes a session file. The key arrives in the query string (URL paths
+   * can't contain raw forward slashes from the S3 key safely). Prefix-check
+   * enforces session ownership.
+   */
+  app.delete(
+    "/sessions/:sessionId/files",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+
+      const key = req.query.key;
+      if (!key || typeof key !== "string") {
+        res
+          .status(400)
+          .json({ detail: "Missing or invalid 'key' query parameter." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      try {
+        await deleteS3Object(key, config);
+        res.json({ deleted: true });
+      } catch (err: any) {
+        console.error("[SESSION-FILES] delete failed", err);
+        res.status(500).json({ detail: "Failed to delete session file." });
+      }
+    },
+  );
+
+  /**
+   * GET /sessions/:sessionId/file/preview-pdf
+   * Renders an Office-binary (.docx/.xlsx/.pptx/etc.) to PDF via LibreOffice
+   * and streams the PDF back. Cached on disk by source ETag — repeat
+   * previews are instant, content updates auto-invalidate.
+   */
+  app.get(
+    "/sessions/:sessionId/file/preview-pdf",
+    async (req: Request, res: Response) => {
+      // <iframe src=...> can't set Authorization: Bearer. Accept the token
+      // via ?auth= query param as a fallback so the iframe can fetch the
+      // PDF directly. Token still ends up in server logs / browser history —
+      // acceptable for a same-user preview that's also auth-checked via the
+      // session-prefix rule below.
+      if (!req.headers.authorization && typeof req.query.auth === "string") {
+        req.headers.authorization = `Bearer ${req.query.auth}`;
+      }
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+
+      const key = req.query.key;
+      if (!key || typeof key !== "string") {
+        res
+          .status(400)
+          .json({ detail: "Missing or invalid 'key' query parameter." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      const etag = await getS3ObjectEtag(key, config);
+      if (!etag) {
+        res.status(404).json({ detail: "Source file not found in S3." });
+        return;
+      }
+
+      try {
+        const pdfBytes = await getPdfPreviewBytes({
+          sourceKey: key,
+          etag,
+          config,
+        });
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        res.send(pdfBytes);
+      } catch (err: any) {
+        if (err instanceof PreviewRenderError) {
+          console.error("[SESSION-FILES] preview render failed", err);
+          res.status(500).json({ detail: err.message });
+          return;
+        }
+        console.error("[SESSION-FILES] preview unexpected error", err);
+        res.status(500).json({ detail: "Failed to render preview." });
+      }
+    },
+  );
+
+  // ─── End Session Files ────────────────────────────────────────────────────────
 
   app.use(express.static("public"));
 

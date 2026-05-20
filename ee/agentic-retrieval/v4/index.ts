@@ -154,7 +154,7 @@ export function createAgenticRetrievalToolV4({
 
     return new ExuluTool({
         id: "agentic_context_search",
-        name: "Agentic Context Search",
+        name: "Context Search",
         description: `Intelligent context search with query classification, strategy-based retrieval, and virtual filesystem filtering. Searches: ${contextNames}`,
         category: "contexts",
         needsApproval: false,

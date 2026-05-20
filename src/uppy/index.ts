@@ -291,6 +291,32 @@ export const getS3ObjectContent = async (
 };
 
 /**
+ * Fetch the ETag for an S3 object via HeadObject. Used as a cache key for
+ * derived artefacts like the LibreOffice-rendered PDF preview — the ETag
+ * changes whenever the object content changes, so cached derivations
+ * invalidate automatically. Returns null if HeadObject fails (object
+ * missing or auth error).
+ */
+export const getS3ObjectEtag = async (
+  key: string,
+  config: ExuluConfig,
+): Promise<string | null> => {
+  if (!config.fileUploads) {
+    throw new Error("File uploads are not configured");
+  }
+  const client = getS3Client(config);
+  const bucket = config.fileUploads.s3Bucket;
+  try {
+    const response = await client.send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
+    return response.ETag ?? null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Read the full binary content of an S3 object as a Buffer.
  * Use for archives, images, and any non-text payload (e.g. skill bundle zips).
  */

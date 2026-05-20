@@ -531,6 +531,20 @@ export class ExuluProvider {
               `;
     }
 
+    // Session files: any files the user uploads via the chat side panel land
+    // in the working directory at their original filename, alongside files
+    // produced by your own writeFile / bash artifact mirroring. Mentioning
+    // this unconditionally so the agent always knows to look at the working
+    // directory before saying "I can't see any file".
+    system += "\n\n" + `
+        Session files:
+        The user can upload files to this session through a side panel in the chat UI. Any such
+        file appears in your working directory by its original filename — list them with \`ls\` or
+        read them with the readFile tool. Files you produce yourself (via writeFile or via shell
+        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
+        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+      `
+
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
@@ -1088,6 +1102,20 @@ ${skillsList}
           read that skill's SKILL.md instead of reasoning from scratch.
       `;
     }
+
+    // Session files: any files the user uploads via the chat side panel land
+    // in the working directory at their original filename, alongside files
+    // produced by your own writeFile / bash artifact mirroring. Mentioning
+    // this unconditionally so the agent always knows to look at the working
+    // directory before saying "I can't see any file".
+    system += "\n\n" + `
+        Session files:
+        The user can upload files to this session through a side panel in the chat UI. Any such
+        file appears in your working directory by its original filename — list them with \`ls\` or
+        read them with the readFile tool. Files you produce yourself (via writeFile or via shell
+        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
+        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+      `
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`

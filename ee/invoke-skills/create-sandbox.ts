@@ -7,12 +7,54 @@ import { existsSync } from 'node:fs'
 import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
-import { listS3ObjectsByPrefix, getS3ObjectContent, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
+import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
 import { z } from "zod";
+import { type Variable } from "@EXULU_TYPES/models/variable";
+import CryptoJS from "crypto-js";
+import { postgresClient } from "@SRC/postgres/client";
+
+/**
+ * Load every variable from the database with its decrypted value. Returns
+ * a name → value map suitable for spreading into a child-process env.
+ *
+ * Used by the skill sandbox to expose configured secrets to bash commands
+ * (API keys, etc.) so skills can call external services without hard-coding
+ * credentials. Decryption runs server-side; nothing encrypted leaves the
+ * Node process.
+ *
+ * Variables whose name starts with `_` or contains `=` are skipped — those
+ * shapes corrupt POSIX env parsing or shadow shell internals.
+ */
+const getAllExuluVariables = async (): Promise<Record<string, string>> => {
+    const { db } = await postgresClient();
+    const rows: Variable[] = await db.from("variables").select("*");
+    const out: Record<string, string> = {};
+    for (const row of rows) {
+        if (!row?.name) continue;
+        if (row.name.startsWith("_")) continue;
+        if (row.name.includes("=")) continue;
+        let value = row.value;
+        if (row.encrypted) {
+            try {
+                const bytes = CryptoJS.AES.decrypt(value, process.env.NEXTAUTH_SECRET);
+                value = bytes.toString(CryptoJS.enc.Utf8);
+            } catch (err) {
+                console.error(
+                    `[VARIABLES] Failed to decrypt variable "${row.name}"; skipping.`,
+                    err,
+                );
+                continue;
+            }
+        }
+        if (typeof value !== "string") continue;
+        out[row.name] = value;
+    }
+    return out;
+}
 
 const execAsync = promisify(exec);
 // Sandbox commands can be very long (long deny lists) — bump default buffer.
@@ -30,7 +72,7 @@ export interface SkillRef {
     current_version: number
 }
 
-export interface SkillSandboxHandle {
+export interface SessionSandboxHandle {
     /** Absolute path to the session's temporary directory, containing all downloaded skill files. */
     sessionDir: string
     /**
@@ -48,7 +90,7 @@ export interface SkillSandboxHandle {
 }
 
 interface CachedSandbox {
-    handle: SkillSandboxHandle
+    handle: SessionSandboxHandle
     /** skill id -> installed version */
     installedSkills: Map<string, number>
 }
@@ -95,8 +137,10 @@ async function downloadSkill(
         const localPath = join(skillsDirectory, skill.name, relativePath)
         await mkdir(dirname(localPath), { recursive: true })
 
-        const content = await getS3ObjectContent(file.key, config)
-        await writeFile(localPath, content, 'utf-8')
+        // Binary-safe download — skill bundles can ship images, fonts, and
+        // other non-text assets alongside the SKILL.md / scripts.
+        const bytes = await getS3ObjectBytes(file.key, config)
+        await writeFile(localPath, bytes)
     }
 }
 
@@ -193,9 +237,12 @@ async function restoreArtifactsFromS3(
 
         const localPath = join(sessionDir, relativePath)
         try {
-            const content = await getS3ObjectContent(obj.key, config)
+            // Use binary-safe fetch — session artifacts now include PDFs, .docx
+            // and other binary formats (from user uploads as well as agent
+            // bash-produced files). Reading as utf-8 would corrupt these.
+            const bytes = await getS3ObjectBytes(obj.key, config)
             await mkdir(dirname(localPath), { recursive: true })
-            await writeFile(localPath, content, 'utf-8')
+            await writeFile(localPath, bytes)
         } catch (err) {
             console.error(
                 `[SKILLS] Failed to restore artifact ${obj.key} -> ${localPath}; continuing.`,
@@ -203,6 +250,54 @@ async function restoreArtifactsFromS3(
             )
         }
     }
+}
+
+/**
+ * Materialize a single S3 key into the live session sandbox directory. Used
+ * by the user-upload flow: after a file lands in S3 via Uppy, we want it
+ * available to the agent's readFile/bash on the next turn without waiting
+ * for a process restart to trigger a full cold-start restore.
+ *
+ * The key MUST belong to the calling user's session prefix
+ * (`user_<userId>/sessions/<sessionId>/`). Caller (route handler) is
+ * responsible for that authorization check before invoking this helper.
+ *
+ * No-op if the session dir doesn't exist on disk yet — the cold-start
+ * restore will pick the file up when the sandbox is next materialized.
+ */
+export async function downloadKeyIntoSandbox(opts: {
+    sessionId: string
+    userId: number | string
+    fullS3Key: string
+    config: ExuluConfig
+}): Promise<{ written: boolean; localPath?: string }> {
+    const { sessionId, userId, fullS3Key, config } = opts
+
+    const sessionDir = join('/tmp', 'exulu-sessions', sessionId)
+    if (!existsSync(sessionDir)) {
+        // Sandbox not yet materialized; nothing to do. The cold-start restore
+        // in createSessionSandbox handles this case on demand.
+        return { written: false }
+    }
+
+    const userPrefix = `user_${userId}/sessions/${sessionId}/`
+    const idx = fullS3Key.indexOf(userPrefix)
+    if (idx < 0) {
+        throw new Error(
+            `downloadKeyIntoSandbox: key "${fullS3Key}" does not contain expected prefix "${userPrefix}". ` +
+            `The caller must verify the key belongs to this user+session before invoking this helper.`,
+        )
+    }
+    const relativePath = fullS3Key.slice(idx + userPrefix.length)
+    if (!relativePath) return { written: false } // directory marker
+
+    const localPath = join(sessionDir, relativePath)
+
+    const bytes = await getS3ObjectBytes(fullS3Key, config)
+    await mkdir(dirname(localPath), { recursive: true })
+    await writeFile(localPath, bytes)
+
+    return { written: true, localPath }
 }
 
 /**
@@ -222,12 +317,12 @@ async function restoreArtifactsFromS3(
  * cache AND no session directory on disk), previously persisted artifacts for
  * the session are restored from S3 into the fresh session directory.
  */
-export async function createSkillSandbox(
+export async function createSessionSandbox(
     sessionId: string,
     skills: SkillRef[],
     config: ExuluConfig,
     userId?: number | string,
-): Promise<SkillSandboxHandle> {
+): Promise<SessionSandboxHandle> {
     const cached = sandboxCache.get(sessionId)
 
     if (cached) {
@@ -362,13 +457,32 @@ export async function createSkillSandbox(
         });
     } */
 
-    // Environment for sandboxed bash invocations. NODE_PATH points at the
-    // global node_modules so scripts produced by skills (e.g. docx) can
-    // `require('docx')` without needing a local install. We merge with
-    // process.env so PATH and other essentials are preserved; if NODE_PATH
-    // was already set on the parent process, our injection takes precedence
-    // since the skill scripts depend on global packages being reachable.
+    // Load every configured Exulu variable into the sandbox env so skill
+    // scripts can reach external services (API keys, etc.) without the user
+    // hard-coding credentials. Decryption happens server-side in
+    // ExuluVariables.getAll; encrypted blobs never leave the Node process.
+    // Failure to load is non-fatal — bash commands still run, they just
+    // won't see the variables (an empty map is the same as nothing
+    // configured).
+    let configuredVariables: Record<string, string> = {}
+    try {
+        configuredVariables = await getAllExuluVariables()
+    } catch (err) {
+        console.error(
+            `[SKILLS] Failed to load configured variables for session ${sessionId}; bash env will not include them.`,
+            err,
+        )
+    }
+
+    // Environment for sandboxed bash invocations.
+    //   - Spread order matters: later spreads win.
+    //   - configuredVariables go first so process.env (PATH, HOME, etc.)
+    //     overrides them. If a variable accidentally collides with a system
+    //     env name, the system value stays authoritative.
+    //   - NODE_PATH is set last so it's always our resolved global root,
+    //     regardless of what process.env or variables already had.
     const sandboxedExecEnv: NodeJS.ProcessEnv = {
+        ...configuredVariables,
         ...process.env,
         ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
     }
@@ -738,7 +852,7 @@ export async function createSkillSandbox(
 
     const wrappedTools = { ...tools, bash: bashTool, readFile: readFileTool, writeFile: writeFileTool }
 
-    const handle: SkillSandboxHandle = {
+    const handle: SessionSandboxHandle = {
         sessionDir,
         tools: wrappedTools,
         wrapCommand: (command: string) =>

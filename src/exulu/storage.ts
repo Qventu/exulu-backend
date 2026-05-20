@@ -8,13 +8,17 @@ export class ExuluStorage {
   }
 
   public getPresignedUrl = async (key: string) => {
+    // original key
+    const originalKey = key;
     const bucket = key.split("/")[0];
     if (!bucket || typeof bucket !== "string" || bucket.trim() === "") {
-      throw new Error("Invalid S3 key, must be in the format of <bucket>/<key>.");
+      console.error("Invalid S3 key, must be in the format of <bucket>/<key> but got: " + originalKey, new Error().stack);
+      throw new Error("Invalid S3 key, must be in the format of <bucket>/<key> but got: " + originalKey);
     }
     key = key.split("/").slice(1).join("/");
     if (!key || typeof key !== "string" || key.trim() === "") {
-      throw new Error("Invalid S3 key, must be in the format of <bucket>/<key>.");
+      console.error("Invalid S3 key, must be in the format of <bucket>/<key> but got: " + originalKey, new Error().stack);
+      throw new Error("Invalid S3 key, must be in the format of <bucket>/<key> but got: " + originalKey);
     }
     return await getPresignedUrlUppy(bucket, key, this.config);
   };
