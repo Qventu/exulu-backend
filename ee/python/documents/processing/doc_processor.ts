@@ -1017,7 +1017,7 @@ export async function documentProcessor({
         supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
         break;
       case "officeparser":
-        supportedTypes = [];
+        supportedTypes = ['docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'pdf', 'rtf', 'csv', 'md', 'html'];
         break;
       case "liteparse":
         supportedTypes = ['pdf', 'doc', 'docx', 'docm', 'odt', 'rtf', 'ppt', 'pptx', 'pptm', 'odp', 'xls', 'xlsx', 'xlsm', 'ods', 'csv', 'tsv'];

@@ -117,7 +117,7 @@ export const ExuluVariables = {
       variable.value = bytes.toString(CryptoJS.enc.Utf8);
     }
     return variable.value;
-  },
+  }
 };
 
 export const ExuluAuthentication = {
