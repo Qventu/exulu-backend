@@ -316,6 +316,7 @@ export class ExuluProvider {
     agent,
     instructions,
     maxStepCount,
+    onTokenUsage,
   }: {
     prompt?: string;
     user?: User;
@@ -336,6 +337,7 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     outputSchema?: z.ZodTypeAny;
+    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -646,6 +648,10 @@ export class ExuluProvider {
         ]);
       }
 
+      if (onTokenUsage) {
+        await onTokenUsage({ inputTokens, outputTokens });
+      }
+
       return result.text || result.object;
     }
     if (messages) {
@@ -719,6 +725,13 @@ export class ExuluProvider {
             ]
             : []),
         ]);
+      }
+
+      if (onTokenUsage) {
+        await onTokenUsage({
+          inputTokens: totalUsage?.inputTokens || 0,
+          outputTokens: totalUsage?.outputTokens || 0,
+        });
       }
 
       return text;
