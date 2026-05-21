@@ -3,10 +3,13 @@ import {
   streamText,
   generateText,
   stepCountIs,
-  type CoreMessage,
-  type CoreUserMessage,
-  type CoreAssistantMessage,
+  jsonSchema,
+  type ModelMessage,
+  type UserModelMessage,
+  type AssistantModelMessage,
+  type ToolSet,
 } from "ai";
+import { transformStreamChunk, transformCompletion, type TransformerContext } from "./openai-transformer.ts";
 import { randomUUID } from "node:crypto";
 import CryptoJS from "crypto-js";
 import express from "express";
@@ -39,12 +42,43 @@ type OpenAIMessage = {
   tool_call_id?: string;
 };
 
-function convertOpenAIMessagesToCoreMessages(messages: OpenAIMessage[]): {
+type OpenAITool = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+};
+
+function convertOpenAIToolsToAiSdkTools(tools: OpenAITool[]): ToolSet {
+  return Object.fromEntries(
+    tools.map((t) => {
+      const params = t.function.parameters ?? {};
+      return [
+        t.function.name,
+        {
+          description: t.function.description ?? "",
+          inputSchema: jsonSchema({
+            type: "object" as const,
+            properties: (params.properties as Record<string, unknown>) ?? {},
+            ...(params.required ? { required: params.required as string[] } : {}),
+          }),
+        },
+      ];
+    }),
+  );
+}
+
+function convertOpenAIMessagesToModelMessages(messages: OpenAIMessage[]): {
   systemPrompt: string;
-  coreMessages: CoreMessage[];
+  coreMessages: ModelMessage[];
 } {
   const systemParts: string[] = [];
-  const coreMessages: CoreMessage[] = [];
+  const coreMessages: ModelMessage[] = [];
+
+  // Track toolCallId → toolName from assistant messages for tool result lookup
+  const toolCallIdToName = new Map<string, string>();
 
   for (const msg of messages) {
     if (msg.role === "system") {
@@ -53,31 +87,48 @@ function convertOpenAIMessagesToCoreMessages(messages: OpenAIMessage[]): {
     }
 
     if (msg.role === "user") {
+      const last = coreMessages[coreMessages.length - 1];
       if (typeof msg.content === "string") {
-        coreMessages.push({ role: "user", content: msg.content });
+        if (last?.role === "user" && typeof last.content === "string") {
+          last.content += "\n\n" + msg.content;
+        } else {
+          coreMessages.push({ role: "user", content: msg.content });
+        }
       } else if (Array.isArray(msg.content)) {
         const parts = (msg.content as OpenAIContentPart[]).flatMap((part) => {
           if (part.type === "text") return [{ type: "text" as const, text: part.text }];
           if (part.type === "image_url") return [{ type: "image" as const, image: part.image_url.url }];
           return [];
         });
-        coreMessages.push({ role: "user", content: parts } as CoreUserMessage);
+        if (last?.role === "user" && Array.isArray(last.content)) {
+          (last.content as UserModelMessage["content"]).push(...(parts as UserModelMessage["content"]));
+        } else {
+          coreMessages.push({ role: "user", content: parts } as UserModelMessage);
+        }
       }
       continue;
     }
 
     if (msg.role === "assistant") {
       if (msg.tool_calls && msg.tool_calls.length > 0) {
-        const parts: CoreAssistantMessage["content"] = [];
+        const parts: AssistantModelMessage["content"] = [];
         if (typeof msg.content === "string" && msg.content) {
           parts.push({ type: "text", text: msg.content });
         }
         for (const tc of msg.tool_calls) {
+          toolCallIdToName.set(tc.id, tc.function.name);
+          const rawArgs = tc.function.arguments;
+          const input =
+            rawArgs == null
+              ? {}
+              : typeof rawArgs === "object"
+                ? rawArgs
+                : (() => { try { return JSON.parse(rawArgs); } catch { return {}; } })();
           parts.push({
             type: "tool-call",
             toolCallId: tc.id,
             toolName: tc.function.name,
-            args: JSON.parse(tc.function.arguments || "{}"),
+            input,
           });
         }
         coreMessages.push({ role: "assistant", content: parts });
@@ -91,13 +142,17 @@ function convertOpenAIMessagesToCoreMessages(messages: OpenAIMessage[]): {
     }
 
     if (msg.role === "tool") {
+      const toolCallId = msg.tool_call_id ?? "";
+      const toolName = toolCallIdToName.get(toolCallId) ?? "unknown";
+      const resultText = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
       coreMessages.push({
         role: "tool",
         content: [
           {
             type: "tool-result",
-            toolCallId: msg.tool_call_id ?? "",
-            result: msg.content,
+            toolCallId,
+            toolName,
+            output: { type: "text" as const, value: resultText },
           },
         ],
       });
@@ -255,6 +310,23 @@ export const registerOpenAIGatewayRoutes = async (
     ["/gateway/open-ai/v1/chat/completions", "/gateway/open-ai/v1/completions"],
     express.json({ limit: REQUEST_SIZE_LIMIT }),
     (req: Request, _res: Response, next) => {
+      console.log("[OPENAI GATEWAY] incoming request:", {
+        url: req.originalUrl,
+        method: req.method,
+        headers: {
+          authorization: req.headers["authorization"] ? "[present]" : "[missing]",
+          "x-api-key": req.headers["x-api-key"] ? "[present]" : "[missing]",
+          "exulu-api-key": req.headers["exulu-api-key"] ? "[present]" : "[missing]",
+          "content-type": req.headers["content-type"],
+        },
+        body: {
+          model: req.body?.model,
+          stream: req.body?.stream,
+          messagesCount: req.body?.messages?.length,
+          hasPrompt: typeof req.body?.prompt === "string",
+          tools: req.body?.tools,
+        },
+      });
       if (typeof req.body.prompt === "string") {
         req.body.messages = [{ role: "user", content: req.body.prompt }];
         delete req.body.prompt;
@@ -385,9 +457,17 @@ export const registerOpenAIGatewayRoutes = async (
           agent,
         );
 
+        // Client-provided tools (e.g. from Continue.dev) take priority — they are
+        // executed client-side, so we pass them without execute functions.
+        const clientTools: OpenAITool[] = Array.isArray(req.body.tools) ? req.body.tools : [];
+        const activeTools: ToolSet =
+          clientTools.length > 0
+            ? convertOpenAIToolsToAiSdkTools(clientTools)
+            : convertedTools;
+
         const openaiMessages: OpenAIMessage[] = req.body.messages ?? [];
         const { systemPrompt: requestSystemPrompt, coreMessages } =
-          convertOpenAIMessagesToCoreMessages(openaiMessages);
+          convertOpenAIMessagesToModelMessages(openaiMessages);
 
         const agentInstructions = agent.instructions ?? "";
         const systemParts = [
@@ -403,7 +483,8 @@ export const registerOpenAIGatewayRoutes = async (
 
         const completionId = `chatcmpl-${randomUUID()}`;
         const created = Math.floor(Date.now() / 1000);
-        const hasTools = Object.keys(convertedTools).length > 0;
+        const hasTools = Object.keys(activeTools).length > 0;
+        const ctx: TransformerContext = { completionId, created, modelId };
 
         if (req.body.stream === true) {
           res.setHeader("Content-Type", "text/event-stream");
@@ -414,9 +495,9 @@ export const registerOpenAIGatewayRoutes = async (
             model: languageModel,
             system: systemPrompt || undefined,
             messages: coreMessages,
-            tools: hasTools ? convertedTools : undefined,
+            tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: [stepCountIs(5)],
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
             },
@@ -436,75 +517,15 @@ export const registerOpenAIGatewayRoutes = async (
           let outputTokens = 0;
 
           for await (const chunk of result.fullStream) {
-            if (chunk.type === "text-delta") {
-              res.write(
-                `data: ${JSON.stringify({
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created,
-                  model: modelId,
-                  choices: [{ index: 0, delta: { content: chunk.text }, finish_reason: null }],
-                })}\n\n`,
-              );
-            } else if (chunk.type === "tool-input-start") {
-              res.write(
-                `data: ${JSON.stringify({
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created,
-                  model: modelId,
-                  choices: [
-                    {
-                      index: 0,
-                      delta: {
-                        tool_calls: [
-                          {
-                            index: 0,
-                            id: chunk.id,
-                            type: "function",
-                            function: { name: chunk.toolName, arguments: "" },
-                          },
-                        ],
-                      },
-                      finish_reason: null,
-                    },
-                  ],
-                })}\n\n`,
-              );
-            } else if (chunk.type === "tool-input-delta") {
-              res.write(
-                `data: ${JSON.stringify({
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created,
-                  model: modelId,
-                  choices: [
-                    {
-                      index: 0,
-                      delta: { tool_calls: [{ index: 0, function: { arguments: chunk.delta } }] },
-                      finish_reason: null,
-                    },
-                  ],
-                })}\n\n`,
-              );
-            } else if (chunk.type === "finish") {
-              inputTokens = chunk.usage?.inputTokens ?? 0;
-              outputTokens = chunk.usage?.outputTokens ?? 0;
-              const finishReason = chunk.finishReason === "tool-calls" ? "tool_calls" : "stop";
-              res.write(
-                `data: ${JSON.stringify({
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created,
-                  model: modelId,
-                  choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-                  usage: {
-                    prompt_tokens: inputTokens,
-                    completion_tokens: outputTokens,
-                    total_tokens: inputTokens + outputTokens,
-                  },
-                })}\n\n`,
-              );
+            console.log("[OPENAI GATEWAY] chunk:", chunk.type);
+            const openAIChunk = transformStreamChunk(chunk, ctx);
+            if (openAIChunk) {
+              if (chunk.type === "finish") {
+                inputTokens = chunk.usage?.inputTokens ?? 0;
+                outputTokens = chunk.usage?.outputTokens ?? 0;
+                console.log("[OPENAI GATEWAY] finish_reason:", openAIChunk.choices[0]?.finish_reason);
+              }
+              res.write(`data: ${JSON.stringify(openAIChunk)}\n\n`);
             }
           }
 
@@ -517,31 +538,14 @@ export const registerOpenAIGatewayRoutes = async (
             model: languageModel,
             system: systemPrompt || undefined,
             messages: coreMessages,
-            tools: hasTools ? convertedTools : undefined,
+            tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: [stepCountIs(5)],
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
           });
 
-          res.json({
-            id: completionId,
-            object: "chat.completion",
-            created,
-            model: agentId,
-            choices: [
-              {
-                index: 0,
-                message: { role: "assistant", content: text },
-                finish_reason: "stop",
-              },
-            ],
-            usage: {
-              prompt_tokens: usage.promptTokens,
-              completion_tokens: usage.completionTokens,
-              total_tokens: usage.totalTokens,
-            },
-          });
+          res.json(transformCompletion(text, usage.inputTokens ?? 0, usage.outputTokens ?? 0, ctx));
 
-          await writeStatistics(agent, project, user, usage.promptTokens, usage.completionTokens);
+          await writeStatistics(agent, project, user, usage.inputTokens ?? 0, usage.outputTokens ?? 0);
         }
       } catch (error: any) {
         console.error("[OPENAI GATEWAY] /v1/chat/completions error:", error);
