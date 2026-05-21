@@ -513,16 +513,11 @@ export const registerOpenAIGatewayRoutes = async (
             })}\n\n`,
           );
 
-          let inputTokens = 0;
-          let outputTokens = 0;
-
           for await (const chunk of result.fullStream) {
             console.log("[OPENAI GATEWAY] chunk:", chunk.type);
             const openAIChunk = transformStreamChunk(chunk, ctx);
             if (openAIChunk) {
               if (chunk.type === "finish") {
-                inputTokens = chunk.usage?.inputTokens ?? 0;
-                outputTokens = chunk.usage?.outputTokens ?? 0;
                 console.log("[OPENAI GATEWAY] finish_reason:", openAIChunk.choices[0]?.finish_reason);
               }
               res.write(`data: ${JSON.stringify(openAIChunk)}\n\n`);
@@ -532,7 +527,10 @@ export const registerOpenAIGatewayRoutes = async (
           res.write("data: [DONE]\n\n");
           res.end();
 
-          await writeStatistics(agent, project, user, inputTokens, outputTokens);
+          // Use result.usage (resolves after stream) — more reliable than chunk-based
+          // tracking since not all providers include usage in the finish chunk.
+          const usage = await result.usage;
+          await writeStatistics(agent, project, user, usage.inputTokens ?? 0, usage.outputTokens ?? 0);
         } else {
           const { text, usage } = await generateText({
             model: languageModel,
