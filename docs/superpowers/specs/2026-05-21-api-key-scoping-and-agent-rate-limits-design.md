@@ -12,8 +12,8 @@ The new feedback chat exposes an API key in the browser. Today, every API key in
 
 Two features that ship together:
 
-1. **API key scoping.** Each key declares a `scope_mode`. `admin` keeps today's broad behavior. `agents`-scoped keys store a whitelist of agent IDs and can ONLY call the agent run route for those IDs.
-2. **Per-agent rate limits.** Each agent gains an optional `rate_limits` config with three independent metrics: `requests`, `input_tokens`, `output_tokens`. Limits are enforced per `(agent, caller)` in Redis. All callers are limited — human JWT users, admin API keys, agents-scoped API keys, and anonymous callers (by IP).
+1. **API key scoping** (community / OSS). Each key declares a `scope_mode`. `admin` keeps today's broad behavior. `agents`-scoped keys store a whitelist of agent IDs and can ONLY call the agent run route for those IDs.
+2. **Per-agent rate limits** (**enterprise feature** — gated on `EXULU_ENTERPRISE_LICENSE`). Each agent gains an optional `rate_limits` config with three independent metrics: `requests`, `input_tokens`, `output_tokens`. Limits are enforced per `(agent, caller)` in Redis. All callers are limited — human JWT users, admin API keys, agents-scoped API keys, and anonymous callers (by IP). Without an enterprise license, rate-limit configuration is read-only in the UI (with a warning) and the runtime ignores any stored `rate_limits` value.
 
 ## Non-goals
 
@@ -38,6 +38,7 @@ Two features that ship together:
 | Migration | Existing keys default to `scope_mode: 'admin'`. No behavior change. |
 | Admin UI placement | Scope on API keys page. Rate limits + live usage on agent detail page. |
 | Live usage observability | Read live Redis counters; show per-caller usage table on agent detail. |
+| Rate-limits licensing | Rate limits are an **enterprise feature** gated via `checkLicense()["rate-limits"]`. Without a license: backend skips pre-check + post-record (treats `rate_limits` as `null` regardless of stored value); GraphQL `agentRateLimitUsage` returns `[]`; frontend `RateLimitsControl` disables all inputs and shows an enterprise-license warning. The `/config` backend endpoint exposes `entitlements: checkLicense()` so the frontend can detect license state. |
 
 ## Architecture
 

@@ -33,6 +33,7 @@ import { createMutations } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
+import { checkLicense } from "@EE/entitlements.ts";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -545,6 +546,67 @@ type PageInfo {
   typeDefs += `
    jobs(queue: QueueEnum!, statusses: [JobStateEnum!], page: Int, limit: Int): JobPaginationResult
     `;
+
+  typeDefs += `
+   agentRateLimitUsage(agentId: ID!): [RateLimitUsageRow!]!
+    `;
+
+  modelDefs += `
+type RateLimitUsageRow {
+  callerId: String!
+  callerLabel: String!
+  requests: Int!
+  inputTokens: Int!
+  outputTokens: Int!
+}
+`;
+
+  resolvers.Query["agentRateLimitUsage"] = async (_, args, context) => {
+    // Enterprise feature — return an empty list when the license is not active.
+    if (!checkLicense()["rate-limits"]) return [];
+    const { client } = await getRedisClient();
+    if (!client) return [];
+    const pattern = `exulu/ratelimit/agent/${args.agentId}/caller/*/*`;
+    type Row = { requests: number; inputTokens: number; outputTokens: number };
+    const byCaller = new Map<string, Row>();
+    let cursor: any = "0";
+    do {
+      const reply: any = await (client as any).scan(cursor, { MATCH: pattern, COUNT: 200 });
+      // node-redis v4: scan returns { cursor, keys }
+      cursor = reply?.cursor ?? "0";
+      const keys: string[] = reply?.keys ?? [];
+      if (keys.length) {
+        const values = await Promise.all(keys.map((k) => client.get(k)));
+        keys.forEach((k, i) => {
+          // expulu/ratelimit/agent/<aid>/caller/<callerId(can-have-colons)>/<metric>
+          const parts = k.split("/");
+          const metric = parts.pop()!;
+          // join everything after "caller" up to (but not including) metric back into callerId
+          const callerIdx = parts.indexOf("caller");
+          const callerId = parts.slice(callerIdx + 1).join("/");
+          const row = byCaller.get(callerId) ?? { requests: 0, inputTokens: 0, outputTokens: 0 };
+          const n = Number(values[i] ?? 0) || 0;
+          if (metric === "requests") row.requests = n;
+          else if (metric === "input_tokens") row.inputTokens = n;
+          else if (metric === "output_tokens") row.outputTokens = n;
+          byCaller.set(callerId, row);
+        });
+      }
+    } while (cursor !== "0" && cursor !== 0);
+
+    const { db } = context;
+    const result: Array<{ callerId: string; callerLabel: string } & Row> = [];
+    for (const [callerId, row] of byCaller.entries()) {
+      let label = callerId;
+      if (callerId.startsWith("user:")) {
+        const id = callerId.slice("user:".length);
+        const u = await db.from("users").where({ id }).select("firstname", "name", "email").first();
+        label = u ? (u.firstname || u.name || u.email || callerId) : callerId;
+      }
+      result.push({ callerId, callerLabel: label, ...row });
+    }
+    return result;
+  };
 
   resolvers.Query["providers"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);

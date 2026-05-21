@@ -1,5 +1,13 @@
 import type { ExuluProviderWorkflowConfig } from "@SRC/exulu/provider";
 
+export type AgentRateLimitBucket = { limit: number; window_seconds: number };
+
+export type AgentRateLimits = {
+    requests?: AgentRateLimitBucket;
+    input_tokens?: AgentRateLimitBucket;
+    output_tokens?: AgentRateLimitBucket;
+};
+
 export interface ExuluAgent {
     id: string;
     modelName?: string;
@@ -62,6 +70,7 @@ export interface ExuluAgent {
         users?: Array<{ id: number; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
     };
+    rate_limits?: AgentRateLimits;
     createdAt?: string;
     updatedAt?: string;
 }

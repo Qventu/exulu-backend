@@ -55,6 +55,12 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
+import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
+import {
+  preCheckAgentRateLimit,
+  recordAgentTokenUsage,
+  resolveCallerId,
+} from "@SRC/utils/check-agent-rate-limit.ts";
 import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
@@ -500,6 +506,7 @@ Mood: friendly and intelligent.
   app.get("/config", async (req: Request, res: Response) => {
     res.status(200).json({
       authMode: process.env.AUTH_MODE as "password" | "otp",
+      entitlements: checkLicense(),
       MCP: {
         enabled: config?.MCP.enabled,
       },
@@ -585,11 +592,41 @@ Mood: friendly and intelligent.
 
       const user = authenticationResult.user;
 
+      // API key scope check — early reject for agents-scoped keys with a clear message.
+      const scopeCheck = checkApiKeyScope(user, instance);
+      if (!scopeCheck.allowed) {
+        res.status(scopeCheck.code).json({ detail: scopeCheck.reason });
+        return;
+      }
+
       const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
 
       if (!hasAccessToAgent) {
         res.status(401).json({
           message: "You don't have access to this agent.",
+        });
+        return;
+      }
+
+      // Rate limit pre-check (per agent, per caller).
+      // Enterprise feature — when the license is not active, agent.rate_limits is
+      // ignored entirely (no pre-check, no post-record).
+      const callerId = resolveCallerId(req, user?.id);
+      const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
+      const effectiveLimits = rateLimitsEnabled
+        ? ((agent as any).rate_limits ?? null)
+        : null;
+      const preCheck = await preCheckAgentRateLimit({
+        agentId: instance,
+        callerId,
+        limits: effectiveLimits,
+      });
+      if (!preCheck.ok) {
+        res.setHeader("Retry-After", String(preCheck.retryAfter));
+        res.status(429).json({
+          detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
+          metric: preCheck.metric,
+          retryAfter: preCheck.retryAfter,
         });
         return;
       }
@@ -829,6 +866,13 @@ Mood: friendly and intelligent.
                   : []),
               ]);
             }
+            await recordAgentTokenUsage({
+              agentId: instance,
+              callerId,
+              limits: effectiveLimits,
+              inputTokens: metadata?.inputTokens,
+              outputTokens: metadata?.outputTokens,
+            });
           },
         });
         // Returns a response that can be used by the "useChat" hook
@@ -866,6 +910,15 @@ Mood: friendly and intelligent.
           statistics: {
             label: agent.name,
             trigger: "agent",
+          },
+          onTokenUsage: async ({ inputTokens, outputTokens }) => {
+            await recordAgentTokenUsage({
+              agentId: instance,
+              callerId,
+              limits: effectiveLimits,
+              inputTokens,
+              outputTokens,
+            });
           },
         });
         res.status(200).json(response);
