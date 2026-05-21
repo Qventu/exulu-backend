@@ -62,6 +62,8 @@ export interface ExuluAgent {
         users?: Array<{ id: number; rights: 'read' | 'write' }>;
         roles?: Array<{ id: string; rights: 'read' | 'write' }>;
     };
+    price_input_token?: number;
+    price_output_token?: number;
     createdAt?: string;
     updatedAt?: string;
 }

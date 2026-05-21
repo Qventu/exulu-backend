@@ -268,6 +268,14 @@ const agentsSchema: ExuluTableDefinition = {
       name: "animation_responding",
       type: "text",
     },
+    {
+      name: "price_input_token",
+      type: "number",
+    },
+    {
+      name: "price_output_token",
+      type: "number",
+    },
   ],
 };
 
