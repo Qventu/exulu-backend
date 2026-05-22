@@ -12,6 +12,7 @@ import {
   vertexGemini25FlashProvider,
   vertexGemini25ProProvider,
   vertexGemini3ProProvider,
+  vertexLlamaScout4,
 } from "@SRC/templates/providers/google/vertex";
 import {
   gpt5MiniProvider,
@@ -202,6 +203,7 @@ export class ExuluApp {
       vertexGemini25FlashProvider,
       vertexGemini25ProProvider,
       vertexGemini3ProProvider,
+      vertexLlamaScout4,
       claudeSonnet45Provider,
       gpt5MiniProvider,
       gpt5Provider,
