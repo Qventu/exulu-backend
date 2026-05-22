@@ -87,7 +87,13 @@ export class ExuluProvider {
   public rateLimit?: RateLimiterRule;
   public config?: ExuluProviderConfig | undefined;
   public model?: {
-    create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel;
+    create: ({ apiKey, user, role, project, agent }: {
+      apiKey?: string | undefined;
+      user?: number;
+      role?: string;
+      project?: string;
+      agent?: string;
+    }) => LanguageModel;
   };
   public capabilities: {
     text: boolean;
@@ -361,8 +367,20 @@ export class ExuluProvider {
       throw new Error("Prompt or message is required for generating.");
     }
 
+    let project: string | undefined;
+    let sessionItems: string[] | undefined;
+    if (session) {
+      const sessionData = await getSession({ sessionID: session });
+      sessionItems = sessionData.session_items;
+      project = sessionData.project;
+    }
+
     const model = this.model.create({
       ...(providerapikey ? { apiKey: providerapikey } : {}),
+      user: user?.id,
+      role: user?.role?.id,
+      project,
+      agent: agent?.id,
     });
 
     console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.");
@@ -392,14 +410,6 @@ export class ExuluProvider {
       "loaded for generating sync.",
       messages.length,
     );
-
-    let project: string | undefined;
-    let sessionItems: string[] | undefined;
-    if (session) {
-      const sessionData = await getSession({ sessionID: session });
-      sessionItems = sessionData.session_items;
-      project = sessionData.project;
-    }
 
     const query = prompt;
 
@@ -888,10 +898,6 @@ export class ExuluProvider {
       throw new Error("Message is required for streaming.");
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-    });
-
     let messages: UIMessage[] = [];
     let previousMessagesContent: UIMessage[] = previousMessages || [];
     // load the previous messages from the server:
@@ -911,6 +917,14 @@ export class ExuluProvider {
       });
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
+
+    const model = this.model.create({
+      ...(providerapikey ? { apiKey: providerapikey } : {}),
+      user: user?.id,
+      role: user?.role?.id,
+      project,
+      agent: agent?.id,
+    });
 
     // validate messages
     messages = await validateUIMessages({

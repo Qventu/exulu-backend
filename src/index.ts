@@ -47,6 +47,7 @@ import {
   vertexGemini25FlashProvider,
   vertexGemini3ProProvider,
   vertexGemini25ProProvider,
+  vertexLlamaScout4,
 } from "./templates/providers/google/vertex";
 import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
 import type { Item } from "@EXULU_TYPES/models/item";
@@ -91,6 +92,7 @@ export const ExuluDefaultProviders = {
     vertexGemini25Flash: vertexGemini25FlashProvider,
     vertexGemini25Pro: vertexGemini25ProProvider,
     vertexGemini3Pro: vertexGemini3ProProvider,
+    vertexLlamaScout4: vertexLlamaScout4,
   },
   openai: {
     gpt5Mini: gpt5MiniProvider,

@@ -347,7 +347,13 @@ export const registerOpenAIGatewayRoutes = async (
           return;
         }
 
-        const languageModel = provider.config.model.create({ apiKey: providerapikey });
+        const languageModel = provider.config.model.create({
+          apiKey: providerapikey,
+          user: user.id,
+          role: user.role?.id,
+          project: project?.id,
+          agent: agent.id,
+        });
 
         const disabledTools: string[] = req.body.disabledTools ?? [];
         const enabledTools = await getEnabledTools(
