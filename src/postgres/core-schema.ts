@@ -268,6 +268,10 @@ const agentsSchema: ExuluTableDefinition = {
       name: "animation_responding",
       type: "text",
     },
+    {
+      name: "rate_limits",
+      type: "json",
+    },
   ],
 };
 
@@ -337,6 +341,15 @@ const usersSchema: ExuluTableDefinition = {
     {
       name: "apikey",
       type: "text",
+    },
+    {
+      name: "scope_mode",
+      type: "text",
+      default: "admin",
+    },
+    {
+      name: "agent_ids",
+      type: "json",
     },
     {
       name: "last_used",

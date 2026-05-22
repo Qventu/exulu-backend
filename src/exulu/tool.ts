@@ -6,7 +6,6 @@ import type { ExuluConfig } from "./app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { postgresClient } from "@SRC/postgres/client";
 import CryptoJS from "crypto-js";
-import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
@@ -20,7 +19,7 @@ export class ExuluTool {
   public description: string;
   public category: string;
   public inputSchema?: z.ZodType;
-  public type: "context" | "function" | "agent" | "web_search";
+  public type: "context" | "function" | "agent" | "web_search" | "skill";
   public tool: Tool;
   public needsApproval: boolean;
   public config: {
@@ -46,7 +45,7 @@ export class ExuluTool {
     description: string;
     category?: string;
     inputSchema?: z.ZodType;
-    type: "context" | "function" | "agent" | "web_search";
+    type: "context" | "function" | "agent" | "web_search" | "skill";
     config: {
       name: string;
       description: string;
@@ -144,8 +143,13 @@ export class ExuluTool {
       }
     }
 
+    const { convertExuluToolsToAiSdkTools } = await import(
+      "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools"
+    );
+
     const tools = await convertExuluToolsToAiSdkTools(
       [this],
+      [],
       [],
       [],
       agent.tools,

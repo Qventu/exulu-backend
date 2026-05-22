@@ -19,10 +19,15 @@ import {
   copyS3Object,
   deleteS3Object,
   getS3ObjectContent,
+  getS3ObjectBytes,
+  getS3ObjectEtag,
   getS3SignedUploadUrl,
   getPresignedUrl,
   type S3FileObject,
 } from "../uppy/index.ts";
+import { extractBundleToS3, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
+import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -50,11 +55,19 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
+import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
+import {
+  preCheckAgentRateLimit,
+  recordAgentTokenUsage,
+  resolveCallerId,
+} from "@SRC/utils/check-agent-rate-limit.ts";
 import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { convertJsonSchemaToZod } from 'zod-from-json-schema';
+import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
+import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -493,6 +506,7 @@ Mood: friendly and intelligent.
   app.get("/config", async (req: Request, res: Response) => {
     res.status(200).json({
       authMode: process.env.AUTH_MODE as "password" | "otp",
+      entitlements: checkLicense(),
       MCP: {
         enabled: config?.MCP.enabled,
       },
@@ -553,7 +567,7 @@ Mood: friendly and intelligent.
 
       if (!agent) {
         res.status(404).json({
-          message: "Agent with id " + instance + " not found.",
+          message: "Agent with id " + instance + " not found.", 
         });
         return;
       }
@@ -578,11 +592,41 @@ Mood: friendly and intelligent.
 
       const user = authenticationResult.user;
 
+      // API key scope check — early reject for agents-scoped keys with a clear message.
+      const scopeCheck = checkApiKeyScope(user, instance);
+      if (!scopeCheck.allowed) {
+        res.status(scopeCheck.code).json({ detail: scopeCheck.reason });
+        return;
+      }
+
       const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
 
       if (!hasAccessToAgent) {
         res.status(401).json({
           message: "You don't have access to this agent.",
+        });
+        return;
+      }
+
+      // Rate limit pre-check (per agent, per caller).
+      // Enterprise feature — when the license is not active, agent.rate_limits is
+      // ignored entirely (no pre-check, no post-record).
+      const callerId = resolveCallerId(req, user?.id);
+      const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
+      const effectiveLimits = rateLimitsEnabled
+        ? ((agent as any).rate_limits ?? null)
+        : null;
+      const preCheck = await preCheckAgentRateLimit({
+        agentId: instance,
+        callerId,
+        limits: effectiveLimits,
+      });
+      if (!preCheck.ok) {
+        res.setHeader("Retry-After", String(preCheck.retryAfter));
+        res.status(429).json({
+          detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
+          metric: preCheck.metric,
+          retryAfter: preCheck.retryAfter,
         });
         return;
       }
@@ -610,6 +654,13 @@ Mood: friendly and intelligent.
       );
 
       const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
+      const disabledSkills = req.body.disabledSkills ? req.body.disabledSkills : [];
+
+      let enabledSkills: ExuluSkill[] = await getEnabledSkills(
+        agent,
+        disabledSkills,
+      );
+
       let enabledTools: ExuluTool[] = await getEnabledTools(
         agent,
         tools,
@@ -711,6 +762,7 @@ Mood: friendly and intelligent.
           message,
           previousMessages,
           currentTools: enabledTools,
+          currentSkills: enabledSkills,
           approvedTools: approvedTools,
           allExuluTools: tools,
           providerapikey,
@@ -814,6 +866,13 @@ Mood: friendly and intelligent.
                   : []),
               ]);
             }
+            await recordAgentTokenUsage({
+              agentId: instance,
+              callerId,
+              limits: effectiveLimits,
+              inputTokens: metadata?.inputTokens,
+              outputTokens: metadata?.outputTokens,
+            });
           },
         });
         // Returns a response that can be used by the "useChat" hook
@@ -843,6 +902,7 @@ Mood: friendly and intelligent.
           session: headers.session as string,
           inputMessages: [req.body.message],
           currentTools: enabledTools,
+          currentSkills: enabledSkills,
           allExuluTools: tools,
           providerapikey,
           exuluConfig: config,
@@ -850,6 +910,15 @@ Mood: friendly and intelligent.
           statistics: {
             label: agent.name,
             trigger: "agent",
+          },
+          onTokenUsage: async ({ inputTokens, outputTokens }) => {
+            await recordAgentTokenUsage({
+              agentId: instance,
+              callerId,
+              limits: effectiveLimits,
+              inputTokens,
+              outputTokens,
+            });
           },
         });
         res.status(200).json(response);
@@ -1368,6 +1437,174 @@ Mood: friendly and intelligent.
   });
 
   /**
+   * POST /skills/:skillId/upload-sign
+   * Returns a presigned PUT URL for uploading a skill bundle (.zip or .md) to
+   * a per-user staging area in S3. The frontend uploads directly to the URL
+   * (via the existing Uppy AwsS3 flow), then calls /init-from-upload below to
+   * trigger extraction.
+   *
+   * Body: { extension: ".zip" | ".md", contentType: string }
+   * Response: { uploadUrl: string, stagingKey: string }
+   */
+  app.post("/skills/:skillId/upload-sign", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { extension, contentType } = req.body ?? {};
+
+    if (extension !== ".zip" && extension !== ".md") {
+      res.status(400).json({ detail: 'extension must be ".zip" or ".md".' });
+      return;
+    }
+    if (!contentType || typeof contentType !== "string") {
+      res.status(400).json({ detail: "Missing contentType in request body." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    // Per-user staging path. The init-from-upload handler verifies the same
+    // user owns the staging key, so users can't trigger extraction of someone
+    // else's upload.
+    const stagingKey = `user_${authResult.user.id}/skills/_staging/${randomUUID()}${extension}`;
+    const fullKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${stagingKey}`
+      : stagingKey;
+
+    const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
+    res.json({ uploadUrl, stagingKey });
+  });
+
+  /**
+   * POST /skills/:skillId/init-from-upload
+   * Fetches a staged bundle from S3, extracts it (validates SKILL.md presence,
+   * path safety, size + count caps), and uploads the contents to
+   * skills/<skillId>/v1/. Updates the skill row with s3folder, current_version,
+   * and history — mirroring what /init does for blank-create.
+   *
+   * Body: { stagingKey: string, isZip: boolean }
+   * Response: { version: 1, filesCount: number }
+   */
+  app.post("/skills/:skillId/init-from-upload", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const skillId = req.params.skillId;
+    if (!skillId) {
+      res.status(400).json({ detail: "Missing skillId in path." });
+      return;
+    }
+    const { stagingKey, isZip } = req.body ?? {};
+
+    if (!stagingKey || typeof stagingKey !== "string") {
+      res.status(400).json({ detail: "Missing stagingKey in request body." });
+      return;
+    }
+    if (typeof isZip !== "boolean") {
+      res.status(400).json({ detail: "Missing or invalid isZip in request body." });
+      return;
+    }
+
+    // Authorization: the staging key must belong to the calling user. Without
+    // this check, a malicious caller could trigger extraction of another
+    // user's staged upload into their own skill.
+    const expectedPrefix = `user_${authResult.user.id}/skills/_staging/`;
+    if (!stagingKey.startsWith(expectedPrefix)) {
+      res.status(403).json({ detail: "stagingKey does not belong to the authenticated user." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    // Fetch the staged bundle. getS3ObjectBytes prepends the s3prefix the
+    // same way uploadFile / getS3ObjectContent do, so we pass the
+    // pre-prefix stagingKey directly.
+    const fullStagingKey = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/${stagingKey}`
+      : stagingKey;
+
+    let bytes: Buffer;
+    try {
+      bytes = await getS3ObjectBytes(fullStagingKey, config);
+    } catch (err: any) {
+      console.error("[SKILLS] Failed to fetch staged bundle", err);
+      res.status(500).json({ detail: "Failed to fetch staged bundle from S3." });
+      return;
+    }
+
+    let result: { filesCount: number };
+    try {
+      result = await extractBundleToS3({ bytes, skillId, isZip, config });
+    } catch (err: any) {
+      // Extraction failed. Delete the skill row so the user can retry with
+      // the same name (the alternative is hitting a unique-constraint error
+      // on the second attempt). The row was created moments ago and contains
+      // no real state — files haven't landed yet (extraction is pre-validated
+      // so no partial S3 writes occur). Best-effort cleanup of the staging
+      // key too.
+      try {
+        await db("skills").where({ id: skillId }).delete();
+      } catch (cleanupErr: any) {
+        console.warn(
+          `[SKILLS] Failed to delete orphan skill row ${skillId} after extraction failure; user may need to delete it manually.`,
+          cleanupErr,
+        );
+      }
+      try {
+        await deleteS3Object(fullStagingKey, config);
+      } catch (cleanupErr: any) {
+        console.warn(
+          `[SKILLS] Failed to delete staging key ${fullStagingKey} after extraction failure; continuing.`,
+          cleanupErr,
+        );
+      }
+
+      if (err instanceof BundleValidationError) {
+        res.status(400).json({ detail: err.message });
+        return;
+      }
+      console.error("[SKILLS] Failed to extract bundle", err);
+      res.status(500).json({ detail: "Failed to extract bundle." });
+      return;
+    }
+
+    await db("skills").where({ id: skillId }).update({
+      s3folder: `skills/${skillId}`,
+      current_version: 1,
+      history: JSON.stringify([
+        { version: 1, created_at: new Date().toISOString(), label: "Uploaded bundle" },
+      ]),
+    });
+
+    // Best-effort cleanup of the staging key. Failure to delete shouldn't
+    // fail the request — the bundle has already landed in the skill folder.
+    try {
+      await deleteS3Object(fullStagingKey, config);
+    } catch (err: any) {
+      console.warn(`[SKILLS] Failed to delete staging key ${fullStagingKey}; continuing.`, err);
+    }
+
+    res.json({ version: 1, filesCount: result.filesCount });
+  });
+
+  /**
    * GET /skills/:skillId/files?version=N
    * Lists all files in a skill version and returns a virtual folder tree.
    */
@@ -1761,6 +1998,378 @@ Mood: friendly and intelligent.
   });
 
   // ─── End Skills File Management ───────────────────────────────────────────────
+
+  // ─── Session Files ────────────────────────────────────────────────────────────
+  // Five routes that power the session files side panel on the chat page.
+  // All files live under <s3prefix>/user_<userId>/sessions/<sessionId>/, the
+  // same prefix the agent's writeFile and bash artifact mirroring use. User-
+  // uploaded files become visible to the agent next turn (cold-start restore
+  // or the explicit sync-to-sandbox route below).
+
+  /**
+   * Map a file extension to a content type. Inlined to avoid a mime-types
+   * dependency; only covers the formats we actually surface in the side
+   * panel (text/markdown/code/images/PDF + Office binaries). Anything else
+   * falls through to application/octet-stream and the frontend offers a
+   * download instead of a preview.
+   */
+  const SESSION_FILE_CONTENT_TYPES: Record<string, string> = {
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".json": "application/json",
+    ".yaml": "text/yaml",
+    ".yml": "text/yaml",
+    ".py": "text/x-python",
+    ".js": "application/javascript",
+    ".ts": "application/typescript",
+    ".tsx": "application/typescript",
+    ".html": "text/html",
+    ".css": "text/css",
+    ".sh": "application/x-sh",
+    ".xml": "application/xml",
+    ".toml": "application/toml",
+    ".csv": "text/csv",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".odt": "application/vnd.oasis.opendocument.text",
+    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation",
+  };
+
+  function inferContentType(name: string): string {
+    const dotIdx = name.lastIndexOf(".");
+    if (dotIdx < 0) return "application/octet-stream";
+    const ext = name.slice(dotIdx).toLowerCase();
+    return SESSION_FILE_CONTENT_TYPES[ext] ?? "application/octet-stream";
+  }
+
+  /**
+   * Build the prefix-shape strings we use for session-file lookups. The
+   * "userSessionPrefix" is what we list against (without s3prefix; the helper
+   * prepends it). "fullSessionPrefix" is what S3 returns inside object keys
+   * and what we use for the auth-by-prefix check.
+   */
+  function buildSessionPrefixes(userId: number | string, sessionId: string) {
+    const userSessionPrefix = `user_${userId}/sessions/${sessionId}/`;
+    const generalPrefix = config.fileUploads?.s3prefix
+      ? `${config.fileUploads.s3prefix.replace(/\/$/, "")}/`
+      : "";
+    const fullSessionPrefix = `${generalPrefix}${userSessionPrefix}`;
+    return { userSessionPrefix, fullSessionPrefix };
+  }
+
+  /**
+   * Sanitize a user-supplied filename. Reject anything that escapes the
+   * intended directory; mostly defensive — Uppy normally posts to the
+   * presigned URL whose key we already control, so the filename arrives
+   * here only as a label.
+   */
+  function sanitizeFilename(name: string): string {
+    const trimmed = name.trim();
+    if (!trimmed) return "";
+    if (trimmed.includes("..")) return "";
+    if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return "";
+    // Replace path separators in the basename — uploads are flat per session,
+    // no subdir creation through this route.
+    return trimmed.replace(/[\\/]/g, "_");
+  }
+
+  /**
+   * GET /sessions/:sessionId/files
+   * Lists all files under the calling user's session prefix. Returns
+   * presigned download URLs inline so the frontend can render previews
+   * (image, PDF) without a second round trip per file.
+   */
+  app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const sessionId = req.params.sessionId;
+    if (!sessionId) {
+      res.status(400).json({ detail: "Missing sessionId in path." });
+      return;
+    }
+    if (!config.fileUploads) {
+      res.status(500).json({ detail: "File uploads are not configured." });
+      return;
+    }
+
+    const { userSessionPrefix } = buildSessionPrefixes(
+      authResult.user.id,
+      sessionId,
+    );
+
+    let objects: S3FileObject[];
+    try {
+      objects = await listS3ObjectsByPrefix(userSessionPrefix, config);
+    } catch (err: any) {
+      console.error("[SESSION-FILES] Failed to list S3 objects", err);
+      res.status(500).json({ detail: "Failed to list session files." });
+      return;
+    }
+
+    const bucket = config.fileUploads.s3Bucket;
+    const files = await Promise.all(
+      objects
+        // Skip the directory marker (key ending with /).
+        .filter((obj) => !obj.key.endsWith("/"))
+        .map(async (obj) => {
+          const name = obj.key.split("/").pop() ?? obj.key;
+          const presignedUrl = await getPresignedUrl(bucket, obj.key, config);
+          return {
+            key: obj.key,
+            name,
+            size: obj.size,
+            lastModified: obj.lastModified.toISOString(),
+            contentType: inferContentType(name),
+            presignedUrl,
+          };
+        }),
+    );
+
+    // Most-recent first.
+    files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+
+    res.json({ files });
+  });
+
+  /**
+   * POST /sessions/:sessionId/files/upload-sign
+   * Returns a presigned PUT URL for uploading a single file into the
+   * session prefix. Frontend uploads via Uppy, then calls
+   * /sync-to-sandbox below to push it into the live sandbox dir.
+   *
+   * Body: { filename: string, contentType: string }
+   * Response: { uploadUrl: string, key: string }
+   */
+  app.post(
+    "/sessions/:sessionId/files/upload-sign",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      if (!config.fileUploads) {
+        res.status(500).json({ detail: "File uploads are not configured." });
+        return;
+      }
+
+      const { filename, contentType } = req.body ?? {};
+      if (!filename || typeof filename !== "string") {
+        res.status(400).json({ detail: "Missing filename in request body." });
+        return;
+      }
+      const safeName = sanitizeFilename(filename);
+      if (!safeName) {
+        res
+          .status(400)
+          .json({ detail: "Invalid filename (no path separators, no '..')." });
+        return;
+      }
+      if (!contentType || typeof contentType !== "string") {
+        res.status(400).json({ detail: "Missing contentType in request body." });
+        return;
+      }
+
+      const { userSessionPrefix, fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      const fullKey = `${fullSessionPrefix}${safeName}`;
+      const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
+
+      // The frontend round-trips `key` back to the sync-to-sandbox and delete
+      // routes; we return the full prefixed key so those routes can do the
+      // prefix-check + S3 ops without any client-side reconstruction.
+      res.json({ uploadUrl, key: fullKey });
+    },
+  );
+
+  /**
+   * POST /sessions/:sessionId/files/sync-to-sandbox
+   * After Uppy reports a successful upload, the frontend calls this so the
+   * agent's next readFile/bash sees the file. No-op if the sandbox isn't
+   * currently materialized (cold-start restore handles that case).
+   */
+  app.post(
+    "/sessions/:sessionId/files/sync-to-sandbox",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+      const { key } = req.body ?? {};
+      if (!key || typeof key !== "string") {
+        res.status(400).json({ detail: "Missing key in request body." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      try {
+        const result = await downloadKeyIntoSandbox({
+          sessionId,
+          userId: authResult.user.id,
+          fullS3Key: key,
+          config,
+        });
+        res.json(result);
+      } catch (err: any) {
+        console.error("[SESSION-FILES] sync-to-sandbox failed", err);
+        res.status(500).json({ detail: "Failed to sync file into sandbox." });
+      }
+    },
+  );
+
+  /**
+   * DELETE /sessions/:sessionId/files
+   * Deletes a session file. The key arrives in the query string (URL paths
+   * can't contain raw forward slashes from the S3 key safely). Prefix-check
+   * enforces session ownership.
+   */
+  app.delete(
+    "/sessions/:sessionId/files",
+    async (req: Request, res: Response) => {
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+
+      const key = req.query.key;
+      if (!key || typeof key !== "string") {
+        res
+          .status(400)
+          .json({ detail: "Missing or invalid 'key' query parameter." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      try {
+        await deleteS3Object(key, config);
+        res.json({ deleted: true });
+      } catch (err: any) {
+        console.error("[SESSION-FILES] delete failed", err);
+        res.status(500).json({ detail: "Failed to delete session file." });
+      }
+    },
+  );
+
+  /**
+   * GET /sessions/:sessionId/file/preview-pdf
+   * Renders an Office-binary (.docx/.xlsx/.pptx/etc.) to PDF via LibreOffice
+   * and streams the PDF back. Cached on disk by source ETag — repeat
+   * previews are instant, content updates auto-invalidate.
+   */
+  app.get(
+    "/sessions/:sessionId/file/preview-pdf",
+    async (req: Request, res: Response) => {
+      // <iframe src=...> can't set Authorization: Bearer. Accept the token
+      // via ?auth= query param as a fallback so the iframe can fetch the
+      // PDF directly. Token still ends up in server logs / browser history —
+      // acceptable for a same-user preview that's also auth-checked via the
+      // session-prefix rule below.
+      if (!req.headers.authorization && typeof req.query.auth === "string") {
+        req.headers.authorization = `Bearer ${req.query.auth}`;
+      }
+      const authResult = await requestValidators.authenticate(req);
+      if (!authResult.user?.id) {
+        res.status(authResult.code ?? 401).json({ detail: authResult.message });
+        return;
+      }
+      const sessionId = req.params.sessionId;
+      if (!sessionId) {
+        res.status(400).json({ detail: "Missing sessionId in path." });
+        return;
+      }
+
+      const key = req.query.key;
+      if (!key || typeof key !== "string") {
+        res
+          .status(400)
+          .json({ detail: "Missing or invalid 'key' query parameter." });
+        return;
+      }
+
+      const { fullSessionPrefix } = buildSessionPrefixes(
+        authResult.user.id,
+        sessionId,
+      );
+      if (!key.startsWith(fullSessionPrefix)) {
+        res.status(403).json({ detail: "Key does not belong to this session." });
+        return;
+      }
+
+      const etag = await getS3ObjectEtag(key, config);
+      if (!etag) {
+        res.status(404).json({ detail: "Source file not found in S3." });
+        return;
+      }
+
+      try {
+        const pdfBytes = await getPdfPreviewBytes({
+          sourceKey: key,
+          etag,
+          config,
+        });
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "private, max-age=300");
+        res.send(pdfBytes);
+      } catch (err: any) {
+        if (err instanceof PreviewRenderError) {
+          console.error("[SESSION-FILES] preview render failed", err);
+          res.status(500).json({ detail: err.message });
+          return;
+        }
+        console.error("[SESSION-FILES] preview unexpected error", err);
+        res.status(500).json({ detail: "Failed to render preview." });
+      }
+    },
+  );
+
+  // ─── End Session Files ────────────────────────────────────────────────────────
 
   app.use(express.static("public"));
 

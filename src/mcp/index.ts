@@ -159,6 +159,7 @@ export class ExuluMCP {
           const tools = await convertExuluToolsToAiSdkTools(
             [tool],
             [],
+            [],
             allTools,
             configValues,
             providerapikey,

@@ -1,5 +1,5 @@
 import { S3Client, PutObjectCommand, S3ServiceException } from "@aws-sdk/client-s3";
-import type { ExuluTool } from "@SRC/exulu/tool";
+import { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { updateStatistic } from "@SRC/exulu/statistics";
@@ -21,6 +21,9 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
+import type { ExuluSkill } from "@EXULU_TYPES/skill";
+import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
+import { getPresignedUrl } from "@SRC/uppy";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 /**
@@ -127,6 +130,7 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
 
 export const convertExuluToolsToAiSdkTools = async (
   currentTools: ExuluTool[] | undefined,
+  currentSkills: ExuluSkill[] | undefined,
   approvedTools: string[] | undefined,
   allExuluTools: ExuluTool[] | undefined,
   configs: ExuluAgentToolConfig[] | undefined,
@@ -151,6 +155,29 @@ export const convertExuluToolsToAiSdkTools = async (
 
   if (!contexts) {
     contexts = [];
+  }
+
+  // When skills are configured, eagerly create the shared session sandbox so
+  // both the inner skill agent AND the outer agent can read/write files in
+  // the same per-session tree. The skill tool's execute below still calls
+  // createSessionSandbox, but those become cache hits and reuse this handle.
+  let sharedSessionSandbox:
+    | Awaited<ReturnType<typeof createSessionSandbox>>
+    | undefined;
+  if (sessionID && exuluConfig) {
+    try {
+      sharedSessionSandbox = await createSessionSandbox(
+        sessionID,
+        currentSkills || [],
+        exuluConfig,
+        user?.id,
+      );
+    } catch (err) {
+      console.error(
+        "[EXULU] Failed to eagerly create shared skill sandbox; outer agent will not have readFile/writeFile available.",
+        err,
+      );
+    }
   }
 
   let projectRetrievalTool: ExuluTool | undefined;
@@ -248,13 +275,27 @@ export const convertExuluToolsToAiSdkTools = async (
   // on follow-up questions without re-running the full retrieval loop.
   const sessionDynamicTools = sessionID
     ? Object.entries(getSessionTools(sessionID)).reduce<Record<string, any>>((acc, [name, t]) => {
-        acc[name] = { ...t, needsApproval: false };
-        return acc;
-      }, {})
+      acc[name] = { ...t, needsApproval: false };
+      return acc;
+    }, {})
+    : {};
+
+  // Expose the shared sandbox's readFile/writeFile to the OUTER agent so it
+  // can save its own outputs (e.g. "store the result as a .md file") without
+  // delegating to a skill. Files written here land under the same session dir
+  // as skill artifacts and benefit from the same S3 persistence + presigned
+  // URL pipeline. Bash is intentionally NOT exposed to the outer agent.
+  const sandboxTools: Record<string, any> = sharedSessionSandbox
+    ? {
+        readFile: { ...sharedSessionSandbox.tools.readFile, needsApproval: false },
+        writeFile: { ...sharedSessionSandbox.tools.writeFile, needsApproval: false },
+        bash: { ...sharedSessionSandbox.tools.bash, needsApproval: false },
+      }
     : {};
 
   return {
     ...sessionDynamicTools,
+    ...sandboxTools,
     ...sanitizedTools?.reduce((prev, cur) => {
       let toolVariableConfig = configs?.find((config) => config.id === cur.id);
 

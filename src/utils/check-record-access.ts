@@ -34,10 +34,19 @@ export const checkRecordAccess = async (
   const isCreator = user ? createdBy === user.id.toString() : false;
   const isAdmin = user ? user.super_admin : false;
   const isApi = user ? user.type === "api" : false;
+  // Admin-mode API keys keep the legacy broad bypass.
+  const isAdminApi = isApi && (!user!.scope_mode || user!.scope_mode === "admin");
+  // Agents-scoped API keys may read agents whose id is in their allowlist.
+  const isAgentsScopedApi =
+    isApi &&
+    user!.scope_mode === "agents" &&
+    request === "read" &&
+    Array.isArray(user!.agent_ids) &&
+    user!.agent_ids.includes(String(record.id));
 
   let hasAccess: "read" | "write" | "none" = "none";
 
-  if (isPublic || isCreator || isAdmin || isApi) {
+  if (isPublic || isCreator || isAdmin || isAdminApi || isAgentsScopedApi) {
     setRecordAccessCache(true);
     return true;
   }

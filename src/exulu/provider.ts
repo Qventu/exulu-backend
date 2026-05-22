@@ -40,6 +40,7 @@ import { setSessionCurrentTask } from "./task-description.ts";
 
 import fs from "fs";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
+import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -86,7 +87,13 @@ export class ExuluProvider {
   public rateLimit?: RateLimiterRule;
   public config?: ExuluProviderConfig | undefined;
   public model?: {
-    create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel;
+    create: ({ apiKey, user, role, project, agent }: {
+      apiKey?: string | undefined;
+      user?: number;
+      role?: string;
+      project?: string;
+      agent?: string;
+    }) => LanguageModel;
   };
   public capabilities: {
     text: boolean;
@@ -303,6 +310,7 @@ export class ExuluProvider {
     inputMessages,
     approvedTools,
     currentTools,
+    currentSkills,
     allExuluTools,
     statistics,
     toolConfigs,
@@ -314,6 +322,7 @@ export class ExuluProvider {
     agent,
     instructions,
     maxStepCount,
+    onTokenUsage,
   }: {
     prompt?: string;
     user?: User;
@@ -324,6 +333,7 @@ export class ExuluProvider {
     approvedTools?: string[];
     inputMessages?: UIMessage[];
     currentTools?: ExuluTool[];
+    currentSkills?: ExuluSkill[];
     allExuluTools?: ExuluTool[];
     statistics?: ExuluStatisticParams;
     toolConfigs?: ExuluAgentToolConfig[];
@@ -333,6 +343,7 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     outputSchema?: z.ZodTypeAny;
+    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -356,8 +367,20 @@ export class ExuluProvider {
       throw new Error("Prompt or message is required for generating.");
     }
 
+    let project: string | undefined;
+    let sessionItems: string[] | undefined;
+    if (session) {
+      const sessionData = await getSession({ sessionID: session });
+      sessionItems = sessionData.session_items;
+      project = sessionData.project;
+    }
+
     const model = this.model.create({
       ...(providerapikey ? { apiKey: providerapikey } : {}),
+      user: user?.id,
+      role: user?.role?.id,
+      project,
+      agent: agent?.id,
     });
 
     console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.");
@@ -387,14 +410,6 @@ export class ExuluProvider {
       "loaded for generating sync.",
       messages.length,
     );
-
-    let project: string | undefined;
-    let sessionItems: string[] | undefined;
-    if (session) {
-      const sessionData = await getSession({ sessionID: session });
-      sessionItems = sessionData.session_items;
-      project = sessionData.project;
-    }
 
     const query = prompt;
 
@@ -528,6 +543,20 @@ export class ExuluProvider {
               `;
     }
 
+    // Session files: any files the user uploads via the chat side panel land
+    // in the working directory at their original filename, alongside files
+    // produced by your own writeFile / bash artifact mirroring. Mentioning
+    // this unconditionally so the agent always knows to look at the working
+    // directory before saying "I can't see any file".
+    system += "\n\n" + `
+        Session files:
+        The user can upload files to this session through a side panel in the chat UI. Any such
+        file appears in your working directory by its original filename — list them with \`ls\` or
+        read them with the readFile tool. Files you produce yourself (via writeFile or via shell
+        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
+        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+      `
+
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
@@ -564,6 +593,7 @@ export class ExuluProvider {
           maxRetries: 2,
           tools: await convertExuluToolsToAiSdkTools(
             currentTools,
+            currentSkills,
             approvedTools,
             allExuluTools,
             toolConfigs,
@@ -628,6 +658,10 @@ export class ExuluProvider {
         ]);
       }
 
+      if (onTokenUsage) {
+        await onTokenUsage({ inputTokens, outputTokens });
+      }
+
       return result.text || result.object;
     }
     if (messages) {
@@ -645,6 +679,7 @@ export class ExuluProvider {
         maxRetries: 2,
         tools: await convertExuluToolsToAiSdkTools(
           currentTools,
+          currentSkills,
           approvedTools,
           allExuluTools,
           toolConfigs,
@@ -700,6 +735,13 @@ export class ExuluProvider {
             ]
             : []),
         ]);
+      }
+
+      if (onTokenUsage) {
+        await onTokenUsage({
+          inputTokens: totalUsage?.inputTokens || 0,
+          outputTokens: totalUsage?.outputTokens || 0,
+        });
       }
 
       return text;
@@ -807,6 +849,7 @@ export class ExuluProvider {
     message,
     previousMessages,
     currentTools,
+    currentSkills,
     approvedTools,
     allExuluTools,
     toolConfigs,
@@ -825,6 +868,7 @@ export class ExuluProvider {
     message?: UIMessage;
     previousMessages?: UIMessage[];
     currentTools?: ExuluTool[];
+    currentSkills?: ExuluSkill[];
     approvedTools?: string[];
     allExuluTools?: ExuluTool[];
     toolConfigs?: ExuluAgentToolConfig[];
@@ -854,10 +898,6 @@ export class ExuluProvider {
       throw new Error("Message is required for streaming.");
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-    });
-
     let messages: UIMessage[] = [];
     let previousMessagesContent: UIMessage[] = previousMessages || [];
     // load the previous messages from the server:
@@ -877,6 +917,14 @@ export class ExuluProvider {
       });
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
+
+    const model = this.model.create({
+      ...(providerapikey ? { apiKey: providerapikey } : {}),
+      user: user?.id,
+      role: user?.role?.id,
+      project,
+      agent: agent?.id,
+    });
 
     // validate messages
     messages = await validateUIMessages({
@@ -1029,10 +1077,101 @@ export class ExuluProvider {
               `;
     }
 
+    if (currentSkills?.length) {
+      // Render each skill as a bulleted name + description block. Listing only
+      // names (the previous shape) hides what each skill is FOR — the model
+      // could see a skill named "Docx" but not realise it knows how to produce
+      // valid .docx files, and would fall back to writeFile with raw markdown.
+      const skillsList = currentSkills
+        .map((skill) => {
+          const description = (skill.description ?? "").trim();
+          return description
+            ? `        - ${skill.name}: ${description}`
+            : `        - ${skill.name}`;
+        })
+        .join("\n");
+
+      system += "\n\n" + `
+        Skills are enabled for this session.
+
+        CRITICAL — Skills are NOT tools. You cannot invoke a skill by calling its name as a tool.
+        Skills are folders of instructions and scripts on the session filesystem. To "use a skill"
+        means: read its SKILL.md with the readFile tool, follow the instructions inside it, and run
+        any scripts it references with the bash tool. The list of skills below is reference material,
+        not a tool catalogue — your callable tools are ONLY the ones declared in the tools list of
+        this request (readFile, writeFile, bash, plus whatever else is registered). Trying to call a
+        skill name as a tool will fail with "Model tried to call unavailable tool".
+
+        Skills are stored in the skills/ folder of the session sandbox and are always structured like:
+
+        skills/<skill_name>/SKILL.md
+        skills/<skill_name>/scripts/
+        skills/<skill_name>/assets/
+        skills/<skill_name>/ ... any other files needed to follow the skill's instructions
+
+        Available skills (name: description):
+${skillsList}
+
+        How to use a skill (the only correct workflow):
+          1. Decide which skill matches the user's request based on the descriptions above. The user
+             does not always name the skill explicitly — match on intent.
+          2. Call readFile with path "skills/<skill_name>/SKILL.md" and read the instructions.
+          3. Follow those instructions step by step. They may direct you to readFile other files in
+             the skill folder, write working files with writeFile, and run scripts via bash.
+          4. Produce the final output the user asked for.
+
+        Specifically:
+        - When the user asks for output in a specialized file format (.docx, .xlsx, .pdf, .pptx,
+          etc.), check the list above for a skill that produces that format and follow its workflow.
+          writeFile alone only writes raw bytes; it cannot construct the binary structure these
+          formats require, so the file will not open in the target application.
+        - When the user mentions a workflow or domain that matches a skill name or description,
+          read that skill's SKILL.md instead of reasoning from scratch.
+      `;
+    }
+
+    // Session files: any files the user uploads via the chat side panel land
+    // in the working directory at their original filename, alongside files
+    // produced by your own writeFile / bash artifact mirroring. Mentioning
+    // this unconditionally so the agent always knows to look at the working
+    // directory before saying "I can't see any file".
+    system += "\n\n" + `
+        Session files:
+        The user can upload files to this session through a side panel in the chat UI. Any such
+        file appears in your working directory by its original filename — list them with \`ls\` or
+        read them with the readFile tool. Files you produce yourself (via writeFile or via shell
+        commands like \`node create_doc.js\`) live in the same place. These files are scoped to
+        this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+      `
+
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
     fs.writeFileSync("system-prompt.txt", system);
+
+    console.log("[EXULU] Tools", currentTools?.map(x => x.name));
+    console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
+
+    const tools = await convertExuluToolsToAiSdkTools(
+      currentTools,
+      currentSkills,
+      approvedTools,
+      allExuluTools,
+      toolConfigs,
+      providerapikey,
+      contexts,
+      rerankers,
+      user,
+      exuluConfig,
+      session,
+      req,
+      project,
+      sessionItems,
+      model,
+      agent,
+      memoryItems
+    )
+    console.log("[EXULU] Converted tools", Object.keys(tools));
 
     const result = streamText({
       temperature: 0, // TODO Make this configurable
@@ -1049,31 +1188,16 @@ export class ExuluProvider {
           reasoningSummary: "auto",
         },
       },
-      tools: await convertExuluToolsToAiSdkTools(
-        currentTools,
-        approvedTools,
-        allExuluTools,
-        toolConfigs,
-        providerapikey,
-        contexts,
-        rerankers,
-        user,
-        exuluConfig,
-        session,
-        req,
-        project,
-        sessionItems,
-        model,
-        agent,
-        memoryItems
-      ),
+      tools: tools,
       onError: (error) => {
         console.error("[EXULU] chat stream error.", error);
         throw new Error(
           `Chat stream error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
         );
       },
-      stopWhen: [stepCountIs(maxStepCount || 5)],
+      // provide more loops for skills because they are more complex to execute
+      // todo allow configuring this per skill
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)], 
     });
 
     return {

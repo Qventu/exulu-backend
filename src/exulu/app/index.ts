@@ -12,6 +12,7 @@ import {
   vertexGemini25FlashProvider,
   vertexGemini25ProProvider,
   vertexGemini3ProProvider,
+  vertexLlamaScout4,
 } from "@SRC/templates/providers/google/vertex";
 import {
   gpt5MiniProvider,
@@ -48,6 +49,7 @@ import { exuluApp } from "./singleton";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { createWorkers } from "@EE/workers.ts";
+import { reportSystemDependencies } from "@SRC/exulu/system-dependencies.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -135,6 +137,14 @@ export type ExuluConfig = {
   privacy?: {
     systemPromptPersonalization?: boolean;
   };
+  /**
+   * When true, ExuluApp.create() throws if any required system binary
+   * (pandoc / soffice / pdftoppm — needed by built-in skills like docx) is
+   * missing. When false or unset, the missing deps are logged as a warning
+   * and the app continues to start; skills that need the binary will fail
+   * at use time instead. Recommended `true` in production deployments.
+   */
+  requireSystemDependencies?: boolean;
 };
 
 export class ExuluApp {
@@ -193,6 +203,7 @@ export class ExuluApp {
       vertexGemini25FlashProvider,
       vertexGemini25ProProvider,
       vertexGemini3ProProvider,
+      vertexLlamaScout4,
       claudeSonnet45Provider,
       gpt5MiniProvider,
       gpt5Provider,
@@ -293,6 +304,14 @@ export class ExuluApp {
     }
 
     this._queues = [...new Set(queueSet.values())] as any;
+
+    // Probe system binaries required by built-in skills (docx etc.). Warns by
+    // default; throws when config.requireSystemDependencies is true so that
+    // production deployments fail fast on a misconfigured image.
+    await reportSystemDependencies({
+      requireSystemDependencies: config.requireSystemDependencies !== false,
+    });
+
     console.log("[EXULU] App initialized.");
 
     // Set the instance in the singleton

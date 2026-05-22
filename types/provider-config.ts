@@ -4,7 +4,7 @@ export type ExuluProviderConfig = {
     name: string;
     instructions: string;
     model: {
-        create: ({ apiKey }: { apiKey?: string | undefined }) => LanguageModel;
+        create: ({ apiKey, user, role, project, agent }: { apiKey?: string | undefined, user?: number, role?: string, project?: string, agent?: string }) => LanguageModel;
     };
     custom?: {
         name: string;
