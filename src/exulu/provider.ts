@@ -6,6 +6,7 @@ import type { videoTypes } from "@EXULU_TYPES/models/agent";
 import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules.ts";
 import { z } from "zod";
 import { ExuluTool } from "./tool.ts";
+import { resolveModel } from "./resolve-model.ts";
 import { updateStatistic } from "./statistics.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
@@ -205,43 +206,19 @@ export class ExuluProvider {
           user,
         );
 
-        // Get the variable name from user's anthropic_token field
-        const variableName = agent.providerapikey;
-
-        let providerapikey: string | undefined;
-
-        if (variableName) {
-          const { db } = await postgresClient();
-          // Look up the variable from the variables table
-          const variable = await db.from("variables").where({ name: variableName }).first();
-          if (!variable) {
-            throw new Error(
-              "Provider API key variable not found for agent: " +
-              agent.name +
-              " (" +
-              agent.id +
-              ") being called as a tool.",
-            );
-          }
-
-          // Get the API key from the variable (decrypt if encrypted)
-          providerapikey = variable.value;
-
-          if (!variable.encrypted) {
-            throw new Error(
-              "Provider API key variable not encrypted for agent: " +
-              agent.name +
-              " (" +
-              agent.id +
-              ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-            );
-          }
-
-          if (variable.encrypted) {
-            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-            providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-          }
+        if (!agent.model) {
+          throw new Error(
+            `Agent ${agent.name} (${agent.id}) has no model configured (called as a tool).`,
+          );
         }
+
+        const resolved = await resolveModel({
+          modelId: agent.model,
+          user,
+          providers,
+          agent: { id: agent.id },
+        });
+        const providerapikey = resolved.apiKey;
         console.log(
           "[EXULU] Enabled tools for agent '" +
           agent.name +
@@ -275,6 +252,7 @@ export class ExuluProvider {
             prompt +
             " and the following information is available: " +
             information,
+          languageModel: resolved.languageModel,
           providerapikey: providerapikey,
           user,
           currentTools: enabledTools,
@@ -315,6 +293,7 @@ export class ExuluProvider {
     statistics,
     toolConfigs,
     providerapikey,
+    languageModel,
     contexts,
     rerankers,
     exuluConfig,
@@ -338,6 +317,7 @@ export class ExuluProvider {
     statistics?: ExuluStatisticParams;
     toolConfigs?: ExuluAgentToolConfig[];
     providerapikey?: string | undefined;
+    languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
@@ -350,10 +330,6 @@ export class ExuluProvider {
       "[EXULU] Called generate sync for agent: " + this.name,
       "with prompt: " + prompt?.slice(0, 100) + "...",
     );
-
-    if (!this.model) {
-      throw new Error("Model is required for streaming.");
-    }
 
     if (!this.config) {
       throw new Error("Config is required for generating.");
@@ -375,13 +351,7 @@ export class ExuluProvider {
       project = sessionData.project;
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-      user: user?.id,
-      role: user?.role?.id,
-      project,
-      agent: agent?.id,
-    });
+    const model = languageModel;
 
     console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.");
 
@@ -854,6 +824,7 @@ export class ExuluProvider {
     allExuluTools,
     toolConfigs,
     providerapikey,
+    languageModel,
     contexts,
     rerankers,
     exuluConfig,
@@ -873,6 +844,7 @@ export class ExuluProvider {
     allExuluTools?: ExuluTool[];
     toolConfigs?: ExuluAgentToolConfig[];
     providerapikey?: string | undefined;
+    languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
@@ -883,11 +855,6 @@ export class ExuluProvider {
     originalMessages: UIMessage[];
     previousMessages: UIMessage[];
   }> => {
-    if (!this.model) {
-      console.error("[EXULU] Model is required for streaming.");
-      throw new Error("Model is required for streaming.");
-    }
-
     if (!this.config) {
       console.error("[EXULU] Config is required for streaming.");
       throw new Error("Config is required for generating.");
@@ -918,13 +885,7 @@ export class ExuluProvider {
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-      user: user?.id,
-      role: user?.role?.id,
-      project,
-      agent: agent?.id,
-    });
+    const model = languageModel;
 
     // validate messages
     messages = await validateUIMessages({
@@ -1254,10 +1215,12 @@ export const saveChat = async ({
   session,
   user,
   messages,
+  model,
 }: {
   session: string;
   user: number;
   messages: UIMessage[];
+  model?: string;
 }) => {
   const { db } = await postgresClient();
   // Save messages sequentially to maintain correct createdAt timestamps
@@ -1270,6 +1233,7 @@ export const saveChat = async ({
         content: JSON.stringify(message),
         message_id: message.id,
         title: message.role === "user" ? "User" : "Assistant",
+        ...(model ? { model } : {}),
       })
       .returning("id");
     mutation.onConflict("message_id").merge();

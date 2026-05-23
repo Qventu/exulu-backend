@@ -12,9 +12,9 @@ import { type Tracer } from "@opentelemetry/api";
 import { requestValidators } from "../validators/requests.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
+import { resolveModel } from "@SRC/exulu/resolve-model.ts";
 import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
-import CryptoJS from "crypto-js";
 import type { ExuluConfig } from "../exulu/app/index.ts";
 import type { User } from "@EXULU_TYPES/models/user";
 import { z } from "zod";
@@ -78,13 +78,20 @@ export class ExuluMCP {
       user,
     );
 
-    const provider = allProviders.find((a) => a.id === agent.provider);
-
-    if (!provider) {
+    if (!agent.model) {
       throw new Error(
-        "Agent provider not found for agent " + agent.name + " (" + agent.id + ").",
+        "Agent has no model configured for agent " + agent.name + " (" + agent.id + ").",
       );
     }
+
+    const resolved = await resolveModel({
+      modelId: agent.model,
+      user,
+      providers: allProviders,
+      agent: { id: agent.id },
+    });
+    const provider = resolved.exuluProvider;
+    const providerapikey = resolved.apiKey;
 
     // Add the agent itself as a tool so MCP clients can also call the
     // agent directly, instead of just its tools.
@@ -92,42 +99,6 @@ export class ExuluMCP {
 
     if (agentTool) {
       enabledTools = [...enabledTools, agentTool];
-    }
-
-    // Get the variable name from user's anthropic_token field
-    const variableName = agent.providerapikey;
-
-    const { db } = await postgresClient();
-
-    let providerapikey: string | undefined;
-
-    // Look up the variable from the variables table
-    if (variableName) {
-      const variable = await db.from("variables").where({ name: variableName }).first();
-
-      if (!variable) {
-        throw new Error(
-          "Provider API key variable not found for " +
-          agent.name +
-          " (" +
-          agent.id +
-          ").",
-        );
-      }
-
-      // Get the API key from the variable (decrypt if encrypted)
-      providerapikey = variable.value;
-
-      if (!variable.encrypted) {
-        throw new Error(
-          "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-        );
-      }
-
-      if (variable.encrypted) {
-        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-      }
     }
 
     console.log(

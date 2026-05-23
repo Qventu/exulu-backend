@@ -24,6 +24,7 @@ import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/s
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluConfig } from "./app/index.ts";
 import type { ExuluProvider } from "./provider.ts";
+import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluReranker } from "./reranker.ts";
@@ -392,47 +393,34 @@ export const registerOpenAIGatewayRoutes = async (
           return;
         }
 
-        if (!agent.providerapikey) {
+        if (!agent.model) {
           res.status(400).json({
-            error: { message: "Agent has no API key configured", type: "invalid_request_error" },
+            error: { message: "Agent has no model configured", type: "invalid_request_error" },
           });
           return;
         }
 
-        const variable = await db.from("variables").where({ name: agent.providerapikey }).first();
-        if (!variable) {
-          res.status(400).json({
-            error: { message: "API key variable not found", type: "invalid_request_error" },
+        let resolved: Awaited<ReturnType<typeof resolveModel>>;
+        try {
+          resolved = await resolveModel({
+            modelId: agent.model,
+            user,
+            providers,
+            agent: { id: agent.id },
+            project: project ? { id: project.id } : undefined,
           });
-          return;
+        } catch (err) {
+          if (err instanceof ResolveModelError) {
+            const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+            res.status(status).json({
+              error: { message: err.message, type: "invalid_request_error", code: err.code },
+            });
+            return;
+          }
+          throw err;
         }
-
-        if (!variable.encrypted) {
-          res.status(400).json({
-            error: { message: "API key variable must be encrypted", type: "invalid_request_error" },
-          });
-          return;
-        }
-
-        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-        const providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-
-        const provider = providers.find((p) => p.id === agent.provider);
-
-        if (!provider?.config?.model?.create) {
-          res.status(400).json({
-            error: { message: "No provider configured for this agent", type: "invalid_request_error" },
-          });
-          return;
-        }
-
-        const languageModel = provider.config.model.create({
-          apiKey: providerapikey,
-          user: user.id,
-          role: user.role?.id,
-          project: project?.id,
-          agent: agent.id,
-        });
+        const providerapikey = resolved.apiKey;
+        const languageModel = resolved.languageModel;
 
         const disabledTools: string[] = req.body.disabledTools ?? [];
         const enabledTools = await getEnabledTools(
