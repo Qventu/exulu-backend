@@ -7,6 +7,7 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluProvider } from "@SRC/exulu/provider";
+import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
@@ -661,13 +662,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -766,13 +765,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -836,13 +833,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -934,13 +929,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -1573,7 +1566,7 @@ type RateLimitUsageRow {
     const instances = await exuluApp.get().agents();
     let agentTools = await Promise.all(
       instances.map(async (agent: ExuluAgent) => {
-        const provider: ExuluProvider | undefined = providers.find((a) => a.id === agent.provider);
+        const provider = await resolveAgentProvider(agent, providers);
         if (!provider) {
           return null;
         }
@@ -1862,6 +1855,9 @@ type Provider {
   provider: String
   modelName: String
   type: EnumProviderType!
+  authenticationInformation: String
+  maxContextLength: Int
+  capabilities: JSON
 }
 
 type Eval {

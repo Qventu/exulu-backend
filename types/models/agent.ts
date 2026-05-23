@@ -12,7 +12,8 @@ export interface ExuluAgent {
     id: string;
     modelName?: string;
     providerName?: string;
-    provider: string;
+    /** @deprecated Hydrated for read compatibility; the underlying DB column is gone. */
+    provider?: string;
     source: "code" | "database";
     memory?: string;
     welcomemessage?: string;
@@ -20,7 +21,8 @@ export interface ExuluAgent {
     type: "agent";
     name: string;
     image?: string;
-    providerapikey?: string;
+    /** FK to models.id — replaces legacy provider + providerapikey columns. */
+    model?: string;
     workflows?: ExuluProviderWorkflowConfig;
     firewall?: {
         enabled: boolean;

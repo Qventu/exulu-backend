@@ -20,13 +20,26 @@ const addProviderFields = async (
   contexts: ExuluContext[],
   rerankers: ExuluReranker[],
 ) => {
-  let provider = providers.find((a) => a.id === result?.provider);
+  // Resolve the underlying ExuluProvider via the agent's Model row.
+  // agent.model -> models row -> models.provider -> ExuluProvider.
+  let provider: ExuluProvider | undefined;
+  let modelRow: { name?: string; provider?: string } | undefined;
+  if (result?.model) {
+    const { db } = await postgresClient();
+    modelRow = await db.from("models").where({ id: result.model }).first();
+    if (modelRow?.provider) {
+      provider = providers.find((a) => a.id === modelRow!.provider);
+    }
+  }
+
   if (requestedFields.includes("providerName")) {
     result.providerName = provider?.providerName || "";
   }
 
   if (requestedFields.includes("modelName")) {
-    result.modelName = provider?.modelName || "";
+    // Prefer the admin-set display name on the Model row; fall back to the
+    // ExuluProvider's hardcoded config.name.
+    result.modelName = modelRow?.name || provider?.modelName || "";
   }
 
   if (requestedFields.includes("slug")) {
@@ -82,12 +95,23 @@ const addProviderFields = async (
                     " was not found in the database.",
                 );
               }
-              const provider = providers.find((a) => a.id === instance.provider);
-              if (!provider) {
+              if (!instance.model) {
                 throw new Error(
                   "Trying to load a tool of type 'agent', but the associated agent with id " +
                     tool.id +
-                    " does not have a provider set for it.",
+                    " does not have a model set for it.",
+                );
+              }
+              const { db } = await postgresClient();
+              const innerModelRow = await db.from("models").where({ id: instance.model }).first();
+              const provider = innerModelRow?.provider
+                ? providers.find((a) => a.id === innerModelRow.provider)
+                : undefined;
+              if (!provider) {
+                throw new Error(
+                  "Trying to load a tool of type 'agent', but the model referenced by agent with id " +
+                    tool.id +
+                    " does not point at a registered ExuluProvider.",
                 );
               }
 

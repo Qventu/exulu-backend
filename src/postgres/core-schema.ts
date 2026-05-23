@@ -41,6 +41,10 @@ const agentMessagesSchema: ExuluTableDefinition = {
       name: "session",
       type: "text",
     },
+    {
+      name: "model",
+      type: "uuid",
+    },
   ],
 };
 
@@ -240,12 +244,8 @@ const agentsSchema: ExuluTableDefinition = {
       type: "text", // allows selecting a exulu context as native memory for the agent
     },
     {
-      name: "providerapikey",
-      type: "text",
-    },
-    {
-      name: "provider",
-      type: "text",
+      name: "model",
+      type: "uuid",
     },
     {
       name: "active",
@@ -271,6 +271,60 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "rate_limits",
       type: "json",
+    },
+  ],
+};
+
+const modelsSchema: ExuluTableDefinition = {
+  type: "models",
+  name: {
+    plural: "models",
+    singular: "model",
+  },
+  RBAC: true,
+  fields: [
+    {
+      name: "name",
+      type: "text",
+      required: true,
+    },
+    {
+      name: "description",
+      type: "text",
+    },
+    {
+      name: "provider",
+      type: "text",
+      required: true,
+    },
+    {
+      name: "authvariable",
+      type: "text",
+    },
+    {
+      name: "active",
+      type: "boolean",
+      default: true,
+    },
+    {
+      name: "requests_per_window",
+      type: "number",
+    },
+    {
+      name: "window_seconds",
+      type: "number",
+    },
+    {
+      name: "token_budget",
+      type: "number",
+    },
+    {
+      name: "cost_budget_usd",
+      type: "number",
+    },
+    {
+      name: "budget_window",
+      type: "text",
     },
   ],
 };
@@ -577,6 +631,7 @@ export const coreSchemas = {
       agentsSchema: (): ExuluTableDefinition => addCoreFields(agentsSchema),
       agentMessagesSchema: (): ExuluTableDefinition => addCoreFields(agentMessagesSchema),
       agentSessionsSchema: (): ExuluTableDefinition => addCoreFields(agentSessionsSchema),
+      modelsSchema: (): ExuluTableDefinition => addCoreFields(modelsSchema),
       projectsSchema: (): ExuluTableDefinition => addCoreFields(projectsSchema),
       usersSchema: (): ExuluTableDefinition => addCoreFields(usersSchema),
       skillsSchema: (): ExuluTableDefinition => addCoreFields(skillsSchema),

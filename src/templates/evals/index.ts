@@ -1,6 +1,7 @@
-import { ExuluVariables } from "@SRC/index";
 import { queues as ExuluQueues } from "@EE/queues/queues";
 import { ExuluEval } from "@SRC/exulu/evals";
+import { resolveModel } from "@SRC/exulu/resolve-model";
+import { exuluApp } from "@SRC/exulu/app/singleton";
 import { z } from "zod";
 
 const llmAsJudgeEval = () => {
@@ -49,13 +50,19 @@ const llmAsJudgeEval = () => {
         // replace {expected} with the expected output
         prompt = prompt.replace("{expected_output}", testCase.expected_output);
 
-        if (!agent.providerapikey) {
+        if (!agent.model) {
           throw new Error(
-            `Provider API key for agent ${agent.name} is required, variable name is ${agent.providerapikey} but it is not set.`,
+            `Agent ${agent.name} has no model configured (required for llm-as-judge eval).`,
           );
         }
 
-        const providerapikey = await ExuluVariables.get(agent.providerapikey);
+        const resolved = await resolveModel({
+          modelId: agent.model,
+          providers: exuluApp.get().providers,
+          agent: { id: agent.id },
+          rbacBypass: true,
+        });
+        const providerapikey = resolved.apiKey;
 
         console.log("[EXULU] prompt", prompt);
 
@@ -67,6 +74,7 @@ const llmAsJudgeEval = () => {
           outputSchema: z.object({
             score: z.number().min(0).max(100).describe("The score between 0 and 100."),
           }),
+          languageModel: resolved.languageModel,
           providerapikey,
         });
 

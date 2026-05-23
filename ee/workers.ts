@@ -10,6 +10,7 @@ import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
 import type { ExuluReranker } from "@SRC/exulu/reranker.ts";
 import type { ExuluEval } from "@SRC/exulu/evals.ts";
 import type { ExuluTool } from "@SRC/exulu/tool.ts";
+import { resolveModel } from "@SRC/exulu/resolve-model.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { type Tracer } from "@opentelemetry/api";
@@ -1379,36 +1380,20 @@ export const processUiMessagesFlow = async ({
     enabledTools?.map((x) => x.name + " (" + x.id + ")"),
   );
 
-  // Get the variable name from user's anthropic_token field
-  const variableName = agent.providerapikey;
-
-  // Look up the variable from the variables table
-  const { db } = await postgresClient();
-
-  let providerapikey: string | undefined;
-
-  if (variableName) {
-    const variable = await db.from("variables").where({ name: variableName }).first();
-    if (!variable) {
-      throw new Error(
-        `Provider API key variable not found for agent ${agent.name} (${agent.id}).`,
-      );
-    }
-
-    // Get the API key from the variable (decrypt if encrypted)
-    providerapikey = variable.value;
-
-    if (!variable.encrypted) {
-      throw new Error(
-        `Provider API key variable not encrypted for agent ${agent.name} (${agent.id}), for security reasons you are only allowed to use encrypted variables for provider API keys.`,
-      );
-    }
-
-    if (variable.encrypted) {
-      const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-      providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-    }
+  if (!agent.model) {
+    throw new Error(
+      `Agent ${agent.name} (${agent.id}) has no model configured.`,
+    );
   }
+
+  const resolved = await resolveModel({
+    modelId: agent.model,
+    user,
+    providers,
+    agent: { id: agent.id },
+  });
+  const providerapikey = resolved.apiKey;
+  const resolvedLanguageModel = resolved.languageModel;
 
   // Remove placeholder agent response before sending
   const messagesWithoutPlaceholder = inputMessages.filter(
@@ -1512,6 +1497,7 @@ export const processUiMessagesFlow = async ({
           message: currentMessage,
           currentTools: enabledTools,
           allExuluTools: tools,
+          languageModel: resolvedLanguageModel,
           providerapikey,
           toolConfigs: agent.tools,
           exuluConfig: config,

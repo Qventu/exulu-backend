@@ -53,6 +53,7 @@ import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
+import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -98,6 +99,7 @@ const {
   platformConfigurationsSchema,
   agentSessionsSchema,
   agentMessagesSchema,
+  modelsSchema,
   rolesSchema,
   usersSchema,
   skillsSchema,
@@ -189,6 +191,7 @@ export const createExpressRoutes = async (
       testCasesSchema(),
       agentSessionsSchema(),
       agentMessagesSchema(),
+      modelsSchema(),
       variablesSchema(),
       workflowTemplatesSchema(),
       statisticsSchema(),
@@ -683,41 +686,34 @@ Mood: friendly and intelligent.
         outputSchema = convertJsonSchemaToZod(req.body.outputSchema);
       }
 
-      let providerapikey: string | undefined;
-      const variableName = agent.providerapikey;
-
-      if (variableName) {
-        console.log("[EXULU] provider api key variable name", variableName);
-        // Look up the variable from the variables table
-        const variable = await db.from("variables").where({ name: variableName }).first();
-        if (!variable) {
-          res.status(400).json({
-            message:
-              "Provider API key variable not found for " +
-              agent.name +
-              " (" +
-              agent.id +
-              ").",
-          });
-          return;
-        }
-
-        // Get the API key from the variable (decrypt if encrypted)
-        providerapikey = variable.value;
-
-        if (!variable.encrypted) {
-          res.status(400).json({
-            message:
-              "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-          });
-          return;
-        }
-
-        if (variable.encrypted) {
-          const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-          providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-        }
+      const overrideModelId = req.headers["x-exulu-model-override"] as string | undefined;
+      const modelId = overrideModelId ?? agent.model;
+      if (!modelId) {
+        res.status(400).json({
+          message: `Agent ${agent.name} (${agent.id}) has no model configured.`,
+        });
+        return;
       }
+
+      let resolved: Awaited<ReturnType<typeof resolveModel>>;
+      try {
+        resolved = await resolveModel({
+          modelId,
+          user,
+          providers,
+          agent: { id: agent.id },
+        });
+      } catch (err) {
+        if (err instanceof ResolveModelError) {
+          const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+          res.status(status).json({ message: err.message, code: err.code });
+          return;
+        }
+        throw err;
+      }
+      const providerapikey = resolved.apiKey;
+      const resolvedLanguageModel = resolved.languageModel;
+      const resolvedModelId = resolved.model.id;
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
       if (!!headers.stream) {
@@ -765,6 +761,7 @@ Mood: friendly and intelligent.
           currentSkills: enabledSkills,
           approvedTools: approvedTools,
           allExuluTools: tools,
+          languageModel: resolvedLanguageModel,
           providerapikey,
           toolConfigs: agent.tools,
           exuluConfig: config,
@@ -820,6 +817,7 @@ Mood: friendly and intelligent.
                 session: headers.session as string,
                 user: user.id,
                 messages: messages,
+                model: resolvedModelId,
               });
               clearSessionCurrentTask(headers.session as string).catch(() => {});
             }
@@ -904,6 +902,7 @@ Mood: friendly and intelligent.
           currentTools: enabledTools,
           currentSkills: enabledSkills,
           allExuluTools: tools,
+          languageModel: resolvedLanguageModel,
           providerapikey,
           exuluConfig: config,
           toolConfigs: agent.tools,
@@ -1029,42 +1028,46 @@ Mood: friendly and intelligent.
           return;
         }
 
-        if (!agent.providerapikey) {
+        if (!agent.model) {
           const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
           res.setHeader("Content-Type", "application/json");
           res.end(Buffer.from(arrayBuffer));
           return;
         }
 
-        // Get the variable name from agent's providerapikey field
-        const variableName = agent.providerapikey;
+        let anthropicApiKey: string | undefined;
+        try {
+          const resolved = await resolveModel({
+            modelId: agent.model,
+            user,
+            providers,
+            agent: { id: agent.id },
+            project: project ? { id: project.id } : undefined,
+          });
+          anthropicApiKey = resolved.apiKey;
+        } catch (err) {
+          if (err instanceof ResolveModelError) {
+            const msg =
+              err.code === "AUTH_VAR_NOT_FOUND"
+                ? CLAUDE_MESSAGES.anthropic_token_variable_not_found
+                : err.code === "AUTH_VAR_NOT_ENCRYPTED"
+                ? CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted
+                : CLAUDE_MESSAGES.not_enabled;
+            const arrayBuffer = createCustomAnthropicStreamingMessage(msg);
+            res.setHeader("Content-Type", "application/json");
+            res.end(Buffer.from(arrayBuffer));
+            return;
+          }
+          throw err;
+        }
 
-        // Look up the variable from the variables table
-        const variable = await db.from("variables").where({ name: variableName }).first();
-        if (!variable) {
+        if (!anthropicApiKey) {
           const arrayBuffer = createCustomAnthropicStreamingMessage(
             CLAUDE_MESSAGES.anthropic_token_variable_not_found,
           );
           res.setHeader("Content-Type", "application/json");
           res.end(Buffer.from(arrayBuffer));
           return;
-        }
-
-        // Get the API key from the variable (decrypt if encrypted)
-        let anthropicApiKey = variable.value;
-
-        if (!variable.encrypted) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(
-            CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted,
-          );
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        if (variable.encrypted) {
-          const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-          anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
         }
 
         // todo get enabled tools from agent and add them to the request body
