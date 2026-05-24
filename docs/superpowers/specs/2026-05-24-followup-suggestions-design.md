@@ -15,12 +15,12 @@ Add an opt-in per-agent "follow-up suggestions" feature. When enabled, after eac
 ## Non-goals
 
 - **No streaming changes.** `generateStream` and the UI message stream are untouched.
-- **No per-agent suggestion prompt override.** Phase 1 ships a single fixed prompt.
+- **No coupling into `generateSync`.** The dedicated route uses `generateObject` directly rather than threading structured-output through the agent-run path.
+- **No per-agent suggestion prompt override.** Phase 1 ships a single fixed prompt, owned by the backend.
 - **No system-wide suggestion-model override.** Phase 1 always uses the agent's own model. (Reserved for phase 2 as a `default_for_suggestions` flag on the `models` table.)
-- **No persistence.** Suggestions live in frontend `useState` only; reloading a session does not restore them.
-- **No backend route changes.** The existing `POST /<slug>/:instance` already supports `Stream: "false"` + `outputSchema` + `customInstructions`.
+- **No persistence.** Suggestions live in frontend `useState` only; reloading a session does not restore them. No session is loaded or written by the suggestions route.
 - **No auto-send on click.** Suggestions populate the input; the user presses send.
-- **No tool-resolution skipping.** The suggestion call goes through the same tool/skill resolution as a regular sync call. (Phase 2 optimisation: a `suggestionsOnly: true` body flag that skips tool prep.)
+- **No tool/skill resolution.** The dedicated route calls `generateObject` without tools — suggestion generation is structured-output only.
 
 ## Decisions
 
@@ -28,12 +28,13 @@ Add an opt-in per-agent "follow-up suggestions" feature. When enabled, after eac
 |---|---|
 | When to generate | After assistant `onFinish`, with both the user message and the assistant reply in the context. |
 | Click behaviour | Fill input only; user presses send. |
-| Persistence | Ephemeral. `useState` on the chat component, cleared when a new user message is submitted. |
-| Suggestion prompt | Fixed constant, defined frontend-side in `chat.tsx`, sent in `customInstructions`. |
+| Persistence | Ephemeral. `useState` on the chat component, cleared when a new user message is submitted. The suggestions route is stateless — no session loaded or written. |
+| Suggestion prompt | Fixed constant, owned by the backend (`src/exulu/suggestions.ts`). |
 | Model | Always `agent.model` (same as the main chat). |
-| Token accounting | Counts toward agent rate limits + statistics, via the existing `generateSync` flow. No special handling. |
-| Toggle authority | Frontend short-circuits when disabled — no request is fired. Backend has no awareness of the toggle. |
-| Number of suggestions | Capped at 3 via `maxItems: 3` in `outputSchema`. |
+| Backend integration | Dedicated route `POST /agents/suggestions/:agentId` that calls `generateObject` directly. Not coupled into `generateSync`/`generateStream`. |
+| Token accounting | Counts toward agent rate limits + statistics via the same `recordAgentTokenUsage` + `updateStatistic` helpers as the agent-run route. |
+| Toggle authority | Frontend short-circuits when disabled (no request fired). Backend route also rejects requests for agents that don't have it enabled. |
+| Number of suggestions | Capped at 3 via `.max(3)` in the Zod schema; backend additionally slices to 3 defensively. |
 | Abort behaviour | New user submit aborts an in-flight suggestion fetch; suggestions also clear on unmount. |
 
 ## Architecture
@@ -43,15 +44,17 @@ Add an opt-in per-agent "follow-up suggestions" feature. When enabled, after eac
 ```
 Assistant message finishes (useChat status → "ready")
     └── effect in chat.tsx fires (only if agent.suggestions_enabled === true)
-            └── fetch POST {backend}{agent.slug}/{agent.id}
-                  headers: Stream: "false", Authorization, User, Session
-                  body: { message, session, outputSchema, customInstructions }
-                    └── routes.ts:543  (existing handler, no changes)
-                          └── outputSchema → convertJsonSchemaToZod (existing)
-                          └── provider.generateSync({ ..., outputSchema })  (existing)
-                                └── generateText({ output: 'object', schema })
-                                └── recordAgentTokenUsage (existing)
-                                └── updateStatistic (existing)
+            └── fetch POST {backend}/agents/suggestions/{agent.id}
+                  headers: Authorization, User
+                  body: { messages: [lastUser, lastAssistant] }
+                    └── routes.ts handler:
+                          - load agent, check suggestions_enabled
+                          - authenticate, RBAC read access, API key scope
+                          - pre-check rate limits
+                          - resolveModel(agent.model)
+                          - generateSuggestions({ languageModel, messages, agentInstructions })
+                                └── generateObject({ schema: { suggestions: string[].max(3) } })
+                          - updateStatistic + recordAgentTokenUsage
                   response: { suggestions: string[] }
             └── setSuggestions(response.suggestions.slice(0, 3))
                   └── render 3 buttons above textarea
@@ -60,20 +63,22 @@ Assistant message finishes (useChat status → "ready")
 
 ### File map
 
-**New files:** none.
+**New files:**
+
+| File | Purpose |
+|---|---|
+| `backend/src/exulu/suggestions.ts` | `generateSuggestions()` helper: owns the fixed system prompt and the Zod schema; calls `generateObject` directly. |
 
 **Modified files:**
 
 | File | Change |
 |---|---|
-| `backend/src/postgres/core-schema.ts` | Add `suggestions_enabled: boolean` to `agentsSchema`. |
-| `backend/src/postgres/init-db.ts` | Add a column-existence-gated `ALTER TABLE agents ADD COLUMN suggestions_enabled boolean DEFAULT false` block. |
+| `backend/src/postgres/core-schema.ts` | Add `suggestions_enabled: boolean` to `agentsSchema`. Existing `addMissingFields` infra adds the column on next boot. |
+| `backend/src/exulu/routes.ts` | Register `POST /agents/suggestions/:agentId`. Mirrors the auth / RBAC / rate-limit / stats wiring used by the agent-run route. |
 | `frontend/app/(application)/agents/edit/[id]/form.tsx` | Add `suggestions_enabled` to `agentFormSchema`; add a `<FormField name="suggestions_enabled">` Switch in the feedback/UI section, modeled on the existing `feedback` toggle (form.tsx:1167-1188); thread the value through the update mutation. |
 | `frontend/app/(application)/chat/[agent]/[session]/chat.tsx` | Add suggestion state, effect, fetch, abort handling, and render the suggestion button row above the textarea. |
 | `frontend/types/models/agent.ts` (or equivalent shared type) | Add optional `suggestions_enabled?: boolean` field. |
 | GraphQL queries/mutations for agents (`@/queries/queries` — exact file resolved at impl) | Include `suggestions_enabled` in `GET_AGENT_BY_ID` and `UPDATE_AGENT_BY_ID`. |
-
-No backend route changes. No new endpoint. No new shared types beyond the agent flag.
 
 ## Schema change
 
@@ -87,23 +92,7 @@ No backend route changes. No new endpoint. No new shared types beyond the agent 
 }
 ```
 
-`backend/src/postgres/init-db.ts` — add a one-time migration block, gated by `information_schema.columns`, matching the pattern in [[feedback_migrations_in_initdb]]:
-
-```ts
-// One-time data migration: add agents.suggestions_enabled column if it doesn't exist.
-const hasSuggestionsEnabled = await trx
-  .from("information_schema.columns")
-  .where({ table_name: "agents", column_name: "suggestions_enabled" })
-  .first();
-if (!hasSuggestionsEnabled) {
-  console.log("[EXULU] Adding agents.suggestions_enabled column.");
-  await trx.schema.alterTable("agents", (t) => {
-    t.boolean("suggestions_enabled").defaultTo(false);
-  });
-}
-```
-
-No backfill needed — `DEFAULT false` covers existing rows.
+No explicit migration block is needed — the existing `addMissingFields` mechanism in `init-db.ts:35-62` iterates `agentsSchema.fields` on boot and adds any missing columns via `hasColumn` + `alterTable` + `mapType`. Adding the field to the schema alone is sufficient. `DEFAULT false` covers existing rows.
 
 ## Frontend: agent edit form
 
@@ -141,31 +130,37 @@ suggestions_enabled: z.boolean().optional(),
 
 3. Form submit path already spreads form values into the `UPDATE_AGENT_BY_ID` mutation; the only requirement is that the GraphQL mutation and the agent-read query include `suggestions_enabled`.
 
+## Backend: suggestions helper + route
+
+### `backend/src/exulu/suggestions.ts` (new file)
+
+Owns the fixed system prompt and the Zod schema. Exposes a single `generateSuggestions()` function that takes a resolved `LanguageModel`, the messages array, and optional agent instructions. Internally calls `generateObject` with `temperature: 0`, the schema `z.object({ suggestions: z.array(z.string()).max(3) })`, and the system prompt concatenated with the agent's instructions (so suggestions stay topical to the agent's purpose).
+
+Returns `{ suggestions: string[]; usage: { inputTokens, outputTokens } }`.
+
+`generateObject` (not `generateText` + `Output.object`) is used because it enforces JSON mode at the provider level — avoids the `AI_NoObjectGeneratedError: could not parse the response` failure mode that occurs when models wrap output in markdown or add preamble text.
+
+### `POST /agents/suggestions/:agentId` (in `routes.ts`)
+
+Registered in the main routes-setup function, alongside (but separate from) the per-provider agent-run handlers. Steps:
+
+1. Load agent by id. 404 if missing.
+2. Reject with 400 if `agent.suggestions_enabled !== true` (defence-in-depth — frontend short-circuits too).
+3. Authenticate the request. Allow unauthenticated only when `agent.rights_mode === "public"`.
+4. API key scope check.
+5. RBAC: require `read` access on the agent.
+6. Rate-limit pre-check via `preCheckAgentRateLimit` using `agent.rate_limits` (when entitled).
+7. Validate `req.body.messages` is a non-empty array of UIMessages.
+8. Resolve `agent.model` via `resolveModel` (same path as agent-run; surfaces forbidden/missing-model errors as 403/400).
+9. Call `generateSuggestions({ languageModel, messages, agentInstructions: agent.instructions })`.
+10. Emit stats (`updateStatistic` for count + token usage) and record rate-limit consumption (`recordAgentTokenUsage`).
+11. Return `{ suggestions: string[] }` with status 200.
+
+On any thrown error from `generateSuggestions`, log it and return 500 with a generic detail. The frontend treats this as a silent failure.
+
 ## Frontend: chat surface
 
 In `frontend/app/(application)/chat/[agent]/[session]/chat.tsx`:
-
-### Constants (top of file)
-
-```ts
-const SUGGESTIONS_PROMPT =
-  "Based on the conversation so far, suggest up to 3 short follow-up questions or " +
-  "messages the user might want to send next. Each suggestion must be written from " +
-  "the user's perspective (first person) and be 12 words or fewer. Return only " +
-  "the suggestions in the structured output — no preamble, no numbering.";
-
-const SUGGESTIONS_SCHEMA = {
-  type: "object",
-  properties: {
-    suggestions: {
-      type: "array",
-      items: { type: "string" },
-      maxItems: 3,
-    },
-  },
-  required: ["suggestions"],
-} as const;
-```
 
 ### State
 
@@ -181,8 +176,10 @@ useEffect(() => {
   if (!agent.suggestions_enabled) return;
   if (status === "streaming" || status === "submitted") return;
   if (messages.length === 0) return;
-  const last = messages[messages.length - 1];
-  if (last.role !== "assistant") return;
+  const lastAssistant = messages[messages.length - 1];
+  if (lastAssistant.role !== "assistant") return;
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  if (!lastUser) return;
 
   // Abort any prior in-flight suggestion fetch (defensive — the submit handler also aborts).
   suggestionAbortRef.current?.abort();
@@ -193,44 +190,34 @@ useEffect(() => {
     try {
       const token = await getToken();
       if (!token) return;
-      const session = currentSessionRef.current;
-      if (!session) return;
 
-      const res = await fetch(`${configContext?.backend}${agent.slug}/${agent.id}`, {
+      const res = await fetch(`${configContext?.backend}/agents/suggestions/${agent.id}`, {
         method: "POST",
         signal: ctrl.signal,
         headers: {
           "Content-Type": "application/json",
           User: user.id,
-          Session: session.id,
           Authorization: `Bearer ${token}`,
-          Stream: "false",
         },
         body: JSON.stringify({
-          message: last,
-          session: session.id,
-          outputSchema: SUGGESTIONS_SCHEMA,
-          customInstructions: SUGGESTIONS_PROMPT,
+          messages: [lastUser, lastAssistant],
         }),
       });
       if (!res.ok) return; // silent failure — feature is best-effort
       const data = await res.json();
       const arr = Array.isArray(data?.suggestions) ? data.suggestions : [];
       setSuggestions(arr.slice(0, 3).map(String));
-    } catch (e) {
+    } catch {
       // Aborted or network error — silently drop. Suggestions are non-essential.
     }
   })();
 
   return () => ctrl.abort();
-  // Re-run on each new completed assistant message. messages.length is sufficient
-  // because the effect is gated on the last message being an assistant in a ready state.
 }, [
   status,
   messages.length,
   agent.suggestions_enabled,
   agent.id,
-  agent.slug,
   configContext?.backend,
   user.id,
 ]);
@@ -281,32 +268,21 @@ Rendered **inside** the existing `{writeAccess && (` gate at chat.tsx:929 — di
 - Suggestion click → input populated, textarea focused, suggestions remain visible until the user actually submits (lets the user pick a different one if they change their mind).
 - Fetch fails (network, auth, model error, schema mismatch) → silent. No error toast, no console.error in production. Suggestions just don't appear.
 
-## Backend: zero changes
-
-Confirmed by inspection of `routes.ts:684-694` (outputSchema branch) and `routes.ts:888-932` (`generateSync` branch with outputSchema):
-
-- `req.body.outputSchema` is parsed (string or object) and converted to a Zod schema via `convertJsonSchemaToZod`.
-- `req.body.customInstructions` is appended to `agent.instructions` before being passed as `instructions` to `generateSync`.
-- `generateSync` handles structured output via `generateText({ output: 'object', schema })` at provider.ts:283-558.
-- Token usage is recorded via the existing `onTokenUsage` callback (routes.ts:920-928) which calls `recordAgentTokenUsage`.
-- Statistics are emitted via the `statistics` arg (routes.ts:916-919) which `generateSync` already wires into `updateStatistic`.
-
-No backend code needs to be written for phase 1.
-
 ## Security and abuse
 
-- The suggestion endpoint is the same authenticated, RBAC-gated, rate-limited endpoint the chat already uses. No new attack surface.
-- The fixed `customInstructions` prompt is shipped from the frontend. A motivated user could already craft an arbitrary `customInstructions` body when calling the chat API directly — this feature does not widen that surface.
-- Suggestions count against the per-agent rate limit (`agent.rate_limits`) and the API-key scope check (routes.ts:606-610). A misconfigured agent or pathological model could double agent traffic; this is acceptable for an opt-in feature.
+- The dedicated route uses the same authentication, RBAC (`read` access on the agent), API-key scope check, and rate-limit pre-check as the agent-run route. No new attack surface.
+- The fixed suggestion prompt lives backend-side — clients cannot inject arbitrary system instructions into the suggestions pipeline.
+- Suggestions count against the per-agent rate limit (`agent.rate_limits`). A misconfigured agent or pathological model could double agent traffic; this is acceptable for an opt-in feature.
 
 ## Failure modes
 
 | Failure | User-visible behaviour |
 |---|---|
-| Model returns malformed JSON despite the schema | Backend throws; frontend `res.ok === false`; suggestions silently absent. |
+| Model fails to produce schema-valid JSON | `generateObject` retries up to 3 times; if all retries fail it throws, route returns 500, frontend `res.ok === false`, suggestions silently absent. |
 | Rate limit exceeded on suggestion call | Backend returns 429; frontend `res.ok === false`; suggestions silently absent. The next user turn is unaffected. |
 | User refreshes the page | Suggestions disappear (ephemeral). |
-| Agent's `model` is unset or unresolvable | Backend returns 400 (routes.ts:698-720); frontend silently drops the suggestion. The main chat path also surfaces this error on the next normal send. |
+| Agent's `model` is unset or unresolvable | Backend returns 400/403; frontend silently drops the suggestion. The main chat path also surfaces this error on the next normal send. |
+| Agent's `suggestions_enabled` flipped off after frontend cached it | Backend returns 400 with "Suggestions are not enabled for this agent"; frontend silently drops. |
 | Suggestion call still in-flight when user submits next message | Aborted in `onSubmit`; suggestions cleared. |
 | Slow suggestion call | Stale suggestions remain hidden because `status === "streaming"` gates rendering; once the next reply finishes, the new fetch supersedes the old one (which has already been aborted). |
 

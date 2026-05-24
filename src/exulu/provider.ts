@@ -66,7 +66,6 @@ interface ExuluProviderParams {
     audio: audioTypes[];
     video: videoTypes[];
   };
-  outputSchema?: z.ZodType;
   rateLimit?: RateLimiterRule;
 }
 
@@ -239,9 +238,6 @@ export class ExuluProvider {
           agent.instructions?.slice(0, 100) + "...",
         );
 
-        // todo cant use outputSchema when calling an agent as a tool for now, maybe look into
-        // enabling this in the future by adding a "outputSchema" field to the inputSchema of this
-        // tool definition so agents can dynamically define a desired output schema.
         const response = await this.generateSync({
           agent: agent,
           contexts: contexts,
@@ -297,7 +293,6 @@ export class ExuluProvider {
     contexts,
     rerankers,
     exuluConfig,
-    outputSchema,
     agent,
     instructions,
     maxStepCount,
@@ -322,7 +317,6 @@ export class ExuluProvider {
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
     instructions?: string;
-    outputSchema?: z.ZodTypeAny;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
     // todo get rid of any
   }): Promise<any> => {
@@ -389,7 +383,7 @@ export class ExuluProvider {
         session,
         userMessage: query,
         model: model,
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // If memory context was configured for the agent, we retrieve
@@ -534,63 +528,46 @@ export class ExuluProvider {
       let result: { object?: any; text?: string } = { object: null, text: "" };
       let inputTokens: number = 0;
       let outputTokens: number = 0;
-      if (outputSchema) {
-        const { output, usage } = await generateText({
-          temperature: 0, // TODO Make this configurable
-          model: model,
-          system,
-          maxRetries: 3,
-          output: Output.object({
-            schema: outputSchema,
-          }),
-          prompt: prompt,
-          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
-        });
-        result.object = output;
-        inputTokens = usage.inputTokens || 0;
-        outputTokens = usage.outputTokens || 0;
-      } else {
-        console.log(
-          "[EXULU] Generating text for agent: " + this.name,
-          "with prompt: " + prompt?.slice(0, 100) + "...",
-        );
+      console.log(
+        "[EXULU] Generating text for agent: " + this.name,
+        "with prompt: " + prompt?.slice(0, 100) + "...",
+      );
 
-        const output = await generateText({
-          temperature: 0, // TODO Make this configurable
-          model: model,
-          system,
-          prompt: prompt,
-          maxRetries: 2,
-          tools: await convertExuluToolsToAiSdkTools(
-            currentTools,
-            currentSkills,
-            approvedTools,
-            allExuluTools,
-            toolConfigs,
-            providerapikey,
-            contexts,
-            rerankers,
-            user,
-            exuluConfig,
-            session,
-            req,
-            project,
-            sessionItems,
-            model,
-            agent,
-            memoryItems
-          ),
-          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
-        });
-        console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
-        const {
-          text,
-          totalUsage,
-        } = output;
-        result.text = text;
-        inputTokens = totalUsage?.inputTokens || 0;
-        outputTokens = totalUsage?.outputTokens || 0;
-      }
+      const output = await generateText({
+        temperature: 0, // TODO Make this configurable
+        model: model,
+        system,
+        prompt: prompt,
+        maxRetries: 2,
+        tools: await convertExuluToolsToAiSdkTools(
+          currentTools,
+          currentSkills,
+          approvedTools,
+          allExuluTools,
+          toolConfigs,
+          providerapikey,
+          contexts,
+          rerankers,
+          user,
+          exuluConfig,
+          session,
+          req,
+          project,
+          sessionItems,
+          model,
+          agent,
+          memoryItems
+        ),
+        stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
+      });
+      console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
+      const {
+        text,
+        totalUsage,
+      } = output;
+      result.text = text;
+      inputTokens = totalUsage?.inputTokens || 0;
+      outputTokens = totalUsage?.outputTokens || 0;
 
       if (statistics) {
         await Promise.all([
@@ -901,7 +878,7 @@ export class ExuluProvider {
         session,
         userMessage: query,
         model: model,
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // If memory context was configured for the agent, we retrieve
@@ -1158,7 +1135,7 @@ ${skillsList}
       },
       // provide more loops for skills because they are more complex to execute
       // todo allow configuring this per skill
-      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)], 
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)],
     });
 
     return {
