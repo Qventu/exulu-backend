@@ -58,7 +58,25 @@ jest.mock("crypto-js", () => ({
   },
 }));
 
-import { resolveModel, ResolveModelError } from "./resolve-model";
+const mockWaitForReady = jest.fn();
+jest.mock("./litellm/supervisor", () => ({
+  isLiteLLMEnabled: () => process.env.EXULU_USE_LITELLM === "true",
+  waitForLiteLLMReady: (...args: any[]) => mockWaitForReady(...args),
+}));
+
+const mockLiteLLMModelFactory = jest.fn(
+  (modelName: string) => ({ tag: "litellm-lm", modelName }),
+);
+jest.mock("@ai-sdk/openai-compatible", () => ({
+  createOpenAICompatible: jest.fn(() => mockLiteLLMModelFactory),
+}));
+
+import {
+  resolveModel,
+  ResolveModelError,
+  LITELLM_PROVIDER_SENTINEL,
+  __resetLiteLLMProviderForTesting,
+} from "./resolve-model";
 import type { ExuluProvider } from "./provider";
 
 const fakeProvider = (id: string, hasCreate = true): ExuluProvider =>
@@ -87,6 +105,11 @@ beforeEach(() => {
   fixtures.variables.clear();
   mockCheckRecordAccess.mockReset();
   mockCheckRecordAccess.mockResolvedValue(true);
+  mockWaitForReady.mockReset();
+  mockWaitForReady.mockResolvedValue(undefined);
+  mockLiteLLMModelFactory.mockClear();
+  __resetLiteLLMProviderForTesting();
+  delete process.env.EXULU_USE_LITELLM;
   process.env.NEXTAUTH_SECRET = "test-secret";
 });
 
@@ -318,6 +341,84 @@ describe("resolveModel", () => {
       expect.objectContaining({ id: "m11" }),
       "write",
       expect.any(Object),
+    );
+  });
+});
+
+describe("resolveModel in LiteLLM mode", () => {
+  beforeEach(() => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+  });
+
+  test("happy path: returns language model built from openai-compatible factory", async () => {
+    const result = await resolveModel({
+      modelId: "vertex-flash",
+      user: fakeUser(),
+      providers: [],
+    });
+
+    expect(mockWaitForReady).toHaveBeenCalledTimes(1);
+    expect(mockLiteLLMModelFactory).toHaveBeenCalledWith("vertex-flash");
+    expect(result.languageModel).toEqual({
+      tag: "litellm-lm",
+      modelName: "vertex-flash",
+    });
+    expect(result.model.id).toBe("vertex-flash");
+    expect(result.model.name).toBe("vertex-flash");
+    expect(result.exuluProvider).toBe(LITELLM_PROVIDER_SENTINEL);
+    expect(result.apiKey).toBeUndefined();
+  });
+
+  test("does NOT call checkRecordAccess (RBAC bypass at resolver level)", async () => {
+    await resolveModel({
+      modelId: "vertex-flash",
+      user: fakeUser(),
+      providers: [],
+    });
+    expect(mockCheckRecordAccess).not.toHaveBeenCalled();
+  });
+
+  test("does NOT query the models DB table", async () => {
+    // Fail the test if the DB is touched.
+    fixtures.models.set("vertex-flash", {
+      id: "vertex-flash",
+      name: "Should not be read",
+      provider: "p1",
+      active: false, // would normally trigger MODEL_INACTIVE
+      rights_mode: "public",
+      created_by: "1",
+    } as any);
+
+    const result = await resolveModel({
+      modelId: "vertex-flash",
+      providers: [],
+    });
+    // If the catalog branch had run, MODEL_INACTIVE would have thrown.
+    expect(result.languageModel).toBeDefined();
+  });
+
+  test("LITELLM_NOT_CONFIGURED: master key missing", async () => {
+    delete process.env.LITELLM_MASTER_KEY;
+    await expect(
+      resolveModel({ modelId: "vertex-flash", providers: [] }),
+    ).rejects.toMatchObject({ code: "LITELLM_NOT_CONFIGURED" });
+  });
+
+  test("LITELLM_NOT_READY: waitForLiteLLMReady rejects", async () => {
+    mockWaitForReady.mockRejectedValueOnce(new Error("/health timeout"));
+    await expect(
+      resolveModel({ modelId: "vertex-flash", providers: [] }),
+    ).rejects.toMatchObject({ code: "LITELLM_NOT_READY" });
+  });
+
+  test("LITELLM_PROVIDER_SENTINEL.id returns 'litellm', other props throw", () => {
+    expect(LITELLM_PROVIDER_SENTINEL.id).toBe("litellm");
+    expect(() => (LITELLM_PROVIDER_SENTINEL as any).capabilities).toThrow(
+      /not available in LiteLLM mode/,
+    );
+    expect(() => (LITELLM_PROVIDER_SENTINEL as any).workflows).toThrow(
+      /not available in LiteLLM mode/,
     );
   });
 });

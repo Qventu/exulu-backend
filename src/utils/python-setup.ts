@@ -14,9 +14,15 @@ import { fileURLToPath } from 'url';
 const execAsync = promisify(exec);
 
 /**
- * Get the package root directory (where this package is installed)
+ * Get the package root directory (where this package is installed).
+ *
+ * Walks up from the current file until it finds a package.json with
+ * name === "@exulu/backend". Works in dev (src/), built dist/, and via
+ * npm link. Exported so other boot-time code (e.g., the LiteLLM supervisor
+ * in src/exulu/app/index.ts) can find the package root without repeating
+ * the same walk.
  */
-function getPackageRoot(): string {
+export function getPackageRoot(): string {
   // In ESM, we need to use import.meta.url
   const currentFile = fileURLToPath(import.meta.url);
   let currentDir = dirname(currentFile);

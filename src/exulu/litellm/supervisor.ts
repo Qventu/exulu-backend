@@ -1,0 +1,361 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+
+/**
+ * Spawns the LiteLLM proxy as a child process when EXULU_USE_LITELLM=true,
+ * supervises it (exponential-backoff respawn capped at 5 consecutive crashes),
+ * exposes a memoized readiness promise consumers can await before issuing
+ * requests, and shuts the child down cleanly on Exulu shutdown signals.
+ *
+ * The package root is passed in by the caller (ExuluApp boot path) so this
+ * module stays free of import.meta.url, making it cleanly unit-testable.
+ *
+ * Design doc: docs/superpowers/specs/2026-05-23-litellm-proxy-integration-design.md
+ */
+
+export type SupervisorState =
+  | "idle"
+  | "starting"
+  | "ready"
+  | "respawning"
+  | "stopped"
+  | "given_up";
+
+type SupervisorInternal = {
+  child: ChildProcess | undefined;
+  state: SupervisorState;
+  crashCount: number;
+  backoffMs: number;
+  readyPromise: Promise<void> | undefined;
+  shutdownRequested: boolean;
+};
+
+const MAX_CRASHES = 5;
+const INITIAL_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 30_000;
+const READY_TIMEOUT_MS = 30_000;
+const READY_POLL_INTERVAL_MS = 200;
+const SHUTDOWN_GRACE_MS = 5_000;
+
+const internal: SupervisorInternal = {
+  child: undefined,
+  state: "idle",
+  crashCount: 0,
+  backoffMs: INITIAL_BACKOFF_MS,
+  readyPromise: undefined,
+  shutdownRequested: false,
+};
+
+/**
+ * Whether LiteLLM mode is enabled via env var.
+ */
+export const isLiteLLMEnabled = (): boolean =>
+  process.env.EXULU_USE_LITELLM === "true";
+
+const resolveConfig = (packageRoot: string) => {
+  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+  const port = process.env.LITELLM_PORT ?? "4000";
+  const masterKey = process.env.LITELLM_MASTER_KEY;
+  const configPath =
+    process.env.LITELLM_CONFIG_PATH ??
+    resolve(packageRoot, "./config.litellm.yaml");
+  const venvPython = resolve(packageRoot, "ee/python/.venv/bin/python");
+  const litellmBin = resolve(packageRoot, "ee/python/.venv/bin/litellm");
+  return { host, port, masterKey, configPath, venvPython, litellmBin };
+};
+
+const log = (line: string) => console.log(`[EXULU-LITELLM] ${line}`);
+
+/**
+ * Poll http://host:port/health/liveliness until 200 OK or timeout.
+ *
+ * /health requires the master key in LiteLLM; /health/liveliness is the
+ * unauthenticated liveness probe specifically intended for boot-time
+ * supervisors and k8s probes. (The misspelling is LiteLLM's, not ours.)
+ */
+const pollHealth = async (host: string, port: string): Promise<void> => {
+  const url = `http://${host}:${port}/health/liveliness`;
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (res.ok) return;
+    } catch {
+      // not up yet
+    }
+    await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+  }
+  throw new Error(
+    `LiteLLM did not become ready at ${url} within ${READY_TIMEOUT_MS}ms`,
+  );
+};
+
+const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
+  log(
+    `Spawning LiteLLM: ${cfg.litellmBin} --config ${cfg.configPath} --port ${cfg.port} --host ${cfg.host}`,
+  );
+
+  // Strip env vars that conflict with LiteLLM's CLI flags. LiteLLM's
+  // click-based CLI reads DEBUG as the value for its `--debug` boolean flag,
+  // and any value other than 0/1/true/false/etc. crashes the process. Node's
+  // `debug` package convention is DEBUG=<namespace-filter> (e.g.
+  // "http-proxy-middleware*"), which is incompatible — strip it for the child
+  // so the parent process's debugging is unaffected.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { DEBUG: _debug, ...envWithoutDebug } = process.env;
+
+  const child = spawn(
+    cfg.litellmBin,
+    [
+      "--config",
+      cfg.configPath,
+      "--port",
+      cfg.port,
+      "--host",
+      cfg.host,
+    ],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: envWithoutDebug,
+    },
+  );
+
+  child.stdout?.on("data", (chunk: Buffer) => {
+    chunk
+      .toString()
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .forEach((l) => log(l));
+  });
+  child.stderr?.on("data", (chunk: Buffer) => {
+    chunk
+      .toString()
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .forEach((l) => log(`stderr: ${l}`));
+  });
+
+  return child;
+};
+
+const supervise = async (cfg: ReturnType<typeof resolveConfig>) => {
+  while (!internal.shutdownRequested && internal.crashCount < MAX_CRASHES) {
+    internal.state = internal.crashCount === 0 ? "starting" : "respawning";
+    internal.child = spawnLiteLLM(cfg);
+
+    const exitPromise = new Promise<number | null>((resolveFn) => {
+      internal.child!.on("exit", (code) => resolveFn(code));
+    });
+
+    try {
+      // Wait for ready or for child to exit (whichever first).
+      await Promise.race([
+        pollHealth(cfg.host, cfg.port).then(() => "ready" as const),
+        exitPromise.then((code) => ({ exited: code })),
+      ]);
+    } catch (err) {
+      log(`Readiness probe failed: ${(err as Error).message}`);
+      // kill the child if it's still alive; the exit handler will trigger respawn
+      try {
+        internal.child?.kill("SIGTERM");
+      } catch {
+        // already dead
+      }
+    }
+
+    if (!internal.child?.killed && internal.child?.exitCode === null) {
+      internal.state = "ready";
+      internal.crashCount = 0;
+      internal.backoffMs = INITIAL_BACKOFF_MS;
+      log("LiteLLM is ready.");
+    }
+
+    // Wait for the child to exit (it stays running until shutdown or crash).
+    const code = await exitPromise;
+    internal.state = "respawning";
+    internal.child = undefined;
+
+    if (internal.shutdownRequested) {
+      log("Child exited during shutdown; supervisor stopping.");
+      internal.state = "stopped";
+      return;
+    }
+
+    internal.crashCount += 1;
+    log(
+      `LiteLLM exited (code=${code}). Crash ${internal.crashCount}/${MAX_CRASHES}. ` +
+        `Respawning in ${internal.backoffMs}ms.`,
+    );
+    if (internal.crashCount >= MAX_CRASHES) {
+      log(
+        "LiteLLM keeps crashing — fix the config and restart Exulu. " +
+          "Giving up on respawn.",
+      );
+      internal.state = "given_up";
+      return;
+    }
+    await new Promise((r) => setTimeout(r, internal.backoffMs));
+    internal.backoffMs = Math.min(internal.backoffMs * 2, MAX_BACKOFF_MS);
+  }
+};
+
+/**
+ * Module-level package root. Set by the ExuluApp boot path before calling
+ * startLiteLLMSupervisor(). Tests inject a fake path directly.
+ */
+let _packageRoot: string | undefined;
+
+/**
+ * Set the package root once at boot. The caller (ExuluApp) knows where
+ * @exulu/backend is installed via its own discovery (python-setup.ts already
+ * does this). Keeps this module free of import.meta.url so it's cleanly
+ * unit-testable in jest's CommonJS environment.
+ */
+export const setLiteLLMPackageRoot = (root: string): void => {
+  _packageRoot = root;
+};
+
+/**
+ * Start the LiteLLM supervisor. Idempotent — calling twice is a no-op (returns
+ * the existing ready promise).
+ *
+ * Behavior:
+ *   - EXULU_USE_LITELLM not set: returns early, no-op.
+ *   - LITELLM_MASTER_KEY missing: throws synchronously.
+ *   - Package root not set: throws (caller must invoke setLiteLLMPackageRoot first).
+ *   - Config path missing: logs error, keeps Exulu running, returns. resolveModel
+ *     will surface LITELLM_NOT_READY for every agent request until the operator
+ *     fixes the config and restarts.
+ *   - Python venv missing: logs error, returns.
+ */
+export const startLiteLLMSupervisor = async (
+  options: { packageRoot?: string } = {},
+): Promise<void> => {
+  if (!isLiteLLMEnabled()) return;
+
+  if (internal.readyPromise) {
+    return internal.readyPromise;
+  }
+
+  // Validate the master key first (the most common misconfig) so the error
+  // surfaces clearly even if the caller forgot to set the package root too.
+  if (!process.env.LITELLM_MASTER_KEY) {
+    throw new Error(
+      "EXULU_USE_LITELLM is true but LITELLM_MASTER_KEY is not set. " +
+        "Set LITELLM_MASTER_KEY to a strong secret and restart Exulu.",
+    );
+  }
+
+  const packageRoot = options.packageRoot ?? _packageRoot;
+  if (!packageRoot) {
+    throw new Error(
+      "LiteLLM supervisor: package root not set. Call setLiteLLMPackageRoot() " +
+        "from the boot path before starting the supervisor.",
+    );
+  }
+  const cfg = resolveConfig(packageRoot);
+
+  if (!existsSync(cfg.configPath)) {
+    log(
+      `LiteLLM config not found at ${cfg.configPath}. ` +
+        `Copy ee/python/.litellm/config.yaml.example to that path, edit it, ` +
+        `and restart Exulu. LiteLLM will NOT be started until then.`,
+    );
+    internal.state = "given_up";
+    return;
+  }
+
+  if (!existsSync(cfg.litellmBin)) {
+    log(
+      `LiteLLM binary not found at ${cfg.litellmBin}. The Python venv may not ` +
+        `be set up. Run setupPythonEnvironment() from @exulu/backend, then restart.`,
+    );
+    internal.state = "given_up";
+    return;
+  }
+
+  internal.readyPromise = (async () => {
+    // Kick off the supervisor loop in the background and resolve as soon as the
+    // first readiness check passes. If supervise() exits with given_up before
+    // that, we surface a clear rejection.
+    const supervisionLoop = supervise(cfg);
+    const deadline = Date.now() + READY_TIMEOUT_MS + 5_000;
+    while (Date.now() < deadline) {
+      if (internal.state === "ready") return;
+      if (internal.state === "given_up") {
+        throw new Error("LiteLLM supervisor gave up before becoming ready.");
+      }
+      await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+    }
+    throw new Error("Timed out waiting for LiteLLM supervisor readiness.");
+  })();
+
+  registerShutdownHandlers();
+
+  return internal.readyPromise;
+};
+
+/**
+ * Await this from resolveModel() before issuing the first request. Memoized;
+ * subsequent calls return the same promise.
+ */
+export const waitForLiteLLMReady = async (): Promise<void> => {
+  if (!isLiteLLMEnabled()) return;
+  if (!internal.readyPromise) {
+    // Supervisor was never started — start it now. This covers test paths and
+    // unusual boot sequences where resolveModel runs before startLiteLLMSupervisor.
+    await startLiteLLMSupervisor();
+    return;
+  }
+  return internal.readyPromise;
+};
+
+const stopLiteLLM = (signal: NodeJS.Signals = "SIGTERM") => {
+  internal.shutdownRequested = true;
+  const child = internal.child;
+  if (!child) return;
+  try {
+    child.kill(signal);
+  } catch {
+    // already dead
+  }
+  // Force-kill if it hasn't exited after the grace period.
+  setTimeout(() => {
+    try {
+      if (!child.killed && child.exitCode === null) {
+        child.kill("SIGKILL");
+      }
+    } catch {
+      // ignore
+    }
+  }, SHUTDOWN_GRACE_MS).unref();
+};
+
+let shutdownHandlersRegistered = false;
+const registerShutdownHandlers = () => {
+  if (shutdownHandlersRegistered) return;
+  shutdownHandlersRegistered = true;
+  process.on("SIGINT", () => stopLiteLLM("SIGTERM"));
+  process.on("SIGTERM", () => stopLiteLLM("SIGTERM"));
+  process.on("exit", () => stopLiteLLM("SIGTERM"));
+};
+
+/**
+ * Returns the current supervisor state. Exposed for tests + debugging endpoints.
+ */
+export const getSupervisorState = (): SupervisorState => internal.state;
+
+/**
+ * Test-only: reset internal state. Don't call from production code.
+ */
+export const __resetSupervisorForTesting = () => {
+  internal.child = undefined;
+  internal.state = "idle";
+  internal.crashCount = 0;
+  internal.backoffMs = INITIAL_BACKOFF_MS;
+  internal.readyPromise = undefined;
+  internal.shutdownRequested = false;
+  shutdownHandlersRegistered = false;
+  _packageRoot = undefined;
+};

@@ -54,6 +54,7 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
+import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -526,13 +527,19 @@ Mood: friendly and intelligent.
         redisHost: process.env.REDIS_HOST,
         enabled: config?.workers?.enabled,
       },
+      liteLLM: {
+        enabled: process.env.EXULU_USE_LITELLM === "true",
+      },
     });
   });
 
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-
+  // Register the agent-run handler for a (provider, slug) pair. In Spec A
+  // catalog mode this is called once per ExuluProvider in providers.forEach
+  // below. In LiteLLM mode it is also called once with a fixed slug and any
+  // provider as the orchestrator (the in-code provider here is only used as
+  // a method-holder for generateStream/generateSync; the actual languageModel
+  // comes from resolveModel's LiteLLM branch).
+  const registerAgentRunRoute = (slug: string, provider: ExuluProvider) => {
     app.post(slug + "/:instance", async (req: Request, res: Response) => {
       console.log("[EXULU] POST " + slug + "/:instance", req.body);
 
@@ -924,7 +931,21 @@ Mood: friendly and intelligent.
         return;
       }
     });
+  };
+
+  // Spec A: one handler per code-defined ExuluProvider, mounted at its slug.
+  providers.forEach((provider) => {
+    const slug = provider.slug as string;
+    if (!slug) return;
+    registerAgentRunRoute(slug, provider);
   });
+
+  // LiteLLM mode: a single handler at a fixed path. agent.slug is hydrated to
+  // "/agents/litellm/run" in graphql/utilities/sanitize-and-hydrate-fields.ts
+  // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
+  if (isLiteLLMEnabled() && providers.length > 0) {
+    registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  }
 
   if (
     config?.fileUploads &&

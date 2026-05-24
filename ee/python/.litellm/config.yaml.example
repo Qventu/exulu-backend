@@ -1,0 +1,45 @@
+# LiteLLM Proxy configuration for Exulu.
+#
+# This file is read by the LiteLLM process Exulu spawns when EXULU_USE_LITELLM=true.
+# Documentation: https://docs.litellm.ai/docs/proxy/configs
+#
+# To use:
+#   1. Copy this file to config.yaml in the same directory.
+#   2. Edit model_list to add the providers you want to expose.
+#   3. Set the referenced env vars (LITELLM_MASTER_KEY, GOOGLE_VERTEX_PROJECT, etc.).
+#   4. Set EXULU_USE_LITELLM=true and (re)start Exulu.
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+model_list:
+  # Each entry's `model_name` is what Exulu agents will reference in their
+  # `model` field after toggling LiteLLM on. Pick stable, human-friendly names.
+
+  - model_name: vertex-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/GOOGLE_VERTEX_PROJECT
+      vertex_location: europe-west1
+      vertex_credentials: os.environ/GOOGLE_VERTEX_CREDENTIALS_JSON
+
+  - model_name: vertex-pro
+    litellm_params:
+      model: vertex_ai/gemini-2.5-pro
+      vertex_project: os.environ/GOOGLE_VERTEX_PROJECT
+      vertex_location: europe-west1
+      vertex_credentials: os.environ/GOOGLE_VERTEX_CREDENTIALS_JSON
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+      api_key: os.environ/OPENAI_API_KEY
+
+# Per-model rate limits and budgets are configured here in LiteLLM-native form.
+# See https://docs.litellm.ai/docs/proxy/users for budget configuration and
+# https://docs.litellm.ai/docs/proxy/rate_limit_tiers for rate limiting.

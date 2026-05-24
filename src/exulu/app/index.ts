@@ -50,6 +50,12 @@ import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { createWorkers } from "@EE/workers.ts";
 import { reportSystemDependencies } from "@SRC/exulu/system-dependencies.ts";
+import {
+  isLiteLLMEnabled,
+  setLiteLLMPackageRoot,
+  startLiteLLMSupervisor,
+} from "@SRC/exulu/litellm/supervisor.ts";
+import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -311,6 +317,31 @@ export class ExuluApp {
     await reportSystemDependencies({
       requireSystemDependencies: config.requireSystemDependencies !== false,
     });
+
+    // Spawn the LiteLLM proxy when EXULU_USE_LITELLM=true. Resolves once LiteLLM
+    // is ready, or — if the config / venv is missing — logs a clear message
+    // and lets Exulu keep booting (resolveModel surfaces LITELLM_NOT_READY for
+    // every agent request until the operator fixes the setup and restarts).
+    // No-op when EXULU_USE_LITELLM is unset.
+    if (isLiteLLMEnabled()) {
+      // Reuse python-setup.ts's package-root walker so this works whether
+      // the file is loaded from src/exulu/app/index.ts (dev) or dist/index.js
+      // (built/linked) — a naive ../../.. would land in the wrong place in
+      // the latter case.
+      const packageRoot = getPackageRoot();
+      setLiteLLMPackageRoot(packageRoot);
+      try {
+        await startLiteLLMSupervisor();
+      } catch (err) {
+        console.error(
+          "[EXULU] LiteLLM supervisor failed to start:",
+          (err as Error).message,
+        );
+        // Do not throw — Exulu keeps booting so the admin UI is reachable
+        // to debug. Agent runs will fail with LITELLM_NOT_READY until the
+        // operator fixes the underlying issue.
+      }
+    }
 
     console.log("[EXULU] App initialized.");
 
