@@ -53,6 +53,7 @@ import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
+import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
@@ -681,18 +682,6 @@ Mood: friendly and intelligent.
         user,
       );
 
-      if (req.body.outputSchema && !!headers.stream) {
-        throw new Error("Providing a outputSchema in the POST body is not allowed when using the streaming API, set 'stream' to false in the headers when defining a response schema.")
-      }
-
-      let outputSchema: any | undefined;
-      if (req.body.outputSchema) {
-        if (typeof req.body.outputSchema === "string") {
-          req.body.outputSchema = JSON.parse(req.body.outputSchema);
-        }
-        outputSchema = convertJsonSchemaToZod(req.body.outputSchema);
-      }
-
       const overrideModelId = req.headers["x-exulu-model-override"] as string | undefined;
       const modelId = overrideModelId ?? agent.model;
       if (!modelId) {
@@ -899,7 +888,6 @@ Mood: friendly and intelligent.
         const response = await provider.generateSync({
           contexts: contexts,
           rerankers: rerankers || [],
-          outputSchema: outputSchema,
           agent: agent,
           user,
           req: req,
@@ -946,6 +934,159 @@ Mood: friendly and intelligent.
   if (isLiteLLMEnabled() && providers.length > 0) {
     registerAgentRunRoute("/agents/litellm/run", providers[0]!);
   }
+
+  // Follow-up message suggestions. Stateless: no session is loaded or written.
+  // The frontend posts the last user+assistant exchange and gets back up to 3
+  // short follow-up prompts the user might want to send next. Toggle lives on
+  // the agent (`suggestions_enabled`) and is enforced client-side; this route
+  // also rejects when the agent does not have it enabled.
+  app.post("/agents/suggestions/:agentId", async (req: Request, res: Response) => {
+    const agentId = req.params.agentId;
+    if (!agentId) {
+      res.status(400).json({ detail: "Missing agentId" });
+      return;
+    }
+
+    const agent = await exuluApp.get().agent(agentId);
+    if (!agent) {
+      res.status(404).json({ detail: `Agent ${agentId} not found.` });
+      return;
+    }
+
+    if (!agent.suggestions_enabled) {
+      res.status(400).json({ detail: "Suggestions are not enabled for this agent." });
+      return;
+    }
+
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id && agent.rights_mode !== "public") {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    const scopeCheck = checkApiKeyScope(user, agentId);
+    if (!scopeCheck.allowed) {
+      res.status(scopeCheck.code).json({ detail: scopeCheck.reason });
+      return;
+    }
+
+    const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+    if (!hasAccessToAgent) {
+      res.status(401).json({ detail: "You don't have access to this agent." });
+      return;
+    }
+
+    const callerId = resolveCallerId(req, user?.id);
+    const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
+    const effectiveLimits = rateLimitsEnabled
+      ? ((agent as any).rate_limits ?? null)
+      : null;
+    const preCheck = await preCheckAgentRateLimit({
+      agentId,
+      callerId,
+      limits: effectiveLimits,
+    });
+    if (!preCheck.ok) {
+      res.setHeader("Retry-After", String(preCheck.retryAfter));
+      res.status(429).json({
+        detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
+        metric: preCheck.metric,
+        retryAfter: preCheck.retryAfter,
+      });
+      return;
+    }
+
+    const messages: UIMessage[] = Array.isArray(req.body.messages) ? req.body.messages : [];
+    if (messages.length === 0) {
+      res.status(400).json({ detail: "Missing messages in request body." });
+      return;
+    }
+
+    if (!agent.model) {
+      res.status(400).json({
+        detail: `Agent ${agent.name} (${agent.id}) has no model configured.`,
+      });
+      return;
+    }
+
+    let resolved: Awaited<ReturnType<typeof resolveModel>>;
+    try {
+      resolved = await resolveModel({
+        modelId: agent.model,
+        user,
+        providers,
+        agent: { id: agent.id },
+      });
+    } catch (err) {
+      if (err instanceof ResolveModelError) {
+        const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+        res.status(status).json({ detail: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+
+    try {
+      const { suggestions, usage } = await generateSuggestions({
+        languageModel: resolved.languageModel,
+        messages,
+        agentInstructions: agent.instructions,
+      });
+
+      await Promise.all([
+        updateStatistic({
+          name: "count",
+          label: agent.name,
+          type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+          trigger: "agent",
+          count: 1,
+          user: user?.id,
+          role: user?.role?.id,
+        }),
+        ...(usage.inputTokens
+          ? [
+            updateStatistic({
+              name: "inputTokens",
+              label: agent.name,
+              type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+              trigger: "agent",
+              count: usage.inputTokens,
+              user: user?.id,
+              role: user?.role?.id,
+            }),
+          ]
+          : []),
+        ...(usage.outputTokens
+          ? [
+            updateStatistic({
+              name: "outputTokens",
+              label: agent.name,
+              type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+              trigger: "agent",
+              count: usage.outputTokens,
+            }),
+          ]
+          : []),
+        recordAgentTokenUsage({
+          agentId,
+          callerId,
+          limits: effectiveLimits,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        }),
+      ]);
+
+      res.status(200).json({ suggestions });
+    } catch (err) {
+      console.error("[EXULU] suggestions generation failed", err);
+      res.status(500).json({
+        detail: err instanceof Error ? err.message : "Failed to generate suggestions.",
+      });
+    }
+  });
 
   if (
     config?.fileUploads &&

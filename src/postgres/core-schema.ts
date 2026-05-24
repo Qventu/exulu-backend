@@ -228,6 +228,11 @@ const agentsSchema: ExuluTableDefinition = {
       type: "boolean"
     },
     {
+      name: "suggestions_enabled",
+      type: "boolean",
+      default: false,
+    },
+    {
       name: "description",
       type: "text",
     },
