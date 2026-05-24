@@ -43,7 +43,7 @@ const agentMessagesSchema: ExuluTableDefinition = {
     },
     {
       name: "model",
-      type: "uuid",
+      type: "text",
     },
   ],
 };
@@ -245,7 +245,7 @@ const agentsSchema: ExuluTableDefinition = {
     },
     {
       name: "model",
-      type: "uuid",
+      type: "text",
     },
     {
       name: "active",

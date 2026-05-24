@@ -3,3 +3,7 @@ transformers
 pyinstaller
 docling-hierarchical-pdf
 defusedxml
+# LiteLLM proxy — only used when EXULU_USE_LITELLM=true. Always installed so
+# the dep is ready when the env var is flipped. Pinned to a tested version;
+# upgrade deliberately.
+litellm[proxy]==1.85.1

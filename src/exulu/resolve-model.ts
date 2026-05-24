@@ -1,9 +1,11 @@
 import type { LanguageModel } from "ai";
 import CryptoJS from "crypto-js";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { postgresClient } from "@SRC/postgres/client";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluProvider } from "./provider";
+import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor";
 
 export type ModelRow = {
   id: string;
@@ -45,7 +47,33 @@ export type ResolveModelErrorCode =
   | "PROVIDER_NOT_FOUND"
   | "PROVIDER_NO_MODEL"
   | "AUTH_VAR_NOT_FOUND"
-  | "AUTH_VAR_NOT_ENCRYPTED";
+  | "AUTH_VAR_NOT_ENCRYPTED"
+  | "LITELLM_NOT_CONFIGURED"
+  | "LITELLM_NOT_READY";
+
+/**
+ * Sentinel returned in place of ExuluProvider when LiteLLM mode is on.
+ * Reading any property other than `id` throws — call sites that try to access
+ * provider.capabilities / .workflows / etc. fail loudly rather than silently
+ * returning undefined. Code paths that need ExuluProvider metadata MUST check
+ * isLiteLLMEnabled() first and degrade.
+ */
+export const LITELLM_PROVIDER_SENTINEL: ExuluProvider = new Proxy(
+  {} as ExuluProvider,
+  {
+    get(_target, prop) {
+      if (prop === "id") return "litellm";
+      if (prop === Symbol.toPrimitive || prop === "toString") {
+        return () => "[LiteLLMProviderSentinel]";
+      }
+      throw new Error(
+        `ExuluProvider.${String(prop)} is not available in LiteLLM mode. ` +
+          `Code paths that depend on the in-code provider catalog must check ` +
+          `isLiteLLMEnabled() and degrade.`,
+      );
+    },
+  },
+);
 
 export class ResolveModelError extends Error {
   constructor(public code: ResolveModelErrorCode, message: string) {
@@ -54,10 +82,78 @@ export class ResolveModelError extends Error {
   }
 }
 
+/**
+ * Memoized OpenAI-compatible provider pointing at the spawned LiteLLM proxy.
+ * Built once on first use in LiteLLM mode.
+ */
+let _litellmProvider: ReturnType<typeof createOpenAICompatible> | undefined;
+const getLiteLLMProvider = () => {
+  if (_litellmProvider) return _litellmProvider;
+  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+  const port = process.env.LITELLM_PORT ?? "4000";
+  const masterKey = process.env.LITELLM_MASTER_KEY;
+  if (!masterKey) {
+    throw new ResolveModelError(
+      "LITELLM_NOT_CONFIGURED",
+      "LITELLM_MASTER_KEY is required when EXULU_USE_LITELLM=true",
+    );
+  }
+  _litellmProvider = createOpenAICompatible({
+    name: "litellm",
+    baseURL: `http://${host}:${port}/v1`,
+    apiKey: masterKey,
+  });
+  return _litellmProvider;
+};
+
+/**
+ * Test-only: reset the memoized provider so tests can rebuild it with
+ * different env vars between cases.
+ */
+export const __resetLiteLLMProviderForTesting = () => {
+  _litellmProvider = undefined;
+};
+
 export async function resolveModel(input: ResolveModelInput): Promise<ResolvedModel> {
   const { modelId, user, providers, agent, project, rbacBypass } = input;
   const rbacRequest = input.rbacRequest ?? "read";
 
+  // ─────────── LiteLLM branch ───────────
+  // When LiteLLM mode is on, bypass the DB + ExuluProvider lookup entirely.
+  // modelId is treated as the LiteLLM model_name string (e.g., "vertex-flash").
+  // RBAC at the model level is delegated to LiteLLM's own auth (virtual keys);
+  // agent-level RBAC still applies higher up via checkRecordAccess(agent, ...).
+  if (isLiteLLMEnabled()) {
+    try {
+      await waitForLiteLLMReady();
+    } catch (err) {
+      throw new ResolveModelError(
+        "LITELLM_NOT_READY",
+        `LiteLLM is not ready: ${(err as Error).message}`,
+      );
+    }
+
+    const litellm = getLiteLLMProvider();
+    const languageModel = litellm(modelId);
+
+    const syntheticModel: ModelRow = {
+      id: modelId,
+      name: modelId,
+      provider: modelId,
+      active: true,
+      rights_mode: "public",
+      created_by: "litellm",
+    };
+
+    return {
+      languageModel,
+      model: syntheticModel,
+      exuluProvider: LITELLM_PROVIDER_SENTINEL,
+      apiKey: undefined,
+    };
+  }
+
+  // ─────────── Catalog branch (Spec A, unchanged) ───────────
   const { db } = await postgresClient();
   const model: ModelRow | undefined = await db.from("models").where({ id: modelId }).first();
   if (!model) {

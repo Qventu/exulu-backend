@@ -35,6 +35,7 @@ import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { checkLicense } from "@EE/entitlements.ts";
+import fs from "fs";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -481,6 +482,10 @@ type PageInfo {
     `;
 
   typeDefs += `
+    litellmCatalog: [LiteLLMModel!]!
+    `;
+
+  typeDefs += `
     workflowSchedule(workflow: ID!): WorkflowScheduleResult
     `;
 
@@ -562,6 +567,21 @@ type RateLimitUsageRow {
 }
 `;
 
+  modelDefs += `
+type LiteLLMModel {
+  model_name: String!
+  upstream_model: String
+  tags: [String!]
+  max_tokens: Int
+  max_input_tokens: Int
+  max_output_tokens: Int
+  supports_vision: Boolean
+  supports_function_calling: Boolean
+  supports_pdf_input: Boolean
+  supports_audio_input: Boolean
+}
+`;
+
   resolvers.Query["agentRateLimitUsage"] = async (_, args, context) => {
     // Enterprise feature — return an empty list when the license is not active.
     if (!checkLicense()["rate-limits"]) return [];
@@ -620,6 +640,17 @@ type RateLimitUsageRow {
         return object;
       }),
     };
+  };
+
+  // litellmCatalog: returns the list of models LiteLLM is currently configured
+  // to expose. Empty array when LiteLLM is off / misconfigured so callers can
+  // invoke this unconditionally. Cache lives in the shared catalog module so
+  // addProviderFields can use the same data without re-fetching.
+  resolvers.Query["litellmCatalog"] = async () => {
+    const { fetchLiteLLMCatalog } = await import(
+      "@SRC/exulu/litellm/catalog"
+    );
+    return fetchLiteLLMCatalog();
   };
 
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {
