@@ -19,7 +19,8 @@ export { ExuluReranker } from "./exulu/reranker"
 export { ExuluEval } from "./exulu/evals"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
-import { execute as initDb } from "./postgres/init-db";
+import { execute as initExuluDb } from "./postgres/init-exulu-db";
+import { initLitellmDb } from "./postgres/init-litellm-db";
 import { generateApiKey } from "./auth/generate-key";
 import { create } from "./exulu/otel";
 import { ExuluContext } from "./exulu/context.ts";
@@ -158,11 +159,17 @@ export {
 } from "@EXULU_TYPES/enums/jobs";
 
 export const ExuluDatabase = {
-  init: async ({ contexts }: { contexts: ExuluContext[] }) => {
-    await initDb({ contexts });
+  init: async ({ contexts, litellm }: { contexts: ExuluContext[], litellm?: boolean }) => {
+    await initExuluDb({ contexts });
+    if (litellm !== false) {
+      await initLitellmDb();
+    }
   },
-  update: async ({ contexts }: { contexts: ExuluContext[] }) => {
-    await initDb({ contexts });
+  update: async ({ contexts, litellm }: { contexts: ExuluContext[], litellm?: boolean }) => {
+    await initExuluDb({ contexts });
+    if (litellm !== false) {
+      await initLitellmDb();
+    }
   },
   api: {
     key: {

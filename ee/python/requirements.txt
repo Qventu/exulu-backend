@@ -7,3 +7,9 @@ defusedxml
 # the dep is ready when the env var is flipped. Pinned to a tested version;
 # upgrade deliberately.
 litellm[proxy]==1.85.1
+# Prisma Python client — required by LiteLLM proxy whenever a `database_url`
+# is set in config.litellm.yaml (used for user/budget tracking, key
+# management, etc.). NOT included in litellm[proxy] in 1.85.1, hence the
+# separate pin. setup.sh runs `prisma generate` against LiteLLM's bundled
+# schema after pip install so the Python client module is materialized.
+prisma==0.15.0
