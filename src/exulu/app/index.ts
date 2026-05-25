@@ -343,6 +343,27 @@ export class ExuluApp {
       }
     }
 
+    if (process.env.TRANSCRIPTION_MODEL && !isLiteLLMEnabled()) {
+      console.warn(
+        "[EXULU] TRANSCRIPTION_MODEL is set but EXULU_USE_LITELLM is not 'true'. " +
+          "The /transcribe endpoint will return 503 until LiteLLM is enabled.",
+      );
+    }
+
+    if (process.env.TTS_MODEL && !isLiteLLMEnabled()) {
+      console.warn(
+        "[EXULU] TTS_MODEL is set but EXULU_USE_LITELLM is not 'true'. " +
+          "The /speech endpoint will return 503 until LiteLLM is enabled.",
+      );
+    }
+    if (process.env.TTS_MODEL && !process.env.TTS_VOICE) {
+      console.warn(
+        "[EXULU] TTS_MODEL is set but TTS_VOICE is not. LiteLLM's router " +
+          "requires a voice for /v1/audio/speech; the /speech endpoint will " +
+          "return 503 until TTS_VOICE is set (e.g. 'alloy' for OpenAI tts-1).",
+      );
+    }
+
     console.log("[EXULU] App initialized.");
 
     // Set the instance in the singleton

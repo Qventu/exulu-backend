@@ -55,7 +55,10 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
-import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
+import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
+import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
+import { synthesizeSpeech, SpeechError } from "./speech.ts";
+import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -1087,6 +1090,180 @@ Mood: friendly and intelligent.
       });
     }
   });
+
+  // Speech-to-text transcription. Forwards a multipart audio upload to the
+  // LiteLLM proxy's /v1/audio/transcriptions endpoint with the model name from
+  // TRANSCRIPTION_MODEL. Gated on both EXULU_USE_LITELLM=true and
+  // TRANSCRIPTION_MODEL being set; either missing → 503.
+  //
+  // Design doc: docs/superpowers/specs/2026-05-24-speech-to-text-transcription-design.md
+  const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
+  const transcribeUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_TRANSCRIBE_BYTES },
+  });
+
+  app.post(
+    "/transcribe",
+    (req: Request, res: Response, next) => {
+      transcribeUpload.single("file")(req, res, (err: unknown) => {
+        if (!err) return next();
+        const code = (err as { code?: string })?.code;
+        if (code === "LIMIT_FILE_SIZE") {
+          res
+            .status(413)
+            .json({ detail: "Recording too large. Please record a shorter clip." });
+          return;
+        }
+        res
+          .status(400)
+          .json({ detail: err instanceof Error ? err.message : "Upload failed." });
+      });
+    },
+    async (req: Request, res: Response) => {
+      if (!isLiteLLMEnabled() || !process.env.TRANSCRIPTION_MODEL) {
+        res.status(503).json({
+          detail:
+            "Speech-to-text is not enabled on this deployment. " +
+            "Set EXULU_USE_LITELLM=true and TRANSCRIPTION_MODEL in the environment.",
+        });
+        return;
+      }
+
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res
+          .status(authenticationResult.code || 401)
+          .json({ detail: authenticationResult.message });
+        return;
+      }
+
+      const file = (req as Request & { file?: Express.Multer.File }).file;
+      if (!file) {
+        res.status(400).json({ detail: "No audio file provided in 'file' field." });
+        return;
+      }
+      if (!file.mimetype.startsWith("audio/")) {
+        res.status(400).json({
+          detail: `Unsupported mimetype: ${file.mimetype}. Expected audio/*.`,
+        });
+        return;
+      }
+
+      try {
+        await Promise.race([
+          waitForLiteLLMReady(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+          ),
+        ]);
+      } catch {
+        res
+          .status(503)
+          .json({ detail: "Transcription service is not ready. Try again shortly." });
+        return;
+      }
+
+      // Optional language hint (ISO-639-1, e.g. "de"). Without it Whisper
+      // auto-detects, which sometimes flips short clips to English.
+      const language =
+        typeof req.body?.language === "string" && /^[a-z]{2}$/.test(req.body.language)
+          ? req.body.language
+          : undefined;
+
+      try {
+        const { text } = await transcribeAudio({ file, language });
+        res.status(200).json({ text });
+      } catch (err) {
+        if (err instanceof TranscriptionError) {
+          const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+          res.status(code).json({ detail: err.message });
+          return;
+        }
+        console.error("[EXULU] /transcribe failed", err);
+        res.status(500).json({
+          detail: err instanceof Error ? err.message : "Transcription failed.",
+        });
+      }
+    },
+  );
+
+  // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
+  // /v1/audio/speech endpoint with the model from TTS_MODEL and the optional
+  // voice from TTS_VOICE, and streams the resulting MP3 bytes back as
+  // audio/mpeg. Gated on both EXULU_USE_LITELLM=true and TTS_MODEL being set.
+  //
+  // Design doc: docs/superpowers/specs/2026-05-25-text-to-speech-design.md
+  const MAX_TTS_INPUT_CHARS = 4000;
+
+  app.post(
+    "/speech",
+    bodyParser.json({ limit: "64kb" }),
+    async (req: Request, res: Response) => {
+      if (!isLiteLLMEnabled() || !process.env.TTS_MODEL || !process.env.TTS_VOICE) {
+        res.status(503).json({
+          detail:
+            "Text-to-speech is not enabled on this deployment. " +
+            "Set EXULU_USE_LITELLM=true, TTS_MODEL, and TTS_VOICE in the environment.",
+        });
+        return;
+      }
+
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res
+          .status(authenticationResult.code || 401)
+          .json({ detail: authenticationResult.message });
+        return;
+      }
+
+      const text =
+        typeof req.body?.text === "string" ? req.body.text.trim() : "";
+      if (!text) {
+        res.status(400).json({ detail: "Missing 'text' in request body." });
+        return;
+      }
+      if (text.length > MAX_TTS_INPUT_CHARS) {
+        res.status(400).json({
+          detail: `Text too long (${text.length} chars). Max ${MAX_TTS_INPUT_CHARS}.`,
+        });
+        return;
+      }
+
+      try {
+        await Promise.race([
+          waitForLiteLLMReady(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+          ),
+        ]);
+      } catch {
+        res
+          .status(503)
+          .json({ detail: "Speech service is not ready. Try again shortly." });
+        return;
+      }
+
+      try {
+        const audio = await synthesizeSpeech({ text });
+        res.status(200);
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Length", String(audio.length));
+        res.setHeader("Cache-Control", "no-store");
+        res.send(audio);
+      } catch (err) {
+        if (err instanceof SpeechError) {
+          const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+          res.status(code).json({ detail: err.message });
+          return;
+        }
+        console.error("[EXULU] /speech failed", err);
+        res.status(500).json({
+          detail: err instanceof Error ? err.message : "Speech generation failed.",
+        });
+      }
+    },
+  );
 
   if (
     config?.fileUploads &&
