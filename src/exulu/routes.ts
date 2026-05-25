@@ -581,7 +581,7 @@ Mood: friendly and intelligent.
 
       if (!agent) {
         res.status(404).json({
-          message: "Agent with id " + instance + " not found.", 
+          message: "Agent with id " + instance + " not found.",
         });
         return;
       }
@@ -818,7 +818,7 @@ Mood: friendly and intelligent.
                 messages: messages,
                 model: resolvedModelId,
               });
-              clearSessionCurrentTask(headers.session as string).catch(() => {});
+              clearSessionCurrentTask(headers.session as string).catch(() => { });
             }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);
@@ -1390,8 +1390,8 @@ Mood: friendly and intelligent.
               err.code === "AUTH_VAR_NOT_FOUND"
                 ? CLAUDE_MESSAGES.anthropic_token_variable_not_found
                 : err.code === "AUTH_VAR_NOT_ENCRYPTED"
-                ? CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted
-                : CLAUDE_MESSAGES.not_enabled;
+                  ? CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted
+                  : CLAUDE_MESSAGES.not_enabled;
             const arrayBuffer = createCustomAnthropicStreamingMessage(msg);
             res.setHeader("Content-Type", "application/json");
             res.end(Buffer.from(arrayBuffer));
@@ -1708,13 +1708,13 @@ Mood: friendly and intelligent.
           const nodePath = "/" + parts.slice(0, i + 1).join("/");
           const node: SkillFileNode = isFile
             ? {
-                name: part,
-                path: nodePath,
-                key: file.key,
-                type: "file",
-                size: file.size,
-                lastModified: file.lastModified,
-              }
+              name: part,
+              path: nodePath,
+              key: file.key,
+              type: "file",
+              size: file.size,
+              lastModified: file.lastModified,
+            }
             : { name: part, path: nodePath, key: "", type: "folder", children: [] };
 
           current.children = current.children ?? [];

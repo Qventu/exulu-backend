@@ -60,9 +60,10 @@ const resolveConfig = (packageRoot: string) => {
   const configPath =
     process.env.LITELLM_CONFIG_PATH ??
     resolve(packageRoot, "./config.litellm.yaml");
-  const venvPython = resolve(packageRoot, "ee/python/.venv/bin/python");
-  const litellmBin = resolve(packageRoot, "ee/python/.venv/bin/litellm");
-  return { host, port, masterKey, configPath, venvPython, litellmBin };
+  const venvBin = resolve(packageRoot, "ee/python/.venv/bin");
+  const venvPython = resolve(venvBin, "python");
+  const litellmBin = resolve(venvBin, "litellm");
+  return { host, port, masterKey, configPath, venvBin, venvPython, litellmBin };
 };
 
 const log = (line: string) => console.log(`[EXULU-LITELLM] ${line}`);
@@ -104,6 +105,23 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
   // so the parent process's debugging is unaffected.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { DEBUG: _debug, ...envWithoutDebug } = process.env;
+
+  // SAFETY: Do NOT prepend the venv's bin directory to PATH for the child.
+  // When LiteLLM has a `database_url` configured, it auto-shells out to
+  // `prisma` for schema management on startup, and `prisma db push
+  // --accept-data-loss` will drop any tables in the public schema that are
+  // not in LiteLLM's Prisma schema. Pointing LiteLLM at a database shared
+  // with another application (e.g. Exulu's own Postgres) would result in
+  // silent, total data loss — without any operator confirmation, from a
+  // background process. By keeping the venv off PATH the prisma CLI is
+  // unreachable from the LiteLLM child, its schema-management probe fails
+  // closed, and the operator must run `prisma db push` manually (ideally
+  // against a database used *only* by LiteLLM).
+  //
+  // If a future change ever needs the venv's bin on PATH for some other
+  // reason, that change MUST also (1) refuse to start when database_url is
+  // configured and the target database contains non-LiteLLM_* tables, AND
+  // (2) never invoke prisma operations with --accept-data-loss.
 
   const child = spawn(
     cfg.litellmBin,
@@ -279,7 +297,7 @@ export const startLiteLLMSupervisor = async (
     // Kick off the supervisor loop in the background and resolve as soon as the
     // first readiness check passes. If supervise() exits with given_up before
     // that, we surface a clear rejection.
-    const supervisionLoop = supervise(cfg);
+    supervise(cfg);
     const deadline = Date.now() + READY_TIMEOUT_MS + 5_000;
     while (Date.now() < deadline) {
       if (internal.state === "ready") return;
