@@ -6,6 +6,7 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluProvider } from "./provider";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor";
+import { buildTags, createTaggedFetch } from "./tags";
 
 export type ModelRow = {
   id: string;
@@ -87,11 +88,27 @@ export class ResolveModelError extends Error {
  * Built once on first use in LiteLLM mode.
  */
 let _litellmProvider: ReturnType<typeof createOpenAICompatible> | undefined;
-const getLiteLLMProvider = () => {
+const getLiteLLMProvider = ({
+  user,
+  role,
+  project,
+  agent
+}: {
+  user?: number;
+  role?: string;
+  project?: string;
+  agent?: string;
+}) => {
   if (_litellmProvider) return _litellmProvider;
   const host = process.env.LITELLM_HOST ?? "127.0.0.1";
   const port = process.env.LITELLM_PORT ?? "4000";
   const masterKey = process.env.LITELLM_MASTER_KEY;
+  const tags = buildTags({
+    user: user,
+    role: role,
+    project: project,
+    agent: agent,
+  });
   if (!masterKey) {
     throw new ResolveModelError(
       "LITELLM_NOT_CONFIGURED",
@@ -102,6 +119,8 @@ const getLiteLLMProvider = () => {
     name: "litellm",
     baseURL: `http://${host}:${port}/v1`,
     apiKey: masterKey,
+    fetch: createTaggedFetch(tags),
+    
   });
   return _litellmProvider;
 };
@@ -133,7 +152,12 @@ export async function resolveModel(input: ResolveModelInput): Promise<ResolvedMo
       );
     }
 
-    const litellm = getLiteLLMProvider();
+    const litellm = getLiteLLMProvider({ 
+      user: user?.id,
+      role: user?.role?.id,
+      project: project?.id,
+      agent: agent?.id,
+    });
     const languageModel = litellm(modelId);
 
     const syntheticModel: ModelRow = {
