@@ -59,6 +59,7 @@ import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
+import { buildTags, createTaggedFetch } from "./tags.ts";
 import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
@@ -72,7 +73,6 @@ import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
-import { convertJsonSchemaToZod } from 'zod-from-json-schema';
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
@@ -1266,6 +1266,190 @@ Mood: friendly and intelligent.
     },
   );
 
+  // Generic LiteLLM pass-through. Anything under /litellm/:project/v1/* is
+  // forwarded to the local LiteLLM server with the master key injected as the
+  // Authorization header, so callers never see it. Exulu user authentication
+  // gates access, and the request is tagged with the user+role+project for
+  // cost attribution (same scheme as resolve-model.ts). Restricted to the /v1
+  // OpenAI-compatible surface — LiteLLM admin paths (/model/new,
+  // /key/generate, /user/*, etc.) are not reachable.
+  //
+  // The :project param is mandatory and mirrors /gateway/anthropic: pass
+  // "DEFAULT" for no project association, otherwise the caller must have
+  // access to the referenced project id.
+  //
+  // The upstream response is streamed back as-is, which lets SSE endpoints
+  // (e.g. /v1/chat/completions with stream=true) work transparently.
+  app.use("/litellm/:project", async (req: Request, res: Response) => {
+    if (!isLiteLLMEnabled()) {
+      res.status(503).json({
+        detail:
+          "LiteLLM is not enabled on this deployment. Set EXULU_USE_LITELLM=true.",
+      });
+      return;
+    }
+    const masterKey = process.env.LITELLM_MASTER_KEY;
+    if (!masterKey) {
+      res.status(503).json({ detail: "LITELLM_MASTER_KEY is not configured." });
+      return;
+    }
+
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id) {
+      console.log("[EXULU] /litellm failed authentication", authenticationResult);
+      res
+        .status(authenticationResult.code || 401)
+        .json({ detail: authenticationResult.message });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    // Allowlist the OpenAI-compatible surface. Admin paths fail closed so
+    // future LiteLLM admin endpoints don't accidentally become reachable.
+    if (!req.path.startsWith("/v1/")) {
+      res.status(403).json({
+        detail: `Path ${req.path} is not exposed through the Exulu LiteLLM proxy.`,
+      });
+      return;
+    }
+
+    let project: Project | null = null;
+    if (req.params.project && req.params.project !== "DEFAULT") {
+      const { db } = await postgresClient();
+      let projectQuery = db("projects");
+      projectQuery.select("*");
+      projectQuery = applyAccessControl(
+        projectsSchema(),
+        projectQuery,
+        authenticationResult.user,
+      );
+      projectQuery.where({ id: req.params.project });
+      project = await projectQuery.first();
+
+      if (!project) {
+        res.status(404).json({
+          detail: "Project not found or you do not have access to it.",
+        });
+        return;
+      }
+    }
+
+    const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+    const port = process.env.LITELLM_PORT ?? "4000";
+
+    // app.use strips the mount path, so req.url here is the suffix including
+    // any query string (e.g. "/v1/chat/completions?stream=true").
+    const upstreamUrl = `http://${host}:${port}${req.url}`;
+
+    const upstreamHeaders: Record<string, string> = {};
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue;
+      const lower = name.toLowerCase();
+      if (
+        lower === "authorization" ||
+        lower === "host" ||
+        lower === "content-length" ||
+        lower === "connection" ||
+        lower === "transfer-encoding" ||
+        lower === "accept-encoding"
+      )
+        continue;
+      upstreamHeaders[name] = Array.isArray(value) ? value.join(", ") : value;
+    }
+    upstreamHeaders["authorization"] = `Bearer ${masterKey}`;
+
+    // Re-serialize the JSON body that the global express.json() middleware
+    // already parsed. Non-JSON request bodies (e.g. multipart uploads) are
+    // not supported here — those have dedicated routes like /transcribe.
+    const methodHasBody = !["GET", "HEAD"].includes(req.method);
+    let body: string | undefined;
+    if (
+      methodHasBody &&
+      req.body &&
+      typeof req.body === "object" &&
+      Object.keys(req.body).length > 0
+    ) {
+      body = JSON.stringify(req.body);
+      upstreamHeaders["content-type"] = "application/json";
+    }
+
+    // Inject Exulu identity into the LiteLLM request body as metadata.tags
+    // for cost attribution. createTaggedFetch is a no-op for GETs and for
+    // bodies it can't parse as JSON, so it's safe to wrap unconditionally.
+    const tags = buildTags({
+      user_id: user.id,
+      role_id: user.role?.id,
+      project_id: project?.id,
+      user_name: user.email,
+      role_name: user.role?.name,
+      project_name: project?.name,
+    });
+
+    if (tags?.length) {
+      upstreamHeaders["x-litellm-tags"] = tags.join(",");
+      upstreamHeaders["x-litellm-spend-logs-metadata"] = JSON.stringify({
+        user_id: user.id,
+        role_id: user.role?.id,
+        project_id: project?.id || "DEFAULT",
+        user_name: user.email,
+        role_name: user.role?.name,
+        project_name: project?.name,
+      });
+    }
+    console.log("[EXULU] Built tags", tags);
+
+    const taggedFetch = createTaggedFetch(tags) as unknown as typeof globalThis.fetch;
+
+    try {
+      const upstream = await taggedFetch(upstreamUrl, {
+        method: req.method,
+        headers: upstreamHeaders,
+        body,
+      });
+
+      res.status(upstream.status);
+      upstream.headers.forEach((value, name) => {
+        const lower = name.toLowerCase();
+        // Node fetch transparently decompresses, so the original
+        // content-encoding/length no longer describe the bytes we forward.
+        if (
+          lower === "content-encoding" ||
+          lower === "content-length" ||
+          lower === "transfer-encoding" ||
+          lower === "connection"
+        )
+          return;
+        res.setHeader(name, value);
+      });
+
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+
+      const reader = upstream.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) res.write(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      res.end();
+    } catch (err) {
+      console.error("[EXULU] /litellm proxy failed", err);
+      if (!res.headersSent) {
+        res.status(502).json({
+          detail: err instanceof Error ? err.message : "LiteLLM proxy failed.",
+        });
+      } else {
+        res.end();
+      }
+    }
+  });
+
   if (
     config?.fileUploads &&
     config?.fileUploads?.s3region &&
@@ -1426,6 +1610,7 @@ Mood: friendly and intelligent.
 
         const client = new Anthropic({
           apiKey: anthropicApiKey,
+          baseURL: "http://0.0.0.0:4000"
         });
 
         // console.log("[EXULU] Req.body", req.body)
@@ -1514,6 +1699,11 @@ Mood: friendly and intelligent.
                 `;
         }
 
+        console.log("[EXULU] Sending request to LiteLLM", {
+          ...req.body,
+          system,
+        });
+
         for await (const event of client.messages.stream({
           ...req.body,
           system,
@@ -1543,6 +1733,7 @@ Mood: friendly and intelligent.
             text: string;
           };
         }>) {
+          console.log("[EXULU] Event", event);
           if (event.message?.id) {
             tokens[event.message.id] = {
               input_tokens: event.message.usage.input_tokens,
@@ -1606,6 +1797,7 @@ Mood: friendly and intelligent.
           totalInputTokens += token.input_tokens;
           totalOutputTokens += token.output_tokens;
         }
+        console.log("[EXULU] Total input tokens", totalInputTokens);
 
         const statistics = {
           label: agent.name,
@@ -2790,9 +2982,9 @@ Mood: friendly and intelligent.
       const sessionIds = sessions.map((s: any) => s.id);
       const messages = sessionIds.length
         ? await db
-            .from("agent_messages")
-            .whereIn("session", sessionIds)
-            .orderBy("createdAt", "asc")
+          .from("agent_messages")
+          .whereIn("session", sessionIds)
+          .orderBy("createdAt", "asc")
         : [];
       const messagesBySession = new Map<string, any[]>();
       for (const m of messages) {

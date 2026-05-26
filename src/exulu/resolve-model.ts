@@ -67,6 +67,8 @@ export const LITELLM_PROVIDER_SENTINEL: ExuluProvider = new Proxy(
       if (prop === Symbol.toPrimitive || prop === "toString") {
         return () => "[LiteLLMProviderSentinel]";
       }
+      // log stack trace
+      console.error(`ExuluProvider.${String(prop)} is not available in LiteLLM mode. `, new Error().stack);
       throw new Error(
         `ExuluProvider.${String(prop)} is not available in LiteLLM mode. ` +
           `Code paths that depend on the in-code provider catalog must check ` +

@@ -2,12 +2,6 @@ import type { FetchFunction } from "@ai-sdk/provider-utils";
 
 const MAX_LEN = 63;
 
-function sanitizeTagKey(raw: string): string {
-  let s = (raw ?? "").normalize("NFKC").toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-  if (!/^[a-z]/.test(s)) s = "k_" + s;
-  return s.slice(0, MAX_LEN);
-}
-
 function sanitizeTagValue(
   raw: string | number | undefined | null,
 ): string | undefined {
@@ -17,18 +11,33 @@ function sanitizeTagValue(
 }
 
 export function buildTags(input: {
-  user?: number | string;
-  role?: string;
-  project?: string;
-  agent?: string;
+  user_id?: number | string;
+  role_id?: string;
+  project_id?: string;
+  agent_id?: string;
+  user_name?: string;
+  role_name?: string;
+  project_name?: string;
+  agent_name?: string;
 }): string[] {
-  const candidates: (string | number | undefined)[] = [input.user, input.role, input.project, input.agent];
+  const candidates: (string | number | undefined)[] = [
+    "user_id_" + input.user_id,
+    "role_id_" + input.role_id,
+    "project_id_" + (input.project_id || "DEFAULT"),
+    "agent_id_" + input.agent_id,
+    "user_name_" + input.user_name,
+    "role_name_" + input.role_name,
+    "project_name_" + (input.project_name || "DEFAULT"),
+    "agent_name_" + input.agent_name
+  ];
+  console.log("[EXULU] Candidates", candidates);
   const out: string[] = [];
   for (const candidate of candidates) {
     if (candidate === undefined || candidate === null) continue;
     const value = sanitizeTagValue(candidate);
+    console.log("[EXULU] Sanitized tag value", value);
     if (value === undefined || value === "") continue;
-    out.push(sanitizeTagKey(value));
+    out.push(value);
   }
   return out;
 }
@@ -93,7 +102,7 @@ export function createTaggedFetch(tags: string[]): FetchFunction {
       const existing = (parsed.metadata as Record<string, string> | undefined) ?? {};
       parsed.metadata = { ...existing, tags: tags };
 
-      console.log("[EXULU] tags", parsed.tags);
+      console.log("[EXULU] tags", parsed.metadata);
 
       const nextInit = {
         ...init,
