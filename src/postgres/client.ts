@@ -74,19 +74,20 @@ export async function postgresClient(): Promise<{
           database: dbName,
           password: process.env.POSTGRES_DB_PASSWORD,
           ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
-          connectionTimeoutMillis: 30000, // Increased from 10s to 30s to handle connection spikes
-          // PostgreSQL statement timeout (in milliseconds) - kills queries that run too long
-          // This prevents runaway queries from blocking connections
-          statement_timeout: 1800000, // 30 minutes - should be longer than max job timeout (1200s = 20m)
-          // Connection idle timeout - how long pg client waits before timing out
-          query_timeout: 1800000, // 30 minutes
+          // TCP keepalive prevents idle sockets from being silently dropped by
+          // intermediate network devices (NAT, firewalls) between us and Hetzner.
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 10000,
+          connectionTimeoutMillis: 30000,
+          statement_timeout: 1800000,
+          query_timeout: 1800000,
         },
         pool: {
-          min: 10, // Minimum connections always ready
-          max: 300, // Increased to support high worker concurrency (250+ concurrent jobs)
-          acquireTimeoutMillis: 120000, // 2 minutes - increased to handle high contention during bursts
+          min: 10,
+          max: 300,
+          acquireTimeoutMillis: 120000,
           createTimeoutMillis: 30000,
-          idleTimeoutMillis: 60000, // Keep connections alive for reuse
+          idleTimeoutMillis: 30000,
           reapIntervalMillis: 1000,
           createRetryIntervalMillis: 200,
           // Enable propagateCreateError to properly handle connection creation failures

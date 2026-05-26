@@ -65,7 +65,8 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
     const items: LiteLLMCatalogEntry[] = (
       Array.isArray(json?.data) ? json.data : []
     ).map((m: any) => ({
-      model_name: m.model_name,
+      // filter out trailing * from model_name
+      model_name: m.model_name.replace(/\*$/, ''),
       upstream_model: m.litellm_params?.model ?? null,
       tags: Array.isArray(m.model_info?.tags) ? m.model_info.tags : [],
       brand: m.model_info?.brand ?? null,

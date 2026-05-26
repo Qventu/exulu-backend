@@ -13,6 +13,7 @@ import { requestValidators } from "../validators/requests.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { resolveModel } from "@SRC/exulu/resolve-model.ts";
+import { isLiteLLMEnabled } from "@SRC/exulu/litellm/supervisor.ts";
 import { postgresClient } from "../postgres/client";
 export const SESSION_ID_HEADER = "mcp-session-id";
 import type { ExuluConfig } from "../exulu/app/index.ts";
@@ -90,15 +91,22 @@ export class ExuluMCP {
       providers: allProviders,
       agent: { id: agent.id },
     });
-    const provider = resolved.exuluProvider;
     const providerapikey = resolved.apiKey;
 
     // Add the agent itself as a tool so MCP clients can also call the
-    // agent directly, instead of just its tools.
-    const agentTool = await provider.tool(agent.id, allProviders, allContexts, allRerankers);
-
-    if (agentTool) {
-      enabledTools = [...enabledTools, agentTool];
+    // agent directly, instead of just its tools. Skipped in LiteLLM mode:
+    // ExuluProvider.tool() depends on the in-code provider's generateSync,
+    // which doesn't exist when models route through LiteLLM.
+    if (!isLiteLLMEnabled()) {
+      const agentTool = await resolved.exuluProvider.tool(
+        agent.id,
+        allProviders,
+        allContexts,
+        allRerankers,
+      );
+      if (agentTool) {
+        enabledTools = [...enabledTools, agentTool];
+      }
     }
 
     console.log(
