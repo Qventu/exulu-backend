@@ -12,9 +12,11 @@ export type LiteLLMCatalogEntry = {
   model_name: string;
   upstream_model: string | null;
   tags: string[];
+  type: string | null;
   brand: string | null;
   region: string | null;
   max_tokens: number | null;
+  active: boolean;
   max_input_tokens: number | null;
   max_output_tokens: number | null;
   supports_vision: boolean;
@@ -67,9 +69,11 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       upstream_model: m.litellm_params?.model ?? null,
       tags: Array.isArray(m.model_info?.tags) ? m.model_info.tags : [],
       brand: m.model_info?.brand ?? null,
+      type: m.model_info?.type ?? null,
       region: m.model_info?.region ?? null,
       max_tokens: m.model_info?.max_tokens ?? null,
       max_input_tokens: m.model_info?.max_input_tokens ?? null,
+      active: m.model_info?.active ?? true,
       max_output_tokens: m.model_info?.max_output_tokens ?? null,
       supports_vision: !!m.model_info?.supports_vision,
       supports_function_calling: !!m.model_info?.supports_function_calling,
@@ -77,7 +81,8 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       supports_audio_input: !!m.model_info?.supports_audio_input,
     }));
     _cache = { expiresAt: Date.now() + CACHE_TTL_MS, items };
-    return items;
+    // filter out type: speech_to_text and type: text_to_speech
+    return items.filter((m) => m.type !== "speech_to_text" && m.type !== "text_to_speech");
   } catch (err) {
     console.error("[EXULU] litellmCatalog: failed to fetch /model/info:", err);
     return [];

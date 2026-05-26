@@ -571,7 +571,9 @@ type RateLimitUsageRow {
 type LiteLLMModel {
   model_name: String!
   upstream_model: String
+  active: Boolean
   tags: [String!]
+  type: String
   brand: String
   region: String
   max_tokens: Int
