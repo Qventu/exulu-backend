@@ -572,6 +572,8 @@ type LiteLLMModel {
   model_name: String!
   upstream_model: String
   tags: [String!]
+  brand: String
+  region: String
   max_tokens: Int
   max_input_tokens: Int
   max_output_tokens: Int
