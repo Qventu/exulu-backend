@@ -40,6 +40,7 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import Anthropic from "@anthropic-ai/sdk";
+import JSZip from "jszip";
 import { CLAUDE_MESSAGES } from "../utils/claude-messages.ts";
 import type { Queue } from "bullmq";
 import { createIdGenerator, type UIMessage } from "ai";
@@ -2712,6 +2713,194 @@ Mood: friendly and intelligent.
   );
 
   // ─── End Session Files ────────────────────────────────────────────────────────
+
+  // ─── GDPR (DSGVO Art. 15 / Art. 17) ───────────────────────────────────────────
+  // Operator-driven routes for data-subject access (export) and erasure. Both
+  // require super_admin; self-delete is blocked so there's always another human
+  // accountable for the operation.
+
+  /**
+   * Authenticate, require super_admin, validate :id, and load the target user.
+   * Returns the user row, or null after having written the appropriate error
+   * response. `allowSelf=false` additionally blocks operating on the caller's
+   * own account (used for DELETE).
+   */
+  async function resolveTargetUser(
+    req: Request,
+    res: Response,
+    opts: { allowSelf: boolean },
+  ): Promise<{ targetUser: any; db: Knex } | null> {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return null;
+    }
+    if (!authResult.user.super_admin) {
+      res.status(403).json({ detail: "Super admin access required." });
+      return null;
+    }
+
+    const targetId = Number.parseInt(req.params.id ?? "", 10);
+    if (!Number.isFinite(targetId)) {
+      res.status(400).json({ detail: "Invalid user id." });
+      return null;
+    }
+
+    if (!opts.allowSelf && targetId === authResult.user.id) {
+      res
+        .status(403)
+        .json({ detail: "Super admins cannot delete their own account." });
+      return null;
+    }
+
+    const { db } = await postgresClient();
+    const targetUser = await db.from("users").where({ id: targetId }).first();
+    if (!targetUser) {
+      res.status(404).json({ detail: "User not found." });
+      return null;
+    }
+
+    return { targetUser, db };
+  }
+
+  /**
+   * GET /users/:id/data-export
+   * Returns a ZIP containing the user's account row and all personal data we
+   * hold for them in Postgres. Sensitive auth material (passwords, API key
+   * hashes, tokens) is stripped from user_data.json before serialising.
+   */
+  app.get("/users/:id/data-export", async (req: Request, res: Response) => {
+    const resolved = await resolveTargetUser(req, res, { allowSelf: true });
+    if (!resolved) return;
+    const { targetUser, db } = resolved;
+
+    try {
+      const role = targetUser.role
+        ? await db.from("roles").where({ id: targetUser.role }).first()
+        : null;
+      const userExport = { ...targetUser, role: role ?? targetUser.role };
+      delete userExport.password;
+      delete userExport.apikey;
+      delete userExport.temporary_token;
+      delete userExport.anthropic_token;
+
+      const sessions = await db
+        .from("agent_sessions")
+        .where({ user: targetUser.id });
+      const sessionIds = sessions.map((s: any) => s.id);
+      const messages = sessionIds.length
+        ? await db
+            .from("agent_messages")
+            .whereIn("session", sessionIds)
+            .orderBy("createdAt", "asc")
+        : [];
+      const messagesBySession = new Map<string, any[]>();
+      for (const m of messages) {
+        const list = messagesBySession.get(m.session) ?? [];
+        list.push(m);
+        messagesBySession.set(m.session, list);
+      }
+      const sessionsWithMessages = sessions.map((s: any) => ({
+        ...s,
+        messages: messagesBySession.get(s.id) ?? [],
+      }));
+
+      const [feedback, promptFavorites, tracking] = await Promise.all([
+        db.from("feedback").where({ user: targetUser.id }).catch(() => []),
+        db
+          .from("prompt_favorites")
+          .where({ user_id: targetUser.id })
+          .catch(() => []),
+        db.from("tracking").where({ user: targetUser.id }).catch(() => []),
+      ]);
+
+      const exportedAt = new Date().toISOString();
+      const readme = [
+        `Exulu user data export`,
+        ``,
+        `User id: ${targetUser.id}`,
+        `Exported at: ${exportedAt}`,
+        ``,
+        `This archive contains the personal data Exulu holds for the user`,
+        `referenced above, provided in fulfilment of DSGVO Art. 15`,
+        `(Recht auf Auskunft / GDPR right of access).`,
+        ``,
+        `Files:`,
+        `  - user_data.json        account row (password/api-key hashes stripped)`,
+        `  - sessions.json         chat sessions with messages inlined`,
+        `  - feedback.json         feedback the user submitted`,
+        `  - prompt_favorites.json prompt-library favourites`,
+        `  - tracking.json         tracking events linked to the user`,
+        ``,
+      ].join("\n");
+
+      const zip = new JSZip();
+      zip.file("README.txt", readme);
+      zip.file("user_data.json", JSON.stringify(userExport, null, 2));
+      zip.file("sessions.json", JSON.stringify(sessionsWithMessages, null, 2));
+      zip.file("feedback.json", JSON.stringify(feedback, null, 2));
+      zip.file(
+        "prompt_favorites.json",
+        JSON.stringify(promptFavorites, null, 2),
+      );
+      zip.file("tracking.json", JSON.stringify(tracking, null, 2));
+
+      const buffer = await zip.generateAsync({ type: "nodebuffer" });
+      const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("[GDPR] Failed to build data export", err);
+      res.status(500).json({ detail: "Failed to build data export." });
+    }
+  });
+
+  /**
+   * DELETE /users/:id
+   * Hard-deletes the user and every row referencing them in one transaction.
+   * After the DB transaction commits, S3 objects under user_<id>/ are deleted
+   * best-effort — failure there is logged but does not fail the request,
+   * because the personal-data set is already gone from the database.
+   */
+  app.delete("/users/:id", async (req: Request, res: Response) => {
+    const resolved = await resolveTargetUser(req, res, { allowSelf: false });
+    if (!resolved) return;
+    const { targetUser, db } = resolved;
+
+    try {
+      await db.transaction(async (trx) => {
+        await trx("agent_messages").where({ user: targetUser.id }).delete();
+        await trx("agent_sessions").where({ user: targetUser.id }).delete();
+        await trx("feedback").where({ user: targetUser.id }).delete();
+        await trx("prompt_favorites")
+          .where({ user_id: targetUser.id })
+          .delete();
+        await trx("tracking").where({ user: targetUser.id }).delete();
+        await trx("rbac").where({ user_id: targetUser.id }).delete();
+        await trx("users").where({ id: targetUser.id }).delete();
+      });
+    } catch (err: any) {
+      console.error("[GDPR] Failed to delete user", err);
+      res.status(500).json({ detail: "Failed to delete user." });
+      return;
+    }
+
+    try {
+      const prefix = `user_${targetUser.id}/`;
+      const files = await listS3ObjectsByPrefix(prefix, config);
+      await Promise.all(files.map((f) => deleteS3Object(f.key, config)));
+    } catch (err: any) {
+      console.error("[GDPR] DB delete succeeded but S3 cleanup failed", err);
+    }
+
+    res.status(204).send();
+  });
+
+  // ─── End GDPR ─────────────────────────────────────────────────────────────────
 
   app.use(express.static("public"));
 
