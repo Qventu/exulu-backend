@@ -4,11 +4,10 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { ExuluConfig } from "./app";
 import type { User } from "@EXULU_TYPES/models/user";
-import { postgresClient } from "@SRC/postgres/client";
-import CryptoJS from "crypto-js";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
+import { resolveModel } from "./resolve-model";
 
 export class ExuluTool {
   // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or
@@ -109,38 +108,17 @@ export class ExuluTool {
       throw new Error("Agent not found.");
     }
 
-    const { db } = await postgresClient();
-
     let providerapikey: string | undefined;
-    const variableName = agent.providerapikey;
-
-    if (variableName) {
-      console.log("[EXULU] provider api key variable name", variableName);
-      // Look up the variable from the variables table
-      const variable = await db.from("variables").where({ name: variableName }).first();
-      if (!variable) {
-        throw new Error(
-          "Provider API key variable not found for " +
-          agent.name +
-            " (" +
-            agent.id +
-            ").",
-        );
-      }
-
-      // Get the API key from the variable (decrypt if encrypted)
-      providerapikey = variable.value;
-
-      if (!variable.encrypted) {
-        throw new Error(
-          "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-        );
-      }
-
-      if (variable.encrypted) {
-        const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-        providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-      }
+    if (agent.model) {
+      const providers = exuluApp.get().providers;
+      const resolved = await resolveModel({
+        modelId: agent.model,
+        user,
+        providers,
+        agent: { id: agent.id },
+        rbacBypass: true,
+      });
+      providerapikey = resolved.apiKey;
     }
 
     const { convertExuluToolsToAiSdkTools } = await import(

@@ -6,6 +6,7 @@ import type { videoTypes } from "@EXULU_TYPES/models/agent";
 import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules.ts";
 import { z } from "zod";
 import { ExuluTool } from "./tool.ts";
+import { resolveModel } from "./resolve-model.ts";
 import { updateStatistic } from "./statistics.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
@@ -65,7 +66,6 @@ interface ExuluProviderParams {
     audio: audioTypes[];
     video: videoTypes[];
   };
-  outputSchema?: z.ZodType;
   rateLimit?: RateLimiterRule;
 }
 
@@ -205,43 +205,19 @@ export class ExuluProvider {
           user,
         );
 
-        // Get the variable name from user's anthropic_token field
-        const variableName = agent.providerapikey;
-
-        let providerapikey: string | undefined;
-
-        if (variableName) {
-          const { db } = await postgresClient();
-          // Look up the variable from the variables table
-          const variable = await db.from("variables").where({ name: variableName }).first();
-          if (!variable) {
-            throw new Error(
-              "Provider API key variable not found for agent: " +
-              agent.name +
-              " (" +
-              agent.id +
-              ") being called as a tool.",
-            );
-          }
-
-          // Get the API key from the variable (decrypt if encrypted)
-          providerapikey = variable.value;
-
-          if (!variable.encrypted) {
-            throw new Error(
-              "Provider API key variable not encrypted for agent: " +
-              agent.name +
-              " (" +
-              agent.id +
-              ") being called as a tool, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-            );
-          }
-
-          if (variable.encrypted) {
-            const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-            providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-          }
+        if (!agent.model) {
+          throw new Error(
+            `Agent ${agent.name} (${agent.id}) has no model configured (called as a tool).`,
+          );
         }
+
+        const resolved = await resolveModel({
+          modelId: agent.model,
+          user,
+          providers,
+          agent: { id: agent.id },
+        });
+        const providerapikey = resolved.apiKey;
         console.log(
           "[EXULU] Enabled tools for agent '" +
           agent.name +
@@ -262,9 +238,6 @@ export class ExuluProvider {
           agent.instructions?.slice(0, 100) + "...",
         );
 
-        // todo cant use outputSchema when calling an agent as a tool for now, maybe look into
-        // enabling this in the future by adding a "outputSchema" field to the inputSchema of this
-        // tool definition so agents can dynamically define a desired output schema.
         const response = await this.generateSync({
           agent: agent,
           contexts: contexts,
@@ -275,6 +248,7 @@ export class ExuluProvider {
             prompt +
             " and the following information is available: " +
             information,
+          languageModel: resolved.languageModel,
           providerapikey: providerapikey,
           user,
           currentTools: enabledTools,
@@ -315,10 +289,10 @@ export class ExuluProvider {
     statistics,
     toolConfigs,
     providerapikey,
+    languageModel,
     contexts,
     rerankers,
     exuluConfig,
-    outputSchema,
     agent,
     instructions,
     maxStepCount,
@@ -338,11 +312,11 @@ export class ExuluProvider {
     statistics?: ExuluStatisticParams;
     toolConfigs?: ExuluAgentToolConfig[];
     providerapikey?: string | undefined;
+    languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
     instructions?: string;
-    outputSchema?: z.ZodTypeAny;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
     // todo get rid of any
   }): Promise<any> => {
@@ -350,10 +324,6 @@ export class ExuluProvider {
       "[EXULU] Called generate sync for agent: " + this.name,
       "with prompt: " + prompt?.slice(0, 100) + "...",
     );
-
-    if (!this.model) {
-      throw new Error("Model is required for streaming.");
-    }
 
     if (!this.config) {
       throw new Error("Config is required for generating.");
@@ -375,13 +345,7 @@ export class ExuluProvider {
       project = sessionData.project;
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-      user: user?.id,
-      role: user?.role?.id,
-      project,
-      agent: agent?.id,
-    });
+    const model = languageModel;
 
     console.log("[EXULU] Model for agent: " + this.name, " created for generating sync.");
 
@@ -419,7 +383,7 @@ export class ExuluProvider {
         session,
         userMessage: query,
         model: model,
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // If memory context was configured for the agent, we retrieve
@@ -564,63 +528,46 @@ export class ExuluProvider {
       let result: { object?: any; text?: string } = { object: null, text: "" };
       let inputTokens: number = 0;
       let outputTokens: number = 0;
-      if (outputSchema) {
-        const { output, usage } = await generateText({
-          temperature: 0, // TODO Make this configurable
-          model: model,
-          system,
-          maxRetries: 3,
-          output: Output.object({
-            schema: outputSchema,
-          }),
-          prompt: prompt,
-          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
-        });
-        result.object = output;
-        inputTokens = usage.inputTokens || 0;
-        outputTokens = usage.outputTokens || 0;
-      } else {
-        console.log(
-          "[EXULU] Generating text for agent: " + this.name,
-          "with prompt: " + prompt?.slice(0, 100) + "...",
-        );
+      console.log(
+        "[EXULU] Generating text for agent: " + this.name,
+        "with prompt: " + prompt?.slice(0, 100) + "...",
+      );
 
-        const output = await generateText({
-          temperature: 0, // TODO Make this configurable
-          model: model,
-          system,
-          prompt: prompt,
-          maxRetries: 2,
-          tools: await convertExuluToolsToAiSdkTools(
-            currentTools,
-            currentSkills,
-            approvedTools,
-            allExuluTools,
-            toolConfigs,
-            providerapikey,
-            contexts,
-            rerankers,
-            user,
-            exuluConfig,
-            session,
-            req,
-            project,
-            sessionItems,
-            model,
-            agent,
-            memoryItems
-          ),
-          stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
-        });
-        console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
-        const {
-          text,
-          totalUsage,
-        } = output;
-        result.text = text;
-        inputTokens = totalUsage?.inputTokens || 0;
-        outputTokens = totalUsage?.outputTokens || 0;
-      }
+      const output = await generateText({
+        temperature: 0, // TODO Make this configurable
+        model: model,
+        system,
+        prompt: prompt,
+        maxRetries: 2,
+        tools: await convertExuluToolsToAiSdkTools(
+          currentTools,
+          currentSkills,
+          approvedTools,
+          allExuluTools,
+          toolConfigs,
+          providerapikey,
+          contexts,
+          rerankers,
+          user,
+          exuluConfig,
+          session,
+          req,
+          project,
+          sessionItems,
+          model,
+          agent,
+          memoryItems
+        ),
+        stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
+      });
+      console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
+      const {
+        text,
+        totalUsage,
+      } = output;
+      result.text = text;
+      inputTokens = totalUsage?.inputTokens || 0;
+      outputTokens = totalUsage?.outputTokens || 0;
 
       if (statistics) {
         await Promise.all([
@@ -854,6 +801,7 @@ export class ExuluProvider {
     allExuluTools,
     toolConfigs,
     providerapikey,
+    languageModel,
     contexts,
     rerankers,
     exuluConfig,
@@ -873,6 +821,7 @@ export class ExuluProvider {
     allExuluTools?: ExuluTool[];
     toolConfigs?: ExuluAgentToolConfig[];
     providerapikey?: string | undefined;
+    languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
     rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
@@ -883,11 +832,6 @@ export class ExuluProvider {
     originalMessages: UIMessage[];
     previousMessages: UIMessage[];
   }> => {
-    if (!this.model) {
-      console.error("[EXULU] Model is required for streaming.");
-      throw new Error("Model is required for streaming.");
-    }
-
     if (!this.config) {
       console.error("[EXULU] Config is required for streaming.");
       throw new Error("Config is required for generating.");
@@ -918,13 +862,7 @@ export class ExuluProvider {
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
 
-    const model = this.model.create({
-      ...(providerapikey ? { apiKey: providerapikey } : {}),
-      user: user?.id,
-      role: user?.role?.id,
-      project,
-      agent: agent?.id,
-    });
+    const model = languageModel;
 
     // validate messages
     messages = await validateUIMessages({
@@ -940,7 +878,7 @@ export class ExuluProvider {
         session,
         userMessage: query,
         model: model,
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // If memory context was configured for the agent, we retrieve
@@ -1197,7 +1135,7 @@ ${skillsList}
       },
       // provide more loops for skills because they are more complex to execute
       // todo allow configuring this per skill
-      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)], 
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)],
     });
 
     return {
@@ -1254,10 +1192,12 @@ export const saveChat = async ({
   session,
   user,
   messages,
+  model,
 }: {
   session: string;
   user: number;
   messages: UIMessage[];
+  model?: string;
 }) => {
   const { db } = await postgresClient();
   // Save messages sequentially to maintain correct createdAt timestamps
@@ -1270,6 +1210,7 @@ export const saveChat = async ({
         content: JSON.stringify(message),
         message_id: message.id,
         title: message.role === "user" ? "User" : "Assistant",
+        ...(model ? { model } : {}),
       })
       .returning("id");
     mutation.onConflict("message_id").merge();

@@ -9,6 +9,11 @@ import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-re
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
+import { isLiteLLMEnabled } from "@SRC/exulu/litellm/supervisor";
+import {
+  findLiteLLMModel,
+  type LiteLLMCatalogEntry,
+} from "@SRC/exulu/litellm/catalog";
 
 const addProviderFields = async (
   args: Record<string, any>,
@@ -20,17 +25,48 @@ const addProviderFields = async (
   contexts: ExuluContext[],
   rerankers: ExuluReranker[],
 ) => {
-  let provider = providers.find((a) => a.id === result?.provider);
+  // Resolve the underlying ExuluProvider via the agent's Model row.
+  // agent.model -> models row -> models.provider -> ExuluProvider.
+  //
+  // In LiteLLM mode we instead look the agent's model string up in LiteLLM's
+  // /model/info catalog (cached for 30s by the shared catalog module) so we
+  // can hydrate accurate maxContextLength / capabilities for the chat UI's
+  // context bar and modality badges.
+  let provider: ExuluProvider | undefined;
+  let modelRow: { name?: string; provider?: string } | undefined;
+  let litellmEntry: LiteLLMCatalogEntry | undefined;
+  if (isLiteLLMEnabled() && result?.model) {
+    litellmEntry = await findLiteLLMModel(result.model);
+  } else if (result?.model) {
+    const { db } = await postgresClient();
+    modelRow = await db.from("models").where({ id: result.model }).first();
+    if (modelRow?.provider) {
+      provider = providers.find((a) => a.id === modelRow!.provider);
+    }
+  }
+
   if (requestedFields.includes("providerName")) {
-    result.providerName = provider?.providerName || "";
+    result.providerName = isLiteLLMEnabled()
+      ? "LiteLLM"
+      : provider?.providerName || "";
   }
 
   if (requestedFields.includes("modelName")) {
-    result.modelName = provider?.modelName || "";
+    // LiteLLM mode: agent.model is the LiteLLM model_name string — show it as-is.
+    // Catalog mode: prefer the admin-set display name on the Model row; fall
+    // back to the ExuluProvider's hardcoded config.name.
+    result.modelName = isLiteLLMEnabled()
+      ? (result?.model ?? "")
+      : modelRow?.name || provider?.modelName || "";
   }
 
   if (requestedFields.includes("slug")) {
-    result.slug = provider?.slug || "";
+    // In LiteLLM mode the per-ExuluProvider slug routes don't apply (no
+    // ExuluProvider). The backend mounts a single agent-run handler at
+    // "/agents/litellm/run" — point the frontend there.
+    result.slug = isLiteLLMEnabled()
+      ? "/agents/litellm/run"
+      : provider?.slug || "";
   }
 
   if (requestedFields.includes("rateLimit")) {
@@ -82,23 +118,55 @@ const addProviderFields = async (
                     " was not found in the database.",
                 );
               }
-              const provider = providers.find((a) => a.id === instance.provider);
-              if (!provider) {
+              if (!instance.model) {
                 throw new Error(
                   "Trying to load a tool of type 'agent', but the associated agent with id " +
                     tool.id +
-                    " does not have a provider set for it.",
+                    " does not have a model set for it.",
                 );
               }
-
               // if no access do not return it
               const hasAccessToAgent = await checkRecordAccess(instance, "read", user);
-
               if (!hasAccessToAgent) {
                 return null;
               }
 
-              hydrated = await provider.tool(instance.id, providers, contexts, rerankers);
+              if (isLiteLLMEnabled()) {
+                // No ExuluProvider lookup in LiteLLM mode. The hydrated tool
+                // metadata (name + description) is sourced directly from the
+                // callee agent, since the ExuluProvider catalog isn't relevant.
+                hydrated = {
+                  id: instance.id,
+                  name: instance.name,
+                  description:
+                    `This tool calls an agent named: ${instance.name}. ` +
+                    `The agent does the following: ${instance.description ?? ""}.`,
+                  type: "agent",
+                  category: "agents",
+                } as ExuluTool;
+              } else {
+                const { db } = await postgresClient();
+                const innerModelRow = await db
+                  .from("models")
+                  .where({ id: instance.model })
+                  .first();
+                const provider = innerModelRow?.provider
+                  ? providers.find((a) => a.id === innerModelRow.provider)
+                  : undefined;
+                if (!provider) {
+                  throw new Error(
+                    "Trying to load a tool of type 'agent', but the model referenced by agent with id " +
+                      tool.id +
+                      " does not point at a registered ExuluProvider.",
+                  );
+                }
+                hydrated = await provider.tool(
+                  instance.id,
+                  providers,
+                  contexts,
+                  rerankers,
+                );
+              }
             } else {
               hydrated = tools.find((t) => t.id === tool.id);
             }
@@ -135,22 +203,53 @@ const addProviderFields = async (
     }
   }
   if (requestedFields.includes("streaming")) {
-    result.streaming = provider?.streaming || false;
+    // LiteLLM proxies all calls over its OpenAI-compatible endpoint, which
+    // supports streaming for every backend it routes to.
+    result.streaming = isLiteLLMEnabled() ? true : provider?.streaming || false;
   }
   if (requestedFields.includes("capabilities")) {
-    result.capabilities = provider?.capabilities || [];
+    if (isLiteLLMEnabled()) {
+      // Derive modality support from LiteLLM's catalog metadata. The chat UI's
+      // capability badges use the same shape as ExuluProvider.capabilities, so
+      // we map LiteLLM's boolean flags into the per-modality file-extension
+      // arrays that frontend renders.
+      result.capabilities = {
+        text: true,
+        images: litellmEntry?.supports_vision
+          ? [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+          : [],
+        files: litellmEntry?.supports_pdf_input ? [".pdf"] : [],
+        audio: litellmEntry?.supports_audio_input
+          ? [".mp3", ".wav", ".m4a"]
+          : [],
+        video: [],
+      };
+    } else {
+      result.capabilities = provider?.capabilities || [];
+    }
   }
   if (requestedFields.includes("maxContextLength")) {
-    result.maxContextLength = provider?.maxContextLength || 0;
+    if (isLiteLLMEnabled()) {
+      // Prefer max_input_tokens (the actual context window for chat models);
+      // fall back to max_tokens which LiteLLM reports for some upstreams.
+      result.maxContextLength =
+        litellmEntry?.max_input_tokens ?? litellmEntry?.max_tokens ?? 0;
+    } else {
+      result.maxContextLength = provider?.maxContextLength || 0;
+    }
   }
   if (requestedFields.includes("authenticationInformation")) {
-    result.authenticationInformation = provider?.authenticationInformation || "";
+    result.authenticationInformation = isLiteLLMEnabled()
+      ? ""
+      : provider?.authenticationInformation || "";
   }
   if (requestedFields.includes("provider")) {
-    result.provider = provider?.provider || "";
+    result.provider = isLiteLLMEnabled() ? "litellm" : provider?.provider || "";
   }
   if (requestedFields.includes("systemInstructions")) {
-    result.systemInstructions = provider?.config?.instructions || undefined;
+    result.systemInstructions = isLiteLLMEnabled()
+      ? undefined
+      : provider?.config?.instructions || undefined;
   }
   if (!requestedFields.includes("provider")) {
     delete result.provider;
@@ -159,7 +258,8 @@ const addProviderFields = async (
     let enabled = false;
     let queueName: string | undefined = undefined;
 
-    if (provider?.workflows) {
+    // LiteLLM mode: workflows aren't supported (they hang off the ExuluProvider).
+    if (!isLiteLLMEnabled() && provider?.workflows) {
       enabled = provider?.workflows?.enabled || false;
       if (provider?.workflows?.queue) {
         const queue = await provider?.workflows?.queue;

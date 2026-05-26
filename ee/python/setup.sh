@@ -203,6 +203,19 @@ pip install -r "$REQUIREMENTS_FILE"
 
 print_success "All dependencies installed successfully"
 
+# Step 6.5: Generate Prisma client for LiteLLM database mode.
+# LiteLLM's PrismaClient does `from prisma import Prisma`, which only works
+# after `prisma generate` has materialized the Python client against
+# LiteLLM's bundled schema. Skip silently if LiteLLM isn't installed or its
+# schema isn't where we expect — database mode is opt-in via config.litellm.yaml.
+LITELLM_PROXY_DIR=$(find "$VENV_DIR/lib" -path "*/litellm/proxy" -type d 2>/dev/null | head -1)
+if [ -n "$LITELLM_PROXY_DIR" ] && [ -f "$LITELLM_PROXY_DIR/schema.prisma" ]; then
+    print_info "Generating Prisma client for LiteLLM..."
+    (cd "$LITELLM_PROXY_DIR" && PATH="$VENV_DIR/bin:$PATH" "$VENV_DIR/bin/prisma" generate > /dev/null 2>&1) \
+        && print_success "Prisma client generated for LiteLLM" \
+        || print_warning "Prisma generate failed; LiteLLM database mode (database_url in config.litellm.yaml) may not work until you run 'cd $LITELLM_PROXY_DIR && PATH=$VENV_DIR/bin:\$PATH $VENV_DIR/bin/prisma generate'"
+fi
+
 # Step 7: Validate installation
 echo ""
 echo "Step 7: Validating installation..."

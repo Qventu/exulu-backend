@@ -93,9 +93,11 @@ export const itemsPaginationRequest = async ({
 
 const removeProviderFields = (requestedFields: string[]) => {
   const filtered = requestedFields.filter((field) => !exuluProviderFields.includes(field));
-  // Always add the provider field as we need it to get specific fields
-  // we sanitize this out again in the finalizeRequestedFields step.
-  filtered.push("provider");
+  // Always add the model field (FK to models row) — the hydration step in
+  // finalizeRequestedFields looks up the Model row to find the underlying
+  // ExuluProvider and derives the legacy provider fields (providerName,
+  // modelName, capabilities, ...) from it.
+  filtered.push("model");
   return filtered;
 };
 

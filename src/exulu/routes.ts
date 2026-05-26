@@ -39,8 +39,7 @@ import type { ExuluConfig } from "./app/index.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
-import Anthropic from "@anthropic-ai/sdk";
-import { CLAUDE_MESSAGES } from "../utils/claude-messages.ts";
+import JSZip from "jszip";
 import type { Queue } from "bullmq";
 import { createIdGenerator, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
@@ -53,6 +52,13 @@ import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
+import { generateSuggestions } from "./suggestions.ts";
+import { resolveModel, ResolveModelError } from "./resolve-model.ts";
+import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
+import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
+import { synthesizeSpeech, SpeechError } from "./speech.ts";
+import { buildTags, createTaggedFetch } from "./tags.ts";
+import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -65,7 +71,6 @@ import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
-import { convertJsonSchemaToZod } from 'zod-from-json-schema';
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
@@ -98,6 +103,7 @@ const {
   platformConfigurationsSchema,
   agentSessionsSchema,
   agentMessagesSchema,
+  modelsSchema,
   rolesSchema,
   usersSchema,
   skillsSchema,
@@ -189,6 +195,7 @@ export const createExpressRoutes = async (
       testCasesSchema(),
       agentSessionsSchema(),
       agentMessagesSchema(),
+      modelsSchema(),
       variablesSchema(),
       workflowTemplatesSchema(),
       statisticsSchema(),
@@ -523,13 +530,19 @@ Mood: friendly and intelligent.
         redisHost: process.env.REDIS_HOST,
         enabled: config?.workers?.enabled,
       },
+      liteLLM: {
+        enabled: process.env.EXULU_USE_LITELLM === "true",
+      },
     });
   });
 
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-
+  // Register the agent-run handler for a (provider, slug) pair. In Spec A
+  // catalog mode this is called once per ExuluProvider in providers.forEach
+  // below. In LiteLLM mode it is also called once with a fixed slug and any
+  // provider as the orchestrator (the in-code provider here is only used as
+  // a method-holder for generateStream/generateSync; the actual languageModel
+  // comes from resolveModel's LiteLLM branch).
+  const registerAgentRunRoute = (slug: string, provider: ExuluProvider) => {
     app.post(slug + "/:instance", async (req: Request, res: Response) => {
       console.log("[EXULU] POST " + slug + "/:instance", req.body);
 
@@ -567,7 +580,7 @@ Mood: friendly and intelligent.
 
       if (!agent) {
         res.status(404).json({
-          message: "Agent with id " + instance + " not found.", 
+          message: "Agent with id " + instance + " not found.",
         });
         return;
       }
@@ -671,53 +684,34 @@ Mood: friendly and intelligent.
         user,
       );
 
-      if (req.body.outputSchema && !!headers.stream) {
-        throw new Error("Providing a outputSchema in the POST body is not allowed when using the streaming API, set 'stream' to false in the headers when defining a response schema.")
+      const overrideModelId = req.headers["x-exulu-model-override"] as string | undefined;
+      const modelId = overrideModelId ?? agent.model;
+      if (!modelId) {
+        res.status(400).json({
+          message: `Agent ${agent.name} (${agent.id}) has no model configured.`,
+        });
+        return;
       }
 
-      let outputSchema: any | undefined;
-      if (req.body.outputSchema) {
-        if (typeof req.body.outputSchema === "string") {
-          req.body.outputSchema = JSON.parse(req.body.outputSchema);
-        }
-        outputSchema = convertJsonSchemaToZod(req.body.outputSchema);
-      }
-
-      let providerapikey: string | undefined;
-      const variableName = agent.providerapikey;
-
-      if (variableName) {
-        console.log("[EXULU] provider api key variable name", variableName);
-        // Look up the variable from the variables table
-        const variable = await db.from("variables").where({ name: variableName }).first();
-        if (!variable) {
-          res.status(400).json({
-            message:
-              "Provider API key variable not found for " +
-              agent.name +
-              " (" +
-              agent.id +
-              ").",
-          });
+      let resolved: Awaited<ReturnType<typeof resolveModel>>;
+      try {
+        resolved = await resolveModel({
+          modelId,
+          user,
+          providers,
+          agent: { id: agent.id },
+        });
+      } catch (err) {
+        if (err instanceof ResolveModelError) {
+          const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+          res.status(status).json({ message: err.message, code: err.code });
           return;
         }
-
-        // Get the API key from the variable (decrypt if encrypted)
-        providerapikey = variable.value;
-
-        if (!variable.encrypted) {
-          res.status(400).json({
-            message:
-              "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-          });
-          return;
-        }
-
-        if (variable.encrypted) {
-          const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-          providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-        }
+        throw err;
       }
+      const providerapikey = resolved.apiKey;
+      const resolvedLanguageModel = resolved.languageModel;
+      const resolvedModelId = resolved.model.id;
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
       if (!!headers.stream) {
@@ -765,6 +759,7 @@ Mood: friendly and intelligent.
           currentSkills: enabledSkills,
           approvedTools: approvedTools,
           allExuluTools: tools,
+          languageModel: resolvedLanguageModel,
           providerapikey,
           toolConfigs: agent.tools,
           exuluConfig: config,
@@ -820,8 +815,9 @@ Mood: friendly and intelligent.
                 session: headers.session as string,
                 user: user.id,
                 messages: messages,
+                model: resolvedModelId,
               });
-              clearSessionCurrentTask(headers.session as string).catch(() => {});
+              clearSessionCurrentTask(headers.session as string).catch(() => { });
             }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);
@@ -894,7 +890,6 @@ Mood: friendly and intelligent.
         const response = await provider.generateSync({
           contexts: contexts,
           rerankers: rerankers || [],
-          outputSchema: outputSchema,
           agent: agent,
           user,
           req: req,
@@ -904,6 +899,7 @@ Mood: friendly and intelligent.
           currentTools: enabledTools,
           currentSkills: enabledSkills,
           allExuluTools: tools,
+          languageModel: resolvedLanguageModel,
           providerapikey,
           exuluConfig: config,
           toolConfigs: agent.tools,
@@ -925,6 +921,531 @@ Mood: friendly and intelligent.
         return;
       }
     });
+  };
+
+  // Spec A: one handler per code-defined ExuluProvider, mounted at its slug.
+  providers.forEach((provider) => {
+    const slug = provider.slug as string;
+    if (!slug) return;
+    registerAgentRunRoute(slug, provider);
+  });
+
+  // LiteLLM mode: a single handler at a fixed path. agent.slug is hydrated to
+  // "/agents/litellm/run" in graphql/utilities/sanitize-and-hydrate-fields.ts
+  // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
+  if (isLiteLLMEnabled() && providers.length > 0) {
+    registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  }
+
+  // Follow-up message suggestions. Stateless: no session is loaded or written.
+  // The frontend posts the last user+assistant exchange and gets back up to 3
+  // short follow-up prompts the user might want to send next. Toggle lives on
+  // the agent (`suggestions_enabled`) and is enforced client-side; this route
+  // also rejects when the agent does not have it enabled.
+  app.post("/agents/suggestions/:agentId", async (req: Request, res: Response) => {
+    const agentId = req.params.agentId;
+    if (!agentId) {
+      res.status(400).json({ detail: "Missing agentId" });
+      return;
+    }
+
+    const agent = await exuluApp.get().agent(agentId);
+    if (!agent) {
+      res.status(404).json({ detail: `Agent ${agentId} not found.` });
+      return;
+    }
+
+    if (!agent.suggestions_enabled) {
+      res.status(400).json({ detail: "Suggestions are not enabled for this agent." });
+      return;
+    }
+
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id && agent.rights_mode !== "public") {
+      res
+        .status(authenticationResult.code || 500)
+        .json({ detail: `${authenticationResult.message}` });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    const scopeCheck = checkApiKeyScope(user, agentId);
+    if (!scopeCheck.allowed) {
+      res.status(scopeCheck.code).json({ detail: scopeCheck.reason });
+      return;
+    }
+
+    const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+    if (!hasAccessToAgent) {
+      res.status(401).json({ detail: "You don't have access to this agent." });
+      return;
+    }
+
+    const callerId = resolveCallerId(req, user?.id);
+    const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
+    const effectiveLimits = rateLimitsEnabled
+      ? ((agent as any).rate_limits ?? null)
+      : null;
+    const preCheck = await preCheckAgentRateLimit({
+      agentId,
+      callerId,
+      limits: effectiveLimits,
+    });
+    if (!preCheck.ok) {
+      res.setHeader("Retry-After", String(preCheck.retryAfter));
+      res.status(429).json({
+        detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
+        metric: preCheck.metric,
+        retryAfter: preCheck.retryAfter,
+      });
+      return;
+    }
+
+    const messages: UIMessage[] = Array.isArray(req.body.messages) ? req.body.messages : [];
+    if (messages.length === 0) {
+      res.status(400).json({ detail: "Missing messages in request body." });
+      return;
+    }
+
+    if (!agent.model) {
+      res.status(400).json({
+        detail: `Agent ${agent.name} (${agent.id}) has no model configured.`,
+      });
+      return;
+    }
+
+    let resolved: Awaited<ReturnType<typeof resolveModel>>;
+    try {
+      resolved = await resolveModel({
+        modelId: agent.model,
+        user,
+        providers,
+        agent: { id: agent.id },
+      });
+    } catch (err) {
+      if (err instanceof ResolveModelError) {
+        const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+        res.status(status).json({ detail: err.message, code: err.code });
+        return;
+      }
+      throw err;
+    }
+
+    try {
+      const { suggestions, usage } = await generateSuggestions({
+        languageModel: resolved.languageModel,
+        messages,
+        agentInstructions: agent.instructions,
+      });
+
+      await Promise.all([
+        updateStatistic({
+          name: "count",
+          label: agent.name,
+          type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+          trigger: "agent",
+          count: 1,
+          user: user?.id,
+          role: user?.role?.id,
+        }),
+        ...(usage.inputTokens
+          ? [
+            updateStatistic({
+              name: "inputTokens",
+              label: agent.name,
+              type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+              trigger: "agent",
+              count: usage.inputTokens,
+              user: user?.id,
+              role: user?.role?.id,
+            }),
+          ]
+          : []),
+        ...(usage.outputTokens
+          ? [
+            updateStatistic({
+              name: "outputTokens",
+              label: agent.name,
+              type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+              trigger: "agent",
+              count: usage.outputTokens,
+            }),
+          ]
+          : []),
+        recordAgentTokenUsage({
+          agentId,
+          callerId,
+          limits: effectiveLimits,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        }),
+      ]);
+
+      res.status(200).json({ suggestions });
+    } catch (err) {
+      console.error("[EXULU] suggestions generation failed", err);
+      res.status(500).json({
+        detail: err instanceof Error ? err.message : "Failed to generate suggestions.",
+      });
+    }
+  });
+
+  // Speech-to-text transcription. Forwards a multipart audio upload to the
+  // LiteLLM proxy's /v1/audio/transcriptions endpoint with the model name from
+  // TRANSCRIPTION_MODEL. Gated on both EXULU_USE_LITELLM=true and
+  // TRANSCRIPTION_MODEL being set; either missing → 503.
+  //
+  // Design doc: docs/superpowers/specs/2026-05-24-speech-to-text-transcription-design.md
+  const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
+  const transcribeUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_TRANSCRIBE_BYTES },
+  });
+
+  app.post(
+    "/transcribe",
+    (req: Request, res: Response, next) => {
+      transcribeUpload.single("file")(req, res, (err: unknown) => {
+        if (!err) return next();
+        const code = (err as { code?: string })?.code;
+        if (code === "LIMIT_FILE_SIZE") {
+          res
+            .status(413)
+            .json({ detail: "Recording too large. Please record a shorter clip." });
+          return;
+        }
+        res
+          .status(400)
+          .json({ detail: err instanceof Error ? err.message : "Upload failed." });
+      });
+    },
+    async (req: Request, res: Response) => {
+      if (!isLiteLLMEnabled() || !process.env.TRANSCRIPTION_MODEL) {
+        res.status(503).json({
+          detail:
+            "Speech-to-text is not enabled on this deployment. " +
+            "Set EXULU_USE_LITELLM=true and TRANSCRIPTION_MODEL in the environment.",
+        });
+        return;
+      }
+
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res
+          .status(authenticationResult.code || 401)
+          .json({ detail: authenticationResult.message });
+        return;
+      }
+
+      const file = (req as Request & { file?: Express.Multer.File }).file;
+      if (!file) {
+        res.status(400).json({ detail: "No audio file provided in 'file' field." });
+        return;
+      }
+      if (!file.mimetype.startsWith("audio/")) {
+        res.status(400).json({
+          detail: `Unsupported mimetype: ${file.mimetype}. Expected audio/*.`,
+        });
+        return;
+      }
+
+      try {
+        await Promise.race([
+          waitForLiteLLMReady(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+          ),
+        ]);
+      } catch {
+        res
+          .status(503)
+          .json({ detail: "Transcription service is not ready. Try again shortly." });
+        return;
+      }
+
+      // Optional language hint (ISO-639-1, e.g. "de"). Without it Whisper
+      // auto-detects, which sometimes flips short clips to English.
+      const language =
+        typeof req.body?.language === "string" && /^[a-z]{2}$/.test(req.body.language)
+          ? req.body.language
+          : undefined;
+
+      try {
+        const { text } = await transcribeAudio({ file, language });
+        res.status(200).json({ text });
+      } catch (err) {
+        if (err instanceof TranscriptionError) {
+          const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+          res.status(code).json({ detail: err.message });
+          return;
+        }
+        console.error("[EXULU] /transcribe failed", err);
+        res.status(500).json({
+          detail: err instanceof Error ? err.message : "Transcription failed.",
+        });
+      }
+    },
+  );
+
+  // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
+  // /v1/audio/speech endpoint with the model from TTS_MODEL and the optional
+  // voice from TTS_VOICE, and streams the resulting MP3 bytes back as
+  // audio/mpeg. Gated on both EXULU_USE_LITELLM=true and TTS_MODEL being set.
+  //
+  // Design doc: docs/superpowers/specs/2026-05-25-text-to-speech-design.md
+  const MAX_TTS_INPUT_CHARS = 4000;
+
+  app.post(
+    "/speech",
+    bodyParser.json({ limit: "64kb" }),
+    async (req: Request, res: Response) => {
+      if (!isLiteLLMEnabled() || !process.env.TTS_MODEL || !process.env.TTS_VOICE) {
+        res.status(503).json({
+          detail:
+            "Text-to-speech is not enabled on this deployment. " +
+            "Set EXULU_USE_LITELLM=true, TTS_MODEL, and TTS_VOICE in the environment.",
+        });
+        return;
+      }
+
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res
+          .status(authenticationResult.code || 401)
+          .json({ detail: authenticationResult.message });
+        return;
+      }
+
+      const text =
+        typeof req.body?.text === "string" ? req.body.text.trim() : "";
+      if (!text) {
+        res.status(400).json({ detail: "Missing 'text' in request body." });
+        return;
+      }
+      if (text.length > MAX_TTS_INPUT_CHARS) {
+        res.status(400).json({
+          detail: `Text too long (${text.length} chars). Max ${MAX_TTS_INPUT_CHARS}.`,
+        });
+        return;
+      }
+
+      try {
+        await Promise.race([
+          waitForLiteLLMReady(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+          ),
+        ]);
+      } catch {
+        res
+          .status(503)
+          .json({ detail: "Speech service is not ready. Try again shortly." });
+        return;
+      }
+
+      try {
+        const audio = await synthesizeSpeech({ text });
+        res.status(200);
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Length", String(audio.length));
+        res.setHeader("Cache-Control", "no-store");
+        res.send(audio);
+      } catch (err) {
+        if (err instanceof SpeechError) {
+          const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+          res.status(code).json({ detail: err.message });
+          return;
+        }
+        console.error("[EXULU] /speech failed", err);
+        res.status(500).json({
+          detail: err instanceof Error ? err.message : "Speech generation failed.",
+        });
+      }
+    },
+  );
+
+  // Generic LiteLLM pass-through. Anything under /litellm/:project/v1/* is
+  // forwarded to the local LiteLLM server with the master key injected as the
+  // Authorization header, so callers never see it. Exulu user authentication
+  // gates access, and the request is tagged with the user+role+project for
+  // cost attribution (same scheme as resolve-model.ts). Restricted to the /v1
+  // OpenAI-compatible surface — LiteLLM admin paths (/model/new,
+  // /key/generate, /user/*, etc.) are not reachable.
+  //
+  // The :project param is mandatory and mirrors /gateway/anthropic: pass
+  // "DEFAULT" for no project association, otherwise the caller must have
+  // access to the referenced project id.
+  //
+  // The upstream response is streamed back as-is, which lets SSE endpoints
+  // (e.g. /v1/chat/completions with stream=true) work transparently.
+  app.use("/litellm/:project", async (req: Request, res: Response) => {
+    if (!isLiteLLMEnabled()) {
+      res.status(503).json({
+        detail:
+          "LiteLLM is not enabled on this deployment. Set EXULU_USE_LITELLM=true.",
+      });
+      return;
+    }
+    const masterKey = process.env.LITELLM_MASTER_KEY;
+    if (!masterKey) {
+      res.status(503).json({ detail: "LITELLM_MASTER_KEY is not configured." });
+      return;
+    }
+
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id) {
+      console.log("[EXULU] /litellm failed authentication", authenticationResult);
+      res
+        .status(authenticationResult.code || 401)
+        .json({ detail: authenticationResult.message });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    // Allowlist the OpenAI-compatible surface. Admin paths fail closed so
+    // future LiteLLM admin endpoints don't accidentally become reachable.
+    if (!req.path.startsWith("/v1/")) {
+      res.status(403).json({
+        detail: `Path ${req.path} is not exposed through the Exulu LiteLLM proxy.`,
+      });
+      return;
+    }
+
+    let project: Project | null = null;
+    if (req.params.project && req.params.project !== "DEFAULT") {
+      const { db } = await postgresClient();
+      let projectQuery = db("projects");
+      projectQuery.select("*");
+      projectQuery = applyAccessControl(
+        projectsSchema(),
+        projectQuery,
+        authenticationResult.user,
+      );
+      projectQuery.where({ id: req.params.project });
+      project = await projectQuery.first();
+
+      if (!project) {
+        res.status(404).json({
+          detail: "Project not found or you do not have access to it.",
+        });
+        return;
+      }
+    }
+
+    const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+    const port = process.env.LITELLM_PORT ?? "4000";
+
+    // app.use strips the mount path, so req.url here is the suffix including
+    // any query string (e.g. "/v1/chat/completions?stream=true").
+    const upstreamUrl = `http://${host}:${port}${req.url}`;
+
+    const upstreamHeaders: Record<string, string> = {};
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined) continue;
+      const lower = name.toLowerCase();
+      if (
+        lower === "authorization" ||
+        lower === "host" ||
+        lower === "content-length" ||
+        lower === "connection" ||
+        lower === "transfer-encoding" ||
+        lower === "accept-encoding"
+      )
+        continue;
+      upstreamHeaders[name] = Array.isArray(value) ? value.join(", ") : value;
+    }
+    upstreamHeaders["authorization"] = `Bearer ${masterKey}`;
+
+    // Re-serialize the JSON body that the global express.json() middleware
+    // already parsed. Non-JSON request bodies (e.g. multipart uploads) are
+    // not supported here — those have dedicated routes like /transcribe.
+    const methodHasBody = !["GET", "HEAD"].includes(req.method);
+    let body: string | undefined;
+    if (
+      methodHasBody &&
+      req.body &&
+      typeof req.body === "object" &&
+      Object.keys(req.body).length > 0
+    ) {
+      body = JSON.stringify(req.body);
+      upstreamHeaders["content-type"] = "application/json";
+    }
+
+    // Inject Exulu identity into the LiteLLM request body as metadata.tags
+    // for cost attribution. createTaggedFetch is a no-op for GETs and for
+    // bodies it can't parse as JSON, so it's safe to wrap unconditionally.
+    const tags = buildTags({
+      user_id: user.id,
+      role_id: user.role?.id,
+      project_id: project?.id,
+      user_name: user.email,
+      role_name: user.role?.name,
+      project_name: project?.name,
+    });
+
+    if (tags?.length) {
+      upstreamHeaders["x-litellm-tags"] = tags.join(",");
+      upstreamHeaders["x-litellm-spend-logs-metadata"] = JSON.stringify({
+        user_id: user.id,
+        role_id: user.role?.id,
+        project_id: project?.id || "DEFAULT",
+        user_name: user.email,
+        role_name: user.role?.name,
+        project_name: project?.name,
+      });
+    }
+    console.log("[EXULU] Built tags", tags);
+
+    const taggedFetch = createTaggedFetch(tags) as unknown as typeof globalThis.fetch;
+
+    try {
+      const upstream = await taggedFetch(upstreamUrl, {
+        method: req.method,
+        headers: upstreamHeaders,
+        body,
+      });
+
+      res.status(upstream.status);
+      upstream.headers.forEach((value, name) => {
+        const lower = name.toLowerCase();
+        // Node fetch transparently decompresses, so the original
+        // content-encoding/length no longer describe the bytes we forward.
+        if (
+          lower === "content-encoding" ||
+          lower === "content-length" ||
+          lower === "transfer-encoding" ||
+          lower === "connection"
+        )
+          return;
+        res.setHeader(name, value);
+      });
+
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+
+      const reader = upstream.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) res.write(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      res.end();
+    } catch (err) {
+      console.error("[EXULU] /litellm proxy failed", err);
+      if (!res.headersSent) {
+        res.status(502).json({
+          detail: err instanceof Error ? err.message : "LiteLLM proxy failed.",
+        });
+      } else {
+        res.end();
+      }
+    }
   });
 
   if (
@@ -952,380 +1473,22 @@ Mood: friendly and intelligent.
     });
   });
 
-  // This route basically passes the request 1:1 to the Anthropic API, but we can
-  // inject tools into the request body, publish data to audit logs and implement
-  // custom authentication logic from the IMP UI.
-  app.use(
-    "/gateway/anthropic/:agent/:project",
-    express.raw({ type: "*/*", limit: REQUEST_SIZE_LIMIT }),
-    async (req, res) => {
-      try {
-        if (!req.body.tools) {
-          req.body.tools = [];
-        }
-
-        const { db } = await postgresClient();
-
-        // Authenticate the user, and exchange the user token for an anthropic token.
-        const authenticationResult = await requestValidators.authenticate(req);
-        if (!authenticationResult.user?.id) {
-          console.log("[EXULU] failed authentication result", authenticationResult);
-          res
-            .status(authenticationResult.code || 500)
-            .json({ detail: `${authenticationResult.message}` });
-          return;
-        }
-
-        const user = authenticationResult.user;
-
-        let agentQuery = db("agents");
-        agentQuery.select("*");
-        agentQuery = applyAccessControl(agentsSchema(), agentQuery, authenticationResult.user);
-        agentQuery.where({ id: req.params.agent });
-        const agent: ExuluAgent | undefined = await agentQuery.first();
-
-        if (!agent) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(`
-\x1b[41m -- Agent ${req.params.agent} not found or you do not have access to it. --
-\x1b[0m`);
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        let project: Project | null = null;
-
-        if (!req.params.project || req.params.project === "DEFAULT") {
-          project = null;
-        } else {
-          let projectQuery = db("projects");
-          projectQuery.select("*");
-          projectQuery = applyAccessControl(
-            projectsSchema(),
-            projectQuery,
-            authenticationResult.user,
-          );
-          projectQuery.where({ id: req.params.project });
-          project = await projectQuery.first();
-
-          if (!project) {
-            const arrayBuffer = createCustomAnthropicStreamingMessage(
-              CLAUDE_MESSAGES.missing_project,
-            );
-            res.setHeader("Content-Type", "application/json");
-            res.end(Buffer.from(arrayBuffer));
-            return;
-          }
-        }
-
-        console.log("[EXULU] anthropic proxy called for agent:", agent?.name);
-
-        if (!process.env.NEXTAUTH_SECRET) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(
-            CLAUDE_MESSAGES.missing_nextauth_secret,
-          );
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        if (!agent.providerapikey) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(CLAUDE_MESSAGES.not_enabled);
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        // Get the variable name from agent's providerapikey field
-        const variableName = agent.providerapikey;
-
-        // Look up the variable from the variables table
-        const variable = await db.from("variables").where({ name: variableName }).first();
-        if (!variable) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(
-            CLAUDE_MESSAGES.anthropic_token_variable_not_found,
-          );
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        // Get the API key from the variable (decrypt if encrypted)
-        let anthropicApiKey = variable.value;
-
-        if (!variable.encrypted) {
-          const arrayBuffer = createCustomAnthropicStreamingMessage(
-            CLAUDE_MESSAGES.anthropic_token_variable_not_encrypted,
-          );
-          res.setHeader("Content-Type", "application/json");
-          res.end(Buffer.from(arrayBuffer));
-          return;
-        }
-
-        if (variable.encrypted) {
-          const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-          anthropicApiKey = bytes.toString(CryptoJS.enc.Utf8);
-        }
-
-        // todo get enabled tools from agent and add them to the request body
-        // todo build logic to execute tool calls
-
-        // Set the anthropic api key in the headers.
-        const headers = {
-          "x-api-key": anthropicApiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": req.headers["content-type"] || "application/json",
-        };
-
-        // Copy relevant headers
-        if (req.headers["accept"]) headers["accept"] = req.headers["accept"];
-        if (req.headers["user-agent"]) headers["user-agent"] = req.headers["user-agent"];
-
-        const client = new Anthropic({
-          apiKey: anthropicApiKey,
-        });
-
-        // console.log("[EXULU] Req.body", req.body)
-
-        // Send the request to the anthropic api.
-        // Stream the messages from Anthropic
-        const tokens: Record<
-          string,
-          {
-            input_tokens: number;
-            cache_creation_input_tokens: number;
-            cache_read_input_tokens: number;
-            output_tokens: number;
-          }
-        > = {};
-
-        const disabledTools = req.body.disabledTools ? req.body.disabledTools : [];
-        let enabledTools: ExuluTool[] = await getEnabledTools(
-          agent,
-          tools,
-          contexts || [],
-          rerankers || [],
-          disabledTools,
-          providers,
-          user,
-        );
-
-        // Support custom instructions from the request body
-        const customInstructions = req.body.customInstructions
-          ? typeof req.body.customInstructions === "string"
-            ? req.body.customInstructions
-            : JSON.stringify(req.body.customInstructions)
-          : "";
-
-        const agentInstructions = customInstructions
-          ? `${agent?.instructions}\n\n${customInstructions}`
-          : agent?.instructions;
-
-        let system:
-          | string
-          | {
-            type: "text";
-            text: string;
-          }[] = req.body.system;
-
-        if (Array.isArray(req.body.system)) {
-          system = [
-            ...req.body.system,
-            ...(agent
-              ? [
-                {
-                  type: "text",
-                  text: `
-                            You are an agent named: ${agent?.name}
-                            Here are some additional instructions for you: ${agentInstructions}`,
-                },
-              ]
-              : []),
-            ...(project
-              ? [
-                {
-                  type: "text",
-                  text: `Additional information:
-
-                            The project you are working on is: ${project?.name}
-                            Here is some additional information about the project: ${project?.description}`,
-                },
-              ]
-              : []),
-          ];
-        } else {
-          system = `${req.body.system}\n\n
-                ${agent
-              ? `You are an agent named: ${agent?.name}
-                Here are some additional instructions for you: ${agentInstructions}`
-              : ""
-            }
-
-                ${project?.id
-              ? `Additional information:
-
-                The project you are working on is: ${project?.name}
-                The project description is: ${project?.description}`
-              : ""
-            }
-                `;
-        }
-
-        for await (const event of client.messages.stream({
-          ...req.body,
-          system,
-        }) as AsyncIterable<{
-          type: string;
-          index: number;
-          message?: {
-            id: string;
-            type: string;
-            name: string;
-            input: any;
-            role: string;
-            model: string;
-            content: any[];
-            stop_reason: string | null;
-            stop_sequence: string | null;
-            usage: {
-              input_tokens: number;
-              cache_creation_input_tokens: number;
-              cache_read_input_tokens: number;
-              output_tokens: number;
-              service_tier: string;
-            };
-          };
-          delta?: {
-            type: string;
-            text: string;
-          };
-        }>) {
-          if (event.message?.id) {
-            tokens[event.message.id] = {
-              input_tokens: event.message.usage.input_tokens,
-              cache_creation_input_tokens: event.message.usage.cache_creation_input_tokens,
-              cache_read_input_tokens: event.message.usage.cache_read_input_tokens,
-              output_tokens: event.message.usage.output_tokens,
-            };
-            // todo check against rate limit for this agent and project
-          }
-
-          // We only deal with tools that are prefixed with "exulu_"
-          // on the server, other tools are handled by Claude Code
-          // client side.
-          if (event.message?.type === "tool_use" && event.message?.name?.includes("exulu_")) {
-            const toolName = event.message?.name;
-            console.log("[EXULU] Using tool", toolName);
-            const inputs = event.message?.input;
-            const id = event.message?.id;
-
-            const tool: ExuluTool | undefined = enabledTools.find(
-              (tool) => tool.id === toolName.replace("exulu_", ""),
-            );
-            if (!tool || !tool.tool.execute) {
-              console.error("[EXULU] Tool not found or not enabled.", toolName);
-              continue;
-            }
-
-            const toolResult = await tool.tool.execute(inputs, {
-              toolCallId: id,
-              messages: [
-                {
-                  ...event.message,
-                  role: "tool",
-                },
-              ],
-            });
-
-            console.log("[EXULU] Tool result", toolResult);
-
-            const toolResultMessage = {
-              role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: id,
-                  content: toolResult,
-                },
-              ],
-            };
-
-            res.write(`event: tool_result\ndata: ${JSON.stringify(toolResultMessage)}\n\n`);
-          } else {
-            const msg = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-            res.write(msg);
-          }
-        }
-
-        let totalInputTokens = 0;
-        let totalOutputTokens = 0;
-        for (const token of Object.values(tokens)) {
-          totalInputTokens += token.input_tokens;
-          totalOutputTokens += token.output_tokens;
-        }
-
-        const statistics = {
-          label: agent.name,
-          trigger: "agent" as STATISTICS_LABELS,
-        };
-
-        await Promise.all([
-          updateStatistic({
-            name: "count",
-            label: statistics.label,
-            type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-            trigger: statistics.trigger,
-            count: 1,
-            user: user.id,
-            role: user?.role?.id,
-            ...(project ? { project: project.id } : {}),
-          }),
-          ...(totalInputTokens
-            ? [
-              updateStatistic({
-                name: "inputTokens",
-                label: statistics.label,
-                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                trigger: statistics.trigger,
-                count: totalInputTokens,
-                user: user.id,
-                role: user?.role?.id,
-                ...(project ? { project: project.id } : {}),
-              }),
-            ]
-            : []),
-          ...(totalOutputTokens
-            ? [
-              updateStatistic({
-                name: "outputTokens",
-                label: statistics.label,
-                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                trigger: statistics.trigger,
-                count: totalInputTokens,
-                user: user.id,
-                role: user?.role?.id,
-                ...(project ? { project: project.id } : {}),
-              }),
-            ]
-            : []),
-        ]);
-
-        res.write("event: done\ndata: [DONE]\n\n");
-        res.end();
-      } catch (error: any) {
-        console.error("[PROXY] Manual proxy error:", error);
-        if (!res.headersSent) {
-          if (error?.message === "Invalid token") {
-            res
-              .status(500)
-              .json({ error: "Authentication error, please check your IMP token and try again." });
-          } else {
-            res.status(500).json({ error: error.message });
-          }
-        }
-      }
-    },
-  );
+  // DEPRECATED: superseded by /litellm/:project/v1/messages. Kept as a
+  // compatibility shim for external API consumers that integrated against
+  // the old path. The :agent param is no longer used — the request is
+  // rewritten and re-routed through the LiteLLM passthrough, which performs
+  // auth, project access control, and cost-attribution tagging. New
+  // integrations should call /litellm/:project/v1/messages directly.
+  app.use("/gateway/anthropic/:agent/:project", (req, res) => {
+    console.warn("[EXULU] DEPRECATED: Received a request to /gateway/anthropic/:agent/:project, this is a deprecated path and will be removed in a future version. Please use /litellm/:project instead.");
+    // With app.use(path, ...), Express strips the mount path from req.url,
+    // so req.url here is the suffix after /gateway/anthropic/:agent/:project.
+    const suffix = req.url;
+    req.url = `/litellm/${encodeURIComponent(req.params.project)}${suffix}`;
+    // `app.handle` is the documented entry point for re-running the router
+    // against a rewritten URL but is not exposed on Express's public types.
+    (app as unknown as { handle: (req: Request, res: Response) => void }).handle(req, res);
+  });
 
   // ─── Skills File Management ──────────────────────────────────────────────────
 
@@ -1366,13 +1529,13 @@ Mood: friendly and intelligent.
           const nodePath = "/" + parts.slice(0, i + 1).join("/");
           const node: SkillFileNode = isFile
             ? {
-                name: part,
-                path: nodePath,
-                key: file.key,
-                type: "file",
-                size: file.size,
-                lastModified: file.lastModified,
-              }
+              name: part,
+              path: nodePath,
+              key: file.key,
+              type: "file",
+              size: file.size,
+              lastModified: file.lastModified,
+            }
             : { name: part, path: nodePath, key: "", type: "folder", children: [] };
 
           current.children = current.children ?? [];
@@ -2371,6 +2534,194 @@ Mood: friendly and intelligent.
 
   // ─── End Session Files ────────────────────────────────────────────────────────
 
+  // ─── GDPR (DSGVO Art. 15 / Art. 17) ───────────────────────────────────────────
+  // Operator-driven routes for data-subject access (export) and erasure. Both
+  // require super_admin; self-delete is blocked so there's always another human
+  // accountable for the operation.
+
+  /**
+   * Authenticate, require super_admin, validate :id, and load the target user.
+   * Returns the user row, or null after having written the appropriate error
+   * response. `allowSelf=false` additionally blocks operating on the caller's
+   * own account (used for DELETE).
+   */
+  async function resolveTargetUser(
+    req: Request,
+    res: Response,
+    opts: { allowSelf: boolean },
+  ): Promise<{ targetUser: any; db: Knex } | null> {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return null;
+    }
+    if (!authResult.user.super_admin) {
+      res.status(403).json({ detail: "Super admin access required." });
+      return null;
+    }
+
+    const targetId = Number.parseInt(req.params.id ?? "", 10);
+    if (!Number.isFinite(targetId)) {
+      res.status(400).json({ detail: "Invalid user id." });
+      return null;
+    }
+
+    if (!opts.allowSelf && targetId === authResult.user.id) {
+      res
+        .status(403)
+        .json({ detail: "Super admins cannot delete their own account." });
+      return null;
+    }
+
+    const { db } = await postgresClient();
+    const targetUser = await db.from("users").where({ id: targetId }).first();
+    if (!targetUser) {
+      res.status(404).json({ detail: "User not found." });
+      return null;
+    }
+
+    return { targetUser, db };
+  }
+
+  /**
+   * GET /users/:id/data-export
+   * Returns a ZIP containing the user's account row and all personal data we
+   * hold for them in Postgres. Sensitive auth material (passwords, API key
+   * hashes, tokens) is stripped from user_data.json before serialising.
+   */
+  app.get("/users/:id/data-export", async (req: Request, res: Response) => {
+    const resolved = await resolveTargetUser(req, res, { allowSelf: true });
+    if (!resolved) return;
+    const { targetUser, db } = resolved;
+
+    try {
+      const role = targetUser.role
+        ? await db.from("roles").where({ id: targetUser.role }).first()
+        : null;
+      const userExport = { ...targetUser, role: role ?? targetUser.role };
+      delete userExport.password;
+      delete userExport.apikey;
+      delete userExport.temporary_token;
+      delete userExport.anthropic_token;
+
+      const sessions = await db
+        .from("agent_sessions")
+        .where({ user: targetUser.id });
+      const sessionIds = sessions.map((s: any) => s.id);
+      const messages = sessionIds.length
+        ? await db
+          .from("agent_messages")
+          .whereIn("session", sessionIds)
+          .orderBy("createdAt", "asc")
+        : [];
+      const messagesBySession = new Map<string, any[]>();
+      for (const m of messages) {
+        const list = messagesBySession.get(m.session) ?? [];
+        list.push(m);
+        messagesBySession.set(m.session, list);
+      }
+      const sessionsWithMessages = sessions.map((s: any) => ({
+        ...s,
+        messages: messagesBySession.get(s.id) ?? [],
+      }));
+
+      const [feedback, promptFavorites, tracking] = await Promise.all([
+        db.from("feedback").where({ user: targetUser.id }).catch(() => []),
+        db
+          .from("prompt_favorites")
+          .where({ user_id: targetUser.id })
+          .catch(() => []),
+        db.from("tracking").where({ user: targetUser.id }).catch(() => []),
+      ]);
+
+      const exportedAt = new Date().toISOString();
+      const readme = [
+        `Exulu user data export`,
+        ``,
+        `User id: ${targetUser.id}`,
+        `Exported at: ${exportedAt}`,
+        ``,
+        `This archive contains the personal data Exulu holds for the user`,
+        `referenced above, provided in fulfilment of DSGVO Art. 15`,
+        `(Recht auf Auskunft / GDPR right of access).`,
+        ``,
+        `Files:`,
+        `  - user_data.json        account row (password/api-key hashes stripped)`,
+        `  - sessions.json         chat sessions with messages inlined`,
+        `  - feedback.json         feedback the user submitted`,
+        `  - prompt_favorites.json prompt-library favourites`,
+        `  - tracking.json         tracking events linked to the user`,
+        ``,
+      ].join("\n");
+
+      const zip = new JSZip();
+      zip.file("README.txt", readme);
+      zip.file("user_data.json", JSON.stringify(userExport, null, 2));
+      zip.file("sessions.json", JSON.stringify(sessionsWithMessages, null, 2));
+      zip.file("feedback.json", JSON.stringify(feedback, null, 2));
+      zip.file(
+        "prompt_favorites.json",
+        JSON.stringify(promptFavorites, null, 2),
+      );
+      zip.file("tracking.json", JSON.stringify(tracking, null, 2));
+
+      const buffer = await zip.generateAsync({ type: "nodebuffer" });
+      const filename = `user-${targetUser.id}-export-${exportedAt.replace(/[:.]/g, "-")}.zip`;
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("[GDPR] Failed to build data export", err);
+      res.status(500).json({ detail: "Failed to build data export." });
+    }
+  });
+
+  /**
+   * DELETE /users/:id
+   * Hard-deletes the user and every row referencing them in one transaction.
+   * After the DB transaction commits, S3 objects under user_<id>/ are deleted
+   * best-effort — failure there is logged but does not fail the request,
+   * because the personal-data set is already gone from the database.
+   */
+  app.delete("/users/:id", async (req: Request, res: Response) => {
+    const resolved = await resolveTargetUser(req, res, { allowSelf: false });
+    if (!resolved) return;
+    const { targetUser, db } = resolved;
+
+    try {
+      await db.transaction(async (trx) => {
+        await trx("agent_messages").where({ user: targetUser.id }).delete();
+        await trx("agent_sessions").where({ user: targetUser.id }).delete();
+        await trx("feedback").where({ user: targetUser.id }).delete();
+        await trx("prompt_favorites")
+          .where({ user_id: targetUser.id })
+          .delete();
+        await trx("tracking").where({ user: targetUser.id }).delete();
+        await trx("rbac").where({ user_id: targetUser.id }).delete();
+        await trx("users").where({ id: targetUser.id }).delete();
+      });
+    } catch (err: any) {
+      console.error("[GDPR] Failed to delete user", err);
+      res.status(500).json({ detail: "Failed to delete user." });
+      return;
+    }
+
+    try {
+      const prefix = `user_${targetUser.id}/`;
+      const files = await listS3ObjectsByPrefix(prefix, config);
+      await Promise.all(files.map((f) => deleteS3Object(f.key, config)));
+    } catch (err: any) {
+      console.error("[GDPR] DB delete succeeded but S3 cleanup failed", err);
+    }
+
+    res.status(204).send();
+  });
+
+  // ─── End GDPR ─────────────────────────────────────────────────────────────────
+
   app.use(express.static("public"));
 
   await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config, rerankers);
@@ -2457,17 +2808,3 @@ function buildUnifiedDiff(
   return lines.join("\n");
 }
 
-const createCustomAnthropicStreamingMessage = (message: string) => {
-  const responseData = {
-    type: "message",
-    content: [
-      {
-        type: "text",
-        text: message,
-      },
-    ],
-  };
-  const jsonString = JSON.stringify(responseData);
-  const arrayBuffer = new TextEncoder().encode(jsonString).buffer;
-  return arrayBuffer;
-};

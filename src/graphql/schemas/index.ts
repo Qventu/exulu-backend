@@ -7,6 +7,7 @@ import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluProvider } from "@SRC/exulu/provider";
+import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
@@ -34,6 +35,7 @@ import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { checkLicense } from "@EE/entitlements.ts";
+import fs from "fs";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -480,6 +482,10 @@ type PageInfo {
     `;
 
   typeDefs += `
+    litellmCatalog: [LiteLLMModel!]!
+    `;
+
+  typeDefs += `
     workflowSchedule(workflow: ID!): WorkflowScheduleResult
     `;
 
@@ -561,6 +567,25 @@ type RateLimitUsageRow {
 }
 `;
 
+  modelDefs += `
+type LiteLLMModel {
+  model_name: String!
+  upstream_model: String
+  active: Boolean
+  tags: [String!]
+  type: String
+  brand: String
+  region: String
+  max_tokens: Int
+  max_input_tokens: Int
+  max_output_tokens: Int
+  supports_vision: Boolean
+  supports_function_calling: Boolean
+  supports_pdf_input: Boolean
+  supports_audio_input: Boolean
+}
+`;
+
   resolvers.Query["agentRateLimitUsage"] = async (_, args, context) => {
     // Enterprise feature — return an empty list when the license is not active.
     if (!checkLicense()["rate-limits"]) return [];
@@ -621,6 +646,17 @@ type RateLimitUsageRow {
     };
   };
 
+  // litellmCatalog: returns the list of models LiteLLM is currently configured
+  // to expose. Empty array when LiteLLM is off / misconfigured so callers can
+  // invoke this unconditionally. Cache lives in the shared catalog module so
+  // addProviderFields can use the same data without re-fetching.
+  resolvers.Query["litellmCatalog"] = async () => {
+    const { fetchLiteLLMCatalog } = await import(
+      "@SRC/exulu/litellm/catalog"
+    );
+    return fetchLiteLLMCatalog();
+  };
+
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {
     // Creates a scheduled workflow execution, takes args.workflow (id) args.queue and args.schedule and args.variables
 
@@ -661,13 +697,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -766,13 +800,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -836,13 +868,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -934,13 +964,11 @@ type RateLimitUsageRow {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = providers.find((provider) => provider.id === agent.provider);
+    const provider = await resolveAgentProvider(agent, providers);
 
     if (!provider) {
       throw new Error(
-        "Agent provider: " +
-        agent.provider +
-        " not found for agent instance " +
+        "ExuluProvider not registered for the model configured on agent instance " +
         agent.id +
         ".",
       );
@@ -1573,7 +1601,7 @@ type RateLimitUsageRow {
     const instances = await exuluApp.get().agents();
     let agentTools = await Promise.all(
       instances.map(async (agent: ExuluAgent) => {
-        const provider: ExuluProvider | undefined = providers.find((a) => a.id === agent.provider);
+        const provider = await resolveAgentProvider(agent, providers);
         if (!provider) {
           return null;
         }
@@ -1862,6 +1890,9 @@ type Provider {
   provider: String
   modelName: String
   type: EnumProviderType!
+  authenticationInformation: String
+  maxContextLength: Int
+  capabilities: JSON
 }
 
 type Eval {
