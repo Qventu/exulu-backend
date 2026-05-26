@@ -13,3 +13,8 @@ litellm[proxy]==1.85.1
 # separate pin. setup.sh runs `prisma generate` against LiteLLM's bundled
 # schema after pip install so the Python client module is materialized.
 prisma==0.15.0
+# Vertex AI SDK — required by LiteLLM when routing to `vertex_ai/*` models
+# (the `vertexai` Python module lives inside google-cloud-aiplatform).
+# NOT included in litellm[proxy]; without it, requests to Vertex models
+# fail with "No module named 'vertexai'".
+google-cloud-aiplatform>=1.38
