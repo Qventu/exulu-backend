@@ -12,6 +12,8 @@ export type LiteLLMCatalogEntry = {
   model_name: string;
   upstream_model: string | null;
   tags: string[];
+  brand: string | null;
+  region: string | null;
   max_tokens: number | null;
   max_input_tokens: number | null;
   max_output_tokens: number | null;
@@ -57,12 +59,15 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       return [];
     }
     const json: any = await res.json();
+
     const items: LiteLLMCatalogEntry[] = (
       Array.isArray(json?.data) ? json.data : []
     ).map((m: any) => ({
       model_name: m.model_name,
       upstream_model: m.litellm_params?.model ?? null,
       tags: Array.isArray(m.model_info?.tags) ? m.model_info.tags : [],
+      brand: m.model_info?.brand ?? null,
+      region: m.model_info?.region ?? null,
       max_tokens: m.model_info?.max_tokens ?? null,
       max_input_tokens: m.model_info?.max_input_tokens ?? null,
       max_output_tokens: m.model_info?.max_output_tokens ?? null,
