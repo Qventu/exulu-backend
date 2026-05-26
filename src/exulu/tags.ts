@@ -20,16 +20,32 @@ export function buildTags(input: {
   project_name?: string;
   agent_name?: string;
 }): string[] {
-  const candidates: (string | number | undefined)[] = [
-    "user_id_" + input.user_id,
-    "role_id_" + input.role_id,
-    "project_id_" + (input.project_id || "DEFAULT"),
-    "agent_id_" + input.agent_id,
-    "user_name_" + input.user_name,
-    "role_name_" + input.role_name,
-    "project_name_" + (input.project_name || "DEFAULT"),
-    "agent_name_" + input.agent_name
-  ];
+  const candidates: (string | number | undefined)[] = [];
+
+  if (input.user_id) {
+    candidates.push("user_id_" + input.user_id);
+  }
+  if (input.user_name) {
+    candidates.push("user_name_" + input.user_name);
+  }
+  if (input.role_id) {
+    candidates.push("role_id_" + input.role_id);
+  }
+  if (input.role_name) {
+    candidates.push("role_name_" + input.role_name);
+  }
+  if (input.project_id) {
+    candidates.push("project_id_" + input.project_id);
+  }
+  if (input.project_name) {
+    candidates.push("project_name_" + input.project_name);
+  }
+  if (input.agent_id) {
+    candidates.push("agent_id_" + input.agent_id);
+  }
+  if (input.agent_name) {
+    candidates.push("agent_name_" + input.agent_name);
+  }
   console.log("[EXULU] Candidates", candidates);
   const out: string[] = [];
   for (const candidate of candidates) {
