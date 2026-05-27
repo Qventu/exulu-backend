@@ -37,6 +37,7 @@ import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { emailTool } from "@SRC/templates/tools/email.ts";
+import { transcribeTool } from "@SRC/templates/tools/transcribe.ts";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
@@ -236,12 +237,28 @@ export class ExuluApp {
             mcpTools.push(...responses.flat());
         } */
 
+    // The transcription tool is only registered when both a transcription
+    // model is configured and S3 file uploads are set up — the tool stores
+    // transcripts on S3 and returns the URL.
+    const transcriptionTools: ExuluTool[] = [];
+    if (
+      process.env.TRANSCRIPTION_MODEL &&
+      config?.fileUploads &&
+      config?.fileUploads?.s3region &&
+      config?.fileUploads?.s3key &&
+      config?.fileUploads?.s3secret &&
+      config?.fileUploads?.s3Bucket
+    ) {
+      transcriptionTools.push(transcribeTool);
+    }
+
     this._tools = [
       ...(tools ?? []),
       ...todoTools,
       ...questionTools,
       ...perplexityTools,
       emailTool,
+      ...transcriptionTools,
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.
