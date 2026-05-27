@@ -49,6 +49,7 @@ beforeEach(() => {
   delete process.env.EXULU_USE_LITELLM;
   delete process.env.LITELLM_MASTER_KEY;
   delete process.env.LITELLM_CONFIG_PATH;
+  delete process.env.DEBUG;
 });
 
 describe("isLiteLLMEnabled", () => {
@@ -129,6 +130,28 @@ describe("startLiteLLMSupervisor", () => {
       expect.arrayContaining(["--config", expect.any(String), "--port", "4000"]),
     );
     expect(getSupervisorState()).toBe("ready");
+  });
+
+  test("pins DEBUG=false in the child env so LiteLLM's click CLI never crashes on Node debug filters", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+    process.env.DEBUG = "http-proxy-middleware*";
+    mockExistsSync.mockReturnValue(true);
+    const child = new FakeChild();
+    mockSpawn.mockReturnValue(child);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    try {
+      await startLiteLLMSupervisor({ packageRoot: "/fake/exulu" });
+      const [, , opts] = mockSpawn.mock.calls[0]!;
+      // load_dotenv() defaults to override=False, so a pre-set DEBUG wins
+      // over any value LiteLLM's .env loader injects after spawn.
+      expect(opts.env.DEBUG).toBe("false");
+      // Sanity-check we didn't accidentally drop the rest of the env.
+      expect(opts.env.LITELLM_MASTER_KEY).toBe("sk-test");
+    } finally {
+      delete process.env.DEBUG;
+    }
   });
 
   test("respects LITELLM_PORT and LITELLM_HOST overrides", async () => {
