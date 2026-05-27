@@ -97,14 +97,23 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
     `Spawning LiteLLM: ${cfg.litellmBin} --config ${cfg.configPath} --port ${cfg.port} --host ${cfg.host}`,
   );
 
-  // Strip env vars that conflict with LiteLLM's CLI flags. LiteLLM's
+  // Neutralize env vars that conflict with LiteLLM's CLI flags. LiteLLM's
   // click-based CLI reads DEBUG as the value for its `--debug` boolean flag,
   // and any value other than 0/1/true/false/etc. crashes the process. Node's
   // `debug` package convention is DEBUG=<namespace-filter> (e.g.
-  // "http-proxy-middleware*"), which is incompatible — strip it for the child
-  // so the parent process's debugging is unaffected.
+  // "http-proxy-middleware*"), which is incompatible.
+  //
+  // Stripping DEBUG from the spawn env is not enough on its own: LiteLLM's
+  // proxy_cli imports `dotenv` and calls `load_dotenv()` early in startup,
+  // which loads any `.env` file from the working directory into os.environ
+  // *after* we've handed env to the child. python-dotenv defaults to
+  // override=False, so an explicit DEBUG already present in the child's env
+  // wins over a value in `.env`. We therefore pin DEBUG="false" rather than
+  // just deleting it — that way it survives whatever load_dotenv finds, and
+  // click parses it as a valid boolean.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { DEBUG: _debug, ...envWithoutDebug } = process.env;
+  const { DEBUG: _debug, ...rest } = process.env;
+  const childEnv = { ...rest, DEBUG: "false" };
 
   // SAFETY: Do NOT prepend the venv's bin directory to PATH for the child.
   // When LiteLLM has a `database_url` configured, it auto-shells out to
@@ -135,7 +144,7 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
     ],
     {
       stdio: ["ignore", "pipe", "pipe"],
-      env: envWithoutDebug,
+      env: childEnv,
     },
   );
 
