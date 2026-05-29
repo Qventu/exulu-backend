@@ -551,6 +551,31 @@ const promptFavoritesSchema: ExuluTableDefinition = {
   ],
 };
 
+const transcriptionJobsSchema: ExuluTableDefinition = {
+  type: "transcription_jobs",
+  name: {
+    plural: "transcription_jobs",
+    singular: "transcription_job",
+  },
+  RBAC: true,
+  fields: [
+    { name: "audio", type: "file" },
+    { name: "title", type: "text" },
+    { name: "status", type: "text", index: true },
+    { name: "whisper_job_id", type: "text" },
+    { name: "raw_segments", type: "json" },
+    { name: "speakers", type: "json" },
+    { name: "language", type: "text" },
+    { name: "duration_seconds", type: "number" },
+    { name: "project_id", type: "uuid", required: false },
+    { name: "target_rights_mode", type: "text", default: "private" },
+    { name: "target_rbac_users", type: "json" },
+    { name: "target_rbac_roles", type: "json" },
+    { name: "saved_item_id", type: "uuid", required: false },
+    { name: "error", type: "text" },
+  ],
+};
+
 const contextPresetsSchema: ExuluTableDefinition = {
   type: "context_presets",
   name: {
@@ -647,6 +672,7 @@ export const coreSchemas = {
       embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
+      transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
     }
 
     if (license["agent-feedback"]) {

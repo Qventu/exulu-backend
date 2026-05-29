@@ -115,6 +115,7 @@ const {
   embedderSettingsSchema,
   promptFavoritesSchema,
   statisticsSchema,
+  transcriptionJobsSchema,
 } = coreSchemas.get();
 
 export const createExpressRoutes = async (
@@ -200,6 +201,7 @@ export const createExpressRoutes = async (
       workflowTemplatesSchema(),
       statisticsSchema(),
       rbacSchema(),
+      transcriptionJobsSchema(),
     ],
     contexts ?? [],
     providers,

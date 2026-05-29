@@ -199,6 +199,43 @@ fi
 
 print_info "Installing packages from requirements.txt..."
 echo ""
+
+# Conditional torch wheel for the whisper transcription server.
+# WhisperX depends on torch transitively; by default pip would install the
+# CPU build, which works everywhere but is slow. On CUDA hosts we want the
+# CUDA build instead. Selection rule:
+#   - WHISPER_GPU=cuda explicit OR `nvidia-smi` present → install CUDA wheel
+#   - WHISPER_GPU=cpu/mps/skip OR no GPU detected         → fall through to default
+WHISPER_GPU_MODE="${WHISPER_GPU:-auto}"
+if [ "$WHISPER_GPU_MODE" = "auto" ]; then
+    if command -v nvidia-smi &> /dev/null; then
+        WHISPER_GPU_MODE="cuda"
+    elif [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+        WHISPER_GPU_MODE="mps"
+    else
+        WHISPER_GPU_MODE="cpu"
+    fi
+fi
+
+case "$WHISPER_GPU_MODE" in
+    cuda)
+        print_info "Installing CUDA torch wheel (WHISPER_GPU=$WHISPER_GPU_MODE)…"
+        pip install torch==2.5.0 torchaudio==2.5.0 \
+            --index-url https://download.pytorch.org/whl/cu124 || {
+            print_warning "CUDA torch install failed; falling back to default torch."
+        }
+        ;;
+    mps|cpu)
+        print_info "Installing default torch wheel (WHISPER_GPU=$WHISPER_GPU_MODE)…"
+        ;;
+    skip)
+        print_warning "WHISPER_GPU=skip — torch install skipped; transcription server will not work."
+        ;;
+    *)
+        print_warning "Unknown WHISPER_GPU=$WHISPER_GPU_MODE — falling back to default torch."
+        ;;
+esac
+
 pip install -r "$REQUIREMENTS_FILE"
 
 print_success "All dependencies installed successfully"
@@ -224,6 +261,13 @@ echo "Step 7: Validating installation..."
 print_info "Testing critical imports..."
 $PYTHON_CMD -c "import docling" 2>/dev/null && print_success "docling imported successfully" || print_error "Failed to import docling"
 $PYTHON_CMD -c "import transformers" 2>/dev/null && print_success "transformers imported successfully" || print_error "Failed to import transformers"
+
+# Whisper transcription server imports — non-fatal: only needed for
+# `npx @exulu/backend exulu-start-whisper`. If these fail, the rest of
+# the @exulu/backend package still works fine.
+$PYTHON_CMD -c "import whisperx" 2>/dev/null && print_success "whisperx imported successfully" || print_warning "whisperx not importable (transcription server will not start)"
+$PYTHON_CMD -c "import pyannote.audio" 2>/dev/null && print_success "pyannote.audio imported successfully" || print_warning "pyannote.audio not importable (diarization will be disabled even with HF_AUTH_TOKEN)"
+$PYTHON_CMD -c "import fastapi, uvicorn" 2>/dev/null && print_success "fastapi/uvicorn imported successfully" || print_warning "fastapi/uvicorn not importable (transcription server will not start)"
 
 # Step 8: Display summary
 echo ""
