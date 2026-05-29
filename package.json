@@ -10,7 +10,8 @@
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "bin": {
-    "setup-python": "./bin/setup-python.cjs"
+    "setup-python": "./bin/setup-python.cjs",
+    "exulu-start-whisper": "./dist/cli/start-whisper.cjs"
   },
   "homepage": "https://exulu.com",
   "engines": {
@@ -43,6 +44,7 @@
     "cpd": "jscpd src --reporters console",
     "cpd:report": "jscpd src --reporters console,html",
     "cpd:view": "serve cpd-report/html -l 3001",
+    "start:whisper": "node ./dist/cli/start-whisper.cjs",
     "python:setup": "cd ee/python && ./setup.sh",
     "python:install": "source ee/python/.venv/bin/activate && pip install -r ee/python/requirements.txt",
     "python:validate": "source ee/python/.venv/bin/activate && python -c 'import docling; import transformers; print(\"✓ Python environment is working correctly\")'",

@@ -36,6 +36,8 @@ import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
+import { transcriptionService } from "@SRC/exulu/transcription/service";
+import { transcriptionClient } from "@SRC/exulu/transcription/client";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -543,6 +545,41 @@ type PageInfo {
   mutationDefs += `
     deleteJob(queue: QueueEnum!, id: String!): JobActionReturnPayload
     `;
+
+  mutationDefs += `
+    transcriptionJobStart(input: TranscriptionJobStartInput!): transcription_job
+    transcriptionJobFinalize(id: ID!, input: TranscriptionJobFinalizeInput!): TranscriptionJobFinalizeResult
+    transcriptionJobCancel(id: ID!): transcription_job
+    `;
+
+  modelDefs += `
+    input TranscriptionJobStartInput {
+      audio_s3key: String!
+      filename: String!
+      title: String
+      language: String
+      num_speakers: Int
+      hotwords: [String!]
+      project_id: ID
+      target_rights_mode: String
+      target_rbac_users: [RBACUserInput!]
+      target_rbac_roles: [RBACRoleInput!]
+    }
+
+    input TranscriptionJobFinalizeInput {
+      title: String
+      speakers: JSON!
+      project_id: ID
+      target_rights_mode: String
+      target_rbac_users: [RBACUserInput!]
+      target_rbac_roles: [RBACRoleInput!]
+    }
+
+    type TranscriptionJobFinalizeResult {
+      job: transcription_job!
+      item_id: ID!
+    }
+  `;
 
   typeDefs += `
    tools(search: String, category: String, limit: Int, page: Int): ToolPaginationResult
@@ -1317,6 +1354,67 @@ type LiteLLMModel {
     const config = await queue.use();
     await config.queue.remove(args.id);
     return { success: true };
+  };
+
+  // Authorize the calling user against a transcription_jobs row. Mirrors the
+  // checks the auto-CRUD does in createMutations.validateWriteAccess for RBAC
+  // tables — required because the three custom transcription mutations bypass
+  // the generated CRUD path.
+  const assertOwnsTranscriptionJob = async (id: string, context: any) => {
+    const { db, user } = context;
+    if (!user) throw new Error("Authentication required");
+    if (user.super_admin === true) return;
+    const row = await db
+      .from("transcription_jobs")
+      .select(["created_by", "rights_mode"])
+      .where({ id })
+      .first();
+    if (!row) throw new Error(`transcription_job ${id} not found`);
+    if (row.rights_mode === "public") return;
+    if (row.created_by === user.id) return;
+    throw new Error("Not authorized to act on this transcription job");
+  };
+
+  resolvers.Mutation["transcriptionJobStart"] = async (_, args, context) => {
+    const { user } = context;
+    if (!user) throw new Error("Authentication required");
+    if (!transcriptionClient.isConfigured()) {
+      throw new Error(
+        "TRANSCRIPTION_DISABLED: TRANSCRIPTION_SERVER not set on this server. " +
+          "Ask the operator to start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
+      );
+    }
+    return transcriptionService.startJob({
+      userId: user.id,
+      s3Key: args.input.audio_s3key,
+      filename: args.input.filename,
+      title: args.input.title,
+      language: args.input.language ?? undefined,
+      num_speakers: args.input.num_speakers ?? undefined,
+      hotwords: args.input.hotwords ?? undefined,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? undefined,
+      target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+    });
+  };
+
+  resolvers.Mutation["transcriptionJobFinalize"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    const { item, row } = await transcriptionService.finalize(args.id, {
+      title: args.input.title,
+      speakers: args.input.speakers,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? undefined,
+      target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+    });
+    return { job: row, item_id: item.id };
+  };
+
+  resolvers.Mutation["transcriptionJobCancel"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    return transcriptionService.cancelJob(args.id);
   };
 
   resolvers.Query["evals"] = async (_, args, context, info) => {

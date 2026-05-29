@@ -3,6 +3,24 @@ transformers
 pyinstaller
 docling-hierarchical-pdf
 defusedxml
+# Whisper transcription server. Used by `npx @exulu/backend exulu-start-whisper`.
+#
+# Notes on the pins:
+# - whisperx >= 3.4: earlier versions transitively pin faster-whisper 1.0.0 →
+#   tokenizers <0.16, which collides with litellm's tokenizers >=0.21.
+#   whisperx 3.4+ uses faster-whisper 1.1+ on the modern tokenizers track.
+# - torch / torchaudio pinned because pyannote.audio (≤3.4) still imports
+#   `torchaudio.AudioMetaData`, which was removed in newer torchaudio. The
+#   2.5 line is the most recent series where the old API is still present.
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1
+whisperx>=3.4.0
+pyannote.audio>=3.3.0
+fastapi
+uvicorn
+python-multipart
+requests
 # LiteLLM proxy — only used when EXULU_USE_LITELLM=true. Always installed so
 # the dep is ready when the env var is flipped. Pinned to a tested version;
 # upgrade deliberately.

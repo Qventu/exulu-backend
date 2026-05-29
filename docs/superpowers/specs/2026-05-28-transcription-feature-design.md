@@ -126,7 +126,7 @@ Cancellation between stages: the worker checks an in-memory cancel flag after ea
 **GPU detection at boot (visible-startup-message contract):**
 
 ```
-[EXULU-WHISPER] Starting whisper server on 127.0.0.1:9000
+[EXULU-WHISPER] Starting whisper server on 127.0.0.1:9876
 [EXULU-WHISPER] GPU support: enabled (CUDA, NVIDIA RTX 4090, 24 GB VRAM)
 [EXULU-WHISPER] Model: large-v3 (loading… ~30s first run)
 [EXULU-WHISPER] Diarization: enabled (pyannote)
@@ -148,7 +148,7 @@ Disabled-path version:
 | Var | Purpose | Default |
 |---|---|---|
 | `WHISPER_HOST` | Bind host | `127.0.0.1` |
-| `WHISPER_PORT` | Bind port | `9000` |
+| `WHISPER_PORT` | Bind port | `9876` |
 | `WHISPER_MODEL` | Model id | `large-v3` |
 | `WHISPER_DEVICE` | `auto` / `cuda` / `mps` / `cpu` | `auto` |
 | `WHISPER_BATCH_SIZE` | Inference batch size | `4` |
@@ -420,7 +420,7 @@ If `health.diarization === false` on the server (no `HF_AUTH_TOKEN`), the review
 |---|---|---|---|
 | `TRANSCRIPTION_SERVER` | Main app | HTTP URL of whisper server. Unset = feature off. | (unset) |
 | `WHISPER_HOST` | Whisper server | Bind host | `127.0.0.1` |
-| `WHISPER_PORT` | Whisper server | Bind port | `9000` |
+| `WHISPER_PORT` | Whisper server | Bind port | `9876` |
 | `WHISPER_MODEL` | Whisper server | Model id | `large-v3` |
 | `WHISPER_DEVICE` | Whisper server | `auto`/`cuda`/`mps`/`cpu` | `auto` |
 | `WHISPER_BATCH_SIZE` | Whisper server | Inference batch | `4` |

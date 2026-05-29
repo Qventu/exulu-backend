@@ -57,6 +57,9 @@ import {
   startLiteLLMSupervisor,
 } from "@SRC/exulu/litellm/supervisor.ts";
 import { getPackageRoot } from "@SRC/utils/python-setup.ts";
+import { builtInContexts } from "@SRC/templates/contexts";
+import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
+import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -193,8 +196,19 @@ export class ExuluApp {
         ? [...getDefaultEvals(), ...(evals ?? [])]
         : [];
 
+    if (contexts && "transcriptions" in contexts) {
+      console.warn(
+        "[EXULU] User-defined 'transcriptions' context overridden by built-in. " +
+          "Rename your context to avoid the collision.",
+      );
+    }
+    // Spread user contexts first so built-in contexts win the merge — the
+    // built-in transcriptions context is referenced by the transcription
+    // feature and silently letting a consumer override it would break that
+    // feature in ways that are hard to debug.
     this._contexts = {
       ...contexts,
+      ...builtInContexts,
     };
 
     this._rerankers = [...(rerankers ?? [])];
@@ -398,6 +412,32 @@ export class ExuluApp {
           // to debug. Agent runs will fail with LITELLM_NOT_READY until the
           // operator fixes the underlying issue.
         }
+      }
+
+      // Whisper transcription server. Unlike LiteLLM, we never auto-spawn
+      // it from the main app — it runs as its own process (typically on a
+      // GPU host) via `npx @exulu/backend exulu-start-whisper`. The main
+      // app only consumes it over HTTP when TRANSCRIPTION_SERVER is set.
+      if (process.env.TRANSCRIPTION_SERVER) {
+        try {
+          const health = await transcriptionClient.health();
+          console.log(
+            `[EXULU] Transcription: enabled (server=${process.env.TRANSCRIPTION_SERVER}, ` +
+              `device=${health.device}, GPU=${health.gpu.available ? "enabled" : "disabled"}, ` +
+              `diarization=${health.diarization ? "enabled" : "disabled"})`,
+          );
+          startTranscriptionPollingLoop();
+        } catch (err) {
+          console.warn(
+            `[EXULU] TRANSCRIPTION_SERVER set but unreachable: ${(err as Error).message}. ` +
+              `Transcriptions will fail until the server is up.`,
+          );
+        }
+      } else {
+        console.log(
+          "[EXULU] Transcription: disabled (TRANSCRIPTION_SERVER not set). " +
+            "Start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
+        );
       }
 
       return this._expressApp;
