@@ -8,6 +8,7 @@ export type User = {
   emailVerified?: string;
   type?: "api" | "user"
   anthropic_token?: string;
+  personal_system_prompt?: string;
   super_admin?: boolean;
   favourite_agents?: string[];
   scope_mode?: ApiKeyScopeMode;

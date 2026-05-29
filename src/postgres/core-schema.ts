@@ -423,6 +423,10 @@ const usersSchema: ExuluTableDefinition = {
       type: "text",
     },
     {
+      name: "personal_system_prompt",
+      type: "longText",
+    },
+    {
       name: "role",
       type: "uuid",
     },
