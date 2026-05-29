@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #fdfdfd;
+        font-family: "Inter", system-ui, sans-serif;
+        letter-spacing: -0.025em;
+        color: #000000;
+      }
+
+      /* ---------- HOOK ---------- */
+      #hook {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 72px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        color: #000000;
+        text-align: center;
+        line-height: 1.05;
+        white-space: nowrap;
+      }
+      #hook .accent {
+        color: #6633ff;
+      }
+
+      /* ---------- STAGE: three panes stacked ---------- */
+      #stage {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1080px;
+        height: 1920px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 30px;
+        padding: 100px 60px 180px 60px;
+      }
+
+      .pane {
+        position: relative;
+        width: 760px;
+        height: 410px;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+      .pane-breadcrumb {
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: #6633ff;
+        text-align: center;
+        height: 22px;
+      }
+      .pane-card {
+        flex: 1;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 26px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0px 2px 3px hsl(0 0% 0% / 0.08), 0px 1px 2px -1px hsl(0 0% 0% / 0.08);
+      }
+
+      /* ---------- Pane A: Saved card ---------- */
+      #pane-a .pane-card {
+        gap: 16px;
+        justify-content: center;
+      }
+      .field-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #525252;
+        letter-spacing: 0;
+      }
+      .field-value {
+        font-size: 24px;
+        font-weight: 600;
+        color: #000000;
+        padding: 14px 16px;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        background: #fcfcfc;
+      }
+      .project-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        align-self: flex-start;
+        background: #dde6ff;
+        color: #6633ff;
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0;
+        padding: 6px 13px;
+        border-radius: 4px;
+        transform-origin: center center;
+      }
+      .project-chip::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #6633ff;
+      }
+      .save-button {
+        align-self: flex-end;
+        background: #6633ff;
+        color: #ffffff;
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        padding: 11px 24px;
+        border-radius: 0.4rem;
+      }
+
+      /* ---------- Pane B: /data row ---------- */
+      #pane-b .pane-card {
+        gap: 14px;
+        padding: 22px;
+      }
+      .data-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 14px;
+        color: #525252;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #e8e8ee;
+      }
+      .data-header .slash {
+        color: #6633ff;
+        font-weight: 600;
+      }
+      .col-head {
+        display: grid;
+        grid-template-columns: 1fr 70px 130px 120px;
+        gap: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #525252;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 0 4px;
+      }
+      .data-row {
+        display: grid;
+        grid-template-columns: 1fr 70px 130px 120px;
+        gap: 10px;
+        align-items: center;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 16px 14px;
+      }
+      .data-row .row-name {
+        font-size: 17px;
+        font-weight: 500;
+        color: #000000;
+      }
+      .data-row .row-lang {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        color: #525252;
+      }
+      .data-row .row-chip {
+        background: #dde6ff;
+        color: #6633ff;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 9px;
+        border-radius: 4px;
+        justify-self: start;
+      }
+      .embed-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #6633ff;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 5px 9px;
+        border-radius: 4px;
+        justify-self: end;
+        transform-origin: center center;
+      }
+      .embed-badge .check {
+        font-size: 13px;
+        line-height: 1;
+      }
+
+      /* ---------- Pane C: chat ---------- */
+      #pane-c .pane-card {
+        gap: 12px;
+        padding: 22px;
+      }
+      .chat-breadcrumb {
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 12px;
+        font-weight: 500;
+        color: #525252;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #e8e8ee;
+      }
+      .chat-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        flex: 1;
+        justify-content: center;
+      }
+      .bubble {
+        max-width: 92%;
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 17px;
+        line-height: 1.4;
+        padding: 13px 16px;
+        border-radius: 0.4rem;
+        letter-spacing: -0.01em;
+      }
+      .bubble.user {
+        align-self: flex-end;
+        background: #f5f5f5;
+        color: #000000;
+      }
+      .bubble.agent {
+        align-self: flex-start;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        color: #000000;
+      }
+      .citation {
+        font-style: italic;
+        color: #6633ff;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        font-size: 15px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: rgba(221, 230, 255, 0);
+      }
+
+      /* ---------- Vertical arrows between panes ---------- */
+      .pane-arrow {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 220px;
+        height: 30px;
+        pointer-events: none;
+      }
+      /* gap container is 30px; the .pane-arrow overlays it. */
+      #arrow-ab {
+        /* Sits between pane A (top of stack section) and pane B */
+        top: 542px; /* placeholder — overridden by flex flow visually via z-index overlay */
+      }
+      #arrow-bc {
+        top: 982px;
+      }
+      .pane-arrow .arrow-label {
+        position: absolute;
+        top: 7px;
+        left: 130px;
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        color: #525252;
+        white-space: nowrap;
+        letter-spacing: 0.01em;
+      }
+      .pane-arrow svg {
+        position: absolute;
+        top: 0;
+        left: 90px;
+        width: 30px;
+        height: 30px;
+        overflow: visible;
+      }
+      .arrow-path {
+        stroke: #525252;
+        stroke-width: 1.4;
+        fill: none;
+        stroke-linecap: round;
+      }
+      .arrow-head {
+        fill: #525252;
+        stroke: none;
+      }
+
+      /* ---------- saved-to caption (above Pane A) ---------- */
+      #saved-caption {
+        position: absolute;
+        top: 78px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0;
+        color: #6633ff;
+        text-align: center;
+      }
+
+      /* ---------- PAYOFF ---------- */
+      #payoff {
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 960px;
+        font-family: "Inter", system-ui, sans-serif;
+        font-size: 28px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: #000000;
+        text-align: center;
+        line-height: 1.25;
+      }
+      #payoff .accent {
+        color: #6633ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      data-composition-id="slice-3"
+      data-start="0"
+      data-duration="8.5"
+      data-width="1080"
+      data-height="1920"
+    >
+      <!-- HOOK -->
+      <div
+        id="hook"
+        class="clip"
+        data-start="0"
+        data-duration="1.8"
+        data-track-index="1"
+      >
+        From audio<br/>to <span class="accent">answers.</span>
+      </div>
+
+      <!-- STAGE -->
+      <div
+        id="stage"
+        class="clip"
+        data-start="1.5"
+        data-duration="7.0"
+        data-track-index="2"
+      >
+        <!-- PANE A -->
+        <div id="pane-a" class="pane">
+          <div class="pane-breadcrumb">Saved</div>
+          <div class="pane-card">
+            <div>
+              <div class="field-label">Title</div>
+              <div class="field-value" style="margin-top: 6px;">Meeting 2026-05-28</div>
+            </div>
+            <div>
+              <div class="field-label" style="margin-bottom: 6px;">Project</div>
+              <div id="project-chip" class="project-chip">Q4 Launch</div>
+            </div>
+            <div class="save-button">Save</div>
+          </div>
+        </div>
+
+        <!-- ARROW A -> B (vertical) -->
+        <div id="arrow-ab" class="pane-arrow">
+          <svg viewBox="0 0 30 30" preserveAspectRatio="none">
+            <path
+              class="arrow-path"
+              d="M 15 2 C 4 10, 26 20, 15 28"
+              pathLength="100"
+              stroke-dasharray="100"
+              stroke-dashoffset="100"
+            />
+            <polygon class="arrow-head" points="10,22 15,30 20,22" opacity="0" />
+          </svg>
+          <div class="arrow-label">auto-embed</div>
+        </div>
+
+        <!-- PANE B -->
+        <div id="pane-b" class="pane">
+          <div class="pane-breadcrumb">/data/transcriptions</div>
+          <div class="pane-card">
+            <div class="data-header">
+              <span>/data</span><span class="slash">/</span><span>transcriptions</span>
+            </div>
+            <div class="col-head">
+              <div>Name</div>
+              <div>Lang</div>
+              <div>Project</div>
+              <div style="text-align: right;">Status</div>
+            </div>
+            <div class="data-row">
+              <div class="row-name">Meeting 2026-05-28</div>
+              <div class="row-lang">de</div>
+              <div class="row-chip">Q4 Launch</div>
+              <div id="embed-badge" class="embed-badge">
+                <span class="check">&#10003;</span><span>embedded</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ARROW B -> C (vertical) -->
+        <div id="arrow-bc" class="pane-arrow">
+          <svg viewBox="0 0 30 30" preserveAspectRatio="none">
+            <path
+              class="arrow-path"
+              d="M 15 2 C 4 10, 26 20, 15 28"
+              pathLength="100"
+              stroke-dasharray="100"
+              stroke-dashoffset="100"
+            />
+            <polygon class="arrow-head" points="10,22 15,30 20,22" opacity="0" />
+          </svg>
+          <div class="arrow-label">retrieve via Q4 Launch</div>
+        </div>
+
+        <!-- PANE C -->
+        <div id="pane-c" class="pane">
+          <div class="pane-breadcrumb">Chat</div>
+          <div class="pane-card">
+            <div class="chat-breadcrumb">Q4 Launch &middot; chat</div>
+            <div class="chat-scroll">
+              <div id="user-bubble" class="bubble user">
+                What did Alex say about the API yesterday?
+              </div>
+              <div id="agent-bubble" class="bubble agent">
+                <span id="agent-text"></span><span id="agent-cite" class="citation">(from Meeting 2026-05-28)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SAVED CAPTION -->
+      <div
+        id="saved-caption"
+        class="clip"
+        data-start="1.8"
+        data-duration="6.7"
+        data-track-index="3"
+      >
+        Saved to Q4 Launch
+      </div>
+
+      <!-- PAYOFF -->
+      <div
+        id="payoff"
+        class="clip"
+        data-start="7.6"
+        data-duration="0.9"
+        data-track-index="4"
+      >
+        Every saved transcript becomes <span class="accent">project-scoped</span> knowledge.
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---------- 0.0 – 0.4: Hook in ----------
+      tl.from(
+        "#hook",
+        { opacity: 0, y: 24, duration: 0.4, ease: "power2.out" },
+        0
+      );
+      // 0.4 – 1.5: hold (1.1s read floor for 4-word phrase)
+
+      // ---------- Pre-set hidden states for later elements ----------
+      tl.set("#pane-b", { opacity: 0 }, 0);
+      tl.set("#pane-c", { opacity: 0 }, 0);
+      tl.set("#arrow-ab .arrow-label", { opacity: 0 }, 0);
+      tl.set("#arrow-bc .arrow-label", { opacity: 0 }, 0);
+      tl.set("#saved-caption", { opacity: 0 }, 0);
+      tl.set("#user-bubble", { opacity: 0, scale: 0.92 }, 0);
+      tl.set("#agent-bubble", { opacity: 0 }, 0);
+      tl.set("#agent-text", { opacity: 0 }, 0);
+      tl.set("#agent-cite", { opacity: 0 }, 0);
+
+      tl.call(
+        () => {
+          const el = document.getElementById("agent-text");
+          if (el) el.textContent = "";
+        },
+        [],
+        0
+      );
+
+      // ---------- 1.5 – 1.8: hook out, Pane A in ----------
+      tl.to(
+        "#hook",
+        { opacity: 0, y: -20, duration: 0.3, ease: "power2.in" },
+        1.5
+      );
+      tl.from(
+        "#pane-a",
+        { opacity: 0, y: -30, duration: 0.3, ease: "power2.out" },
+        1.5
+      );
+      tl.to(
+        "#saved-caption",
+        { opacity: 1, duration: 0.3, ease: "power2.out" },
+        1.7
+      );
+
+      // ---------- 1.8 – 2.6: hold Pane A; chip pulse ----------
+      tl.to(
+        "#project-chip",
+        { scale: 1.04, duration: 0.15, ease: "power2.out" },
+        2.0
+      );
+      tl.to(
+        "#project-chip",
+        { scale: 1.0, duration: 0.15, ease: "power2.in" },
+        2.15
+      );
+
+      // ---------- 2.6 – 3.0: Pane B + Arrow A->B ----------
+      tl.to(
+        "#pane-b",
+        { opacity: 1, duration: 0.35, ease: "power2.out" },
+        2.6
+      );
+      tl.from(
+        "#pane-b",
+        { y: -25, duration: 0.35, ease: "power2.out" },
+        2.6
+      );
+      tl.to(
+        "#arrow-ab .arrow-path",
+        { strokeDashoffset: 0, duration: 0.25, ease: "power2.out" },
+        2.65
+      );
+      tl.to(
+        "#arrow-ab .arrow-head",
+        { opacity: 1, duration: 0.15, ease: "power2.out" },
+        2.85
+      );
+      tl.to(
+        "#arrow-ab .arrow-label",
+        { opacity: 1, duration: 0.25, ease: "power2.out" },
+        2.75
+      );
+
+      // ---------- 3.0 – 3.8: hold; embed badge pulse ----------
+      tl.to(
+        "#embed-badge",
+        { scale: 1.06, duration: 0.18, ease: "power2.out" },
+        3.2
+      );
+      tl.to(
+        "#embed-badge",
+        { scale: 1.0, duration: 0.18, ease: "power2.in" },
+        3.38
+      );
+
+      // ---------- 3.8 – 4.1: Pane C + Arrow B->C ----------
+      tl.to(
+        "#pane-c",
+        { opacity: 1, duration: 0.3, ease: "power2.out" },
+        3.8
+      );
+      tl.from(
+        "#pane-c",
+        { y: -25, duration: 0.3, ease: "power2.out" },
+        3.8
+      );
+      tl.to(
+        "#arrow-bc .arrow-path",
+        { strokeDashoffset: 0, duration: 0.25, ease: "power2.out" },
+        3.85
+      );
+      tl.to(
+        "#arrow-bc .arrow-head",
+        { opacity: 1, duration: 0.15, ease: "power2.out" },
+        4.05
+      );
+      tl.to(
+        "#arrow-bc .arrow-label",
+        { opacity: 1, duration: 0.25, ease: "power2.out" },
+        3.95
+      );
+
+      // ---------- 4.1 – 4.4: User bubble pops ----------
+      tl.to(
+        "#user-bubble",
+        { opacity: 1, scale: 1.0, duration: 0.3, ease: "back.out(1.4)" },
+        4.1
+      );
+
+      // 4.4 – 5.4: hold
+
+      // ---------- 5.4 – 6.6: Agent bubble + word-by-word ----------
+      tl.to(
+        "#agent-bubble",
+        { opacity: 1, duration: 0.2, ease: "power2.out" },
+        5.4
+      );
+      tl.to(
+        "#agent-text",
+        { opacity: 1, duration: 0.05 },
+        5.4
+      );
+
+      const words = [
+        "Alex",
+        "confirmed",
+        "the",
+        "API",
+        "is",
+        "signed",
+        "off",
+        "—",
+        "the",
+        "frontend",
+        "lands",
+        "today",
+        "and",
+        "docs",
+        "go",
+        "out",
+        "tomorrow.",
+      ];
+      const wordStart = 5.4;
+      const wordStep = 0.07;
+      words.forEach((w, i) => {
+        tl.call(
+          (word, idx) => {
+            const el = document.getElementById("agent-text");
+            if (!el) return;
+            el.textContent =
+              idx === 0 ? word : el.textContent + " " + word;
+          },
+          [w, i],
+          wordStart + i * wordStep
+        );
+      });
+      tl.call(
+        () => {
+          const el = document.getElementById("agent-text");
+          if (el) el.textContent = el.textContent + " ";
+        },
+        [],
+        6.55
+      );
+
+      // ---------- 6.6 – 7.0: Citation fades in ----------
+      tl.to(
+        "#agent-cite",
+        { opacity: 1, duration: 0.35, ease: "power2.out" },
+        6.6
+      );
+
+      // ---------- 7.0 – 7.6: highlight ----------
+      tl.to(
+        "#agent-cite",
+        { backgroundColor: "rgba(221, 230, 255, 1)", duration: 0.18, ease: "power2.out" },
+        7.0
+      );
+      tl.to(
+        "#agent-cite",
+        { backgroundColor: "rgba(221, 230, 255, 0)", duration: 0.22, ease: "power2.in" },
+        7.38
+      );
+
+      // ---------- 7.6 – 8.0: Payoff ----------
+      tl.from(
+        "#payoff",
+        { opacity: 0, y: 14, duration: 0.4, ease: "power2.out" },
+        7.6
+      );
+
+      // 8.0 – 8.5: resting frame
+
+      window.__timelines["slice-3"] = tl;
+    </script>
+  </body>
+</html>
