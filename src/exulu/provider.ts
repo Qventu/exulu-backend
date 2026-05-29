@@ -443,6 +443,11 @@ export class ExuluProvider {
     let system =
       instructions ||
       "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+
+    if (user?.personal_system_prompt?.trim()) {
+      system += "\n\nUser preferences:\n" + user.personal_system_prompt.trim();
+    }
+
     system += "\n\n" + genericContext;
 
     if (memoryContext) {
@@ -953,6 +958,11 @@ export class ExuluProvider {
     let system =
       instructions ||
       "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+
+    if (user?.personal_system_prompt?.trim()) {
+      system += "\n\nUser preferences:\n" + user.personal_system_prompt.trim();
+    }
+
     system += "\n\n" + genericContext;
 
     /* if (memoryContext) {
