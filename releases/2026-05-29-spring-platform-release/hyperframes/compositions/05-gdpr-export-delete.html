@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    [data-composition-id="gdpr-export-delete"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      background: #FDFDFD;
+      font-family: 'Inter', system-ui, sans-serif;
+      color: #000000;
+      overflow: hidden;
+      letter-spacing: -0.025em;
+    }
+
+    /* ---------- HOOK ---------- */
+    [data-composition-id="gdpr-export-delete"] .hook {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      font-size: 80px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      line-height: 1.1;
+      color: #000000;
+      white-space: nowrap;
+    }
+    [data-composition-id="gdpr-export-delete"] .hook .em {
+      color: #7033FF;
+    }
+
+    /* ---------- TERMINAL ---------- */
+    [data-composition-id="gdpr-export-delete"] .terminal {
+      position: absolute;
+      top: 130px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1344px; /* 70% of 1920 */
+      background: #0A0A0A;
+      border-radius: 6.4px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 2px 4px -1px rgba(0,0,0,0.16);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    [data-composition-id="gdpr-export-delete"] .term-chrome {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 22px;
+      background: #141414;
+      border-bottom: 1px solid #1f1f1f;
+      position: relative;
+    }
+    [data-composition-id="gdpr-export-delete"] .term-dot {
+      width: 13px;
+      height: 13px;
+      border-radius: 999px;
+    }
+    [data-composition-id="gdpr-export-delete"] .term-dot.r { background: #FF5F57; }
+    [data-composition-id="gdpr-export-delete"] .term-dot.y { background: #FEBC2E; }
+    [data-composition-id="gdpr-export-delete"] .term-dot.g { background: #28C840; }
+    [data-composition-id="gdpr-export-delete"] .term-title {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      color: #888888;
+      background: #1f1f1f;
+      padding: 3px 12px;
+      border-radius: 999px;
+      letter-spacing: 0;
+    }
+    [data-composition-id="gdpr-export-delete"] .term-body {
+      padding: 36px 40px 40px 40px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 24px;
+      line-height: 1.55;
+      color: #F5F5F5;
+      min-height: 220px;
+      position: relative;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd {
+      position: absolute;
+      top: 36px;
+      left: 40px;
+      right: 40px;
+      letter-spacing: 0;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd-line {
+      display: block;
+      white-space: pre;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd-line .prompt {
+      color: #A98AFF;
+      margin-right: 8px;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd-line .str {
+      color: #E2EBFF;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd-line .flag {
+      color: #A98AFF;
+    }
+    [data-composition-id="gdpr-export-delete"] .cmd-line .url {
+      color: #F5F5F5;
+    }
+    [data-composition-id="gdpr-export-delete"] .cursor-block {
+      display: inline-block;
+      width: 12px;
+      height: 22px;
+      background: #F5F5F5;
+      vertical-align: -3px;
+      margin-left: 4px;
+    }
+    [data-composition-id="gdpr-export-delete"] .badge-204 {
+      display: inline-flex;
+      align-items: center;
+      background: #E2EBFF;
+      color: #1E6ADC;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 18px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-left: 14px;
+      vertical-align: middle;
+      letter-spacing: 0;
+    }
+
+    /* ---------- ZIP ARTIFACT CARD ---------- */
+    [data-composition-id="gdpr-export-delete"] .zip-card {
+      position: absolute;
+      top: 620px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 720px;
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      padding: 22px 28px 24px 28px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 2px 4px -1px rgba(0,0,0,0.16);
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #E7E7EE;
+      margin-bottom: 14px;
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-icon {
+      width: 38px;
+      height: 44px;
+      flex-shrink: 0;
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-filename {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px;
+      color: #000000;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-files {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 32px;
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-file {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      color: #525252;
+      letter-spacing: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    [data-composition-id="gdpr-export-delete"] .zip-file::before {
+      content: "";
+      width: 4px;
+      height: 4px;
+      border-radius: 999px;
+      background: #E7E7EE;
+      flex-shrink: 0;
+    }
+
+    /* ---------- PAYOFF ---------- */
+    [data-composition-id="gdpr-export-delete"] .payoff {
+      position: absolute;
+      bottom: 70px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 56px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: #000000;
+    }
+    [data-composition-id="gdpr-export-delete"] .payoff .em {
+      color: #7033FF;
+    }
+  </style>
+</head>
+<body>
+  <div data-composition-id="gdpr-export-delete" data-width="1920" data-height="1080" data-start="0" data-duration="9">
+
+    <!-- HOOK 0.0 - 1.8 -->
+    <div class="clip hook" id="hook" data-start="0" data-duration="1.8" data-track-index="0">
+      <span class="em">Article 15 &amp; 17</span>, in two HTTP calls.
+    </div>
+
+    <!-- TERMINAL 1.8 - 9.0 -->
+    <div class="clip terminal" id="terminal" data-start="1.8" data-duration="7.2" data-track-index="1">
+      <div class="term-chrome">
+        <div class="term-dot r"></div>
+        <div class="term-dot y"></div>
+        <div class="term-dot g"></div>
+        <div class="term-title">bash</div>
+      </div>
+      <div class="term-body">
+        <!-- First curl (visible 2.2 - 6.0) -->
+        <div class="cmd" id="cmd-export">
+          <span class="cmd-line" id="cmd-export-l1"><span class="prompt">$</span>curl <span class="flag">-H</span> <span class="str">"Authorization: Bearer $TOKEN"</span> \</span>
+          <span class="cmd-line" id="cmd-export-l2">       <span class="url">https://api.exulu.com/users/42/data-export</span> \</span>
+          <span class="cmd-line" id="cmd-export-l3">       <span class="flag">-o</span> <span class="str">user-42-export.zip</span><span class="cursor-block"></span></span>
+        </div>
+        <!-- Second curl (visible 6.4 - 9.0) -->
+        <div class="cmd" id="cmd-delete" style="opacity: 0;">
+          <span class="cmd-line" id="cmd-delete-l1"><span class="prompt">$</span>curl <span class="flag">-X</span> <span class="str">DELETE</span> \</span>
+          <span class="cmd-line" id="cmd-delete-l2">       <span class="flag">-H</span> <span class="str">"Authorization: Bearer $TOKEN"</span> \</span>
+          <span class="cmd-line" id="cmd-delete-l3">       <span class="url">https://api.exulu.com/users/42</span><span class="cursor-block"></span><span class="badge-204" id="badge-204">204 No Content</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ZIP ARTIFACT CARD 4.2 - 9.0 -->
+    <div class="clip zip-card" id="zip-card" data-start="4.2" data-duration="4.8" data-track-index="2">
+      <div class="zip-head">
+        <svg class="zip-icon" viewBox="0 0 38 44" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M4 1 L26 1 L36 11 L36 41 C36 42.1046 35.1046 43 34 43 L4 43 C2.89543 43 2 42.1046 2 41 L2 3 C2 1.89543 2.89543 1 4 1 Z"
+                fill="#FDFDFD" stroke="#7033FF" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M26 1 L26 11 L36 11" fill="none" stroke="#7033FF" stroke-width="2" stroke-linejoin="round"/>
+          <rect x="10" y="6" width="6" height="4" fill="#7033FF"/>
+          <rect x="10" y="12" width="6" height="4" fill="#7033FF"/>
+          <rect x="10" y="18" width="6" height="4" fill="#7033FF"/>
+          <rect x="10" y="24" width="6" height="4" fill="#7033FF"/>
+        </svg>
+        <div class="zip-filename">user-42-export-2026-05-29.zip</div>
+      </div>
+      <div class="zip-files">
+        <div class="zip-file" id="zf-1">user_data.json</div>
+        <div class="zip-file" id="zf-2">sessions.json</div>
+        <div class="zip-file" id="zf-3">feedback.json</div>
+        <div class="zip-file" id="zf-4">prompt_favorites.json</div>
+        <div class="zip-file" id="zf-5">tracking.json</div>
+        <div class="zip-file" id="zf-6">README.txt</div>
+      </div>
+    </div>
+
+    <!-- PAYOFF 7.8 - 9.0 -->
+    <div class="clip payoff" id="payoff" data-start="7.8" data-duration="1.2" data-track-index="3">
+      <span class="em">Export. Delete.</span> Done.
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // ---- HOOK 0.0 - 1.8 ---------------------------------------------------
+    // Slow, measured entrance — power2.out, ~380ms.
+    tl.from("#hook", {
+      opacity: 0,
+      y: 14,
+      duration: 0.38,
+      ease: "power2.out"
+    }, 0.1);
+    // Hook holds 0.48 - 1.8 (covers 1.32s of stillness, transition takes over).
+
+    // ---- TERMINAL ENTRANCE 1.8 - 2.2 --------------------------------------
+    // Panel materializes — opacity + small scale + slight y. power2.out.
+    tl.from("#terminal", {
+      opacity: 0,
+      y: 18,
+      scale: 0.985,
+      transformOrigin: "50% 50%",
+      duration: 0.4,
+      ease: "power2.out"
+    }, 1.8);
+
+    // ---- FIRST CURL LINE-TYPES IN 2.2 - 3.6 -------------------------------
+    // Each line fades in y from 8 -> 0. Three lines staggered ~0.42s apart.
+    tl.set(["#cmd-export-l1", "#cmd-export-l2", "#cmd-export-l3"], {
+      opacity: 0,
+      y: 8
+    }, 1.8);
+    tl.to("#cmd-export-l1", {
+      opacity: 1,
+      y: 0,
+      duration: 0.35,
+      ease: "power2.out"
+    }, 2.2);
+    tl.to("#cmd-export-l2", {
+      opacity: 1,
+      y: 0,
+      duration: 0.35,
+      ease: "power2.out"
+    }, 2.65);
+    tl.to("#cmd-export-l3", {
+      opacity: 1,
+      y: 0,
+      duration: 0.35,
+      ease: "power2.out"
+    }, 3.1);
+
+    // ---- BREATH 3.6 - 4.2 (600ms still) -----------------------------------
+
+    // ---- ZIP CARD ENTRANCE 4.2 - 4.65 -------------------------------------
+    // Card slides in from below, gently.
+    tl.from("#zip-card", {
+      opacity: 0,
+      y: 22,
+      duration: 0.45,
+      ease: "power2.out"
+    }, 4.2);
+
+    // ---- FILE LIST STAGGER 4.55 - 5.2 -------------------------------------
+    // Pre-set each file row hidden at the moment the card mounts.
+    tl.set(["#zf-1", "#zf-2", "#zf-3", "#zf-4", "#zf-5", "#zf-6"], {
+      opacity: 0,
+      y: 6
+    }, 4.2);
+    tl.to("#zf-1", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.55);
+    tl.to("#zf-2", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.63);
+    tl.to("#zf-3", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.71);
+    tl.to("#zf-4", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.79);
+    tl.to("#zf-5", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.87);
+    tl.to("#zf-6", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.95);
+
+    // ---- BREATH 5.2 - 6.0 (800ms still) -----------------------------------
+
+    // ---- TERMINAL SWAP 6.0 - 6.8 ------------------------------------------
+    // First curl fades out, second fades in (content swap — allowed).
+    tl.to("#cmd-export", {
+      opacity: 0,
+      duration: 0.3,
+      ease: "power2.inOut"
+    }, 6.0);
+    // Pre-stage second command lines (hidden before swap).
+    tl.set("#badge-204", { opacity: 0 }, 1.8);
+    tl.to("#cmd-delete", {
+      opacity: 1,
+      duration: 0.35,
+      ease: "power2.inOut"
+    }, 6.35);
+
+    // ---- 204 BADGE 6.8 - 7.2 ----------------------------------------------
+    tl.to("#badge-204", {
+      opacity: 1,
+      duration: 0.35,
+      ease: "power2.out"
+    }, 6.8);
+
+    // ---- BREATH 7.2 - 7.8 (600ms still) -----------------------------------
+
+    // ---- PAYOFF 7.8 - 9.0 -------------------------------------------------
+    tl.from("#payoff", {
+      opacity: 0,
+      y: 12,
+      duration: 0.4,
+      ease: "power2.out"
+    }, 7.85);
+    // Payoff holds still from ~8.25 - 9.0 (last ~750ms fully static).
+
+    window.__timelines["gdpr-export-delete"] = tl;
+  </script>
+</body>
+</html>

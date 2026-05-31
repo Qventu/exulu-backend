@@ -52,7 +52,13 @@ export class ExuluTool {
       default?: string | boolean | number;
     }[];
     needsApproval?: boolean;
-    execute: (inputs: any) =>
+    // The AI SDK's wrapped tool.execute is invoked with (input, options),
+    // where options carries fields like `toolCallId` and `messages`. We
+    // expose `options` as a second arg so tools that need it (e.g.
+    // image_generation, which needs toolCallId to scope persistence) can
+    // read it; tools that don't simply ignore it. Typed loosely as `any`
+    // because the AI SDK options shape is provider-specific.
+    execute: (inputs: any, options?: any) =>
       | Promise<{
           result?: string;
           job?: string;

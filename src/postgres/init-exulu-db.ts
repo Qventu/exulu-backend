@@ -31,6 +31,7 @@ const {
   embedderSettingsSchema,
   promptFavoritesSchema,
   transcriptionJobsSchema,
+  imageGenerationsSchema,
 } = coreSchemas.get();
 
 const addMissingFields = async (
@@ -82,6 +83,7 @@ const up = async function (knex: Knex) {
     embedderSettingsSchema(),
     promptFavoritesSchema(),
     transcriptionJobsSchema(),
+    imageGenerationsSchema(),
     rbacSchema(),
     agentsSchema(),
     feedbackSchema(),
