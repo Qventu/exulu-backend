@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    [data-composition-id="skill-bundle-upload"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      background: #FDFDFD;
+      font-family: Inter, system-ui, sans-serif;
+      color: #000000;
+      overflow: hidden;
+      letter-spacing: -0.025em;
+    }
+
+    /* --- HOOK ---------------------------------------------------- */
+    .hook {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 110px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      z-index: 50;
+      will-change: transform, opacity;
+    }
+    .hook .accent { color: #7033FF; }
+
+    /* --- SURFACE A: Skills list page ------------------------------ */
+    .skills-page {
+      position: absolute;
+      inset: 0;
+      padding: 80px 120px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 48px;
+      z-index: 10;
+    }
+    .skills-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .skills-title {
+      font-size: 64px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #000000;
+      margin: 0;
+    }
+    .new-skill-btn {
+      background: #7033FF;
+      color: #FFFFFF;
+      border-radius: 6.4px;
+      padding: 18px 32px;
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 1px 2px -1px rgba(0,0,0,0.16);
+      position: relative;
+    }
+    .skills-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .skill-card {
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.06), 0px 1px 2px -1px rgba(0,0,0,0.06);
+    }
+    .skill-card h3 {
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin: 0;
+      color: #000000;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .skill-card-tags {
+      display: flex;
+      gap: 8px;
+    }
+    .tag {
+      background: #E2EBFF;
+      color: #1E6ADC;
+      font-size: 16px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: 999px;
+      letter-spacing: 0;
+    }
+    .skill-card-foot {
+      color: #525252;
+      font-size: 16px;
+      margin-top: 6px;
+    }
+
+    /* --- SURFACE B: Modal overlay --------------------------------- */
+    .modal-scrim {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 10, 14, 0.18);
+      z-index: 60;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      width: 560px;
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 2px 4px -1px rgba(0,0,0,0.16);
+      padding: 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      transform-origin: center center;
+      will-change: transform, opacity;
+    }
+    .modal-title {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      margin: 0;
+      color: #000000;
+    }
+    .toggle-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px;
+      background: #F5F5F5;
+      border-radius: 999px;
+      width: fit-content;
+    }
+    .pill {
+      padding: 10px 20px;
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      border-radius: 999px;
+      cursor: default;
+      position: relative;
+    }
+    .pill.selected {
+      background: #7033FF;
+      color: #FFFFFF;
+    }
+    .pill.unselected {
+      background: transparent;
+      color: #000000;
+    }
+    .input-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .input-label {
+      font-size: 14px;
+      color: #525252;
+      font-weight: 500;
+    }
+    .input-field {
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      padding: 12px 14px;
+      font-size: 18px;
+      color: #525252;
+      font-family: Inter, sans-serif;
+    }
+    .input-field.textarea {
+      min-height: 52px;
+    }
+
+    .dropzone {
+      border: 2px dashed #E7E7EE;
+      border-radius: 6.4px;
+      padding: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #525252;
+      font-size: 18px;
+      font-weight: 500;
+      background: #FDFDFD;
+      position: relative;
+      overflow: hidden;
+      min-height: 96px;
+    }
+    .dropzone-sweep {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 30%;
+      background: linear-gradient(90deg, rgba(112,51,255,0) 0%, rgba(112,51,255,0.18) 50%, rgba(112,51,255,0) 100%);
+      transform: translateX(-100%);
+      will-change: transform;
+    }
+    .file-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #E2EBFF;
+      color: #1E6ADC;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 500;
+      width: fit-content;
+      align-self: flex-start;
+    }
+    .file-chip-dot {
+      width: 8px; height: 8px; border-radius: 999px; background: #1E6ADC;
+    }
+    .modal-foot {
+      display: flex;
+      justify-content: flex-end;
+      padding-top: 4px;
+    }
+    .create-btn {
+      background: #7033FF;
+      color: #FFFFFF;
+      border-radius: 6.4px;
+      padding: 12px 24px;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      position: relative;
+    }
+
+    /* Dragging file glyph */
+    .drag-file {
+      position: absolute;
+      width: 120px;
+      height: 140px;
+      z-index: 70;
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+    .drag-file-card {
+      width: 100%;
+      height: 100%;
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 8px;
+      box-shadow: 0 10px 24px -4px rgba(0,0,0,0.18), 0 4px 8px -2px rgba(0,0,0,0.12);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px;
+      box-sizing: border-box;
+    }
+    .drag-file-ext {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px;
+      font-weight: 600;
+      color: #7033FF;
+      letter-spacing: -0.015em;
+    }
+    .drag-file-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      color: #525252;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    /* Cursor */
+    .cursor {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      z-index: 90;
+      pointer-events: none;
+      will-change: transform, opacity;
+      transform: translate(-2px, -2px);
+    }
+    .cursor-pulse {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      background: rgba(112,51,255,0.28);
+      transform-origin: center center;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 88;
+      will-change: transform, opacity;
+      top: 0;
+      left: 0;
+      margin-left: -24px;
+      margin-top: -24px;
+    }
+
+    /* --- File tree editor surface --------------------------------- */
+    .editor {
+      position: absolute;
+      inset: 0;
+      padding: 80px 120px;
+      box-sizing: border-box;
+      z-index: 70;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+    .editor-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #525252;
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #E7E7EE;
+    }
+    .editor-header .crumb-strong {
+      color: #000000;
+      font-weight: 600;
+    }
+    .file-tree {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-width: 560px;
+    }
+    .tree-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 26px;
+      color: #000000;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      will-change: transform, opacity;
+    }
+    .tree-row.indent-1 { padding-left: 36px; }
+    .tree-row .icon {
+      width: 20px; height: 20px; flex: 0 0 20px;
+      color: #525252;
+    }
+    .tree-row.dir .label { color: #1E6ADC; }
+    .tree-row.dir .icon { color: #1E6ADC; }
+
+    /* --- Payoff --------------------------------------------------- */
+    .payoff {
+      position: absolute;
+      left: 0; right: 0;
+      bottom: 110px;
+      text-align: center;
+      font-size: 88px;
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      z-index: 95;
+      will-change: transform, opacity;
+    }
+    .payoff .accent { color: #7033FF; }
+  </style>
+</head>
+<body>
+  <div data-composition-id="skill-bundle-upload" data-width="1920" data-height="1080" data-start="0" data-duration="9">
+
+    <!-- HOOK -->
+    <div id="hook" class="hook clip" data-start="0" data-duration="2" data-track-index="9">
+      <span><span class="accent">Drop a .zip.</span> Get a skill.</span>
+    </div>
+
+    <!-- SURFACE A: Skills list page (visible 1.6s through 5.9s — covers crossfade) -->
+    <div id="skills-page" class="skills-page clip" data-start="1.6" data-duration="4.3" data-track-index="1">
+      <div class="skills-topbar">
+        <h1 class="skills-title">Skills</h1>
+        <div id="new-skill-btn" class="new-skill-btn">+ New Skill</div>
+      </div>
+      <div class="skills-grid">
+        <div class="skill-card">
+          <h3>docx-formatter</h3>
+          <div class="skill-card-tags">
+            <span class="tag">docs</span>
+            <span class="tag">format</span>
+          </div>
+          <div class="skill-card-foot">Updated 2 days ago</div>
+        </div>
+        <div class="skill-card">
+          <h3>github-pr-review</h3>
+          <div class="skill-card-tags">
+            <span class="tag">github</span>
+            <span class="tag">review</span>
+          </div>
+          <div class="skill-card-foot">Updated 5 days ago</div>
+        </div>
+        <div class="skill-card">
+          <h3>calendar-sync</h3>
+          <div class="skill-card-tags">
+            <span class="tag">calendar</span>
+            <span class="tag">sync</span>
+          </div>
+          <div class="skill-card-foot">Updated 7 days ago</div>
+        </div>
+        <div class="skill-card">
+          <h3>csv-cleanup</h3>
+          <div class="skill-card-tags">
+            <span class="tag">data</span>
+            <span class="tag">csv</span>
+          </div>
+          <div class="skill-card-foot">Updated 12 days ago</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SURFACE B: Modal (opens 2.4s, fades out around 5.5s) -->
+    <div id="modal-scrim" class="modal-scrim clip" data-start="2.4" data-duration="3.5" data-track-index="2">
+      <div id="modal" class="modal">
+        <h2 class="modal-title">New Skill</h2>
+        <div class="toggle-row">
+          <div id="pill-blank" class="pill selected">Create blank</div>
+          <div id="pill-upload" class="pill unselected">Create from upload</div>
+        </div>
+        <div class="input-row">
+          <div class="input-label">Name</div>
+          <div class="input-field">name your skill</div>
+        </div>
+        <div class="input-row">
+          <div class="input-label">Description</div>
+          <div class="input-field textarea">what does it do?</div>
+        </div>
+        <div id="dropzone-wrap" style="display:flex; flex-direction:column; gap:10px;">
+          <div id="dropzone" class="dropzone">
+            <div id="dropzone-sweep" class="dropzone-sweep"></div>
+            <span id="dropzone-label">Drop a .zip or .md here</span>
+          </div>
+          <div id="file-chip" class="file-chip">
+            <span class="file-chip-dot"></span>
+            <span>docx-skill.zip</span>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <div id="create-btn" class="create-btn">Create</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dragging file glyph (visible during 3.6 - 4.6) -->
+    <div id="drag-file" class="drag-file clip" data-start="3.6" data-duration="1.0" data-track-index="3">
+      <div class="drag-file-card">
+        <div class="drag-file-ext">.zip</div>
+        <div class="drag-file-name">docx-skill.zip</div>
+      </div>
+    </div>
+
+    <!-- Cursor (visible 1.95 - 5.3) -->
+    <div id="cursor" class="cursor clip" data-start="1.95" data-duration="3.35" data-track-index="4">
+      <svg viewBox="0 0 28 28" width="28" height="28" xmlns="http://www.w3.org/2000/svg">
+        <path d="M3 2 L3 22 L8 17 L11.5 25 L14.5 23.7 L11 16 L17.5 16 Z" fill="#000000" stroke="#FFFFFF" stroke-width="1.2" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div id="cursor-pulse" class="cursor-pulse clip" data-start="2.2" data-duration="3.1" data-track-index="5"></div>
+
+    <!-- Editor surface (visible 5.7 onwards) -->
+    <div id="editor" class="editor clip" data-start="5.7" data-duration="3.3" data-track-index="6">
+      <div class="editor-header">
+        <span class="crumb-strong">docx-skill</span>
+        <span>/</span>
+        <span>files</span>
+      </div>
+      <div class="file-tree">
+        <div class="tree-row file" data-tree-idx="0">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 2 H12 L16 6 V18 H4 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 2 V6 H16" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">SKILL.md</span>
+        </div>
+        <div class="tree-row dir" data-tree-idx="1">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 5 H8 L10 7 H18 V16 H2 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">scripts/</span>
+        </div>
+        <div class="tree-row file indent-1" data-tree-idx="2">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 2 H12 L16 6 V18 H4 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 2 V6 H16" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">extract.py</span>
+        </div>
+        <div class="tree-row file indent-1" data-tree-idx="3">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 2 H12 L16 6 V18 H4 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 2 V6 H16" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">format.py</span>
+        </div>
+        <div class="tree-row dir" data-tree-idx="4">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 5 H8 L10 7 H18 V16 H2 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">references/</span>
+        </div>
+        <div class="tree-row file indent-1" data-tree-idx="5">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M4 2 H12 L16 6 V18 H4 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 2 V6 H16" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">examples.md</span>
+        </div>
+        <div class="tree-row dir" data-tree-idx="6">
+          <svg class="icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 5 H8 L10 7 H18 V16 H2 Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="label">assets/</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payoff -->
+    <div id="payoff" class="payoff clip" data-start="6.6" data-duration="2.4" data-track-index="8">
+      <span><span class="accent">Zero clicks</span> per file.</span>
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    /* ---------- 0.0 – 1.6: HOOK ---------- */
+    tl.from("#hook", { y: 24, opacity: 0, duration: 0.4, ease: "power2.out" }, 0.0);
+    // hook holds, then fades out under the surface A entrance
+    tl.to("#hook", { opacity: 0, duration: 0.35, ease: "power2.inOut" }, 1.65);
+
+    /* ---------- 1.6 – 2.0: Skills list reveals ---------- */
+    tl.from("#skills-page", { opacity: 0, duration: 0.4, ease: "power2.out" }, 1.6);
+    tl.from(".skills-topbar", { y: 16, opacity: 0, duration: 0.45, ease: "power2.out" }, 1.65);
+    tl.from(".skills-grid > .skill-card", {
+      y: 18, opacity: 0, duration: 0.4, ease: "power2.out", stagger: 0.06
+    }, 1.75);
+
+    /* ---------- Cursor: enters bottom-left, moves to "+ New Skill" ---------- */
+    // Approx button center: skills-page padding 120, page width 1920 -> right edge of content = 1800
+    // button approx x:~1680, y:~168 (vertical center of topbar)
+    tl.set("#cursor", { x: 720, y: 920, opacity: 0 }, 1.95);
+    tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power2.out" }, 1.95);
+    tl.to("#cursor", { x: 1680, y: 168, duration: 0.45, ease: "power2.inOut" }, 2.0);
+
+    /* ---------- 2.4: click pulse on "+ New Skill" → modal opens ---------- */
+    tl.set("#cursor-pulse", { x: 1684, y: 174, opacity: 0, scale: 0.2 }, 2.2);
+    tl.to("#cursor-pulse", { opacity: 0.9, scale: 1, duration: 0.18, ease: "power2.out" }, 2.32);
+    tl.to("#cursor-pulse", { opacity: 0, duration: 0.18, ease: "power2.inOut" }, 2.5);
+
+    // Modal entrance
+    tl.from("#modal-scrim", { opacity: 0, duration: 0.25, ease: "power2.out" }, 2.4);
+    tl.from("#modal", { scale: 0.95, opacity: 0, duration: 0.28, ease: "power2.out" }, 2.4);
+
+    /* ---------- Hide dropzone & file chip initially (set at modal open time) ---------- */
+    tl.set("#dropzone-wrap", { opacity: 0, y: 12 }, 2.4);
+    tl.set("#file-chip", { opacity: 0, y: 6 }, 2.4);
+    tl.set("#dropzone-sweep", { x: "-100%" }, 2.4);
+
+    /* ---------- 2.7–3.0: cursor moves to second pill, click ---------- */
+    // Modal centered at composition center (960, 540).
+    // Upload pill approx center at (970, 388) inside modal toggle row.
+    tl.to("#cursor", { x: 970, y: 388, duration: 0.42, ease: "power2.inOut" }, 2.7);
+
+    // Click pulse on the upload pill
+    tl.set("#cursor-pulse", { x: 970, y: 388, scale: 0.2, opacity: 0 }, 3.0);
+    tl.to("#cursor-pulse", { opacity: 0.9, scale: 1, duration: 0.18, ease: "power2.out" }, 3.0);
+    tl.to("#cursor-pulse", { opacity: 0, duration: 0.18, ease: "power2.inOut" }, 3.18);
+
+    // Toggle pills: swap selected state via color tween
+    tl.to("#pill-blank", { backgroundColor: "rgba(0,0,0,0)", color: "#000000", duration: 0.2, ease: "power2.out" }, 3.05);
+    tl.to("#pill-upload", { backgroundColor: "#7033FF", color: "#FFFFFF", duration: 0.2, ease: "power2.out" }, 3.05);
+
+    /* ---------- 3.0–3.6: 600ms breath while dropzone reveals ---------- */
+    tl.to("#dropzone-wrap", { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 3.15);
+
+    /* ---------- 3.6–4.4: docx-skill.zip drags into the dropzone ---------- */
+    // Animate file from off-right.
+    tl.set("#drag-file", { x: 1900, y: 200, opacity: 0, rotation: -6 }, 3.6);
+    tl.to("#drag-file", { opacity: 1, duration: 0.15, ease: "power2.out" }, 3.6);
+    tl.to("#drag-file", {
+      x: 900, y: 600, rotation: 0, duration: 0.7, ease: "power2.inOut"
+    }, 3.65);
+
+    // Dropzone reacts as file approaches
+    tl.to("#dropzone", {
+      backgroundColor: "#E2EBFF",
+      borderColor: "#7033FF",
+      duration: 0.3,
+      ease: "power2.out"
+    }, 4.15);
+    tl.to("#dropzone-label", { color: "#1E6ADC", duration: 0.3, ease: "power2.out" }, 4.15);
+
+    // File "drops" - fades out
+    tl.to("#drag-file", { opacity: 0, scale: 0.92, duration: 0.18, ease: "power2.inOut" }, 4.35);
+
+    // File chip appears below
+    tl.to("#file-chip", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 4.4);
+
+    /* ---------- 4.4–4.9: cursor to Create button, click ---------- */
+    // Create button approx bottom-right of modal. Modal width 560, right edge ~ 1240.
+    // Button approx x ~ 1180, vertical near bottom of modal ~ 760.
+    tl.to("#cursor", { x: 1180, y: 760, duration: 0.35, ease: "power2.inOut" }, 4.5);
+
+    tl.set("#cursor-pulse", { x: 1180, y: 760, scale: 0.2, opacity: 0 }, 4.82);
+    tl.to("#cursor-pulse", { opacity: 0.9, scale: 1, duration: 0.18, ease: "power2.out" }, 4.85);
+    tl.to("#cursor-pulse", { opacity: 0, duration: 0.18, ease: "power2.inOut" }, 5.03);
+
+    // Progress sweep across the dropzone
+    tl.fromTo("#dropzone-sweep",
+      { x: "-100%" },
+      { x: "350%", duration: 0.5, ease: "power2.inOut" },
+      4.85
+    );
+
+    /* ---------- 4.9–5.6: 700ms breath ---------- */
+    // Cursor fades out
+    tl.to("#cursor", { opacity: 0, duration: 0.3, ease: "power2.inOut" }, 4.95);
+
+    /* ---------- 5.5–5.9: modal crossfade out ---------- */
+    tl.to("#modal-scrim", { opacity: 0, duration: 0.4, ease: "power2.inOut" }, 5.5);
+    // Also fade skills page since editor replaces full screen
+    tl.to("#skills-page", { opacity: 0, duration: 0.4, ease: "power2.inOut" }, 5.5);
+
+    /* ---------- 5.7–6.2: file tree fades in ---------- */
+    tl.from("#editor", { opacity: 0, duration: 0.45, ease: "power2.out" }, 5.7);
+    tl.from(".editor-header", { y: 12, opacity: 0, duration: 0.4, ease: "power2.out" }, 5.75);
+    tl.from(".tree-row", {
+      y: 14,
+      opacity: 0,
+      duration: 0.35,
+      ease: "power2.out",
+      stagger: 0.08
+    }, 5.95);
+
+    /* ---------- 6.6–7.0: payoff fades in ---------- */
+    tl.from("#payoff", { y: 16, opacity: 0, duration: 0.4, ease: "power2.out" }, 6.6);
+
+    /* Final 600ms still — no further animation past 8.4s */
+
+    window.__timelines["skill-bundle-upload"] = tl;
+  </script>
+</body>
+</html>

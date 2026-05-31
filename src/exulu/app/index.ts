@@ -38,6 +38,9 @@ import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { emailTool } from "@SRC/templates/tools/email.ts";
 import { transcribeTool } from "@SRC/templates/tools/transcribe.ts";
+import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-generation.ts";
+import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
+import { resolve } from "node:path";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
@@ -266,6 +269,36 @@ export class ExuluApp {
       transcriptionTools.push(transcribeTool);
     }
 
+    // A single image_generation tool — the per-model loop was replaced by
+    // one unified tool that opens an in-chat widget where the user picks
+    // the model, size, quality, n, optional reference images, and an
+    // optional saved style. parseImageGenerationModels reads
+    // config.litellm.yaml and throws on any image-model whose model_info
+    // is missing the required capability declarations (sizes, qualities,
+    // supports_edit, max_n), so misconfiguration fails the boot fast with
+    // one actionable error message.
+    const imageGenerationTools: ExuluTool[] = [];
+    const s3Configured =
+      !!config?.fileUploads &&
+      !!config.fileUploads.s3region &&
+      !!config.fileUploads.s3key &&
+      !!config.fileUploads.s3secret &&
+      !!config.fileUploads.s3Bucket;
+    if (isLiteLLMEnabled() && s3Configured) {
+      const configPath =
+        process.env.LITELLM_CONFIG_PATH ??
+        resolve(getPackageRoot(), "./config.litellm.yaml");
+      const imageModels = parseImageGenerationModels(configPath);
+      if (imageModels.length > 0) {
+        console.log(
+          `[EXULU] Registering image_generation widget tool with ${imageModels.length} model(s): ${imageModels
+            .map((m) => m.model_name)
+            .join(", ")}`,
+        );
+        imageGenerationTools.push(createImageGenerationWidgetTool(imageModels));
+      }
+    }
+
     this._tools = [
       ...(tools ?? []),
       ...todoTools,
@@ -273,6 +306,7 @@ export class ExuluApp {
       ...perplexityTools,
       emailTool,
       ...transcriptionTools,
+      ...imageGenerationTools,
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.
