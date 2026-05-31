@@ -123,38 +123,29 @@ Capabilities are declared **in `config.litellm.yaml` under `model_info`** for ev
     max_n: 10
 ```
 
-**Implementation:** `parseImageGenerationModels` (already in `src/exulu/litellm/parse-image-models.ts`) is extended to also extract `sizes`, `qualities`, `supports_edit`, and `max_n` from each `model_info` block. A separate validator runs over the parsed models:
+**Implementation — reuse, don't reinvent:**
 
-```ts
-// src/exulu/litellm/validate-image-models.ts
-export const validateImageGenerationModels = (
-  models: ParsedImageModel[],
-): void => {
-  for (const m of models) {
-    const errs: string[] = [];
-    if (!Array.isArray(m.sizes) || m.sizes.length === 0)
-      errs.push("model_info.sizes must be a non-empty array of strings");
-    if (!Array.isArray(m.qualities) || m.qualities.length === 0)
-      errs.push("model_info.qualities must be a non-empty array of strings");
-    if (typeof m.supports_edit !== "boolean")
-      errs.push("model_info.supports_edit must be a boolean");
-    if (!Number.isInteger(m.max_n) || m.max_n < 1)
-      errs.push("model_info.max_n must be an integer ≥ 1");
-    if (errs.length > 0) {
-      throw new Error(
-        `[EXULU] Image-generation model "${m.model_name}" in config.litellm.yaml ` +
-        `is missing required model_info keys:\n  - ${errs.join("\n  - ")}\n` +
-        `See docs/superpowers/specs/2026-05-31-in-chat-image-generation-design.md ` +
-        `for the required schema.`,
-      );
-    }
-  }
-};
-```
+Two pre-existing modules already touch `config.litellm.yaml` and the LiteLLM model list; both are extended in place rather than introducing new validator files.
 
-`validateImageGenerationModels` is called from `ExuluApp.create()` immediately after `parseImageGenerationModels` and before any tool is registered, so misconfiguration fails the boot fast with a single actionable error message.
+1. **`src/exulu/litellm/parse-image-models.ts`** (boot-time YAML walker, written in the previous task) is extended to also extract `sizes`, `qualities`, `supports_edit`, and `max_n` from each entry's `model_info`. Validation happens **inline in the parser** — if any required capability key is missing or invalid for an entry that declares `type: image_generation`, the parser throws a single descriptive error listing the model name and every missing/invalid key. `ExuluApp.create()` calls it once at boot, so misconfiguration fails the boot fast with one actionable message. Return type:
 
-`getRegisteredImageModels()` simply returns the parsed + validated list — there is no merging with a code map.
+   ```ts
+   export type ImageGenerationModel = {
+     model_name: string;
+     sizes: string[];           // non-empty
+     qualities: string[];       // non-empty
+     supports_edit: boolean;
+     max_n: number;             // integer ≥ 1
+   };
+   export const parseImageGenerationModels = (configPath: string): ImageGenerationModel[];
+   ```
+
+2. **`src/exulu/litellm/catalog.ts`** (`fetchLiteLLMCatalog` / `findLiteLLMModel`, hits LiteLLM's `/model/info` HTTP endpoint at runtime — LiteLLM is the authoritative YAML parser) is extended so `LiteLLMCatalogEntry` carries the same four fields. The mapping in `fetchLiteLLMCatalog` already destructures `model_info` and just needs three more lines.
+
+**Where each is used:**
+
+- **At boot**, `ExuluApp.create()` calls `parseImageGenerationModels(configPath)`. If the list is non-empty (and LiteLLM + S3 are configured), the unified `image_generation` tool is registered. The parser is the single fail-fast gate.
+- **At runtime**, the tool's `execute` and the `/images/*` route handlers call `fetchLiteLLMCatalog()` and filter by `type === 'image_generation'`. This is the authoritative source while LiteLLM is up — capabilities surface for the widget without re-reading YAML or shipping a code map. The boot-time parser and the runtime catalog read the same YAML and stay consistent because LiteLLM never reloads `model_list` without a restart (per the existing 30s cache comment in `catalog.ts`).
 
 ### Database
 
@@ -374,7 +365,7 @@ Collapsed view: thumbnails of selected images + "Edit again" button (re-expands)
 ## Implementation order (rough)
 
 1. DB migration for `image_generations` (init-db.ts).
-2. Extend `parseImageGenerationModels` to extract `sizes/qualities/supports_edit/max_n`; add `validateImageGenerationModels`; wire both into `ExuluApp.create()` so misconfig fails boot.
+2. Extend `parseImageGenerationModels` (boot YAML walker — adds capability extraction + inline validation that throws on missing keys) and extend `LiteLLMCatalogEntry` / `fetchLiteLLMCatalog` (runtime HTTP catalog — surfaces the same fields). No new validator file.
 3. Refactor `image-generation.ts` helper to support `n` and an array return.
 4. New routes: `/images/generate`, `/images/edit`, `/images/select`, `/images/history`.
 5. Remove the per-model `createImageGenerationTool` factory; add `createImageGenerationWidgetTool` and wire into `ExuluApp.create()`.
