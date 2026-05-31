@@ -93,29 +93,68 @@ Registration in `ExuluApp.create()` is gated on `isLiteLLMEnabled() && s3Configu
 
 ### Per-model capabilities
 
-A static lookup in `src/templates/tools/image-generation-models.ts`:
+Capabilities are declared **in `config.litellm.yaml` under `model_info`** for every image-generation model. There is no static code map and no silent fallback — if a required key is missing, `ExuluApp.create()` throws and the app refuses to boot, surfacing a clear configuration error. This keeps the source of truth in one place (the operator's YAML) and forces an explicit choice for every model.
 
-```ts
-export const IMAGE_MODEL_CAPABILITIES: Record<string, {
-  sizes: string[];
-  qualities: string[];
-  supportsEdit: boolean;
-  maxN: number;
-}> = {
-  "gpt-image-1": { sizes: ["1024x1024","1024x1536","1536x1024","auto"],
-                   qualities: ["auto","low","medium","high"], supportsEdit: true, maxN: 10 },
-  "dall-e-3":    { sizes: ["1024x1024","1024x1792","1792x1024"],
-                   qualities: ["standard","hd"], supportsEdit: false, maxN: 1 },
-  // ...
-};
-export const getRegisteredImageModels = () =>
-  parseImageGenerationModels(configPath).map(m => ({
-    name: m.model_name,
-    ...(IMAGE_MODEL_CAPABILITIES[m.model_name] ?? FALLBACK_CAPS),
-  }));
+**Required `model_info` keys for image-generation models:**
+
+| Key             | Type           | Notes |
+|---              |---             |---    |
+| `type`          | `"image_generation"` | Already required by the existing parser. |
+| `sizes`         | `string[]`     | Allowed `size` values, e.g. `["1024x1024","1024x1536","1536x1024","auto"]`. Must be non-empty. |
+| `qualities`     | `string[]`     | Allowed `quality` values, e.g. `["auto","low","medium","high"]`. Must be non-empty. |
+| `supports_edit` | `boolean`      | Whether `/images/edit` is allowed for this model. |
+| `max_n`         | `integer`      | Upper bound for `n`. Must be ≥1. |
+
+**Example for `gpt-image-1` in `config.litellm.yaml`:**
+
+```yaml
+- model_name: gpt-image-1
+  litellm_params:
+    model: azure/gpt-image-1
+    api_base: https://exulu-resource.openai.azure.com/
+    api_key: "os.environ/AZURE_API_KEY_EU"
+  model_info:
+    brand: "openai"
+    region: "eu"
+    type: image_generation
+    sizes: ["1024x1024", "1024x1536", "1536x1024", "auto"]
+    qualities: ["auto", "low", "medium", "high"]
+    supports_edit: true
+    max_n: 10
 ```
 
-`FALLBACK_CAPS` defaults to `{ sizes: ['1024x1024'], qualities: ['auto'], supportsEdit: false, maxN: 1 }` — unknown models still work, just conservatively.
+**Implementation:** `parseImageGenerationModels` (already in `src/exulu/litellm/parse-image-models.ts`) is extended to also extract `sizes`, `qualities`, `supports_edit`, and `max_n` from each `model_info` block. A separate validator runs over the parsed models:
+
+```ts
+// src/exulu/litellm/validate-image-models.ts
+export const validateImageGenerationModels = (
+  models: ParsedImageModel[],
+): void => {
+  for (const m of models) {
+    const errs: string[] = [];
+    if (!Array.isArray(m.sizes) || m.sizes.length === 0)
+      errs.push("model_info.sizes must be a non-empty array of strings");
+    if (!Array.isArray(m.qualities) || m.qualities.length === 0)
+      errs.push("model_info.qualities must be a non-empty array of strings");
+    if (typeof m.supports_edit !== "boolean")
+      errs.push("model_info.supports_edit must be a boolean");
+    if (!Number.isInteger(m.max_n) || m.max_n < 1)
+      errs.push("model_info.max_n must be an integer ≥ 1");
+    if (errs.length > 0) {
+      throw new Error(
+        `[EXULU] Image-generation model "${m.model_name}" in config.litellm.yaml ` +
+        `is missing required model_info keys:\n  - ${errs.join("\n  - ")}\n` +
+        `See docs/superpowers/specs/2026-05-31-in-chat-image-generation-design.md ` +
+        `for the required schema.`,
+      );
+    }
+  }
+};
+```
+
+`validateImageGenerationModels` is called from `ExuluApp.create()` immediately after `parseImageGenerationModels` and before any tool is registered, so misconfiguration fails the boot fast with a single actionable error message.
+
+`getRegisteredImageModels()` simply returns the parsed + validated list — there is no merging with a code map.
 
 ### Database
 
@@ -169,7 +208,7 @@ Body: {
 }
 ```
 1. Authenticate; verify session write access.
-2. Validate `model` against registered image models; validate `n/size/quality` against `IMAGE_MODEL_CAPABILITIES[model]`.
+2. Validate `model` against registered image models; validate `n/size/quality` against the parsed model's capabilities (`sizes`, `qualities`, `max_n` from `model_info`).
 3. Resolve `styleId` if provided: load row, verify read access via RBAC, snapshot `config_value.markdown`.
 4. Compose final prompt: `prompt + (style ? "\n\n" + style.markdown : "")`.
 5. `await waitForLiteLLMReady()`; call `generateImage()` (extended to accept `n` and return an `Array<{buffer, contentType, extension, revisedPrompt}>`).
@@ -192,7 +231,7 @@ Body: {
 }
 ```
 1. Authenticate; verify session write access.
-2. Validate model supports edits (`IMAGE_MODEL_CAPABILITIES[model].supportsEdit`).
+2. Validate model supports edits (`supports_edit === true` in the parsed model_info).
 3. Validate every `referenceImageKeys[*]` and the optional `maskKey` is owned by this user — key must contain `user_<userId>/` OR live under this session's `sessions/<sessionId>/` prefix.
 4. Resolve style same as `/images/generate`.
 5. Fetch each ref's bytes via `getS3ObjectBytes`. Build a `FormData` per LiteLLM's curl spec: one `image=@...` per file, `mask=@...` if present, `prompt`, `model`, `n`, `size`, `response_format=b64_json`.
@@ -335,7 +374,7 @@ Collapsed view: thumbnails of selected images + "Edit again" button (re-expands)
 ## Implementation order (rough)
 
 1. DB migration for `image_generations` (init-db.ts).
-2. `IMAGE_MODEL_CAPABILITIES` + `getRegisteredImageModels`.
+2. Extend `parseImageGenerationModels` to extract `sizes/qualities/supports_edit/max_n`; add `validateImageGenerationModels`; wire both into `ExuluApp.create()` so misconfig fails boot.
 3. Refactor `image-generation.ts` helper to support `n` and an array return.
 4. New routes: `/images/generate`, `/images/edit`, `/images/select`, `/images/history`.
 5. Remove the per-model `createImageGenerationTool` factory; add `createImageGenerationWidgetTool` and wire into `ExuluApp.create()`.
