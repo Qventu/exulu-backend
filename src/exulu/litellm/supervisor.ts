@@ -57,9 +57,14 @@ const resolveConfig = (packageRoot: string) => {
   const host = process.env.LITELLM_HOST ?? "127.0.0.1";
   const port = process.env.LITELLM_PORT ?? "4000";
   const masterKey = process.env.LITELLM_MASTER_KEY;
+  // Default to the consumer's CWD, not packageRoot — when @exulu/backend is
+  // consumed as an npm dependency, packageRoot lives under node_modules where
+  // the operator can't reasonably drop a config file. CWD is the project root
+  // they ran Exulu from. LITELLM_CONFIG_PATH still wins, and if relative it
+  // resolves against CWD via node's fs APIs.
   const configPath =
     process.env.LITELLM_CONFIG_PATH ??
-    resolve(packageRoot, "./config.litellm.yaml");
+    resolve(process.cwd(), "./config.litellm.yaml");
   const venvBin = resolve(packageRoot, "ee/python/.venv/bin");
   const venvPython = resolve(venvBin, "python");
   const litellmBin = resolve(venvBin, "litellm");
@@ -113,7 +118,26 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
   // click parses it as a valid boolean.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { DEBUG: _debug, ...rest } = process.env;
-  const childEnv = { ...rest, DEBUG: "false" };
+  const childEnv: Record<string, string | undefined> = {
+    ...rest,
+    DEBUG: "false",
+  };
+
+  // Tell LiteLLM to mount itself under the prefix Exulu reverse-proxies the
+  // admin UI from, so its internal asset URLs, redirects, and SSO callbacks
+  // all include the path. EXULU_LITELLM_UI_PATH is set in ExuluApp.create()
+  // from config.litellm.uiPath (default "/litellm-admin"). We don't
+  // overwrite SERVER_ROOT_PATH if the operator already set it explicitly —
+  // they may be running behind a different reverse proxy with a different
+  // prefix.
+  //
+  // The env var is intentionally namespaced (not LITELLM_UI_PATH) because
+  // LiteLLM itself reads LITELLM_UI_PATH and treats it as a filesystem path
+  // to the UI directory — setting that to a URL path silently breaks the
+  // UI mount inside LiteLLM.
+  if (process.env.EXULU_LITELLM_UI_PATH && !process.env.SERVER_ROOT_PATH) {
+    childEnv.SERVER_ROOT_PATH = process.env.EXULU_LITELLM_UI_PATH;
+  }
 
   // SAFETY: Do NOT prepend the venv's bin directory to PATH for the child.
   // When LiteLLM has a `database_url` configured, it auto-shells out to
