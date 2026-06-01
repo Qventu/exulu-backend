@@ -662,25 +662,52 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       prefix += "global";
     }
 
+    console.log("[EXULU] bucket", config.fileUploads.s3Bucket);
     console.log("[EXULU] prefix", prefix);
 
-    const command = new ListObjectsV2Command({
-      Bucket: config.fileUploads.s3Bucket,
-      Prefix: prefix,
-      MaxKeys: 9,
-      ...(req.query.continuationToken && {
-        ContinuationToken: req.query.continuationToken as string,
-      }),
-    });
-
-    const response: ListObjectsV2CommandOutput = await client.send(command);
+    let response: ListObjectsV2CommandOutput;
 
     if (req.query.search) {
-      const search = req.query.search as string;
+      const search = (req.query.search as string).toLowerCase();
       console.log("[EXULU] Filtering files by search query", req.query.search);
-      response.Contents = response.Contents?.filter((content) =>
-        content?.Key?.toLowerCase().includes(search.toLowerCase()),
-      );
+
+      // Paginate through the full prefix so matches outside the first
+      // page (S3 returns keys lexicographically — UUID-prefixed files
+      // can land anywhere) aren't missed.
+      const matched: NonNullable<ListObjectsV2CommandOutput["Contents"]> = [];
+      let token: string | undefined;
+      do {
+        const page: ListObjectsV2CommandOutput = await client.send(
+          new ListObjectsV2Command({
+            Bucket: config.fileUploads.s3Bucket,
+            Prefix: prefix,
+            ...(token && { ContinuationToken: token }),
+          }),
+        );
+        for (const obj of page.Contents ?? []) {
+          if (obj.Key?.toLowerCase().includes(search)) {
+            matched.push(obj);
+          }
+        }
+        token = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (token);
+
+      response = {
+        $metadata: {} as any,
+        Contents: matched,
+        KeyCount: matched.length,
+        IsTruncated: false,
+      };
+    } else {
+      const command = new ListObjectsV2Command({
+        Bucket: config.fileUploads.s3Bucket,
+        Prefix: prefix,
+        MaxKeys: 9,
+        ...(req.query.continuationToken && {
+          ContinuationToken: req.query.continuationToken as string,
+        }),
+      });
+      response = await client.send(command);
     }
 
     res.json({
