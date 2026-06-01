@@ -19,6 +19,7 @@ import {
   type UIMessage,
   validateUIMessages,
   stepCountIs,
+  hasToolCall,
 } from "ai";
 import { generateSlug } from "@SRC/utils/generate-slug";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
@@ -563,7 +564,10 @@ export class ExuluProvider {
           agent,
           memoryItems
         ),
-        stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
+        // Stop after the image_generation tool fires — the widget IS the
+        // assistant's response, no follow-up text turn is wanted (same
+        // reasoning as question_ask: the UI artifact is the message).
+        stopWhen: [stepCountIs(maxStepCount || 5), hasToolCall("image_generation")] // make configurable
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
       const {
@@ -648,7 +652,7 @@ export class ExuluProvider {
           agent,
           memoryItems
         ),
-        stopWhen: [stepCountIs(maxStepCount || 5)],
+        stopWhen: [stepCountIs(maxStepCount || 5), hasToolCall("image_generation")],
       });
 
       if (statistics) {
@@ -1145,7 +1149,7 @@ ${skillsList}
       },
       // provide more loops for skills because they are more complex to execute
       // todo allow configuring this per skill
-      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)],
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5), hasToolCall("image_generation")],
     });
 
     return {
