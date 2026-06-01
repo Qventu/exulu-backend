@@ -1099,8 +1099,6 @@ ${skillsList}
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
 
-    fs.writeFileSync("system-prompt.txt", system);
-
     console.log("[EXULU] Tools", currentTools?.map(x => x.name));
     console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
 
