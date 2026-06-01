@@ -60,6 +60,69 @@ const execAsync = promisify(exec);
 // Sandbox commands can be very long (long deny lists) — bump default buffer.
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
 
+/**
+ * Probe whether bwrap can actually create a user namespace on this host.
+ * SRT's own dependency check only verifies bwrap is installed, not that the
+ * kernel will let it run — and the latter is what Ubuntu 24.04 (kernel 6.8+
+ * with `kernel.apparmor_restrict_unprivileged_userns=1`) and Debian hosts with
+ * `kernel.unprivileged_userns_clone=0` deny.
+ *
+ * Memoized for the process lifetime: the answer is host-level state that
+ * doesn't change without a sysctl flip + restart.
+ */
+type SandboxProbeResult = { canSandbox: boolean; reason?: string };
+let sandboxProbePromise: Promise<SandboxProbeResult> | undefined;
+
+function probeSandboxSupport(): Promise<SandboxProbeResult> {
+    if (sandboxProbePromise) return sandboxProbePromise;
+    sandboxProbePromise = (async () => {
+        if (process.platform === 'darwin') return { canSandbox: true };
+        if (process.platform !== 'linux') {
+            return { canSandbox: false, reason: `Unsupported platform: ${process.platform}` };
+        }
+        return await new Promise<SandboxProbeResult>((resolve) => {
+            // Minimal bwrap invocation: bind / read-only and exit. If the host
+            // refuses unprivileged user namespaces, this returns
+            // "Operation not permitted" — same path SRT would hit on every command.
+            const child = spawn('bwrap', ['--dev-bind', '/', '/', '--', '/bin/true']);
+            let stderr = '';
+            child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+            child.on('error', (err) => {
+                resolve({ canSandbox: false, reason: `bwrap not executable: ${err.message}` });
+            });
+            child.on('exit', (code) => {
+                if (code === 0) resolve({ canSandbox: true });
+                else resolve({ canSandbox: false, reason: stderr.trim() || `bwrap exited ${code}` });
+            });
+        });
+    })();
+    return sandboxProbePromise;
+}
+
+const SANDBOX_FALLBACK_INSTRUCTIONS =
+    'Skill sandboxing is running in DEGRADED mode: bwrap cannot create user namespaces on this host, so commands\n' +
+    'execute directly. The container remains the isolation boundary and resolveSessionPath still scopes\n' +
+    'readFile/writeFile to the session directory at the JS layer, but bash commands are NOT kernel-sandboxed.\n' +
+    '\n' +
+    'To restore full sandboxing on Ubuntu 23.10+ / 24.04+ hosts (kernel 6.5+):\n' +
+    '  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n' +
+    '  echo "kernel.apparmor_restrict_unprivileged_userns=0" | sudo tee /etc/sysctl.d/60-userns.conf\n' +
+    '  sudo sysctl --system\n' +
+    '\n' +
+    'On Debian hosts where the same symptom appears:\n' +
+    '  sudo sysctl -w kernel.unprivileged_userns_clone=1\n' +
+    '\n' +
+    'Set EXULU_REQUIRE_SANDBOX=1 to fail startup instead of degrading.';
+
+let degradedModeLogged = false;
+function logDegradedModeOnce(reason: string | undefined): void {
+    if (degradedModeLogged) return;
+    degradedModeLogged = true;
+    console.warn(
+        `[SKILLS] ${SANDBOX_FALLBACK_INSTRUCTIONS}\n\nProbe error: ${reason ?? '(no detail)'}`,
+    );
+}
+
 // This is called on every session where a skill is enabled
 // each sandbox setup includes the skill files from the enabled
 // skills, and uses the Anthropic Sandbox Runtime (SRT) to
@@ -380,6 +443,19 @@ export async function createSessionSandbox(
         await restoreArtifactsFromS3(sessionDir, sessionId, userId, config)
     }
 
+    // Probe whether bwrap can actually create namespaces on this host. On a
+    // failure, either throw (strict mode) or degrade to direct exec.
+    const probe = await probeSandboxSupport();
+    const useDirectExec = !probe.canSandbox;
+    if (useDirectExec) {
+        if (process.env.EXULU_REQUIRE_SANDBOX === '1') {
+            throw new Error(
+                `[SKILLS] Sandbox required (EXULU_REQUIRE_SANDBOX=1) but unavailable.\n\n${SANDBOX_FALLBACK_INSTRUCTIONS}\n\nProbe error: ${probe.reason ?? '(no detail)'}`,
+            );
+        }
+        logDegradedModeOnce(probe.reason);
+    }
+
     // SRT's `SandboxManager.initialize()` is a one-shot singleton (see
     // node_modules/@anthropic-ai/sandbox-runtime/.../sandbox-manager.js:187-191);
     // the first config wins and later calls are no-ops. That's incompatible
@@ -402,7 +478,9 @@ export async function createSessionSandbox(
         },
     }
 
-    await SandboxManager.initialize(baselineSandboxConfig)
+    if (!useDirectExec) {
+        await SandboxManager.initialize(baselineSandboxConfig)
+    }
 
     // Resolve the global node_modules directory so skill-generated scripts
     // can `require()` packages installed via `npm install -g <pkg>` (e.g. the
@@ -487,13 +565,21 @@ export async function createSessionSandbox(
         ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
     }
 
+    // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
+    // the host can't sandbox. In degraded mode the container itself is the
+    // isolation boundary; resolveSessionPath still scopes readFile/writeFile.
+    const wrapIfNeeded = async (command: string): Promise<string> => {
+        if (useDirectExec) return command;
+        return SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig);
+    };
+
     // wrapWithSandbox only constructs the sandbox-exec invocation string —
     // it does NOT run it. We have to shell out ourselves and capture the
     // real stdout/stderr/exitCode. The third arg passes the per-session
     // policy so the kernel only allows this session's dir, not whatever
     // baseline the singleton was initialized with.
     const runWrapped = async (command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
-        const wrapped = await SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig);
+        const wrapped = await wrapIfNeeded(command);
         try {
             const { stdout, stderr } = await execAsync(wrapped, {
                 maxBuffer: EXEC_MAX_BUFFER,
@@ -618,10 +704,8 @@ export async function createSessionSandbox(
         for (const file of files) {
             // Pipe content via stdin so arbitrary file content (quotes, $, etc.)
             // doesn't need to be escaped into the shell command.
-            const wrapped = await SandboxManager.wrapWithSandbox(
+            const wrapped = await wrapIfNeeded(
                 `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
-                undefined,
-                sessionSandboxConfig,
             )
             await new Promise<void>((resolveSpawn, rejectSpawn) => {
                 const child = spawn('/bin/bash', ['-c', wrapped])
@@ -855,11 +939,12 @@ export async function createSessionSandbox(
     const handle: SessionSandboxHandle = {
         sessionDir,
         tools: wrappedTools,
-        wrapCommand: (command: string) =>
-            SandboxManager.wrapWithSandbox(command, undefined, sessionSandboxConfig),
+        wrapCommand: (command: string) => wrapIfNeeded(command),
         cleanup: async () => {
             sandboxCache.delete(sessionId)
-            await SandboxManager.reset()
+            if (!useDirectExec) {
+                await SandboxManager.reset()
+            }
             await rm(sessionDir, { recursive: true, force: true })
         },
     }
