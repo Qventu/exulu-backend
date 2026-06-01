@@ -38,6 +38,9 @@ import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { emailTool } from "@SRC/templates/tools/email.ts";
 import { transcribeTool } from "@SRC/templates/tools/transcribe.ts";
+import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-generation.ts";
+import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
+import { resolve } from "node:path";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
@@ -57,6 +60,9 @@ import {
   startLiteLLMSupervisor,
 } from "@SRC/exulu/litellm/supervisor.ts";
 import { getPackageRoot } from "@SRC/utils/python-setup.ts";
+import { builtInContexts } from "@SRC/templates/contexts";
+import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
+import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -193,8 +199,19 @@ export class ExuluApp {
         ? [...getDefaultEvals(), ...(evals ?? [])]
         : [];
 
+    if (contexts && "transcriptions" in contexts) {
+      console.warn(
+        "[EXULU] User-defined 'transcriptions' context overridden by built-in. " +
+          "Rename your context to avoid the collision.",
+      );
+    }
+    // Spread user contexts first so built-in contexts win the merge — the
+    // built-in transcriptions context is referenced by the transcription
+    // feature and silently letting a consumer override it would break that
+    // feature in ways that are hard to debug.
     this._contexts = {
       ...contexts,
+      ...builtInContexts,
     };
 
     this._rerankers = [...(rerankers ?? [])];
@@ -252,6 +269,36 @@ export class ExuluApp {
       transcriptionTools.push(transcribeTool);
     }
 
+    // A single image_generation tool — the per-model loop was replaced by
+    // one unified tool that opens an in-chat widget where the user picks
+    // the model, size, quality, n, optional reference images, and an
+    // optional saved style. parseImageGenerationModels reads
+    // config.litellm.yaml and throws on any image-model whose model_info
+    // is missing the required capability declarations (sizes, qualities,
+    // supports_edit, max_n), so misconfiguration fails the boot fast with
+    // one actionable error message.
+    const imageGenerationTools: ExuluTool[] = [];
+    const s3Configured =
+      !!config?.fileUploads &&
+      !!config.fileUploads.s3region &&
+      !!config.fileUploads.s3key &&
+      !!config.fileUploads.s3secret &&
+      !!config.fileUploads.s3Bucket;
+    if (isLiteLLMEnabled() && s3Configured) {
+      const configPath =
+        process.env.LITELLM_CONFIG_PATH ??
+        resolve(getPackageRoot(), "./config.litellm.yaml");
+      const imageModels = parseImageGenerationModels(configPath);
+      if (imageModels.length > 0) {
+        console.log(
+          `[EXULU] Registering image_generation widget tool with ${imageModels.length} model(s): ${imageModels
+            .map((m) => m.model_name)
+            .join(", ")}`,
+        );
+        imageGenerationTools.push(createImageGenerationWidgetTool(imageModels));
+      }
+    }
+
     this._tools = [
       ...(tools ?? []),
       ...todoTools,
@@ -259,6 +306,7 @@ export class ExuluApp {
       ...perplexityTools,
       emailTool,
       ...transcriptionTools,
+      ...imageGenerationTools,
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
       // in the grahql tools resolver.
@@ -398,6 +446,32 @@ export class ExuluApp {
           // to debug. Agent runs will fail with LITELLM_NOT_READY until the
           // operator fixes the underlying issue.
         }
+      }
+
+      // Whisper transcription server. Unlike LiteLLM, we never auto-spawn
+      // it from the main app — it runs as its own process (typically on a
+      // GPU host) via `npx @exulu/backend exulu-start-whisper`. The main
+      // app only consumes it over HTTP when TRANSCRIPTION_SERVER is set.
+      if (process.env.TRANSCRIPTION_SERVER) {
+        try {
+          const health = await transcriptionClient.health();
+          console.log(
+            `[EXULU] Transcription: enabled (server=${process.env.TRANSCRIPTION_SERVER}, ` +
+              `device=${health.device}, GPU=${health.gpu.available ? "enabled" : "disabled"}, ` +
+              `diarization=${health.diarization ? "enabled" : "disabled"})`,
+          );
+          startTranscriptionPollingLoop();
+        } catch (err) {
+          console.warn(
+            `[EXULU] TRANSCRIPTION_SERVER set but unreachable: ${(err as Error).message}. ` +
+              `Transcriptions will fail until the server is up.`,
+          );
+        }
+      } else {
+        console.log(
+          "[EXULU] Transcription: disabled (TRANSCRIPTION_SERVER not set). " +
+            "Start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
+        );
       }
 
       return this._expressApp;

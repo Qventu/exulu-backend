@@ -23,6 +23,16 @@ export type LiteLLMCatalogEntry = {
   supports_function_calling: boolean;
   supports_pdf_input: boolean;
   supports_audio_input: boolean;
+  // Image-generation capability declarations from model_info. Populated for
+  // models with `type: image_generation`; null/empty for other types. The
+  // boot-time YAML parser (parse-image-models.ts) is the fail-fast gate that
+  // requires these for image models — by the time this catalog is queried,
+  // LiteLLM has already loaded the same YAML and these are guaranteed
+  // present for image entries.
+  sizes: string[] | null;
+  qualities: string[] | null;
+  supports_edit: boolean;
+  max_n: number | null;
 };
 
 const CACHE_TTL_MS = 30_000;
@@ -80,6 +90,10 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       supports_function_calling: !!m.model_info?.supports_function_calling,
       supports_pdf_input: !!m.model_info?.supports_pdf_input,
       supports_audio_input: !!m.model_info?.supports_audio_input,
+      sizes: Array.isArray(m.model_info?.sizes) ? m.model_info.sizes : null,
+      qualities: Array.isArray(m.model_info?.qualities) ? m.model_info.qualities : null,
+      supports_edit: !!m.model_info?.supports_edit,
+      max_n: typeof m.model_info?.max_n === "number" ? m.model_info.max_n : null,
     }));
     _cache = { expiresAt: Date.now() + CACHE_TTL_MS, items };
     // filter out type: speech_to_text and type: text_to_speech

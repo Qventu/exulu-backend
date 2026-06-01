@@ -57,6 +57,18 @@ import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
+import {
+  generateImage,
+  editImage,
+  ImageGenerationError,
+} from "./image-generation.ts";
+import {
+  parseImageGenerationModels,
+  type ImageGenerationModel,
+} from "./litellm/parse-image-models.ts";
+import { resolve as resolvePath } from "node:path";
+import { getPackageRoot } from "@SRC/utils/python-setup.ts";
+import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { buildTags, createTaggedFetch } from "./tags.ts";
 import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
@@ -115,6 +127,7 @@ const {
   embedderSettingsSchema,
   promptFavoritesSchema,
   statisticsSchema,
+  transcriptionJobsSchema,
 } = coreSchemas.get();
 
 export const createExpressRoutes = async (
@@ -200,6 +213,7 @@ export const createExpressRoutes = async (
       workflowTemplatesSchema(),
       statisticsSchema(),
       rbacSchema(),
+      transcriptionJobsSchema(),
     ],
     contexts ?? [],
     providers,
@@ -1263,6 +1277,601 @@ Mood: friendly and intelligent.
       }
     },
   );
+
+  // Image generation routes — back the in-chat ImageGenerationWidget.
+  //
+  // Design doc: docs/superpowers/specs/2026-05-31-in-chat-image-generation-design.md
+  //
+  // All four routes share the same preconditions (LiteLLM + S3 + session
+  // RBAC) so the boilerplate is collected into helpers below. parseImage
+  // GenerationModels is called once and cached for the lifetime of the
+  // route registration — LiteLLM never reloads model_list without a
+  // restart, and the parser is the boot-time fail-fast gate already.
+  const imageModelsByName: Map<string, ImageGenerationModel> = (() => {
+    if (!isLiteLLMEnabled() || !config?.fileUploads) return new Map();
+    try {
+      const configPath =
+        process.env.LITELLM_CONFIG_PATH ??
+        resolvePath(getPackageRoot(), "./config.litellm.yaml");
+      const models = parseImageGenerationModels(configPath);
+      return new Map(models.map((m) => [m.model_name, m]));
+    } catch (err) {
+      // The parser threw on misconfiguration. Boot already failed via
+      // ExuluApp.create(); if we somehow got here, refuse to register
+      // image routes rather than crash the server.
+      console.error(
+        "[EXULU] Skipping /images/* routes due to config.litellm.yaml error:",
+        (err as Error).message,
+      );
+      return new Map();
+    }
+  })();
+
+  const imageRoutesEnabled =
+    isLiteLLMEnabled() &&
+    !!config?.fileUploads?.s3region &&
+    !!config?.fileUploads?.s3key &&
+    !!config?.fileUploads?.s3secret &&
+    !!config?.fileUploads?.s3Bucket &&
+    imageModelsByName.size > 0;
+
+  const respond503ImagesNotEnabled = (res: Response) => {
+    res.status(503).json({
+      detail:
+        "Image generation is not enabled on this deployment. Requires " +
+        "EXULU_USE_LITELLM=true, S3 fileUploads configuration, and at least " +
+        "one model in config.litellm.yaml with model_info.type=image_generation.",
+    });
+  };
+
+  const loadAuthedSession = async (
+    req: Request,
+    res: Response,
+    sessionId: string,
+    rights: "read" | "write",
+  ) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res
+        .status(authResult.code || 401)
+        .json({ detail: authResult.message });
+      return null;
+    }
+    const { db } = await postgresClient();
+    const session = await db
+      .from("agent_sessions")
+      .where({ id: sessionId })
+      .first();
+    if (!session) {
+      res.status(404).json({ detail: `Session ${sessionId} not found.` });
+      return null;
+    }
+    const sessionRbac = await RBACResolver(
+      db,
+      "agent_sessions",
+      session.id,
+      session.rights_mode || "private",
+    );
+    const allowed = await checkRecordAccess(
+      { ...session, RBAC: sessionRbac },
+      rights,
+      authResult.user,
+    );
+    if (!allowed) {
+      res
+        .status(403)
+        .json({ detail: `You don't have ${rights} access to this session.` });
+      return null;
+    }
+    return { user: authResult.user, session, db } as const;
+  };
+
+  /**
+   * Resolve a saved style by id and verify the calling user has read access
+   * to it. Returns the parsed style content (or null if no styleId given).
+   * Throws via res.json on missing/forbidden so callers can early-return.
+   */
+  const loadStyle = async (
+    db: Knex,
+    styleId: string | undefined,
+    user: any,
+    res: Response,
+  ): Promise<{ markdown: string | null; id: string | null } | "error"> => {
+    if (!styleId) return { markdown: null, id: null };
+    const row = await db
+      .from("platform_configurations")
+      .where({ id: styleId })
+      .first();
+    if (!row) {
+      res.status(404).json({ detail: `Style ${styleId} not found.` });
+      return "error";
+    }
+    const rbac = await RBACResolver(
+      db,
+      "platform_configurations",
+      row.id,
+      row.rights_mode || "private",
+    );
+    const allowed = await checkRecordAccess(
+      { ...row, RBAC: rbac },
+      "read",
+      user,
+    );
+    if (!allowed) {
+      res.status(403).json({ detail: "You don't have access to that style." });
+      return "error";
+    }
+    const value =
+      typeof row.config_value === "string"
+        ? (() => { try { return JSON.parse(row.config_value); } catch { return null; } })()
+        : row.config_value;
+    return { markdown: value?.markdown ?? null, id: row.id };
+  };
+
+  const validateGenerationParams = (
+    body: any,
+    res: Response,
+  ): null | {
+    model: ImageGenerationModel;
+    prompt: string;
+    n: number;
+    size?: string;
+    quality?: string;
+  } => {
+    const { model: modelName, prompt, n, size, quality } = body || {};
+    const model = typeof modelName === "string" ? imageModelsByName.get(modelName) : undefined;
+    if (!model) {
+      res.status(400).json({
+        detail: `Unknown image-generation model "${modelName}". ` +
+          `Available: ${[...imageModelsByName.keys()].join(", ")}.`,
+      });
+      return null;
+    }
+    if (typeof prompt !== "string" || prompt.trim().length === 0) {
+      res.status(400).json({ detail: "prompt must be a non-empty string." });
+      return null;
+    }
+    const requestedN = typeof n === "number" ? n : 1;
+    if (!Number.isInteger(requestedN) || requestedN < 1 || requestedN > model.max_n) {
+      res.status(400).json({
+        detail: `n must be an integer between 1 and ${model.max_n} for model ${model.model_name}.`,
+      });
+      return null;
+    }
+    if (size && !model.sizes.includes(size)) {
+      res.status(400).json({
+        detail: `size "${size}" is not supported by ${model.model_name}. ` +
+          `Allowed: ${model.sizes.join(", ")}.`,
+      });
+      return null;
+    }
+    if (quality && !model.qualities.includes(quality)) {
+      res.status(400).json({
+        detail: `quality "${quality}" is not supported by ${model.model_name}. ` +
+          `Allowed: ${model.qualities.join(", ")}.`,
+      });
+      return null;
+    }
+    return { model, prompt, n: requestedN, size, quality };
+  };
+
+  const uploadGeneratedImages = async (
+    images: { buffer: Buffer; contentType: string; extension: string; revisedPrompt?: string }[],
+    sessionId: string,
+    toolCallId: string,
+    userId: number,
+  ): Promise<{ keys: string[]; revisedPrompts: (string | null)[]; presignedUrls: string[] }> => {
+    if (!config?.fileUploads) {
+      throw new Error("File uploads not configured.");
+    }
+    const keys: string[] = [];
+    const revisedPrompts: (string | null)[] = [];
+    for (const img of images) {
+      const filename = `${randomUUID()}.${img.extension}`;
+      const key = `sessions/${sessionId}/images/${toolCallId}/${filename}`;
+      const fullKey = await uploadFile(
+        img.buffer,
+        key,
+        config,
+        { contentType: img.contentType },
+        userId,
+      );
+      keys.push(fullKey);
+      revisedPrompts.push(img.revisedPrompt ?? null);
+    }
+    const presignedUrls = await Promise.all(
+      keys.map((fullKey) => {
+        const slash = fullKey.indexOf("/");
+        const bucket = slash > 0 ? fullKey.slice(0, slash) : config!.fileUploads!.s3Bucket;
+        const objectKey = slash > 0 ? fullKey.slice(slash + 1) : fullKey;
+        return getPresignedUrl(bucket, objectKey, config!);
+      }),
+    );
+    return { keys, revisedPrompts, presignedUrls };
+  };
+
+  app.post("/images/generate", async (req: Request, res: Response) => {
+    if (!imageRoutesEnabled) return respond503ImagesNotEnabled(res);
+    const { sessionId, toolCallId, styleId } = req.body || {};
+    if (typeof sessionId !== "string" || typeof toolCallId !== "string") {
+      res.status(400).json({ detail: "sessionId and toolCallId are required." });
+      return;
+    }
+    const authed = await loadAuthedSession(req, res, sessionId, "write");
+    if (!authed) return;
+
+    const params = validateGenerationParams(req.body, res);
+    if (!params) return;
+
+    const style = await loadStyle(authed.db, styleId, authed.user, res);
+    if (style === "error") return;
+
+    const finalPrompt = style.markdown
+      ? `${params.prompt}\n\n${style.markdown}`
+      : params.prompt;
+
+    try {
+      await Promise.race([
+        waitForLiteLLMReady(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+        ),
+      ]);
+    } catch {
+      res.status(503).json({ detail: "Image service is not ready. Try again shortly." });
+      return;
+    }
+
+    const abortController = new AbortController();
+    req.on("close", () => abortController.abort());
+
+    try {
+      const images = await generateImage({
+        model: params.model.model_name,
+        prompt: finalPrompt,
+        n: params.n,
+        size: params.size,
+        quality: params.quality,
+        signal: abortController.signal,
+      });
+
+      const { keys, revisedPrompts, presignedUrls } = await uploadGeneratedImages(
+        images, sessionId, toolCallId, authed.user.id,
+      );
+
+      const [row] = await authed.db("image_generations")
+        .insert({
+          session_id: sessionId,
+          tool_call_id: toolCallId,
+          user_id: authed.user.id,
+          operation: "generate",
+          model: params.model.model_name,
+          prompt: params.prompt,
+          applied_style_id: style.id,
+          applied_style_markdown: style.markdown,
+          size: params.size,
+          quality: params.quality,
+          n: params.n,
+          image_keys: JSON.stringify(keys),
+          revised_prompts: JSON.stringify(revisedPrompts),
+          selected: false,
+        })
+        .returning("*");
+
+      res.status(200).json({
+        generationId: row.id,
+        images: keys.map((key, i) => ({
+          key,
+          presignedUrl: presignedUrls[i],
+          revisedPrompt: revisedPrompts[i],
+        })),
+      });
+    } catch (err) {
+      if (abortController.signal.aborted) return;
+      if (err instanceof ImageGenerationError) {
+        const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+        res.status(code).json({ detail: err.message });
+        return;
+      }
+      console.error("[EXULU] /images/generate failed", err);
+      res.status(500).json({
+        detail: err instanceof Error ? err.message : "Image generation failed.",
+      });
+    }
+  });
+
+  app.post("/images/edit", async (req: Request, res: Response) => {
+    if (!imageRoutesEnabled) return respond503ImagesNotEnabled(res);
+    const { sessionId, toolCallId, styleId, referenceImageKeys, maskKey } = req.body || {};
+    if (typeof sessionId !== "string" || typeof toolCallId !== "string") {
+      res.status(400).json({ detail: "sessionId and toolCallId are required." });
+      return;
+    }
+    if (!Array.isArray(referenceImageKeys) || referenceImageKeys.length === 0) {
+      res.status(400).json({ detail: "referenceImageKeys must be a non-empty array." });
+      return;
+    }
+    const authed = await loadAuthedSession(req, res, sessionId, "write");
+    if (!authed) return;
+
+    const params = validateGenerationParams(req.body, res);
+    if (!params) return;
+    if (!params.model.supports_edit) {
+      res.status(400).json({
+        detail: `Model ${params.model.model_name} does not support image editing.`,
+      });
+      return;
+    }
+
+    // Reference keys must either live in this user's S3 folder (uploaded
+    // via Uppy) or under the session's images dir. This stops a caller
+    // from "editing" another user's images by guessing their S3 keys.
+    const userPrefix = `user_${authed.user.id}/`;
+    const sessionPrefix = `sessions/${sessionId}/`;
+    const ownsKey = (k: string) => k.includes(userPrefix) || k.includes(sessionPrefix);
+    if (!referenceImageKeys.every((k: any) => typeof k === "string" && ownsKey(k))) {
+      res.status(403).json({ detail: "One or more reference image keys are not accessible." });
+      return;
+    }
+    if (maskKey && (typeof maskKey !== "string" || !ownsKey(maskKey))) {
+      res.status(403).json({ detail: "Mask image is not accessible." });
+      return;
+    }
+
+    const style = await loadStyle(authed.db, styleId, authed.user, res);
+    if (style === "error") return;
+    const finalPrompt = style.markdown
+      ? `${params.prompt}\n\n${style.markdown}`
+      : params.prompt;
+
+    try {
+      await Promise.race([
+        waitForLiteLLMReady(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("LiteLLM not ready")), 5_000),
+        ),
+      ]);
+    } catch {
+      res.status(503).json({ detail: "Image service is not ready. Try again shortly." });
+      return;
+    }
+
+    const fetchRef = async (fullKey: string) => {
+      const slash = fullKey.indexOf("/");
+      const objectKey = slash > 0 ? fullKey.slice(slash + 1) : fullKey;
+      const buf = await getS3ObjectBytes(objectKey, config!);
+      const filename = fullKey.split("/").pop() ?? "image.png";
+      const ext = filename.split(".").pop()?.toLowerCase() ?? "png";
+      const mimetype = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+      return { buffer: buf, filename, mimetype };
+    };
+
+    const abortController = new AbortController();
+    req.on("close", () => abortController.abort());
+
+    try {
+      const references = await Promise.all(referenceImageKeys.map(fetchRef));
+      const mask = maskKey ? await fetchRef(maskKey) : undefined;
+
+      const images = await editImage({
+        model: params.model.model_name,
+        prompt: finalPrompt,
+        references,
+        mask,
+        n: params.n,
+        size: params.size,
+        quality: params.quality,
+        signal: abortController.signal,
+      });
+
+      const { keys, revisedPrompts, presignedUrls } = await uploadGeneratedImages(
+        images, sessionId, toolCallId, authed.user.id,
+      );
+
+      const [row] = await authed.db("image_generations")
+        .insert({
+          session_id: sessionId,
+          tool_call_id: toolCallId,
+          user_id: authed.user.id,
+          operation: "edit",
+          model: params.model.model_name,
+          prompt: params.prompt,
+          applied_style_id: style.id,
+          applied_style_markdown: style.markdown,
+          size: params.size,
+          quality: params.quality,
+          n: params.n,
+          reference_image_keys: JSON.stringify(referenceImageKeys),
+          mask_image_key: maskKey,
+          image_keys: JSON.stringify(keys),
+          revised_prompts: JSON.stringify(revisedPrompts),
+          selected: false,
+        })
+        .returning("*");
+
+      res.status(200).json({
+        generationId: row.id,
+        images: keys.map((key, i) => ({
+          key,
+          presignedUrl: presignedUrls[i],
+          revisedPrompt: revisedPrompts[i],
+        })),
+      });
+    } catch (err) {
+      if (abortController.signal.aborted) return;
+      if (err instanceof ImageGenerationError) {
+        const code = err.upstreamStatus >= 500 ? 502 : err.upstreamStatus;
+        res.status(code).json({ detail: err.message });
+        return;
+      }
+      console.error("[EXULU] /images/edit failed", err);
+      res.status(500).json({
+        detail: err instanceof Error ? err.message : "Image edit failed.",
+      });
+    }
+  });
+
+  app.post("/images/select", async (req: Request, res: Response) => {
+    if (!imageRoutesEnabled) return respond503ImagesNotEnabled(res);
+    const { sessionId, toolCallId, selections } = req.body || {};
+    if (typeof sessionId !== "string" || typeof toolCallId !== "string") {
+      res.status(400).json({ detail: "sessionId and toolCallId are required." });
+      return;
+    }
+    if (!Array.isArray(selections) || selections.length === 0) {
+      res.status(400).json({ detail: "selections must be a non-empty array." });
+      return;
+    }
+    const authed = await loadAuthedSession(req, res, sessionId, "write");
+    if (!authed) return;
+
+    const rows: any[] = await authed.db("image_generations")
+      .where({ session_id: sessionId, tool_call_id: toolCallId })
+      .select("*");
+    const rowsById = new Map(rows.map((r) => [r.id, r]));
+
+    const selectedDetails: {
+      key: string;
+      presignedUrl: string;
+      prompt: string;
+      model: string;
+      styleName: string | null;
+    }[] = [];
+    const rowsToMarkSelected = new Set<string>();
+
+    for (const sel of selections) {
+      if (typeof sel?.generationId !== "string" || typeof sel?.imageKey !== "string") {
+        res.status(400).json({ detail: "Each selection needs generationId + imageKey." });
+        return;
+      }
+      const row = rowsById.get(sel.generationId);
+      if (!row) {
+        res.status(404).json({ detail: `Generation ${sel.generationId} not found in this tool call.` });
+        return;
+      }
+      const keys = Array.isArray(row.image_keys)
+        ? row.image_keys
+        : (() => { try { return JSON.parse(row.image_keys); } catch { return []; } })();
+      if (!keys.includes(sel.imageKey)) {
+        res.status(400).json({ detail: `imageKey not part of generation ${sel.generationId}.` });
+        return;
+      }
+      const slash = sel.imageKey.indexOf("/");
+      const bucket = slash > 0 ? sel.imageKey.slice(0, slash) : config!.fileUploads!.s3Bucket;
+      const objectKey = slash > 0 ? sel.imageKey.slice(slash + 1) : sel.imageKey;
+      const presignedUrl = await getPresignedUrl(bucket, objectKey, config!);
+
+      let styleName: string | null = null;
+      if (row.applied_style_id) {
+        const styleRow = await authed.db("platform_configurations")
+          .where({ id: row.applied_style_id })
+          .first();
+        const parsed = styleRow?.config_value && typeof styleRow.config_value === "string"
+          ? (() => { try { return JSON.parse(styleRow.config_value); } catch { return null; } })()
+          : styleRow?.config_value;
+        styleName = parsed?.name ?? null;
+      }
+
+      selectedDetails.push({
+        key: sel.imageKey,
+        presignedUrl,
+        prompt: row.prompt,
+        model: row.model,
+        styleName,
+      });
+      rowsToMarkSelected.add(row.id);
+    }
+
+    await authed.db("image_generations")
+      .whereIn("id", [...rowsToMarkSelected])
+      .update({ selected: true });
+
+    // Append a system message so the assistant sees the selection on its
+    // next turn (no mutation of historical assistant messages).
+    const lines = selectedDetails.map((d) =>
+      `- ${d.presignedUrl} (prompt: "${d.prompt}", model: ${d.model}${d.styleName ? `, style: ${d.styleName}` : ""})`,
+    );
+    const messageText =
+      "The user generated and selected the following image(s) in this chat:\n" +
+      lines.join("\n");
+
+    const messageId = randomUUID();
+    const uiMessage = {
+      id: messageId,
+      role: "system",
+      parts: [{ type: "text", text: messageText }],
+    };
+    await authed.db("agent_messages").insert({
+      content: JSON.stringify(uiMessage),
+      message_id: messageId,
+      session: sessionId,
+      user: authed.user.id,
+    });
+
+    res.status(200).json({ ok: true, systemMessage: uiMessage, selectedImages: selectedDetails });
+  });
+
+  app.get("/images/history", async (req: Request, res: Response) => {
+    if (!imageRoutesEnabled) return respond503ImagesNotEnabled(res);
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+    const toolCallId = typeof req.query.toolCallId === "string" ? req.query.toolCallId : "";
+    if (!sessionId || !toolCallId) {
+      res.status(400).json({ detail: "sessionId and toolCallId query params are required." });
+      return;
+    }
+    const authed = await loadAuthedSession(req, res, sessionId, "read");
+    if (!authed) return;
+
+    const rows: any[] = await authed.db("image_generations")
+      .where({ session_id: sessionId, tool_call_id: toolCallId })
+      .orderBy("createdAt", "asc")
+      .select("*");
+
+    const parseList = (v: any): string[] => {
+      if (!v) return [];
+      if (Array.isArray(v)) return v;
+      try { return JSON.parse(v); } catch { return []; }
+    };
+    const sign = async (fullKey: string) => {
+      const slash = fullKey.indexOf("/");
+      const bucket = slash > 0 ? fullKey.slice(0, slash) : config!.fileUploads!.s3Bucket;
+      const objectKey = slash > 0 ? fullKey.slice(slash + 1) : fullKey;
+      return getPresignedUrl(bucket, objectKey, config!);
+    };
+
+    const history = await Promise.all(rows.map(async (r) => {
+      const keys = parseList(r.image_keys);
+      const refs = parseList(r.reference_image_keys);
+      const revisedPrompts = parseList(r.revised_prompts);
+      const [imageUrls, referenceUrls] = await Promise.all([
+        Promise.all(keys.map(sign)),
+        Promise.all(refs.map(sign)),
+      ]);
+      return {
+        generationId: r.id,
+        createdAt: r.createdAt,
+        operation: r.operation,
+        model: r.model,
+        prompt: r.prompt,
+        appliedStyleId: r.applied_style_id ?? null,
+        appliedStyleMarkdown: r.applied_style_markdown ?? null,
+        size: r.size ?? null,
+        quality: r.quality ?? null,
+        n: r.n ?? 1,
+        selected: !!r.selected,
+        error: r.error ?? null,
+        maskImageKey: r.mask_image_key ?? null,
+        images: keys.map((key, i) => ({
+          key,
+          presignedUrl: imageUrls[i],
+          revisedPrompt: revisedPrompts[i] ?? null,
+        })),
+        references: refs.map((key, i) => ({ key, presignedUrl: referenceUrls[i] })),
+      };
+    }));
+
+    res.status(200).json({ history });
+  });
 
   // Generic LiteLLM pass-through. Anything under /litellm/:project/v1/* is
   // forwarded to the local LiteLLM server with the master key injected as the

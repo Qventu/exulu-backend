@@ -423,6 +423,10 @@ const usersSchema: ExuluTableDefinition = {
       type: "text",
     },
     {
+      name: "personal_system_prompt",
+      type: "longText",
+    },
+    {
       name: "role",
       type: "uuid",
     },
@@ -431,6 +435,7 @@ const usersSchema: ExuluTableDefinition = {
 
 const platformConfigurationsSchema: ExuluTableDefinition = {
   type: "platform_configurations",
+  RBAC: true,
   name: {
     plural: "platform_configurations",
     singular: "platform_configuration",
@@ -551,6 +556,61 @@ const promptFavoritesSchema: ExuluTableDefinition = {
   ],
 };
 
+const transcriptionJobsSchema: ExuluTableDefinition = {
+  type: "transcription_jobs",
+  name: {
+    plural: "transcription_jobs",
+    singular: "transcription_job",
+  },
+  RBAC: true,
+  fields: [
+    { name: "audio", type: "file" },
+    { name: "title", type: "text" },
+    { name: "status", type: "text", index: true },
+    { name: "whisper_job_id", type: "text" },
+    { name: "raw_segments", type: "json" },
+    { name: "speakers", type: "json" },
+    { name: "language", type: "text" },
+    { name: "duration_seconds", type: "number" },
+    { name: "project_id", type: "uuid", required: false },
+    { name: "target_rights_mode", type: "text", default: "private" },
+    { name: "target_rbac_users", type: "json" },
+    { name: "target_rbac_roles", type: "json" },
+    { name: "saved_item_id", type: "uuid", required: false },
+    { name: "error", type: "text" },
+  ],
+};
+
+const imageGenerationsSchema: ExuluTableDefinition = {
+  type: "image_generations",
+  name: {
+    plural: "image_generations",
+    singular: "image_generation",
+  },
+  // Access is gated by the parent agent_sessions RBAC — rows have no
+  // independent visibility, so no row-level RBAC fields are needed here.
+  RBAC: false,
+  fields: [
+    { name: "session_id", type: "uuid", required: true, index: true },
+    { name: "tool_call_id", type: "text", required: true, index: true },
+    { name: "user_id", type: "number", required: true, index: true },
+    { name: "operation", type: "text", required: true }, // 'generate' | 'edit'
+    { name: "model", type: "text", required: true },
+    { name: "prompt", type: "longText", required: true },
+    { name: "applied_style_id", type: "uuid", required: false },
+    { name: "applied_style_markdown", type: "longText", required: false },
+    { name: "size", type: "text", required: false },
+    { name: "quality", type: "text", required: false },
+    { name: "n", type: "number", default: 1 },
+    { name: "reference_image_keys", type: "json", required: false },
+    { name: "mask_image_key", type: "text", required: false },
+    { name: "image_keys", type: "json", required: true },
+    { name: "revised_prompts", type: "json", required: false },
+    { name: "selected", type: "boolean", default: false },
+    { name: "error", type: "text", required: false },
+  ],
+};
+
 const contextPresetsSchema: ExuluTableDefinition = {
   type: "context_presets",
   name: {
@@ -647,6 +707,8 @@ export const coreSchemas = {
       embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
+      transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
+      imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),
     }
 
     if (license["agent-feedback"]) {

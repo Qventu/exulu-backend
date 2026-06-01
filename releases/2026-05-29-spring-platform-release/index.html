@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release 2026-05-29</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --card: 0 0% 99.2157%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted: 0 0% 96.0784%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+      margin: 0;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; color: hsl(var(--foreground)); }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature pre code { font-family: inherit; }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .feature .snippet-label + .snippet-label { margin-top: 24px; }
+    .feature .snippet-pair pre { margin-top: 8px; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-05-29</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Five shipped: a workspace inside every chat, smart follow-ups, a configurable model gateway, single-zip skill uploads, and GDPR endpoints for super-admins.</p>
+    </header>
+
+    <main>
+
+      <section class="feature" id="session-files-panel">
+        <h2>Session files panel</h2>
+        <p class="one-liner">Every chat now has its own workspace.</p>
+
+        <div class="slice">
+          <video src="./shorts/01-session-files-panel.mp4" autoplay loop muted playsinline></video>
+          <p>A new folder icon in the chat header opens a 340-pixel sidebar listing every file the session has touched — what the agent wrote, what you uploaded, what got mirrored from a bash artifact. Click any row to preview text, code, markdown, images, PDFs, and (via a LibreOffice-backed cache) Office documents.</p>
+          <p>Files dropped into the upload zone are signed straight to S3 at the same prefix the agent's <code>writeFile</code> and bash-artifact mirroring already use, then synced into the live sandbox so the agent's next turn can <code>readFile</code> them without a restart. The panel polls every five seconds; cross-tab edits show up within the same window.</p>
+          <p>The panel is explicit about scope: a persistent notice at the top reminds you that session files don't cross into other sessions, projects, or knowledge bases.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="followup-suggestions">
+        <h2>Follow-up suggestions</h2>
+        <p class="one-liner">Never stare at a blank input again.</p>
+
+        <div class="slice">
+          <video src="./shorts/02-followup-suggestions.mp4" autoplay loop muted playsinline></video>
+          <p>Opt in per agent: when <code>suggestions_enabled</code> is on, the chat fires a stateless <code>POST /agents/suggestions/:agentId</code> after each assistant reply and renders up to three short follow-up prompts above the textarea. Click one to populate the input — you press send yourself.</p>
+          <p>The route uses the agent's own model via <code>generateObject</code> with a fixed Zod schema (<code>{ suggestions: string[] }</code>), so JSON shape is enforced at the provider level. Tokens count toward the same per-agent rate limit and statistics the main run uses; a new submit aborts any in-flight suggestion call. If anything fails — rate limit, schema mismatch, network — the row silently doesn't appear.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="litellm-proxy">
+        <h2>LiteLLM proxy integration</h2>
+        <p class="one-liner">Bring your own model gateway.</p>
+
+        <div class="slice">
+          <video src="./shorts/03-litellm-proxy.mp4" autoplay loop muted playsinline></video>
+          <p>Set <code>EXULU_USE_LITELLM=true</code> and Exulu boots LiteLLM as a supervised sidecar from the existing <code>ee/python/.venv</code>. The <code>resolveModel()</code> seam introduced in the previous release gains a single branch: in LiteLLM mode it bypasses the DB models table entirely and constructs a language model via <code>@ai-sdk/openai-compatible</code> against the proxy, with <code>modelId</code> used directly as the LiteLLM <code>model_name</code>.</p>
+          <p>The Models admin page becomes a read-only viewer over LiteLLM's <code>/model/info</code> endpoint. The agent and chat model pickers source from the same catalog. Rate limits, token budgets, cost tracking, and cross-provider routing all move into LiteLLM's <code>config.yaml</code> — one file, every provider.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Enable</div>
+<pre><code>EXULU_USE_LITELLM=true
+LITELLM_MASTER_KEY=sk-…
+LITELLM_CONFIG_PATH=ee/python/.litellm/config.yaml  # default</code></pre>
+
+            <div class="snippet-label">Catalog (config.yaml)</div>
+<pre><code>general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+model_list:
+  - model_name: vertex-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/GOOGLE_VERTEX_PROJECT
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-bundle-upload">
+        <h2>Skill bundle upload</h2>
+        <p class="one-liner">Drop a <code>.zip</code>, get a skill.</p>
+
+        <div class="slice">
+          <video src="./shorts/04-skill-bundle-upload.mp4" autoplay loop muted playsinline></video>
+          <p>The New Skill modal grows a mode toggle: <strong>Create blank</strong> (unchanged) or <strong>Create from upload</strong>. In upload mode, drag a <code>.zip</code> or a single <code>SKILL.md</code> onto the dropzone, name it, click Create.</p>
+          <p>Behind the scenes: a presigned PUT lands the file in a per-user staging key, then the backend unpacks the archive into <code>skills/&lt;skillId&gt;/v1/...</code> — the same prefix the per-file editor writes to. Anthropic-style zips with a top-level wrapper folder get stripped automatically. Path traversal, missing <code>SKILL.md</code>, archives over 50 MB, and bundles with more than 500 entries are rejected with explicit error messages before any S3 write happens.</p>
+          <p>On success, you land directly in the skill editor with every file already wired up.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="gdpr-export-delete">
+        <h2>GDPR export &amp; delete</h2>
+        <p class="one-liner">Article 15 and Article 17, in two HTTP calls.</p>
+
+        <div class="slice">
+          <video src="./shorts/05-gdpr-export-delete.mp4" autoplay loop muted playsinline></video>
+          <p>Two super-admin routes, root-mounted, no new dependencies. <code>GET /users/:id/data-export</code> streams a ZIP with the user's account row (sensitive auth material stripped), all sessions with their messages inlined, feedback, prompt favorites, tracking events, and a README that names DSGVO Art. 15 explicitly.</p>
+          <p><code>DELETE /users/:id</code> hard-erases the same footprint inside a single Postgres transaction (agent messages, sessions, feedback, prompt favorites, tracking, RBAC entries, the user row itself), then sweeps the <code>user_&lt;id&gt;/</code> S3 prefix best-effort. Self-delete by a super-admin is blocked. Deletion is final — no soft-delete, no recovery window.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Export — DSGVO Art. 15</div>
+<pre><code>curl -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42/data-export \
+     -o user-42-export.zip</code></pre>
+
+            <div class="snippet-label">Delete — DSGVO Art. 17</div>
+<pre><code>curl -X DELETE \
+     -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42</code></pre>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      <span>Released 2026-05-29</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

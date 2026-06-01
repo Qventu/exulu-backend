@@ -19,6 +19,7 @@ import {
   type UIMessage,
   validateUIMessages,
   stepCountIs,
+  hasToolCall,
 } from "ai";
 import { generateSlug } from "@SRC/utils/generate-slug";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
@@ -443,6 +444,11 @@ export class ExuluProvider {
     let system =
       instructions ||
       "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+
+    if (user?.personal_system_prompt?.trim()) {
+      system += "\n\nUser preferences:\n" + user.personal_system_prompt.trim();
+    }
+
     system += "\n\n" + genericContext;
 
     if (memoryContext) {
@@ -558,7 +564,10 @@ export class ExuluProvider {
           agent,
           memoryItems
         ),
-        stopWhen: [stepCountIs(maxStepCount || 5)] // make configurable
+        // Stop after the image_generation tool fires — the widget IS the
+        // assistant's response, no follow-up text turn is wanted (same
+        // reasoning as question_ask: the UI artifact is the message).
+        stopWhen: [stepCountIs(maxStepCount || 5), hasToolCall("image_generation")] // make configurable
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
       const {
@@ -643,7 +652,7 @@ export class ExuluProvider {
           agent,
           memoryItems
         ),
-        stopWhen: [stepCountIs(maxStepCount || 5)],
+        stopWhen: [stepCountIs(maxStepCount || 5), hasToolCall("image_generation")],
       });
 
       if (statistics) {
@@ -953,6 +962,11 @@ export class ExuluProvider {
     let system =
       instructions ||
       "You are a helpful assistant. When you use a tool to answer a question do not explicitly comment on the result of the tool call unless the user has explicitly you to do something with the result.";
+
+    if (user?.personal_system_prompt?.trim()) {
+      system += "\n\nUser preferences:\n" + user.personal_system_prompt.trim();
+    }
+
     system += "\n\n" + genericContext;
 
     /* if (memoryContext) {
@@ -1135,7 +1149,7 @@ ${skillsList}
       },
       // provide more loops for skills because they are more complex to execute
       // todo allow configuring this per skill
-      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5)],
+      stopWhen: [stepCountIs(maxStepCount || currentSkills?.length ? 10 : 5), hasToolCall("image_generation")],
     });
 
     return {

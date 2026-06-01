@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Transcripts with speakers (Release 2026-05-29)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --card: 0 0% 99.2157%;
+      --popover: 0 0% 98.8235%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted: 0 0% 96.0784%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --destructive: 358.4416 74.7573% 59.6078%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 700px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+      max-width: 640px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; max-width: 700px; }
+    .slice p strong { color: hsl(var(--foreground)); font-weight: 600; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature pre .c { color: hsl(0 0% 55%); }
+    .feature pre .k { color: hsl(var(--primary)); }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .callout {
+      margin-top: 32px;
+      padding: 20px 24px;
+      background: hsl(var(--accent));
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+    }
+    .callout strong { color: hsl(var(--accent-foreground)); }
+    .callout p { margin: 0; font-size: 15px; color: hsl(var(--foreground)); }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-05-29</span>
+      <h1 class="hero">Transcripts that <em>know who's talking</em>.</h1>
+      <p class="lede">Upload audio, get a diarized transcript with speaker labels you can rename in seconds, and have it land in your knowledge base — embedded, project-scoped, and reachable from chat. All running on a Whisper server you host yourself.</p>
+    </header>
+
+    <main>
+
+      <!-- ───── Feature 1 — diarized review ────────────────────────── -->
+      <section class="feature" id="review-and-rename">
+        <h2>Diarized review with one click per name</h2>
+        <p class="one-liner">Drop in audio, watch it transcribe with a live ETA, then rename SPEAKER_00 → Daniel before you save.</p>
+
+        <div class="slice">
+          <video
+            src="./shorts/slice-1-review-and-rename.mp4"
+            autoplay loop muted playsinline></video>
+
+          <p>The new <strong>/transcriptions</strong> page pairs a native audio player with a colored timeline of who-spoke-when. Hover any segment to see the snippet text and timestamp; click to jump there. The colors are deterministic per speaker so they don't shift around as you rename — <code>SPEAKER_00</code> stays blue even after it becomes "Daniel".</p>
+
+          <p>Each rename is reversible. Saved transcripts get their own <strong>Completed</strong> section on the same page and can be re-opened to revise speaker names later; the existing context item updates in place and re-embeds automatically — no new item, no broken citations.</p>
+        </div>
+      </section>
+
+      <!-- ───── Feature 2 — standalone whisper server + privacy ───── -->
+      <section class="feature" id="standalone-whisper">
+        <h2>Same package. Separate machine. Your environment.</h2>
+        <p class="one-liner">The Whisper + pyannote pipeline ships inside <code>@exulu/backend</code> but runs as its own process — on a box you control.</p>
+
+        <div class="slice">
+          <video
+            src="./shorts/slice-2-standalone-whisper.mp4"
+            autoplay loop muted playsinline></video>
+
+          <p>Spin it up with <code>npm run start:whisper</code> on a GPU host, point your main app at it with <code>TRANSCRIPTION_SERVER=http://...</code>, and the rest of the app picks up the new capability on its next boot — including a clear startup log line confirming the device and whether diarization is on.</p>
+
+          <p><strong>Your audio never leaves your environment.</strong> Both the main app and the Whisper server are processes you run, on machines you control. There's no Exulu-managed transcription endpoint, no third-party API key, and no traffic egress from your VPC. GPU support auto-detects CUDA, Apple Silicon MPS, and falls back to CPU; the first job downloads the <code>large-v3</code> model (~3 GB) and the pyannote checkpoints from Hugging Face, then subsequent boots are fast and fully local.</p>
+
+          <div class="snippet-label">From the CLI</div>
+<pre><span class="c"># On the GPU host</span>
+npx @exulu/backend exulu-start-whisper
+
+<span class="c"># On the main app</span>
+TRANSCRIPTION_SERVER=http://gpu-host:9876</pre>
+
+          <div class="callout">
+            <p><strong>Diarization needs a HuggingFace token.</strong> Set <code>HF_AUTH_TOKEN</code> on the Whisper host and accept the ToS for <code>pyannote/segmentation-3.0</code> and <code>pyannote/speaker-diarization-3.1</code>. Without it the pipeline still transcribes, but every segment is tagged <code>speaker="unknown"</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───── Feature 3 — knowledge + project + chat ────────────── -->
+      <section class="feature" id="knowledge-and-chat">
+        <h2>From audio to project-scoped knowledge.</h2>
+        <p class="one-liner">Every saved transcript becomes a searchable item in a built-in context — optionally pinned to a project so the right agents pick it up automatically.</p>
+
+        <div class="slice">
+          <video
+            src="./shorts/slice-3-knowledge-and-chat.mp4"
+            autoplay loop muted playsinline></video>
+
+          <p>The <code>transcriptions</code> context is built into <code>@exulu/backend</code> and registered automatically when your app boots. Every diarized transcript you save becomes an item in this context, embedded on insert via your configured embedder — no migration, no extra setup, no separate ingestion pipeline.</p>
+
+          <p>If you picked a project at upload or review time, the transcript is also linked to that project's items, scoping it to the agents and chats that operate inside it. The same speaker names you typed in the review step are part of the embedded text, so queries like "what did Alex say" route directly to the right segments, with citations back to the source.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      <span>Released 2026-05-29 · backend <code>97e7d41</code> · frontend <code>829d202</code></span>
+      <a href="../../docs/superpowers/specs/2026-05-28-transcription-feature-design.md">Read the design doc →</a>
+    </footer>
+  </div>
+</body>
+</html>
