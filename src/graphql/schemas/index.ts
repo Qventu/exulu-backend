@@ -1893,38 +1893,6 @@ type LiteLLMModel {
     }
     `;
 
-  typeDefs += `
-   agentWorldAgents: [AgentWorldAgent!]!
-  `;
-
-  resolvers.Query["agentWorldAgents"] = async (_, _args, context) => {
-    const { db } = context;
-    // Fetch sessions active in the last 30 minutes that have a currenttask set
-    const sessions = await db("agent_sessions as s")
-      .select([
-        "s.id as sessionId",
-        "s.agent as agentId",
-        "s.currenttask as currentTask",
-        "s.createdAt as lastActivityAt",
-        "s.created_by as userId",
-      ])
-      .whereNotNull("s.currenttask")
-      .limit(20)
-      .orderBy("s.createdAt", "desc");
-
-    return sessions.map((row) => {
-      const agent = providers.find((p) => p.id === row.agentId);
-      return {
-        sessionId: row.sessionId,
-        agentId: row.agentId ?? "",
-        agentName: agent?.name ?? row.agentId ?? "Agent",
-        agentImage: (agent as any)?.image ?? null,
-        currentTask: row.currentTask,
-        lastActivityAt: row.lastActivityAt,
-      };
-    });
-  };
-
   typeDefs += "}\n";
   mutationDefs += "}\n";
 
@@ -2140,15 +2108,6 @@ enum JobStateEnum {
 type StatisticsResult {
   group: String!
   count: Int!
-}
-
-type AgentWorldAgent {
-  sessionId: ID!
-  agentId: ID!
-  agentName: String!
-  agentImage: String
-  currentTask: String
-  lastActivityAt: String
 }
 `;
 

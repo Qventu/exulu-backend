@@ -242,6 +242,27 @@ export class ExuluApp {
     ];
     this._config = config;
 
+    // Bridge config.litellm.uiPath → process.env.EXULU_LITELLM_UI_PATH so
+    // the supervisor (which starts later in express.init() and reads env
+    // when spawning the LiteLLM child) injects SERVER_ROOT_PATH=<uiPath>
+    // into the child's env. routes.ts reads the same value from config,
+    // keeping the consumer's ExuluConfig as the single source of truth.
+    // An empty string explicitly disables the UI proxy; "/litellm" is
+    // rejected here because it collides with the /litellm/:project API
+    // mount.
+    //
+    // NOTE: the env var is namespaced as EXULU_LITELLM_UI_PATH (not
+    // LITELLM_UI_PATH) because LiteLLM's own proxy_server.py already
+    // claims LITELLM_UI_PATH for an unrelated purpose — it expects a
+    // filesystem path to the UI directory and silently fails to mount
+    // /ui if that path doesn't exist on disk.
+    if (isLiteLLMEnabled()) {
+      const uiPath = "/litellm-admin";
+      if (uiPath) {
+        process.env.EXULU_LITELLM_UI_PATH = uiPath;
+      }
+    }
+
     /* let mcpTools: ExuluTool[] = [];
         if (mcps) {
             const promises = mcps.map(async (mcp) => {
@@ -287,7 +308,7 @@ export class ExuluApp {
     if (isLiteLLMEnabled() && s3Configured) {
       const configPath =
         process.env.LITELLM_CONFIG_PATH ??
-        resolve(getPackageRoot(), "./config.litellm.yaml");
+        resolve(process.cwd(), "./config.litellm.yaml");
       const imageModels = parseImageGenerationModels(configPath);
       if (imageModels.length > 0) {
         console.log(

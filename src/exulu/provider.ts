@@ -917,8 +917,6 @@ export class ExuluProvider {
         page: 1,
       });
 
-      fs.writeFileSync("pre-fetched-relevant-information.json", JSON.stringify(result, null, 2));
-
       if (result?.chunks?.length) {
         memoryItems = result.chunks;
         // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?

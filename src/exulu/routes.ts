@@ -67,7 +67,6 @@ import {
   type ImageGenerationModel,
 } from "./litellm/parse-image-models.ts";
 import { resolve as resolvePath } from "node:path";
-import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { buildTags, createTaggedFetch } from "./tags.ts";
 import multer from "multer";
@@ -1292,7 +1291,7 @@ Mood: friendly and intelligent.
     try {
       const configPath =
         process.env.LITELLM_CONFIG_PATH ??
-        resolvePath(getPackageRoot(), "./config.litellm.yaml");
+        resolvePath(process.cwd(), "./config.litellm.yaml");
       const models = parseImageGenerationModels(configPath);
       return new Map(models.map((m) => [m.model_name, m]));
     } catch (err) {
@@ -1872,6 +1871,143 @@ Mood: friendly and intelligent.
 
     res.status(200).json({ history });
   });
+
+  // LiteLLM admin UI pass-through. The mount path is taken from
+  // config.litellm.uiPath (default "/litellm-admin"); set to an empty string
+  // in ExuluConfig to disable. ExuluApp.create() mirrors the same value
+  // into process.env.LITELLM_UI_PATH so the supervisor passes a matching
+  // SERVER_ROOT_PATH to LiteLLM — without that, the UI's internal asset
+  // URLs and redirects 404 because they wouldn't include the prefix.
+  //
+  // Auth model: the LiteLLM UI authenticates the operator with
+  // LITELLM_MASTER_KEY via its own login form. We do NOT gate this proxy
+  // behind Exulu auth, because once SSO/cookies are involved the UI's own
+  // login flow stops working. As long as the master key is a strong secret,
+  // public exposure of this path is acceptable. If stronger isolation is
+  // needed, run LiteLLM as its own service behind IAP instead.
+  //
+  // Registered BEFORE /litellm/:project so the mount path can collide with
+  // a project-shaped URL without being swallowed by the API handler.
+  const litellmUiPath = "/litellm-admin";
+  if (isLiteLLMEnabled() && litellmUiPath) {
+    console.log("[EXULU] Registering LiteLLM UI at", litellmUiPath);
+    app.use(litellmUiPath, async (req: Request, res: Response) => {
+      const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+      const port = process.env.LITELLM_PORT ?? "4000";
+
+      // LiteLLM does NOT follow FastAPI root_path semantics for SERVER_ROOT_PATH:
+      // it mounts its routes at the literal prefixed paths inside the app
+      // (e.g. /litellm-admin/ui/, /litellm-admin/swagger/...). Hitting the
+      // upstream without the prefix returns 404. Express's app.use strips
+      // the mount path from req.url, so we re-prepend litellmUiPath when
+      // forwarding upstream. (Verified: curl /ui/ → 404, curl /litellm-admin/ui/ → 200.)
+      const upstreamUrl = `http://${host}:${port}${litellmUiPath}${req.url}`;
+
+      const upstreamHeaders: Record<string, string> = {};
+      for (const [name, value] of Object.entries(req.headers)) {
+        if (value === undefined) continue;
+        const lower = name.toLowerCase();
+        if (
+          lower === "host" ||
+          lower === "content-length" ||
+          lower === "connection" ||
+          lower === "transfer-encoding" ||
+          lower === "accept-encoding"
+        )
+          continue;
+        upstreamHeaders[name] = Array.isArray(value) ? value.join(", ") : value;
+      }
+
+      // Body handling: express.json() has already consumed JSON bodies into
+      // req.body by the time we get here. Re-serialize JSON, otherwise send
+      // no body. Multipart uploads are not supported through this proxy —
+      // the LiteLLM admin UI doesn't currently require them.
+      const methodHasBody = !["GET", "HEAD"].includes(req.method);
+      let body: string | undefined;
+      if (
+        methodHasBody &&
+        req.body &&
+        typeof req.body === "object" &&
+        Object.keys(req.body).length > 0
+      ) {
+        body = JSON.stringify(req.body);
+        upstreamHeaders["content-type"] = "application/json";
+      }
+
+      try {
+        const upstream = await fetch(upstreamUrl, {
+          method: req.method,
+          headers: upstreamHeaders,
+          body,
+          // Pass redirects through to the browser so LiteLLM's post-login
+          // redirect lands the user on the right URL (the Location already
+          // includes SERVER_ROOT_PATH).
+          redirect: "manual",
+        });
+
+        res.status(upstream.status);
+        const upstreamOrigin = `http://${host}:${port}`;
+        upstream.headers.forEach((value, name) => {
+          const lower = name.toLowerCase();
+          if (
+            lower === "content-encoding" ||
+            lower === "content-length" ||
+            lower === "transfer-encoding" ||
+            lower === "connection"
+          )
+            return;
+          if (lower === "location") {
+            // Rewrite the Location header so the browser stays on the proxy.
+            // Starlette's StaticFiles emits absolute URLs with LiteLLM's bind
+            // address for its trailing-slash redirect (and FastAPI's auth
+            // flows do similar things). Strip the upstream origin, then make
+            // sure the path lives under our mount so the next hop comes back
+            // through Exulu — otherwise the browser leaves the proxy and
+            // hits LiteLLM directly, which isn't reachable from outside.
+            let loc = value.startsWith(upstreamOrigin)
+              ? value.slice(upstreamOrigin.length)
+              : value;
+            if (
+              loc.startsWith("/") &&
+              loc !== litellmUiPath &&
+              !loc.startsWith(`${litellmUiPath}/`)
+            ) {
+              loc = `${litellmUiPath}${loc}`;
+            }
+            res.setHeader(name, loc);
+            return;
+          }
+          res.setHeader(name, value);
+        });
+
+        if (!upstream.body) {
+          res.end();
+          return;
+        }
+
+        const reader = upstream.body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) res.write(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        res.end();
+      } catch (err) {
+        console.error("[EXULU] LiteLLM UI proxy failed", err);
+        if (!res.headersSent) {
+          res.status(502).json({
+            detail: err instanceof Error ? err.message : "LiteLLM UI proxy failed.",
+          });
+        } else {
+          res.end();
+        }
+      }
+    });
+  }
 
   // Generic LiteLLM pass-through. Anything under /litellm/:project/v1/* is
   // forwarded to the local LiteLLM server with the master key injected as the

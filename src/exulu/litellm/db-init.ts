@@ -41,7 +41,7 @@ export const initLiteLLMDatabase = async (
   packageRoot: string,
 ): Promise<void> => {
   const configPath =
-    process.env.LITELLM_CONFIG_PATH ?? resolve(packageRoot, "./config.litellm.yaml");
+    process.env.LITELLM_CONFIG_PATH ?? resolve(process.cwd(), "./config.litellm.yaml");
 
   // Static checks (no DB connection): parses YAML, compares URLs to Exulu's
   // Postgres env vars. Pure function — cheap to call even when LiteLLM is off.

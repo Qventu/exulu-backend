@@ -122,7 +122,16 @@ const getLiteLLMProvider = ({
     baseURL: `http://${host}:${port}/v1`,
     apiKey: masterKey,
     fetch: createTaggedFetch(tags),
-    
+    // Without this flag the openai-compatible provider strips any
+    // responseFormat.schema before sending and warns
+    // "JSON response format schema is only supported with structuredOutputs".
+    // Models then return free-form JSON that fails Zod parsing in callers
+    // using `Output.object({ schema })`. LiteLLM forwards
+    // `response_format: { type: "json_schema", ... }` to every upstream it
+    // supports — including Vertex Gemini, which translates it into
+    // responseSchema/responseMimeType — so enabling this matches the actual
+    // proxy contract.
+    supportsStructuredOutputs: true,
   });
   return _litellmProvider;
 };
