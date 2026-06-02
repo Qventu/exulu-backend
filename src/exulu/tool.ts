@@ -121,7 +121,7 @@ export class ExuluTool {
         modelId: agent.model,
         user,
         providers,
-        agent: { id: agent.id },
+        agent: agent,
         rbacBypass: true,
       });
       providerapikey = resolved.apiKey;
