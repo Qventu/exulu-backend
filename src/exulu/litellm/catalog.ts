@@ -20,6 +20,8 @@ export type LiteLLMCatalogEntry = {
   max_input_tokens: number | null;
   max_output_tokens: number | null;
   supports_vision: boolean;
+  input_cost_per_million_tokens: number | null;
+  output_cost_per_million_tokens: number | null;
   supports_function_calling: boolean;
   supports_pdf_input: boolean;
   supports_audio_input: boolean;
@@ -84,6 +86,8 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       region: m.model_info?.region ?? null,
       max_tokens: m.model_info?.max_tokens ?? null,
       max_input_tokens: m.model_info?.max_input_tokens ?? null,
+      input_cost_per_million_tokens: m.model_info?.input_cost_per_token * 1000000,
+      output_cost_per_million_tokens: m.model_info?.output_cost_per_token * 1000000,
       active: m.model_info?.active ?? true,
       max_output_tokens: m.model_info?.max_output_tokens ?? null,
       supports_vision: !!m.model_info?.supports_vision,
@@ -95,9 +99,23 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
       supports_edit: !!m.model_info?.supports_edit,
       max_n: typeof m.model_info?.max_n === "number" ? m.model_info.max_n : null,
     }));
-    _cache = { expiresAt: Date.now() + CACHE_TTL_MS, items };
+    // filter out where model_name + upstream_model is not unique and combine
+    // their tags into one element in the array
+    const map = new Map();
+    for (const item of items) {
+      const key = `${item.model_name}-${item.upstream_model}`;
+      if (map.has(key)) {
+        map.get(key).tags.push(...item.tags);
+      } else {
+        map.set(key, item);
+      }
+    }
+
+    const uniqueItems = Array.from(map.values());
+    
+    _cache = { expiresAt: Date.now() + CACHE_TTL_MS, items: uniqueItems };
     // filter out type: speech_to_text and type: text_to_speech
-    return items.filter((m) => m.type !== "speech_to_text" && m.type !== "text_to_speech");
+    return uniqueItems.filter((m) => m.type !== "speech_to_text" && m.type !== "text_to_speech");
   } catch (err) {
     console.error("[EXULU] litellmCatalog: failed to fetch /model/info:", err);
     return [];

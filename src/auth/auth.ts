@@ -76,6 +76,13 @@ export const authentication = async ({
         }
       }
 
+      if (user?.team) {
+        const team = await db.from("teams").select("*").where("id", user?.team).first();
+        if (team) {
+          user.team = team;
+        }
+      }
+
       if (!user) {
         return {
           error: true,

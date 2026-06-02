@@ -28,6 +28,7 @@ export const checkRecordAccess = async (
   const isPublic = record.rights_mode === "public";
   const byUsers = record.rights_mode === "users";
   const byRoles = record.rights_mode === "roles";
+  const byTeams = record.rights_mode === "teams";
 
   const createdBy =
     typeof record.created_by === "string" ? record.created_by : record.created_by?.toString();
@@ -84,6 +85,28 @@ export const checkRecordAccess = async (
     if (!hasAccess || hasAccess === "none" || hasAccess !== request) {
       console.error(
         `[EXULU] Your current role ${user.role?.name} does not have access to this record, current access type is: ${hasAccess}.`,
+      );
+      setRecordAccessCache(false);
+      return false;
+    } else {
+      setRecordAccessCache(true);
+      return true;
+    }
+  }
+
+  if (byTeams) {
+    if (!user) {
+      setRecordAccessCache(false);
+      return false;
+    }
+    hasAccess =
+      (record.RBAC?.teams?.find((x) => x.id === user.team?.id)?.rights as
+        | "read"
+        | "write"
+        | "none") || "none";
+    if (!hasAccess || hasAccess === "none" || hasAccess !== request) {
+      console.error(
+        `[EXULU] Your current team ${user.team?.name} does not have access to this record, current access type is: ${hasAccess}.`,
       );
       setRecordAccessCache(false);
       return false;

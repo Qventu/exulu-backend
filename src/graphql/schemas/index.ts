@@ -620,6 +620,8 @@ type LiteLLMModel {
   supports_function_calling: Boolean
   supports_pdf_input: Boolean
   supports_audio_input: Boolean
+  input_cost_per_million_tokens: Float
+  output_cost_per_million_tokens: Float
 }
 `;
 

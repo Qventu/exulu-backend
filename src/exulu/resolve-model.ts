@@ -3,10 +3,13 @@ import CryptoJS from "crypto-js";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { postgresClient } from "@SRC/postgres/client";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
-import type { User } from "@EXULU_TYPES/models/user";
+import type { ExuluTeam, User, UserRole } from "@EXULU_TYPES/models/user";
 import type { ExuluProvider } from "./provider";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor";
 import { buildTags, createTaggedFetch } from "./tags";
+import type { Role } from "@mistralai/mistralai/models/components";
+import type { Project } from "@EXULU_TYPES/models/project";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 
 export type ModelRow = {
   id: string;
@@ -35,8 +38,8 @@ export type ResolveModelInput = {
   modelId: string;
   user?: User;
   providers: ExuluProvider[];
-  agent?: { id: string };
-  project?: { id: string };
+  agent?: ExuluAgent;
+  project?: Project;
   rbacRequest?: "read" | "write";
   rbacBypass?: boolean;
 };
@@ -94,22 +97,30 @@ const getLiteLLMProvider = ({
   user,
   role,
   project,
-  agent
+  agent,
+  team
 }: {
-  user?: number;
-  role?: string;
-  project?: string;
-  agent?: string;
+  user?: User;
+  role?: UserRole;
+  project?: Project;
+  agent?: ExuluAgent;
+  team?: ExuluTeam;
 }) => {
   if (_litellmProvider) return _litellmProvider;
   const host = process.env.LITELLM_HOST ?? "127.0.0.1";
   const port = process.env.LITELLM_PORT ?? "4000";
   const masterKey = process.env.LITELLM_MASTER_KEY;
   const tags = buildTags({
-    user: user,
-    role: role,
-    project: project,
-    agent: agent,
+    user_id: user?.id,
+    role_id: role?.id,
+    project_id: project?.id,
+    agent_id: agent?.id,
+    user_name: !user ? undefined : user.type === "api" ? (user.firstname ?? user.email) : user.email,
+    role_name: role?.name,
+    project_name: project?.name,
+    agent_name: agent?.name,
+    team_id: team?.id,
+    team_name: team?.name,
   });
   if (!masterKey) {
     throw new ResolveModelError(
@@ -164,10 +175,11 @@ export async function resolveModel(input: ResolveModelInput): Promise<ResolvedMo
     }
 
     const litellm = getLiteLLMProvider({ 
-      user: user?.id,
-      role: user?.role?.id,
-      project: project?.id,
-      agent: agent?.id,
+      user: user,
+      role: user?.role,
+      project: project,
+      agent: agent,
+      team: user?.team,
     });
     const languageModel = litellm(modelId);
 
