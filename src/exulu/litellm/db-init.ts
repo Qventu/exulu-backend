@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { Client } from "pg";
@@ -216,9 +216,27 @@ export const initLiteLLMDatabase = async (
   // All checks passed — run prisma db push.
   const venvBin = resolve(packageRoot, "ee/python/.venv/bin");
   const prismaCli = resolve(venvBin, "prisma");
+  const venvLibDir = resolve(packageRoot, "ee/python/.venv/lib");
+  // site-packages lives under .venv/lib/python<major>.<minor>/, where the
+  // version reflects whichever Python created the venv (e.g. 3.11 on Debian
+  // 12, 3.12 on Debian 13). Detect it instead of hardcoding.
+  const pythonVersionDir = existsSync(venvLibDir)
+    ? readdirSync(venvLibDir).find((entry) => /^python3\.\d+$/.test(entry))
+    : undefined;
+
+  if (!pythonVersionDir) {
+    warn([
+      `Could not find a python3.* directory under ${venvLibDir}.`,
+      `Run \`npm run python:setup\` to create the venv.`,
+      `Skipping LiteLLM database setup.`,
+    ]);
+    return;
+  }
+
   const litellmProxyDir = resolve(
-    packageRoot,
-    "ee/python/.venv/lib/python3.12/site-packages/litellm/proxy",
+    venvLibDir,
+    pythonVersionDir,
+    "site-packages/litellm/proxy",
   );
   const schemaPath = resolve(litellmProxyDir, "schema.prisma");
 
