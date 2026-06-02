@@ -34,7 +34,15 @@ type SupervisorInternal = {
 const MAX_CRASHES = 5;
 const INITIAL_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 30_000;
-const READY_TIMEOUT_MS = 30_000;
+// Boot-time / per-spawn readiness budget. 90s accommodates cold-start
+// environments (e.g. Cloud Run scale-to-zero) where the Python interpreter,
+// LiteLLM imports, and Postgres connection through a Cloud SQL Auth Proxy
+// sidecar all happen in series on a CPU-throttled container.
+const READY_TIMEOUT_MS = 90_000;
+// Runtime wait budget for callers of waitForLiteLLMReady(). Independent of
+// the boot-time budget — by the time a request arrives, the supervisor has
+// already been trying for a while, so this can be shorter.
+const WAIT_TIMEOUT_MS = 60_000;
 const READY_POLL_INTERVAL_MS = 200;
 const SHUTDOWN_GRACE_MS = 5_000;
 
@@ -348,18 +356,37 @@ export const startLiteLLMSupervisor = async (
 };
 
 /**
- * Await this from resolveModel() before issuing the first request. Memoized;
- * subsequent calls return the same promise.
+ * Await this from resolveModel() before issuing the first request.
+ *
+ * Reads `internal.state` directly rather than returning the cached boot-time
+ * `readyPromise`. If the boot-time promise rejected because LiteLLM was slow
+ * to come up on a cold start, the `supervise()` loop keeps respawning and
+ * may bring LiteLLM healthy seconds later — observing current state lets
+ * the instance self-heal instead of staying permanently broken until the
+ * container is killed.
  */
 export const waitForLiteLLMReady = async (): Promise<void> => {
   if (!isLiteLLMEnabled()) return;
+
   if (!internal.readyPromise) {
     // Supervisor was never started — start it now. This covers test paths and
     // unusual boot sequences where resolveModel runs before startLiteLLMSupervisor.
-    await startLiteLLMSupervisor();
-    return;
+    return startLiteLLMSupervisor();
   }
-  return internal.readyPromise;
+
+  // Read through getSupervisorState() (not internal.state directly) so the
+  // value isn't subject to TS narrowing across the await — supervise() is
+  // mutating internal.state from outside this function's control flow.
+  const deadline = Date.now() + WAIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const s = getSupervisorState();
+    if (s === "ready") return;
+    if (s === "given_up") {
+      throw new Error("LiteLLM supervisor has given up.");
+    }
+    await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+  }
+  throw new Error("Timed out waiting for LiteLLM to become ready.");
 };
 
 const stopLiteLLM = (signal: NodeJS.Signals = "SIGTERM") => {

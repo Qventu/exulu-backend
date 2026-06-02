@@ -19,6 +19,7 @@ export const transcriptionsContext = new ExuluContext({
     { name: "duration_seconds", type: "number" },
     { name: "speakers", type: "json" },
     { name: "raw_segments", type: "json", editable: false },
+
   ],
   sources: [],
   active: true,
