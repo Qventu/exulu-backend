@@ -319,6 +319,25 @@ export function createMutations(
         }
         throw new Error("Insufficient role permissions to edit this record");
       }
+
+      // Check if user has write access via team in RBAC table
+      if (record.rights_mode === "teams" && user.team) {
+        const rbacRecord = await db
+          .from("rbac")
+          .where({
+            entity: table.name.singular,
+            target_resource_id: id,
+            access_type: "Team",
+            team_id: user.team,
+            rights: "write",
+          })
+          .first();
+
+        if (rbacRecord) {
+          return true;
+        }
+        throw new Error("Insufficient team permissions to edit this record");
+      }
       throw new Error("Insufficient permissions to edit this record");
     } catch (error) {
       console.error("Write access validation error:", error);

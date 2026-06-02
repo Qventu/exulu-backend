@@ -9,6 +9,7 @@ export const RBACResolver = async (
   type: string;
   users: any[];
   roles: any[];
+  teams: any[];
 }> => {
 
   // If RBAC is not available
@@ -18,7 +19,8 @@ export const RBACResolver = async (
     return {
       type: "public",
       users: [],
-      roles: []
+      roles: [],
+      teams: []
     }
   }
   // Get RBAC records for this resource
@@ -38,14 +40,20 @@ export const RBACResolver = async (
     .filter((r) => r.access_type === "Role")
     ?.map((r) => ({ id: r.role_id, rights: r.rights }));
 
+  const teams = rbacRecords
+    .filter((r) => r.access_type === "Team")
+    ?.map((r) => ({ id: r.team_id, rights: r.rights }));
+
   // Determine the type based on rights_mode or presence of records
   let type = rights_mode || "private";
   if (type === "users" && users.length === 0) type = "private";
   if (type === "roles" && roles.length === 0) type = "private";
+  if (type === "teams" && teams.length === 0) type = "private";
 
   return {
     type,
     users,
     roles,
+    teams,
   };
 };

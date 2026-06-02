@@ -380,7 +380,7 @@ export const registerOpenAIGatewayRoutes = async (
           return;
         }
 
-        let project: Project | null = null;
+        let project: Project | undefined = undefined;
         if (projectName) {
           let projectQuery = db("projects").select("*");
           projectQuery = applyAccessControl(projectsSchema(), projectQuery, user);
@@ -404,10 +404,10 @@ export const registerOpenAIGatewayRoutes = async (
         try {
           resolved = await resolveModel({
             modelId: agent.model,
-            user,
+            user: user,
             providers,
-            agent: { id: agent.id },
-            project: project ? { id: project.id } : undefined,
+            agent: agent,
+            project: project
           });
         } catch (err) {
           if (err instanceof ResolveModelError) {

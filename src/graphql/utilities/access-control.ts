@@ -114,6 +114,25 @@ export const applyAccessControl = (
           });
         });
       }
+
+      // Records shared with teams via RBAC table (if user has a team)
+      if (user?.team) {
+        const userTeamId = user.team.id;
+        this.orWhere(function (this: any) {
+          this.where(`${prefix}rights_mode`, "teams").whereExists(function (this: any) {
+            this.select("*")
+              .from("rbac")
+              .whereRaw(
+                "rbac.target_resource_id = " +
+                  (prefix ? prefix.slice(0, -1) : tableNamePlural) +
+                  ".id",
+              )
+              .where("rbac.entity", table.name.singular)
+              .where("rbac.access_type", "Team")
+              .where("rbac.team_id", userTeamId);
+          });
+        });
+      }
     });
   } catch (error) {
     console.error("Access control error:", error);

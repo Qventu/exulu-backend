@@ -13,13 +13,22 @@ export type User = {
   favourite_agents?: string[];
   scope_mode?: ApiKeyScopeMode;
   agent_ids?: string[];
-  role: {
-    id: string;
-    name: string;
-    agents: "read" | "write";
-    evals: "read" | "write";
-    workflows: "read" | "write";
-    variables: "read" | "write";
-    users: "read" | "write";
-  };
+  role: UserRole;
+  team?: ExuluTeam;
+};
+
+export type UserRole = {
+  id: string;
+  name: string;
+  agents: "read" | "write";
+  evals: "read" | "write";
+  workflows: "read" | "write";
+  variables: "read" | "write";
+  users: "read" | "write";
+}
+
+export type ExuluTeam = {
+  id: string;
+  name: string;
+  description?: string;
 };

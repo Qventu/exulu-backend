@@ -2,6 +2,7 @@ import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import {
   feedbackSchema,
   rolesSchema,
+  teamsSchema,
   statisticsSchema,
   testCasesSchema,
   evalSetsSchema,
@@ -430,6 +431,10 @@ const usersSchema: ExuluTableDefinition = {
       name: "role",
       type: "uuid",
     },
+    {
+      name: "team",
+      type: "uuid",
+    },
   ],
 };
 
@@ -717,6 +722,7 @@ export const coreSchemas = {
     
     if (license["rbac"]) {
       schemas.rolesSchema = (): ExuluTableDefinition => addCoreFields(rolesSchema)
+      schemas.teamsSchema = (): ExuluTableDefinition => addCoreFields(teamsSchema)
       schemas.rbacSchema = (): ExuluTableDefinition => addCoreFields(rbacSchema)
     }
 

@@ -76,6 +76,27 @@ export const rolesSchema: ExuluTableDefinition = {
     ],
 };
 
+export const teamsSchema: ExuluTableDefinition = {
+    type: "teams",
+    name: {
+        plural: "teams",
+        singular: "team",
+    },
+    fields: [
+        {
+            name: "name",
+            type: "text",
+            index: true,
+            unique: true,
+            required: true,
+        },
+        {
+            name: "description",
+            type: "text",
+        },
+    ],
+};
+
 export const statisticsSchema: ExuluTableDefinition = {
     type: "tracking",
     name: {
@@ -299,6 +320,10 @@ export const rbacSchema: ExuluTableDefinition = {
         },
         {
             name: "role_id",
+            type: "uuid",
+        },
+        {
+            name: "team_id",
             type: "uuid",
         },
         {

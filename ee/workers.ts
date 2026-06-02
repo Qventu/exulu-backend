@@ -1390,7 +1390,7 @@ export const processUiMessagesFlow = async ({
     modelId: agent.model,
     user,
     providers,
-    agent: { id: agent.id },
+    agent: agent
   });
   const providerapikey = resolved.apiKey;
   const resolvedLanguageModel = resolved.languageModel;

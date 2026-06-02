@@ -89,7 +89,7 @@ export class ExuluMCP {
       modelId: agent.model,
       user,
       providers: allProviders,
-      agent: { id: agent.id },
+      agent: agent,
     });
     const providerapikey = resolved.apiKey;
 
