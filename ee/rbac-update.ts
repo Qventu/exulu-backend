@@ -15,7 +15,7 @@ export const handleRBACUpdate = async (
     return;
   }
   
-  const { users = [], roles = [] /* projects = [] */ } = rbacData;
+  const { users = [], roles = [], teams = [] /* projects = [] */ } = rbacData;
 
   // Get existing RBAC records if not provided
   if (!existingRbacRecords) {
@@ -31,6 +31,7 @@ export const handleRBACUpdate = async (
   // Create sets for comparison
   const newUserRecords = new Set(users.map((u: any) => `${u.id}:${u.rights}`));
   const newRoleRecords = new Set(roles.map((r: any) => `${r.id}:${r.rights}`));
+  const newTeamRecords = new Set(teams.map((t: any) => `${t.id}:${t.rights}`));
   // const newProjectRecords = new Set(projects.map((p: any) => `${p.id}:${p.rights}`));
   const existingUserRecords = new Set(
     existingRbacRecords
@@ -42,10 +43,16 @@ export const handleRBACUpdate = async (
       .filter((r) => r.access_type === "Role")
       .map((r) => `${r.role_id}:${r.rights}`),
   );
+  const existingTeamRecords = new Set(
+    existingRbacRecords
+      .filter((r) => r.access_type === "Team")
+      .map((r) => `${r.team_id}:${r.rights}`),
+  );
 
   // Records to create
   const usersToCreate = users.filter((u: any) => !existingUserRecords.has(`${u.id}:${u.rights}`));
   const rolesToCreate = roles.filter((r: any) => !existingRoleRecords.has(`${r.id}:${r.rights}`));
+  const teamsToCreate = teams.filter((t: any) => !existingTeamRecords.has(`${t.id}:${t.rights}`));
   // const projectsToCreate = projects.filter((p: any) => !existingProjectRecords.has(`${p.id}:${p.rights}`));
 
   // Records to remove
@@ -54,6 +61,9 @@ export const handleRBACUpdate = async (
   );
   const rolesToRemove = existingRbacRecords.filter(
     (r) => r.access_type === "Role" && !newRoleRecords.has(`${r.role_id}:${r.rights}`),
+  );
+  const teamsToRemove = existingRbacRecords.filter(
+    (r) => r.access_type === "Team" && !newTeamRecords.has(`${r.team_id}:${r.rights}`),
   );
   // const projectsToRemove = existingRbacRecords
   //     .filter(r => r.access_type === 'Project' && !newProjectRecords.has(`${r.project_id}:${r.rights}`));
@@ -74,6 +84,15 @@ export const handleRBACUpdate = async (
       .whereIn(
         "id",
         rolesToRemove.map((r) => r.id),
+      )
+      .del();
+  }
+  if (teamsToRemove.length > 0) {
+    await db
+      .from("rbac")
+      .whereIn(
+        "id",
+        teamsToRemove.map((r) => r.id),
       )
       .del();
   }
@@ -100,6 +119,18 @@ export const handleRBACUpdate = async (
       target_resource_id: resourceId,
       role_id: role.id,
       rights: role.rights,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  });
+
+  teamsToCreate.forEach((team: any) => {
+    recordsToInsert.push({
+      entity: entityName,
+      access_type: "Team",
+      target_resource_id: resourceId,
+      team_id: team.id,
+      rights: team.rights,
       createdAt: new Date(),
       updatedAt: new Date(),
     });

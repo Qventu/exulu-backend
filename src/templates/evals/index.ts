@@ -3,6 +3,7 @@ import { ExuluEval } from "@SRC/exulu/evals";
 import { resolveModel } from "@SRC/exulu/resolve-model";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { z } from "zod";
+import { generateText, Output } from "ai";
 
 const llmAsJudgeEval = () => {
   if (process.env.REDIS_HOST?.length && process.env.REDIS_PORT?.length) {
@@ -59,32 +60,32 @@ const llmAsJudgeEval = () => {
         const resolved = await resolveModel({
           modelId: agent.model,
           providers: exuluApp.get().providers,
-          agent: { id: agent.id },
+          agent: agent,
           rbacBypass: true,
         });
-        const providerapikey = resolved.apiKey;
 
         console.log("[EXULU] prompt", prompt);
 
-        const response = await provider.generateSync({
-          agent: agent,
-          contexts: [],
-          rerankers: [],
-          prompt,
-          outputSchema: z.object({
-            score: z.number().min(0).max(100).describe("The score between 0 and 100."),
+        const { output } = await generateText({
+          temperature: 0,
+          model: resolved.languageModel,
+          system: "",
+          prompt: prompt,
+          maxRetries: 2,
+          output: Output.object({
+            schema: z.object({
+              score: z.number().min(0).max(100).describe("The score between 0 and 100."),
+            }),
           }),
-          languageModel: resolved.languageModel,
-          providerapikey,
         });
 
-        console.log("[EXULU] response", response);
+        console.log("[EXULU] output", output);
 
-        const score = parseFloat(response.score);
+        const score = output.score;
 
         if (isNaN(score)) {
           throw new Error(
-            `Generated score from llm as a judge eval is not a number: ${response.score}`,
+            `Generated score from llm as a judge eval is not a number: ${output.score}`,
           );
         }
 

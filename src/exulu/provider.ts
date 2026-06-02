@@ -216,8 +216,9 @@ export class ExuluProvider {
           modelId: agent.model,
           user,
           providers,
-          agent: { id: agent.id },
+          agent: agent,
         });
+        
         const providerapikey = resolved.apiKey;
         console.log(
           "[EXULU] Enabled tools for agent '" +
@@ -297,7 +298,7 @@ export class ExuluProvider {
     agent,
     instructions,
     maxStepCount,
-    onTokenUsage,
+    onTokenUsage
   }: {
     prompt?: string;
     user?: User;

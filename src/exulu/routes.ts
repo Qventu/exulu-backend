@@ -123,6 +123,7 @@ const {
   rbacSchema,
   promptLibrarySchema,
   contextPresetsSchema,
+  teamsSchema,
   embedderSettingsSchema,
   promptFavoritesSchema,
   statisticsSchema,
@@ -199,6 +200,7 @@ export const createExpressRoutes = async (
       jobResultsSchema(),
       promptLibrarySchema(),
       contextPresetsSchema(),
+      teamsSchema(),
       embedderSettingsSchema(),
       promptFavoritesSchema(),
       evalRunsSchema(),
@@ -712,7 +714,7 @@ Mood: friendly and intelligent.
           modelId,
           user,
           providers,
-          agent: { id: agent.id },
+          agent: agent,
         });
       } catch (err) {
         if (err instanceof ResolveModelError) {
@@ -1033,7 +1035,7 @@ Mood: friendly and intelligent.
         modelId: agent.model,
         user,
         providers,
-        agent: { id: agent.id },
+        agent: agent,
       });
     } catch (err) {
       if (err instanceof ResolveModelError) {
@@ -2126,6 +2128,8 @@ Mood: friendly and intelligent.
       user_name: user.email,
       role_name: user.role?.name,
       project_name: project?.name,
+      team_id: user.team?.id,
+      team_name: user.team?.name,
     });
 
     if (tags?.length) {

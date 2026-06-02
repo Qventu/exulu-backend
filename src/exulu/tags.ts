@@ -13,12 +13,14 @@ function sanitizeTagValue(
 export function buildTags(input: {
   user_id?: number | string;
   role_id?: string;
+  team_id?: string;
   project_id?: string;
   agent_id?: string;
   user_name?: string;
   role_name?: string;
   project_name?: string;
   agent_name?: string;
+  team_name?: string;
 }): string[] {
   const candidates: (string | number | undefined)[] = [];
 
@@ -46,7 +48,15 @@ export function buildTags(input: {
   if (input.agent_name) {
     candidates.push("agent_name_" + input.agent_name);
   }
+  if (input.team_id) {
+    candidates.push("team_id_" + input.team_id);
+  }
+  if (input.team_name) {
+    candidates.push("team_name_" + input.team_name);
+  }
+
   console.log("[EXULU] Candidates", candidates);
+  
   const out: string[] = [];
   for (const candidate of candidates) {
     if (candidate === undefined || candidate === null) continue;
