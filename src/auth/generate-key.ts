@@ -24,6 +24,8 @@ export const deleteApiKey = async (name: string): Promise<{ message: string }> =
 export const generateApiKey = async (name: string, email: string): Promise<{ key: string }> => {
   const { db } = await postgresClient();
 
+  email = String(email).trim().toLowerCase();
+
   console.log("[EXULU] Inserting default user and admin role.");
   const existingRole = await db.from("roles").where({ name: "admin" }).first();
   let roleId;

@@ -51,8 +51,8 @@ export const convertGraphqlOperatorToPostgresQuery = (
       // This checks if the JSON field contains the provided value
       query = query.whereRaw(`?? @> ?::jsonb`, [fieldName, JSON.stringify(operators.contains)]);
     } else {
-      // For text fields, use LIKE
-      query = query.where(fieldName, "like", `%${operators.contains}%`);
+      // For text fields, use ILIKE for case-insensitive matching
+      query = query.where(fieldName, "ilike", `%${operators.contains}%`);
     }
   }
   if (operators.lte !== undefined) {
