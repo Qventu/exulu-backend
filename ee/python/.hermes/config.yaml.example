@@ -1,0 +1,25 @@
+# EXAMPLE ONLY — Exulu generates the real config.yaml per profile at runtime.
+# Documentation: https://hermes-agent.nousresearch.com/docs/user-guide/configuration
+#
+# The model block points Hermes at the LiteLLM proxy so every model call still
+# flows through the single model gateway. NOTE: the model-name key is `default`,
+# not `model`. When base_url is set, Hermes calls it directly using api_key.
+
+model:
+  default: "claude-haiku"            # a LiteLLM model_name from config.litellm.yaml
+  provider: custom
+  base_url: "http://127.0.0.1:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"  # resolved from the profile .env / process env
+  api_mode: chat_completions
+
+# Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:
+# mcp_servers:
+#   exulu:
+#     url: "http://127.0.0.1:<exulu-port>/mcp/<agentId>"
+#     headers:
+#       Authorization: "Bearer ${EXULU_MCP_KEY}"
+
+# Added in Phase 4 — Exulu skills synced from S3 to disk:
+# skills:
+#   external_dirs:
+#     - "/agents/skills/<profileId>"
