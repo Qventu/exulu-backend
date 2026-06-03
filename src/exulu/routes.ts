@@ -41,7 +41,7 @@ import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
 import type { Queue } from "bullmq";
-import { createIdGenerator, type UIMessage } from "ai";
+import { createIdGenerator, pipeUIMessageStreamToResponse, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import cookieParser from "cookie-parser";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition.ts";
@@ -55,6 +55,15 @@ import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
+import {
+  isHermesEnabled,
+  ensureProfile,
+  profileIdFor,
+  ensureGateway,
+  resolveHermesSessionId,
+  createHermesRunStream,
+  uiMessagesToOpenAI,
+} from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -761,6 +770,113 @@ Mood: friendly and intelligent.
         const instructions = customInstructions
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
+
+        // Advanced (Hermes) agent mode. Routes this request through the Hermes
+        // harness instead of the default AI SDK → LiteLLM flow. Backwards
+        // compatible: only taken when the agent opted in AND ENABLE_HERMES_AGENT
+        // is set; otherwise we fall through to provider.generateStream below.
+        if ((agent as any).advanced_mode && isHermesEnabled()) {
+          const scope =
+            (agent as any).advanced_agent_profile_scope === "private"
+              ? "private"
+              : "shared";
+
+          // Provisioning + gateway start happen BEFORE we begin streaming, so a
+          // failure can still return a clean 503 (graceful degradation) rather
+          // than a half-open stream.
+          let gateway: { baseUrl: string; apiKey: string };
+          let hermesSessionId: string;
+          try {
+            const profileId = profileIdFor(agent.id, scope, user?.id);
+            await ensureProfile({
+              profileId,
+              instructions: instructions ?? agent.instructions,
+              modelName: modelId,
+              skills: enabledSkills.map((s) => ({
+                id: s.id,
+                version: (s as any).current_version,
+              })),
+              toolIds: enabledTools
+                .map((t) => t.id)
+                .filter(Boolean) as string[],
+            });
+            gateway = await ensureGateway(profileId);
+            hermesSessionId = await resolveHermesSessionId(db, headers.session);
+          } catch (err) {
+            console.error("[EXULU] Hermes advanced mode setup failed:", err);
+            res.status(503).json({
+              message: "Advanced agent mode is temporarily unavailable.",
+              detail: (err as Error).message,
+            });
+            return;
+          }
+
+          // Abort the run + event stream if the client disconnects.
+          const ac = new AbortController();
+          res.on("close", () => ac.abort());
+
+          const conversation = [...previousMessages, message].filter(
+            Boolean,
+          ) as UIMessage[];
+
+          const stream = createHermesRunStream({
+            baseUrl: gateway.baseUrl,
+            apiKey: gateway.apiKey,
+            hermesSessionId,
+            model: modelId,
+            // With a persisted session, rely on Hermes' own per-session memory
+            // (carried via X-Hermes-Session-Id) and send only the new user turn;
+            // sessionless requests send the full in-request conversation.
+            messages: uiMessagesToOpenAI(
+              headers.session
+                ? ([message].filter(Boolean) as UIMessage[])
+                : conversation,
+            ),
+            originalMessages: conversation,
+            generateId: createIdGenerator({ prefix: "msg_", size: 16 }),
+            signal: ac.signal,
+            onError: (error) => {
+              console.error("[EXULU] Hermes run error.", error);
+              if (error == null) return "unknown error";
+              if (typeof error === "string") return error;
+              if (error instanceof Error) return error.message;
+              return JSON.stringify(error);
+            },
+            onFinish: async ({ messages }) => {
+              if (headers.session && user?.id) {
+                await saveChat({
+                  session: headers.session as string,
+                  user: user.id,
+                  messages,
+                  model: resolvedModelId,
+                });
+                clearSessionCurrentTask(headers.session as string).catch(() => {});
+              }
+              const metadata = messages[messages.length - 1]?.metadata as any;
+              if (statistics) {
+                await updateStatistic({
+                  name: "count",
+                  label: statistics.label,
+                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                  trigger: statistics.trigger,
+                  count: 1,
+                  user: user?.id,
+                  role: user?.role?.id,
+                });
+              }
+              await recordAgentTokenUsage({
+                agentId: instance,
+                callerId,
+                limits: effectiveLimits,
+                inputTokens: metadata?.inputTokens,
+                outputTokens: metadata?.outputTokens,
+              });
+            },
+          });
+
+          pipeUIMessageStreamToResponse({ response: res, stream });
+          return;
+        }
 
         const result = await provider.generateStream({
           contexts: contexts,
