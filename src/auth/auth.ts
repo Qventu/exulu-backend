@@ -67,7 +67,11 @@ export const authentication = async ({
         };
       }
 
-      const user = await db.from("users").select("*").where("email", authtoken?.email).first();
+      const user = await db
+        .from("users")
+        .select("*")
+        .whereRaw("LOWER(email) = LOWER(?)", [authtoken?.email])
+        .first();
 
       if (user?.role) {
         const role = await db.from("roles").select("*").where("id", user?.role).first();
