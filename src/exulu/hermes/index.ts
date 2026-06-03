@@ -20,3 +20,9 @@ export {
   profileIdFor,
   type ProvisionInput,
 } from "./provisioner";
+export {
+  createHermesRunStream,
+  uiMessagesToOpenAI,
+  type HermesRunStreamParams,
+} from "./run-stream";
+export { resolveHermesSessionId } from "./session-map";
