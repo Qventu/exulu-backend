@@ -91,6 +91,14 @@ const agentSessionsSchema: ExuluTableDefinition = {
       type: "text",
       required: false,
     },
+    {
+      // Hermes session id (e.g. "sess_…") for sessions run in advanced mode.
+      // Maps this Exulu session onto its Hermes-side session/run; access stays
+      // governed by this table's existing RBAC. Null for non-advanced sessions.
+      name: "hermes_session_id",
+      type: "text",
+      required: false,
+    },
   ],
 };
 
@@ -277,6 +285,21 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "rate_limits",
       type: "json",
+    },
+    {
+      // Advanced (Hermes) agent mode toggle. When true and ENABLE_HERMES_AGENT
+      // is set, requests route through the Hermes harness instead of the
+      // default AI SDK → LiteLLM flow.
+      name: "advanced_mode",
+      type: "boolean",
+      default: false,
+    },
+    {
+      // 'shared' (default): one Hermes profile shared by all users of the
+      // agent. 'private': one profile per agent/user. Distinct from RBAC
+      // rights_mode, which still controls who can access the agent.
+      name: "advanced_agent_profile_scope",
+      type: "text",
     },
   ],
 };

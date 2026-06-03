@@ -253,6 +253,28 @@ if [ -n "$LITELLM_PROXY_DIR" ] && [ -f "$LITELLM_PROXY_DIR/schema.prisma" ]; the
         || print_warning "Prisma generate failed; LiteLLM database mode (database_url in config.litellm.yaml) may not work until you run 'cd $LITELLM_PROXY_DIR && PATH=$VENV_DIR/bin:\$PATH $VENV_DIR/bin/prisma generate'"
 fi
 
+# Step 6.6: Install the Hermes Agent harness (advanced agent mode).
+# Opt-in via ENABLE_HERMES_AGENT=true. Hermes is NOT a pip package — it ships
+# as a standalone binary via Nous Research's official installer (lands in
+# ~/.local/bin/hermes). We only install if it's not already present so re-runs
+# are fast, and we never fail the whole setup if the install fails (advanced
+# mode is optional; the operator can install it manually and retry).
+if [ "${ENABLE_HERMES_AGENT}" = "true" ]; then
+    echo ""
+    echo "Step 6.6: Installing Hermes Agent harness (ENABLE_HERMES_AGENT=true)..."
+    if command -v hermes &> /dev/null || [ -x "$HOME/.local/bin/hermes" ]; then
+        HERMES_VERSION=$( (command -v hermes &> /dev/null && hermes --version 2>/dev/null) || "$HOME/.local/bin/hermes" --version 2>/dev/null || echo "unknown")
+        print_success "Hermes already installed ($HERMES_VERSION) — skipping installer"
+    else
+        print_info "Running Hermes official installer..."
+        if curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash; then
+            print_success "Hermes Agent installed (binary at ~/.local/bin/hermes)"
+        else
+            print_warning "Hermes installer failed. Advanced agent mode will be unavailable until 'hermes' is on PATH. Install manually: https://hermes-agent.nousresearch.com/docs/getting-started/installation"
+        fi
+    fi
+fi
+
 # Step 7: Validate installation
 echo ""
 echo "Step 7: Validating installation..."
@@ -268,6 +290,15 @@ $PYTHON_CMD -c "import transformers" 2>/dev/null && print_success "transformers 
 $PYTHON_CMD -c "import whisperx" 2>/dev/null && print_success "whisperx imported successfully" || print_warning "whisperx not importable (transcription server will not start)"
 $PYTHON_CMD -c "import pyannote.audio" 2>/dev/null && print_success "pyannote.audio imported successfully" || print_warning "pyannote.audio not importable (diarization will be disabled even with HF_AUTH_TOKEN)"
 $PYTHON_CMD -c "import fastapi, uvicorn" 2>/dev/null && print_success "fastapi/uvicorn imported successfully" || print_warning "fastapi/uvicorn not importable (transcription server will not start)"
+
+# Hermes Agent binary check (advanced agent mode) — only when opted in.
+if [ "${ENABLE_HERMES_AGENT}" = "true" ]; then
+    if command -v hermes &> /dev/null || [ -x "$HOME/.local/bin/hermes" ]; then
+        print_success "hermes binary available (advanced agent mode ready)"
+    else
+        print_warning "hermes binary not found (advanced agent mode will be unavailable)"
+    fi
+fi
 
 # Step 8: Display summary
 echo ""
