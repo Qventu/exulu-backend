@@ -79,11 +79,12 @@ import {
   resolveCallerId,
 } from "@SRC/utils/check-agent-rate-limit.ts";
 import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
-import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
+
+export const LITELLM_UI_PATH = "/litellm-admin";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -1890,10 +1891,10 @@ Mood: friendly and intelligent.
   //
   // Registered BEFORE /litellm/:project so the mount path can collide with
   // a project-shaped URL without being swallowed by the API handler.
-  const litellmUiPath = "/litellm-admin";
-  if (isLiteLLMEnabled() && litellmUiPath) {
-    console.log("[EXULU] Registering LiteLLM UI at", litellmUiPath);
-    app.use(litellmUiPath, async (req: Request, res: Response) => {
+  
+  if (isLiteLLMEnabled() && LITELLM_UI_PATH) {
+    console.log("[EXULU] Registering LiteLLM UI at", LITELLM_UI_PATH);
+    app.use(LITELLM_UI_PATH, async (req: Request, res: Response) => {
       const host = process.env.LITELLM_HOST ?? "127.0.0.1";
       const port = process.env.LITELLM_PORT ?? "4000";
 
@@ -1903,7 +1904,7 @@ Mood: friendly and intelligent.
       // upstream without the prefix returns 404. Express's app.use strips
       // the mount path from req.url, so we re-prepend litellmUiPath when
       // forwarding upstream. (Verified: curl /ui/ → 404, curl /litellm-admin/ui/ → 200.)
-      const upstreamUrl = `http://${host}:${port}${litellmUiPath}${req.url}`;
+      const upstreamUrl = `http://${host}:${port}${LITELLM_UI_PATH}${req.url}`;
 
       const upstreamHeaders: Record<string, string> = {};
       for (const [name, value] of Object.entries(req.headers)) {
@@ -1973,10 +1974,10 @@ Mood: friendly and intelligent.
             let loc = absolute ? absolute[1] ?? "/" : value;
             if (
               loc.startsWith("/") &&
-              loc !== litellmUiPath &&
-              !loc.startsWith(`${litellmUiPath}/`)
+              loc !== LITELLM_UI_PATH &&
+              !loc.startsWith(`${LITELLM_UI_PATH}/`)
             ) {
-              loc = `${litellmUiPath}${loc}`;
+              loc = `${LITELLM_UI_PATH}${loc}`;
             }
             res.setHeader(name, loc);
             return;

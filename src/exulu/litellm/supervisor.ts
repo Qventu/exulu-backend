@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-
+import { LITELLM_UI_PATH } from "../routes";
 /**
  * Spawns the LiteLLM proxy as a child process when EXULU_USE_LITELLM=true,
  * supervises it (exponential-backoff respawn capped at 5 consecutive crashes),
@@ -133,18 +133,14 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
 
   // Tell LiteLLM to mount itself under the prefix Exulu reverse-proxies the
   // admin UI from, so its internal asset URLs, redirects, and SSO callbacks
-  // all include the path. EXULU_LITELLM_UI_PATH is set in ExuluApp.create()
-  // from config.litellm.uiPath (default "/litellm-admin"). We don't
-  // overwrite SERVER_ROOT_PATH if the operator already set it explicitly —
-  // they may be running behind a different reverse proxy with a different
-  // prefix.
+  // all include the path.
   //
   // The env var is intentionally namespaced (not LITELLM_UI_PATH) because
   // LiteLLM itself reads LITELLM_UI_PATH and treats it as a filesystem path
   // to the UI directory — setting that to a URL path silently breaks the
   // UI mount inside LiteLLM.
-  if (process.env.EXULU_LITELLM_UI_PATH && !process.env.SERVER_ROOT_PATH) {
-    childEnv.SERVER_ROOT_PATH = process.env.EXULU_LITELLM_UI_PATH;
+  if (LITELLM_UI_PATH && !process.env.SERVER_ROOT_PATH) {
+    childEnv.SERVER_ROOT_PATH = LITELLM_UI_PATH;
   }
 
   // SAFETY: Do NOT prepend the venv's bin directory to PATH for the child.
