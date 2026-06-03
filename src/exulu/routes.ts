@@ -1948,7 +1948,6 @@ Mood: friendly and intelligent.
         });
 
         res.status(upstream.status);
-        const upstreamOrigin = `http://${host}:${port}`;
         upstream.headers.forEach((value, name) => {
           const lower = name.toLowerCase();
           if (
@@ -1962,13 +1961,16 @@ Mood: friendly and intelligent.
             // Rewrite the Location header so the browser stays on the proxy.
             // Starlette's StaticFiles emits absolute URLs with LiteLLM's bind
             // address for its trailing-slash redirect (and FastAPI's auth
-            // flows do similar things). Strip the upstream origin, then make
-            // sure the path lives under our mount so the next hop comes back
-            // through Exulu — otherwise the browser leaves the proxy and
-            // hits LiteLLM directly, which isn't reachable from outside.
-            let loc = value.startsWith(upstreamOrigin)
-              ? value.slice(upstreamOrigin.length)
-              : value;
+            // flows do similar things). Strip any absolute scheme://host[:port]
+            // prefix and keep only the path — we deliberately do NOT compare
+            // against LITELLM_HOST/LITELLM_PORT, because Starlette can render
+            // the netloc as `127.0.0.1`, `localhost`, or the container's
+            // hostname depending on what reaches it as the Host header, and
+            // any mismatch with the env-derived origin would silently leak
+            // the upstream URL to the browser. After stripping, force the
+            // path under our mount so the next hop comes back through Exulu.
+            const absolute = value.match(/^https?:\/\/[^/]+(\/.*)?$/);
+            let loc = absolute ? absolute[1] ?? "/" : value;
             if (
               loc.startsWith("/") &&
               loc !== litellmUiPath &&
