@@ -449,11 +449,11 @@ export const createHermesRunStream = (
           // some events may send a bare string payload
         }
         const ev = normalizeEvent(record.event, data);
-        if (ev.kind === "ignore" && process.env.HERMES_DEBUG_EVENTS === "true") {
-          // Bring-up aid: surface unmapped events so the wire format can be
-          // pinned. Enable with HERMES_DEBUG_EVENTS=true.
+        if (process.env.HERMES_DEBUG_EVENTS === "true") {
+          // Bring-up aid: dump every event and how it mapped, so the wire format
+          // can be pinned. Enable with HERMES_DEBUG_EVENTS=true.
           log(
-            `unmapped event=${record.event ?? "(none)"} data=${record.data.slice(0, 300)}`,
+            `event=${record.event ?? "(none)"} -> ${ev.kind} :: ${record.data.slice(0, 600)}`,
           );
         }
         const isFinish = translateEvent(ev, writer, state, params.generateId);
