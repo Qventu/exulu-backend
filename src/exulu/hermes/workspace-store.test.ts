@@ -41,11 +41,15 @@ describe("contentTypeFor", () => {
 });
 
 describe("resolveInWorkspace", () => {
-  it("rejects path traversal / absolute paths", () => {
+  it("rejects path traversal / absolute / hidden paths", () => {
     process.env.HERMES_HOME = "/tmp/hh";
     expect(resolveInWorkspace("a", "ok/file.txt")).toContain("workspace");
     expect(resolveInWorkspace("a", "../../etc/passwd")).toBeUndefined();
     expect(resolveInWorkspace("a", "../escape")).toBeUndefined();
+    // Hidden paths (Hermes' .hermes/.cache live here when mounted at /root).
+    expect(resolveInWorkspace("a", ".hermes/config.json")).toBeUndefined();
+    expect(resolveInWorkspace("a", ".env")).toBeUndefined();
+    expect(resolveInWorkspace("a", "sub/.secret")).toBeUndefined();
   });
 });
 
