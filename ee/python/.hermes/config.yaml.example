@@ -25,15 +25,11 @@ approvals:
 # secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
 terminal:
   backend: docker
-  # The agent runs in /root; Hermes' home is the hidden /root/.hermes. We mount
-  # the host workspace at /root so the agent's top-level files land in the host
-  # workspace (and the Files panel, which skips dotfiles, shows them) while
-  # .hermes/.cache stay hidden inside the mount. Override with
-  # HERMES_CONTAINER_WORKDIR.
-  cwd: "/root"
+  # We do NOT bind-mount the workspace under docker: Hermes runs the agent in
+  # its own /root home inside the container and mounting over it destabilizes
+  # the container. Shared files are bridged via the Exulu MCP file tools (agent
+  # <-> host workspace) instead. (The `local` backend keeps a workspace cwd.)
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
-  docker_volumes:
-    - "/abs/.../profiles/<profileId>/workspace:/root"
     - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:

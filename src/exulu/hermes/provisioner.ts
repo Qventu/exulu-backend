@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 10;
+const PROVISION_FORMAT_VERSION = 11;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -60,18 +60,6 @@ const getDockerImage = (): string =>
   process.env.HERMES_DOCKER_IMAGE?.trim() ||
   "nikolaik/python-nodejs:python3.11-nodejs20";
 
-/**
- * Container path the host workspace is mounted to under the docker backend.
- *
- * The agent runs in `/root` (verified), and Hermes keeps its own home in the
- * HIDDEN `/root/.hermes` subdir. Mounting the host workspace at `/root` makes
- * the agent's working dir host-backed: its top-level files land in the host
- * workspace (and the Files panel, which skips dotfiles, shows them), while
- * `/root/.hermes` + `/root/.cache` are created inside the mount but stay hidden
- * and persist on the host. Override with HERMES_CONTAINER_WORKDIR.
- */
-const getContainerWorkdir = (): string =>
-  process.env.HERMES_CONTAINER_WORKDIR?.trim() || "/root";
 
 /** The agent id keying the MCP endpoint — explicit, or the profileId's first segment. */
 const agentIdOf = (input: ProvisionInput): string =>
@@ -150,25 +138,24 @@ const renderConfigYaml = (
     "",
     // Native shell/file tools run via this backend. `docker` isolates them in a
     // hardened, Hermes-managed container (cap-drop ALL, no-new-privileges) that
-    // works without host user namespaces. Hermes runs docker exec from the
-    // container user's home and ignores terminal.cwd, so we mount the host
-    // workspace AT that home dir — the agent's default writes then land in the
-    // host workspace (and show in the Files panel). Secrets (config.yaml/.env)
-    // are NOT mounted. NOTE: the container is persistent — changing these
-    // volumes requires `docker rm -f` to recreate it.
+    // works without host user namespaces. We do NOT bind-mount the workspace:
+    // Hermes runs the agent in its own /root home inside the container and
+    // mounting over it destabilizes the container. Shared files are bridged via
+    // the Exulu MCP file tools instead (agent <-> host workspace), independent
+    // of the container. The `local` backend keeps a workspace-bound cwd.
     "terminal:",
     `  backend: ${getTerminalBackend()}`,
-    `  cwd: ${yamlString(getTerminalBackend() === "docker" ? getContainerWorkdir() : workspaceDir)}`,
     ...(getTerminalBackend() === "docker"
       ? [
           `  docker_image: ${yamlString(getDockerImage())}`,
-          "  docker_volumes:",
-          `    - ${yamlString(`${workspaceDir}:${getContainerWorkdir()}`)}`,
           ...((input.skills?.length ?? 0) > 0
-            ? [`    - ${yamlString(`${exuluSkillsDir}:${exuluSkillsDir}:ro`)}`]
+            ? [
+                "  docker_volumes:",
+                `    - ${yamlString(`${exuluSkillsDir}:${exuluSkillsDir}:ro`)}`,
+              ]
             : []),
         ]
-      : []),
+      : [`  cwd: ${yamlString(workspaceDir)}`]),
     "",
     "# ExuluTools exposed over HTTP MCP. These ADD to Hermes' native tools",
     "# (bash, filesystem, …) — they do not replace them. The key is resolved",
