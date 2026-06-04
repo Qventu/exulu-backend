@@ -25,15 +25,15 @@ approvals:
 # secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
 terminal:
   backend: docker
-  # Hermes runs docker exec from the container user's home (/home/ubuntu) and
-  # ignores terminal.cwd, so the host workspace is mounted AT that home dir —
-  # the agent's default writes then land in the host workspace (and the Files
-  # panel sees them). Override with HERMES_CONTAINER_WORKDIR if your image/user
-  # differs.
-  cwd: "/home/ubuntu"
+  # Hermes runs docker exec as its `hermes` user from /home/hermes and ignores
+  # terminal.cwd, so the host workspace is mounted AT that home dir — the agent's
+  # default reads/writes then hit the host workspace (and the Files panel sees
+  # them). Override with HERMES_CONTAINER_WORKDIR if your image/user differs
+  # (verify with `docker inspect <container> --format '{{.Config.WorkingDir}}'`).
+  cwd: "/home/hermes"
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
   docker_volumes:
-    - "/abs/.../profiles/<profileId>/workspace:/home/ubuntu"
+    - "/abs/.../profiles/<profileId>/workspace:/home/hermes"
     - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:

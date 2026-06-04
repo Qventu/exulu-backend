@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 7;
+const PROVISION_FORMAT_VERSION = 8;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -62,13 +62,14 @@ const getDockerImage = (): string =>
 
 /**
  * Container path the agent's tools actually run in under the docker backend.
- * Hermes runs `docker exec` from the container user's home (observed:
- * `/home/ubuntu`) and ignores `terminal.cwd`, so we mount the host workspace
- * HERE — that way the agent's default file writes land in the host workspace
- * (and show in the Files panel). Overridable if a different image/user is used.
+ * Hermes runs `docker exec` as its `hermes` user from that user's home
+ * (`/home/hermes`) and ignores `terminal.cwd`, so we mount the host workspace
+ * HERE — that way the agent's default file reads/writes hit the host workspace
+ * (and show in the Files panel). Override with HERMES_CONTAINER_WORKDIR if a
+ * different image/user puts the home elsewhere (verify with `docker inspect`).
  */
 const getContainerWorkdir = (): string =>
-  process.env.HERMES_CONTAINER_WORKDIR?.trim() || "/home/ubuntu";
+  process.env.HERMES_CONTAINER_WORKDIR?.trim() || "/home/hermes";
 
 /** The agent id keying the MCP endpoint — explicit, or the profileId's first segment. */
 const agentIdOf = (input: ProvisionInput): string =>
