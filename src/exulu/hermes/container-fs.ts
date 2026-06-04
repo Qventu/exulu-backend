@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { contentTypeFor, type WorkspaceFile } from "./workspace-store";
@@ -22,7 +22,6 @@ import { contentTypeFor, type WorkspaceFile } from "./workspace-store";
  */
 
 const execFileAsync = promisify(execFile);
-const CONTAINER_ROOT = "/root";
 const MAX_LIST_BUFFER = 16 * 1024 * 1024;
 
 const profileLabel = (profileId: string): string => `exulu-profile=${profileId}`;
@@ -41,13 +40,17 @@ export const safeRelPath = (p: string): string | undefined => {
 };
 
 /** Parse `find … -printf '%s\t%T@\t%p\n'` output into WorkspaceFile[]. */
-export const parseFindOutput = (stdout: string): WorkspaceFile[] => {
+export const parseFindOutput = (
+  stdout: string,
+  rootDir = "/root",
+): WorkspaceFile[] => {
+  const prefix = rootDir.endsWith("/") ? rootDir : `${rootDir}/`;
   const files: WorkspaceFile[] = [];
   for (const line of stdout.split("\n")) {
     if (!line) continue;
     const [sizeStr, mtimeStr, fullPath] = line.split("\t");
     if (!fullPath) continue;
-    const rel = fullPath.replace(/^\/root\//, "");
+    const rel = fullPath.startsWith(prefix) ? fullPath.slice(prefix.length) : fullPath;
     if (!rel || rel.split("/").some((s) => s.startsWith("."))) continue;
     files.push({
       path: rel,
@@ -90,20 +93,59 @@ export const resolveContainerId = async (
   return hermesContainers.length === 1 ? hermesContainers[0] : undefined;
 };
 
-/** List files in the sandbox `/root` (excludes hidden dirs/files). */
+/**
+ * The agent's actual working directory inside the container — where its native
+ * tools read & write. Hermes decides this and a plain `docker exec` won't reveal
+ * it (the agent runs as the host user via docker_run_as_host_user, so its cwd is
+ * that user's HOME replicated in the container, e.g. /Users/<you>; a manual exec
+ * is root at `/`).
+ *
+ * Since the gateway runs as the same OS user as this backend, the agent's home
+ * IS `os.homedir()`. We probe candidate homes inside the container and use the
+ * first that exists: the host-user home (host-user mode) else /root (root mode).
+ * Overridable with HERMES_CONTAINER_WORKDIR.
+ */
+const getContainerCwd = async (id: string): Promise<string> => {
+  const override = process.env.HERMES_CONTAINER_WORKDIR?.trim();
+  const candidates = [
+    ...(override ? [override] : []),
+    homedir().replace(/\/+$/, ""),
+    "/root",
+  ];
+  for (const dir of candidates) {
+    if (!dir) continue;
+    try {
+      await execFileAsync("docker", ["exec", id, "test", "-d", dir]);
+      return dir;
+    } catch {
+      /* not present in this container */
+    }
+  }
+  return "/root";
+};
+
+type Sandbox = { id: string; cwd: string };
+
+const resolveSandbox = async (profileId: string): Promise<Sandbox | undefined> => {
+  const id = await resolveContainerId(profileId);
+  if (!id) return undefined;
+  return { id, cwd: await getContainerCwd(id) };
+};
+
+/** List files in the sandbox working dir (excludes hidden dirs/files). */
 export const listContainerFiles = async (
   profileId: string,
 ): Promise<WorkspaceFile[]> => {
-  const id = await resolveContainerId(profileId);
-  if (!id) return [];
+  const sb = await resolveSandbox(profileId);
+  if (!sb) return [];
   try {
     const { stdout } = await execFileAsync(
       "docker",
       [
         "exec",
-        id,
+        sb.id,
         "find",
-        CONTAINER_ROOT,
+        sb.cwd,
         "-mindepth",
         "1",
         "-name",
@@ -118,7 +160,7 @@ export const listContainerFiles = async (
       ],
       { maxBuffer: MAX_LIST_BUFFER },
     );
-    return parseFindOutput(stdout);
+    return parseFindOutput(stdout, sb.cwd);
   } catch {
     return []; // container not running / find failed
   }
@@ -131,13 +173,13 @@ export const readContainerFile = async (
 ): Promise<{ stream: NodeJS.ReadableStream; contentType: string } | undefined> => {
   const safe = safeRelPath(relPath);
   if (!safe) return undefined;
-  const id = await resolveContainerId(profileId);
-  if (!id) return undefined;
-  const child = spawn("docker", ["exec", id, "cat", "--", `${CONTAINER_ROOT}/${safe}`]);
+  const sb = await resolveSandbox(profileId);
+  if (!sb) return undefined;
+  const child = spawn("docker", ["exec", sb.id, "cat", "--", `${sb.cwd}/${safe}`]);
   return { stream: child.stdout, contentType: contentTypeFor(safe) };
 };
 
-/** Copy bytes into the sandbox at `/root/<relPath>` (creates parent dirs). */
+/** Copy bytes into the sandbox at `<cwd>/<relPath>` (creates parent dirs). */
 export const writeContainerFile = async (
   profileId: string,
   relPath: string,
@@ -145,21 +187,21 @@ export const writeContainerFile = async (
 ): Promise<void> => {
   const safe = safeRelPath(relPath);
   if (!safe) throw new Error("Invalid path");
-  const id = await resolveContainerId(profileId);
-  if (!id) {
+  const sb = await resolveSandbox(profileId);
+  if (!sb) {
     throw new Error(
       "The agent's sandbox isn't running yet — send the agent a message first, then upload.",
     );
   }
   const dir = safe.includes("/") ? safe.slice(0, safe.lastIndexOf("/")) : "";
   if (dir) {
-    await execFileAsync("docker", ["exec", id, "mkdir", "-p", `${CONTAINER_ROOT}/${dir}`]);
+    await execFileAsync("docker", ["exec", sb.id, "mkdir", "-p", `${sb.cwd}/${dir}`]);
   }
   const tmpDir = await mkdtemp(join(tmpdir(), "exulu-upload-"));
   const tmp = join(tmpDir, "file");
   await writeFile(tmp, bytes);
   try {
-    await execFileAsync("docker", ["cp", tmp, `${id}:${CONTAINER_ROOT}/${safe}`]);
+    await execFileAsync("docker", ["cp", tmp, `${sb.id}:${sb.cwd}/${safe}`]);
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -172,7 +214,7 @@ export const deleteContainerFile = async (
 ): Promise<void> => {
   const safe = safeRelPath(relPath);
   if (!safe) throw new Error("Invalid path");
-  const id = await resolveContainerId(profileId);
-  if (!id) return;
-  await execFileAsync("docker", ["exec", id, "rm", "-f", "--", `${CONTAINER_ROOT}/${safe}`]);
+  const sb = await resolveSandbox(profileId);
+  if (!sb) return;
+  await execFileAsync("docker", ["exec", sb.id, "rm", "-f", "--", `${sb.cwd}/${safe}`]);
 };

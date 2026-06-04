@@ -38,4 +38,10 @@ describe("parseFindOutput", () => {
   it("returns empty for empty output", () => {
     expect(parseFindOutput("")).toEqual([]);
   });
+
+  it("strips a custom root dir (the discovered cwd)", () => {
+    const out = `10\t1780000000\t/Users/daniel.claessen/notes.md`;
+    const files = parseFindOutput(out, "/Users/daniel.claessen");
+    expect(files[0]!.path).toBe("notes.md");
+  });
 });
