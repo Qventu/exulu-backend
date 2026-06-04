@@ -157,6 +157,42 @@ describe("startRun request body", () => {
 
     expect(captured).toEqual({ input: "what files are here?", session_id: "sess_z" });
   });
+
+  it("includes conversation_history for multi-turn memory", async () => {
+    let captured: any;
+    (global as any).fetch = jest.fn(async (url: string, init?: any) => {
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        captured = JSON.parse(init.body);
+        return new Response(JSON.stringify({ run_id: "run_h" }), { status: 200 });
+      }
+      return new Response("event: response.completed\ndata: {}\n\n", { status: 200 });
+    });
+
+    const stream = createHermesRunStream({
+      baseUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "k",
+      hermesSessionId: "sess_z",
+      input: "what did I ask before?",
+      conversationHistory: [
+        { role: "user", content: "what is the pdf about?" },
+        { role: "assistant", content: "it's about X" },
+      ],
+      originalMessages: [],
+      generateId: createIdGenerator({ prefix: "msg_", size: 8 }),
+      onError: (e) => (e instanceof Error ? e.message : String(e)),
+      onFinish: async () => {},
+    });
+    const reader = stream.getReader();
+    while (!(await reader.read()).done) {
+      /* drain */
+    }
+
+    expect(captured.input).toBe("what did I ask before?");
+    expect(captured.conversation_history).toEqual([
+      { role: "user", content: "what is the pdf about?" },
+      { role: "assistant", content: "it's about X" },
+    ]);
+  });
 });
 
 describe("createHermesRunStream (integration with mocked fetch)", () => {

@@ -41,3 +41,43 @@ export const resolveHermesSessionId = async (
     .update({ hermes_session_id: id });
   return id;
 };
+
+export type HistoryTurn = { role: "user" | "assistant"; content: string };
+
+/**
+ * Load the prior turns of a session as [{role, content}] for the runs API's
+ * `conversation_history`. The runs API's `session_id` is only a correlation
+ * label — it does NOT make Hermes recall the conversation — so we pass history
+ * explicitly. We read it from `agent_messages` (the dual-write we already do),
+ * so there's no dependency on Hermes' own session memory.
+ *
+ * Returns turns oldest-first, text-only; excludes the in-flight turn (persisted
+ * after the run). RBAC is enforced upstream.
+ */
+export const loadHermesConversationHistory = async (
+  db: Knex,
+  exuluSessionId: string | null | undefined,
+  userId?: number | string,
+): Promise<HistoryTurn[]> => {
+  if (!exuluSessionId) return [];
+  const rows: Array<{ content: string }> = await db
+    .from("agent_messages")
+    .where({ session: exuluSessionId, ...(userId != null ? { user: userId } : {}) })
+    .orderBy("createdAt", "asc");
+
+  const history: HistoryTurn[] = [];
+  for (const row of rows) {
+    try {
+      const msg = JSON.parse(row.content);
+      const text = (msg?.parts ?? [])
+        .map((p: any) => (p?.type === "text" ? p.text : ""))
+        .join("")
+        .trim();
+      if (!text) continue;
+      history.push({ role: msg?.role === "user" ? "user" : "assistant", content: text });
+    } catch {
+      // skip unparseable rows
+    }
+  }
+  return history;
+};
