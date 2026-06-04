@@ -60,23 +60,34 @@ export const parseFindOutput = (stdout: string): WorkspaceFile[] => {
   return files.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
 };
 
-/** The running container id for a profile, or undefined if none is up. */
+const dockerPsIds = async (filters: string[]): Promise<string[]> => {
+  try {
+    const args = ["ps", "-q"];
+    for (const f of filters) args.push("--filter", f);
+    const { stdout } = await execFileAsync("docker", args);
+    return stdout.trim().split("\n").filter(Boolean);
+  } catch {
+    return []; // docker unavailable / errored
+  }
+};
+
+/**
+ * The running Hermes container id for a profile, or undefined if none is up.
+ * Primary: our deterministic `exulu-profile=<profileId>` label. Fallback (in
+ * case Hermes didn't honor docker_extra_args): if there is exactly ONE
+ * hermes-managed container running, use it — correct for single-agent setups.
+ */
 export const resolveContainerId = async (
   profileId: string,
 ): Promise<string | undefined> => {
-  try {
-    const { stdout } = await execFileAsync("docker", [
-      "ps",
-      "-q",
-      "--filter",
-      "label=hermes-agent=1",
-      "--filter",
-      `label=${profileLabel(profileId)}`,
-    ]);
-    return stdout.trim().split("\n").filter(Boolean)[0];
-  } catch {
-    return undefined; // docker unavailable / errored
-  }
+  const tagged = await dockerPsIds([
+    "label=hermes-agent=1",
+    `label=${profileLabel(profileId)}`,
+  ]);
+  if (tagged[0]) return tagged[0];
+
+  const hermesContainers = await dockerPsIds(["label=hermes-agent=1"]);
+  return hermesContainers.length === 1 ? hermesContainers[0] : undefined;
 };
 
 /** List files in the sandbox `/root` (excludes hidden dirs/files). */

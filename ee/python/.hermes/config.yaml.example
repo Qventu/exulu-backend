@@ -32,6 +32,11 @@ terminal:
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
   container_persistent: true
   lifetime_seconds: 86400
+  # Run as root (home /root) so the agent's working dir is a predictable /root
+  # the Files panel reads — NOT the host user's home (e.g. /Users/<you>), which
+  # is what docker_run_as_host_user (default) would replicate.
+  docker_run_as_host_user: false
+  docker_mount_cwd_to_workspace: false
   docker_extra_args: ["--label", "exulu-profile=<profileId>"]
     - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
