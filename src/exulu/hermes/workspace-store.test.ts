@@ -83,6 +83,14 @@ describe("list/read/write/delete", () => {
     expect(await readWorkspaceFile("agent-1", "out/report.txt")).toBeUndefined();
   });
 
+  it("readWorkspaceText returns file content / undefined for hidden or missing", async () => {
+    const { readWorkspaceText } = await import("./workspace-store");
+    await writeWorkspaceFile("agent-1", "notes.md", Buffer.from("# hi"));
+    expect(await readWorkspaceText("agent-1", "notes.md")).toBe("# hi");
+    expect(await readWorkspaceText("agent-1", "missing.md")).toBeUndefined();
+    expect(await readWorkspaceText("agent-1", ".hermes/config.json")).toBeUndefined();
+  });
+
   it("refuses to write/read outside the workspace", async () => {
     await expect(
       writeWorkspaceFile("agent-1", "../escape.txt", Buffer.from("x")),
