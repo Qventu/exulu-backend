@@ -37,10 +37,12 @@ export type HermesRunStreamParams = {
   apiKey: string;
   /** Hermes session id carried via X-Hermes-Session-Id (our external identity). */
   hermesSessionId: string;
-  /** Optional per-request model override (LiteLLM model_name). */
-  model?: string;
-  /** OpenAI-style messages for the run request. */
-  messages: Array<{ role: string; content: string }>;
+  /**
+   * The user's input for this turn. Hermes' /v1/runs follows the OpenAI
+   * Responses API: a single `input` string (the model is server-side via
+   * config.yaml), with history carried by the session, not re-sent.
+   */
+  input: string;
   /** Original UI messages — enables persistence-mode id assignment. */
   originalMessages: UIMessage[];
   generateId: IdGenerator;
@@ -52,25 +54,27 @@ export type HermesRunStreamParams = {
 
 const log = (line: string) => console.log(`[EXULU-HERMES-RUN] ${line}`);
 
-/**
- * Minimal text extraction from UI message parts → an OpenAI-style message.
- * Phase 2 is text-only; tool-call history round-tripping comes with Phase 3.
- */
-export const uiMessagesToOpenAI = (
-  messages: UIMessage[],
-): Array<{ role: string; content: string }> =>
-  messages.map((m) => ({
-    role: m.role,
-    content: (m.parts ?? [])
-      .map((p: any) => (p?.type === "text" ? p.text : ""))
-      .join(""),
-  }));
+/** Concatenate the text parts of a single UI message into a plain string. */
+export const uiMessageText = (message: UIMessage | undefined): string =>
+  (message?.parts ?? [])
+    .map((p: any) => (p?.type === "text" ? p.text : ""))
+    .join("");
 
 /** A normalized event the translator understands, decoupled from wire names. */
 type NormalizedEvent =
   | { kind: "text"; delta: string }
   | { kind: "reasoning"; delta: string }
-  | { kind: "tool-start"; toolCallId: string; toolName: string; input?: unknown }
+  // Tool calls follow the OpenAI Responses streaming sequence: an item is added
+  // (name known), its arguments stream in as text deltas, then finalize.
+  | {
+      kind: "tool-start";
+      itemId: string;
+      toolCallId: string;
+      toolName: string;
+      input?: unknown;
+    }
+  | { kind: "tool-args-delta"; itemId: string; delta: string }
+  | { kind: "tool-args-done"; itemId: string; toolCallId?: string; arguments: unknown }
   | { kind: "tool-end"; toolCallId: string; output: unknown }
   | { kind: "approval"; approvalId: string; toolCallId: string }
   | { kind: "finish"; usage?: HermesUsage }
@@ -103,20 +107,79 @@ export const normalizeEvent = (
     if (typeof r === "string" && r.length > 0) return { kind: "reasoning", delta: r };
   }
 
-  if (/tool.*(start|call)/i.test(type)) {
+  // --- Tool calls (OpenAI Responses streaming sequence) ---
+  // Argument deltas/done must be matched BEFORE the generic function_call branch
+  // so they aren't mistaken for new tool starts.
+  if (/function_call_arguments\.delta/i.test(type)) {
     return {
-      kind: "tool-start",
-      toolCallId: String(data?.tool_call_id ?? data?.id ?? data?.toolCallId ?? ""),
-      toolName: String(data?.tool_name ?? data?.name ?? data?.toolName ?? "tool"),
-      input: data?.input ?? data?.arguments ?? data?.args,
+      kind: "tool-args-delta",
+      itemId: String(data?.item_id ?? data?.id ?? ""),
+      delta: String(data?.delta ?? ""),
+    };
+  }
+  if (/function_call_arguments\.done/i.test(type)) {
+    return {
+      kind: "tool-args-done",
+      itemId: String(data?.item_id ?? data?.id ?? ""),
+      arguments: data?.arguments,
     };
   }
 
-  if (/tool.*(complete|result|output|end)/i.test(type)) {
+  // An output item was added/done. Inspect the nested item to tell a function
+  // call (tool start) from its output (tool result).
+  const item = data?.item;
+  if (/output_item\.(added|done)/i.test(type) && item) {
+    const itemType = String(item.type ?? "");
+    if (/function_call_output|tool.*output/i.test(itemType)) {
+      return {
+        kind: "tool-end",
+        toolCallId: String(item.call_id ?? item.id ?? ""),
+        output: item.output ?? item.result ?? item.content,
+      };
+    }
+    if (/function_call|tool/i.test(itemType)) {
+      // On ".done" the full arguments are present → finalize; on ".added" the
+      // name is known but args may be empty → start.
+      if (/\.done/i.test(type) && item.arguments !== undefined) {
+        return {
+          kind: "tool-args-done",
+          itemId: String(item.id ?? ""),
+          toolCallId: String(item.call_id ?? item.id ?? ""),
+          arguments: item.arguments,
+        };
+      }
+      return {
+        kind: "tool-start",
+        itemId: String(item.id ?? ""),
+        toolCallId: String(item.call_id ?? item.id ?? ""),
+        toolName: String(item.name ?? item.tool_name ?? "tool"),
+      };
+    }
+  }
+
+  // Tool result (flat / Hermes-custom shapes). Checked before the start branch
+  // because "function_call_output" also contains "function_call".
+  if (/(function_call_output|tool.*(complete|result|output|end))/i.test(type)) {
     return {
       kind: "tool-end",
-      toolCallId: String(data?.tool_call_id ?? data?.id ?? data?.toolCallId ?? ""),
+      toolCallId: String(
+        data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId ?? "",
+      ),
       output: data?.output ?? data?.result ?? data?.content,
+    };
+  }
+
+  // Tool start (flat / Hermes-custom). May carry full input in one shot.
+  if (/(function_call|tool.*(start|call))/i.test(type)) {
+    const toolCallId = String(
+      data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId ?? "",
+    );
+    return {
+      kind: "tool-start",
+      itemId: toolCallId,
+      toolCallId,
+      toolName: String(data?.tool_name ?? data?.name ?? data?.toolName ?? "tool"),
+      input: data?.input ?? data?.arguments ?? data?.args,
     };
   }
 
@@ -128,8 +191,12 @@ export const normalizeEvent = (
     };
   }
 
-  if (/(run\.(completed|finished|succeeded)|^done$|^finish$|completed)/i.test(type)) {
-    const u = data?.usage ?? data?.tokens;
+  if (
+    /(run\.(completed|finished|succeeded)|response\.(completed|done)|^done$|^finish$|completed)/i.test(
+      type,
+    )
+  ) {
+    const u = data?.usage ?? data?.tokens ?? data?.response?.usage;
     const usage: HermesUsage | undefined = u
       ? {
           inputTokens: u.input_tokens ?? u.prompt_tokens ?? u.inputTokens,
@@ -142,18 +209,36 @@ export const normalizeEvent = (
     return { kind: "finish", usage };
   }
 
-  if (/(run\.(failed|error)|^error$)/i.test(type)) {
+  if (/(run\.(failed|error)|response\.(failed|error)|failed|^error$)/i.test(type)) {
     return {
       kind: "error",
-      message: String(data?.error ?? data?.message ?? "Hermes run error"),
+      message: String(
+        data?.error?.message ?? data?.error ?? data?.message ?? "Hermes run error",
+      ),
     };
   }
 
   return { kind: "ignore" };
 };
 
-/** Per-run translation state (open text block id, surfaced usage). */
-type TranslateState = { textId: string | undefined; usage: HermesUsage | undefined };
+/** Per-run translation state (open text block id, in-flight tools, usage). */
+type TranslateState = {
+  textId: string | undefined;
+  usage: HermesUsage | undefined;
+  /** itemId → tool identity, so argument deltas/done resolve back to a call. */
+  tools: Map<string, { toolCallId: string; toolName: string }>;
+};
+
+/** Parse a tool's accumulated argument string into a structured input. */
+const parseToolInput = (raw: unknown): unknown => {
+  if (raw == null) return {};
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw; // keep the raw string if it isn't valid JSON
+  }
+};
 
 /** Write the UIMessage chunks for one normalized event. Returns true on finish. */
 const translateEvent = (
@@ -179,11 +264,48 @@ const translateEvent = (
       return false;
     }
     case "tool-start": {
-      writer.write({
-        type: "tool-input-available",
+      state.tools.set(ev.itemId, {
         toolCallId: ev.toolCallId,
         toolName: ev.toolName,
-        input: ev.input ?? {},
+      });
+      // Surface the tool name to the UI immediately (streaming-input start).
+      writer.write({
+        type: "tool-input-start",
+        toolCallId: ev.toolCallId,
+        toolName: ev.toolName,
+        dynamic: true,
+      });
+      // Non-streaming shape: the start event already carried full input.
+      if (ev.input !== undefined) {
+        writer.write({
+          type: "tool-input-available",
+          toolCallId: ev.toolCallId,
+          toolName: ev.toolName,
+          input: parseToolInput(ev.input),
+          dynamic: true,
+        });
+      }
+      return false;
+    }
+    case "tool-args-delta": {
+      const t = state.tools.get(ev.itemId);
+      if (t) {
+        writer.write({
+          type: "tool-input-delta",
+          toolCallId: t.toolCallId,
+          inputTextDelta: ev.delta,
+        });
+      }
+      return false;
+    }
+    case "tool-args-done": {
+      const t = state.tools.get(ev.itemId);
+      const toolCallId = t?.toolCallId ?? ev.toolCallId ?? ev.itemId;
+      writer.write({
+        type: "tool-input-available",
+        toolCallId,
+        toolName: t?.toolName ?? "tool",
+        input: parseToolInput(ev.arguments),
         dynamic: true,
       });
       return false;
@@ -263,9 +385,10 @@ const startRun = async (
       "X-Hermes-Session-Id": params.hermesSessionId,
     },
     body: JSON.stringify({
-      messages: params.messages,
-      ...(params.model ? { model: params.model } : {}),
-      stream: true,
+      input: params.input,
+      // Session continuity: also pass it in the body (the X-Hermes-Session-Id
+      // header carries it too) so Hermes recalls this conversation's history.
+      session_id: params.hermesSessionId,
     }),
     signal: params.signal,
   });
@@ -292,7 +415,11 @@ export const createHermesRunStream = (
     onError: params.onError,
     onFinish: params.onFinish,
     execute: async ({ writer }) => {
-      const state: TranslateState = { textId: undefined, usage: undefined };
+      const state: TranslateState = {
+        textId: undefined,
+        usage: undefined,
+        tools: new Map(),
+      };
       writer.write({ type: "start" });
 
       const runId = await startRun(params);
@@ -322,6 +449,13 @@ export const createHermesRunStream = (
           // some events may send a bare string payload
         }
         const ev = normalizeEvent(record.event, data);
+        if (ev.kind === "ignore" && process.env.HERMES_DEBUG_EVENTS === "true") {
+          // Bring-up aid: surface unmapped events so the wire format can be
+          // pinned. Enable with HERMES_DEBUG_EVENTS=true.
+          log(
+            `unmapped event=${record.event ?? "(none)"} data=${record.data.slice(0, 300)}`,
+          );
+        }
         const isFinish = translateEvent(ev, writer, state, params.generateId);
         if (isFinish) {
           finished = true;

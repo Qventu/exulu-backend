@@ -22,7 +22,7 @@ export {
 } from "./provisioner";
 export {
   createHermesRunStream,
-  uiMessagesToOpenAI,
+  uiMessageText,
   type HermesRunStreamParams,
 } from "./run-stream";
 export { resolveHermesSessionId } from "./session-map";

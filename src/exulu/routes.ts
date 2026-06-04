@@ -62,7 +62,7 @@ import {
   ensureGateway,
   resolveHermesSessionId,
   createHermesRunStream,
-  uiMessagesToOpenAI,
+  uiMessageText,
 } from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -823,15 +823,10 @@ Mood: friendly and intelligent.
             baseUrl: gateway.baseUrl,
             apiKey: gateway.apiKey,
             hermesSessionId,
-            model: modelId,
-            // With a persisted session, rely on Hermes' own per-session memory
-            // (carried via X-Hermes-Session-Id) and send only the new user turn;
-            // sessionless requests send the full in-request conversation.
-            messages: uiMessagesToOpenAI(
-              headers.session
-                ? ([message].filter(Boolean) as UIMessage[])
-                : conversation,
-            ),
+            // Hermes /v1/runs takes a single `input` string (OpenAI Responses
+            // shape); history is carried by the session, so we send only the
+            // new user turn. The model is configured server-side in config.yaml.
+            input: uiMessageText(message),
             originalMessages: conversation,
             generateId: createIdGenerator({ prefix: "msg_", size: 16 }),
             signal: ac.signal,
