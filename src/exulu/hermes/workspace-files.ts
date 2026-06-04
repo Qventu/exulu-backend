@@ -3,7 +3,6 @@ import { exuluApp } from "../app/singleton.ts";
 import { requestValidators } from "../../validators/requests.ts";
 import { checkRecordAccess } from "../../utils/check-record-access.ts";
 import { isHermesEnabled } from "./config";
-import { profileIdFor } from "./provisioner";
 import {
   deleteWorkspaceFile,
   listWorkspaceFiles,
@@ -66,16 +65,12 @@ const authorize = async (
     res.status(403).json({ message: "You don't have access to this agent." });
     return null;
   }
-  const scope =
-    (agent as any).advanced_agent_profile_scope === "private"
-      ? "private"
-      : "shared";
-  try {
-    return profileIdFor(agent.id, scope, user?.id);
-  } catch (err) {
-    res.status(400).json({ message: (err as Error).message });
-    return null;
-  }
+  // The shared-files workspace is AGENT-level (keyed by agentId), matching the
+  // MCP file tools — the MCP server only knows the agentId, so both ends must
+  // use the same key. (This is decoupled from the gateway's profile scope,
+  // which may be per-user; only the explicitly-shared files folder is shared
+  // across the agent's users.)
+  return agent.id;
 };
 
 const getPath = (req: Request): string | null => {
