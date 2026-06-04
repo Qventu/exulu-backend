@@ -263,3 +263,53 @@ Each phase is independently shippable behind `ENABLE_HERMES_AGENT` (off by defau
 - Whether Exulu's on-disk skill format already satisfies Hermes' `SKILL.md` frontmatter or
   needs a transform (Phase 4).
 - Whether to offer a **fallback to simple mode** on Hermes failure, or hard-fail (Phase 2).
+
+---
+
+## Revision 2026-06-04 — verified wire format, sandboxing, new phases
+
+Live-gateway testing pinned the wire format and surfaced a security model change.
+
+**Verified facts (supersede earlier guesses):**
+- `POST /v1/runs` uses the OpenAI **Responses** shape: `{ input: string, session_id }`
+  (model is server-side via config.yaml), returns `{ run_id, status }`.
+- `/v1/runs/{id}/events` streams **Hermes-native** SSE: no `event:` line (type in
+  `data.event`), tool name in `data.tool`, **no call id**, **no structured args** (only a
+  `preview` string), and `tool.completed` carries **no result** (just `duration` + `error`).
+  Confirmed events: `tool.started`, `tool.completed`, `message.delta`, `reasoning.available`,
+  `run.completed` (with `usage: { input_tokens, output_tokens, total_tokens }`).
+- The adapter's `normalizeEvent`/`translateEvent` were rewritten to this; tool ids are
+  synthesized and `started`/`completed` paired via a LIFO stack.
+- **Token usage is per-run and accurate** (e.g. 957k for a deep tool-using turn, 77k for a
+  lighter one). It is high because Hermes re-injects growing context (incl. large tool
+  outputs) across many internal LLM calls. Not a display bug — surfaced via
+  `messageMetadata.totalTokens`.
+
+**Security finding:** Hermes' built-in `terminal`/`search_files`/`read_file` tools execute
+on the **host** with the backend's privileges (observed running `ls`/`find`/file reads
+across the user's home dir). Unacceptable for shared/`public` agents. Mitigations adopted:
+- `approvals.mode: smart` in every profile (auto-approve low-risk, prompt on destructive) —
+  overridable via `HERMES_APPROVALS_MODE`. **Requires** the approval round-trip (below).
+- `terminal: { backend: local, cwd: <profileDir>/workspace }` — an **absolute** per-profile
+  workspace, keeping the agent out of Hermes' own config/state. (`cwd: "."` would mean the
+  launch dir, not the profile dir.)
+- **Per-gateway OS-user isolation** (new phase): run each `hermes gateway` as a dedicated
+  unprivileged user whose HOME is the profile dir, so even shell tools can't reach the rest
+  of the host.
+
+**Revised / added phases:**
+- **Phase 3 — ExuluTools over MCP** (unchanged intent): `/mcp/:agentId`, provisioner writes
+  `mcp_servers.url`.
+- **Phase 3b — Approval round-trip:** track active runs (run id + gateway) so a Hermes
+  `approval.request` event → frontend `ToolCallApproval` → backend `POST /v1/runs/{id}/approval`
+  / `/stop`. Needed for `approvals.mode: smart` not to hang on destructive actions.
+- **Phase 4 — Skills sync** (unchanged).
+- **Phase 6 — Auto-generated skills surfacing:** Hermes auto-distills past conversations into
+  skills under `${profileDir}/skills/`. Expose them in `chat.tsx` (sidebar) with
+  review/edit/delete — backend endpoints to list/read/update/delete skill files in the
+  profile, gated by the agent's existing RBAC.
+- **Phase 7 — OS-user isolation:** supervisor spawns the gateway under a per-profile
+  unprivileged user (uid/gid + HOME=profileDir). Platform-specific; Linux-first.
+
+**Done in this revision:** `approvals.mode` + `terminal.cwd`/workspace are written by the
+provisioner (config format v2).

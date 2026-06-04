@@ -35,6 +35,13 @@ describe("ensureProfile", () => {
     expect(config).toContain("provider: custom");
     expect(config).toContain('base_url: "http://127.0.0.1:4000/v1"');
     expect(config).toContain('api_key: "${LITELLM_MASTER_KEY}"');
+    // Approval policy + sandboxed working dir.
+    expect(config).toContain("mode: smart");
+    expect(config).toContain("backend: local");
+    expect(config).toContain(`cwd: "${join(dir, "workspace")}"`);
+
+    // The workspace dir the agent's shell is bound to must exist.
+    await expect(stat(join(dir, "workspace"))).resolves.toBeDefined();
 
     const soul = await readFile(join(dir, "SOUL.md"), "utf8");
     expect(soul).toBe("Be a precise research assistant.\n");

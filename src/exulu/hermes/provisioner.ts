@@ -27,9 +27,17 @@ import { getLiteLLMBaseUrl, getProfileDir } from "./config";
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 1;
+const PROVISION_FORMAT_VERSION = 2;
 
 const HASH_FILE = ".exulu-hash";
+
+/**
+ * Tool-approval policy written to config.yaml. `smart` auto-approves low-risk
+ * actions and emits an approval event (requiring a decision) for destructive
+ * ones. Overridable via HERMES_APPROVALS_MODE.
+ */
+const getApprovalsMode = (): string =>
+  process.env.HERMES_APPROVALS_MODE?.trim() || "smart";
 
 export type ProvisionInput = {
   /** `<agentId>` (shared) or `<agentId>/<userId>` (private). */
@@ -51,6 +59,7 @@ const computeHash = (input: ProvisionInput): string => {
     instructions: input.instructions ?? "",
     modelName: input.modelName,
     litellm: getLiteLLMBaseUrl(),
+    approvals: getApprovalsMode(),
     skills: (input.skills ?? [])
       .map((s) => `${s.id}@${s.version ?? 1}`)
       .sort(),
@@ -65,7 +74,7 @@ const DEFAULT_SOUL = `You are a helpful, capable assistant.`;
 const yamlString = (value: string): string =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
-const renderConfigYaml = (input: ProvisionInput): string => {
+const renderConfigYaml = (input: ProvisionInput, workspaceDir: string): string => {
   // Hermes calls model.base_url directly when set, authenticating with
   // model.api_key. We point it at the LiteLLM proxy so every model call still
   // flows through the single model gateway. ${LITELLM_MASTER_KEY} is resolved
@@ -81,6 +90,19 @@ const renderConfigYaml = (input: ProvisionInput): string => {
     `  base_url: ${yamlString(getLiteLLMBaseUrl())}`,
     '  api_key: "${LITELLM_MASTER_KEY}"',
     "  api_mode: chat_completions",
+    "",
+    "# Tool-approval policy: `smart` auto-approves low-risk actions and emits an",
+    "# approval event (requiring a decision) before destructive ones.",
+    "approvals:",
+    `  mode: ${getApprovalsMode()}`,
+    "",
+    "# Bound the agent's shell/file tools to its own workspace directory. cwd",
+    "# MUST be absolute — Hermes treats '.' as the launch dir, not the profile",
+    "# dir. This keeps the agent out of Hermes' own config/state and (together",
+    "# with per-gateway OS-user isolation) off the rest of the host.",
+    "terminal:",
+    "  backend: local",
+    `  cwd: ${yamlString(workspaceDir)}`,
     "",
     "# mcp_servers: added in Phase 3 (ExuluTools over HTTP MCP).",
     "# skills:      added in Phase 4 (external_dirs synced from S3).",
@@ -115,14 +137,17 @@ export const ensureProfile = async (input: ProvisionInput): Promise<void> => {
 
   const task = (async () => {
     const dir = getProfileDir(input.profileId);
-    await mkdir(dir, { recursive: true });
+    // The agent's shell/file tools are bound here (terminal.cwd). Creating it
+    // also creates the profile dir (recursive).
+    const workspaceDir = join(dir, "workspace");
+    await mkdir(workspaceDir, { recursive: true });
 
     const hash = computeHash(input);
     const hashPath = join(dir, HASH_FILE);
     const current = await readFile(hashPath, "utf8").catch(() => undefined);
     if (current?.trim() === hash) return; // up to date
 
-    await writeFile(join(dir, "config.yaml"), renderConfigYaml(input), "utf8");
+    await writeFile(join(dir, "config.yaml"), renderConfigYaml(input, workspaceDir), "utf8");
     // SOUL.md is owned by Exulu (Hermes won't overwrite an existing one), so we
     // always rewrite it to propagate instruction edits.
     await writeFile(join(dir, "SOUL.md"), renderSoul(input.instructions), "utf8");
