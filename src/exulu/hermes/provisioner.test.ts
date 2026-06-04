@@ -55,7 +55,8 @@ describe("ensureProfile", () => {
     await expect(stat(join(dir, "workspace"))).resolves.toBeDefined();
 
     const soul = await readFile(join(dir, "SOUL.md"), "utf8");
-    expect(soul).toBe("Be a precise research assistant.\n");
+    expect(soul).toContain("Be a precise research assistant.");
+    expect(soul).toContain("write_shared_file"); // shared-files guidance appended
 
     const env = await readFile(join(dir, ".env"), "utf8");
     expect(env).toContain("LITELLM_MASTER_KEY=sk-test-master");
@@ -114,7 +115,7 @@ describe("ensureProfile", () => {
     await ensureProfile({ profileId: "agent-4", instructions: "v1", modelName: "m" });
     await ensureProfile({ profileId: "agent-4", instructions: "v2", modelName: "m" });
     const soul = await readFile(join(profileDir("agent-4"), "SOUL.md"), "utf8");
-    expect(soul).toBe("v2\n");
+    expect(soul).toContain("v2");
   });
 
   it("dedupes concurrent provisioning of the same profile", async () => {
@@ -124,7 +125,7 @@ describe("ensureProfile", () => {
       ensureProfile({ profileId: "agent-5", instructions: "v1", modelName: "m" }),
     ]);
     const soul = await readFile(join(profileDir("agent-5"), "SOUL.md"), "utf8");
-    expect(soul).toBe("v1\n");
+    expect(soul).toContain("v1");
   });
 });
 

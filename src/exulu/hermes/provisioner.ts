@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 11;
+const PROVISION_FORMAT_VERSION = 12;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -104,6 +104,25 @@ const computeHash = (input: ProvisionInput): string => {
 };
 
 const DEFAULT_SOUL = `You are a helpful, capable assistant.`;
+
+/**
+ * Appended to every advanced-mode SOUL.md so the agent reliably uses the shared
+ * workspace (visible to the user in the Files panel) instead of its private
+ * container filesystem for anything the user should see. Tool-selection
+ * guidance, not a security boundary.
+ */
+const SHARED_FILES_GUIDANCE = `
+
+## Shared files
+Files the user uploads, and any file you want the user to see or keep
+(summaries, reports, generated code, data, etc.), live in a shared workspace.
+Use the \`list_shared_files\`, \`read_shared_file\`, and \`write_shared_file\` tools
+for those:
+- To find or read a file the user mentions or uploaded, use \`list_shared_files\`
+  then \`read_shared_file\`.
+- To give the user a file, always save it with \`write_shared_file\` (your own
+  filesystem, e.g. /root, is private scratch the user cannot see or download).
+`;
 
 /** YAML-safe double-quoted scalar (handles the limited set of chars we emit). */
 const yamlString = (value: string): string =>
@@ -191,7 +210,10 @@ const renderEnv = (): string => {
 
 const renderSoul = (instructions: string | undefined): string => {
   const body = instructions?.trim();
-  return body && body.length > 0 ? `${body}\n` : `${DEFAULT_SOUL}\n`;
+  const base = body && body.length > 0 ? body : DEFAULT_SOUL;
+  // Append the shared-files tool guidance so deliverables/uploads flow through
+  // the workspace the user sees, not the agent's private container fs.
+  return `${base}\n${SHARED_FILES_GUIDANCE}`;
 };
 
 /** In-flight provisioning per profile, so concurrent requests don't race. */
