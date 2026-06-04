@@ -35,13 +35,14 @@ describe("ensureProfile", () => {
     expect(config).toContain("provider: custom");
     expect(config).toContain('base_url: "http://127.0.0.1:4000/v1"');
     expect(config).toContain('api_key: "${LITELLM_MASTER_KEY}"');
-    // Approval policy + sandboxed working dir + docker isolation (default).
+    // Approval policy + docker isolation (default). Under docker, cwd is the
+    // container path /workspace and the host workspace is mounted there.
     expect(config).toContain("mode: smart");
     expect(config).toContain("backend: docker");
-    expect(config).toContain(`cwd: "${join(dir, "workspace")}"`);
+    expect(config).toContain('cwd: "/workspace"');
     expect(config).toContain("docker_image:");
     expect(config).toContain("docker_volumes:");
-    expect(config).toContain(`${join(dir, "workspace")}:${join(dir, "workspace")}`);
+    expect(config).toContain(`${join(dir, "workspace")}:/workspace`);
     // ExuluTools MCP endpoint (agent id derived from profileId) + key in .env.
     expect(config).toContain("mcp_servers:");
     expect(config).toContain("/mcp/agent-1");
