@@ -508,16 +508,23 @@ export const createHermesRunStream = (
         const ev = normalizeEvent(record.event, data);
         if (process.env.HERMES_DEBUG_EVENTS === "true") {
           // Bring-up aid: dump every event and how it mapped, so the wire format
-          // can be pinned. Enable with HERMES_DEBUG_EVENTS=true.
-          log(
-            `event=${record.event ?? "(none)"} -> ${ev.kind} :: ${record.data.slice(0, 600)}`,
-          );
+          // can be pinned. The finish/error payloads are logged in full (no
+          // truncation) so a usage object after a long `output` is visible.
+          const preview =
+            ev.kind === "finish" || ev.kind === "error"
+              ? record.data
+              : record.data.slice(0, 600);
+          log(`event=${record.event ?? "(none)"} -> ${ev.kind} :: ${preview}`);
         }
         const isFinish = translateEvent(ev, writer, state, params.generateId);
         if (isFinish) {
           finished = true;
           break;
         }
+      }
+
+      if (process.env.HERMES_DEBUG_EVENTS === "true") {
+        log(`run finished. extracted usage=${JSON.stringify(state.usage)}`);
       }
 
       if (state.textId) writer.write({ type: "text-end", id: state.textId });
