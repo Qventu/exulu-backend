@@ -32,6 +32,8 @@ provisioner writes the real files at runtime under `${HERMES_HOME}/profiles/<id>
 | `HERMES_MAX_GATEWAYS` | `20` | LRU cap on concurrent gateways. |
 | `HERMES_IDLE_TIMEOUT_MS` | `900000` | Idle eviction threshold (15 min). |
 | `HERMES_APPROVALS_MODE` | `smart` | Tool-approval policy written to config.yaml. |
+| `HERMES_TERMINAL_BACKEND` | `docker` | Backend that runs native shell/file tools (`docker` isolates without host user namespaces; `local`/`ssh`/`modal`/`daytona`/`singularity` also selectable). Docker must be available to the host process. |
+| `HERMES_DOCKER_IMAGE` | `nikolaik/python-nodejs:python3.11-nodejs20` | Image for the docker backend (needs python + node). |
 | `BACKEND` | `http://127.0.0.1:<PORT>` | URL a gateway uses to reach Exulu's `/mcp/:agentId` (set this if the host app's port isn't `PORT`/`EXULU_PORT`). |
 | `EXULU_MCP_KEY` | `LITELLM_MASTER_KEY` | Bearer token guarding the ExuluTools MCP endpoint. |
 

@@ -308,8 +308,20 @@ across the user's home dir). Unacceptable for shared/`public` agents. Mitigation
   skills under `${profileDir}/skills/`. Expose them in `chat.tsx` (sidebar) with
   review/edit/delete — backend endpoints to list/read/update/delete skill files in the
   profile, gated by the agent's existing RBAC.
-- **Phase 7 — OS-user isolation:** supervisor spawns the gateway under a per-profile
-  unprivileged user (uid/gid + HOME=profileDir). Platform-specific; Linux-first.
+- **Phase 7 — tool isolation via Hermes' terminal backend (supersedes OS-user
+  isolation):** Hermes has built-in terminal backends (`docker`, `ssh`, `modal`,
+  `daytona`, `singularity`) that isolate native tool execution at the Hermes layer.
+  The `local` backend can't be confined by config (no chroot/path-allowlist), and
+  bwrap/Nix sandboxes need unprivileged user namespaces our deploy hosts lack.
+  **Docker uses the daemon's privileges, not user namespaces, so it works where
+  bwrap fell back — and behaves the same on macOS (Docker Desktop) and Linux.**
+  So Phase 7 is a config knob, not infra: the provisioner writes
+  `terminal.backend` (default `docker` via `HERMES_TERMINAL_BACKEND`) +
+  `docker_image` + `docker_volumes` that bind-mount the workspace (rw) and synced
+  Exulu skills (ro) host→same path (so absolute `cwd`/`external_dirs` resolve in
+  the container; secrets are not mounted). Requires Docker reachable by the host
+  process. **Open validation:** the host↔container volume mapping for skills/
+  workspace needs verifying against a real Docker backend.
 
 **Done in this revision:** `approvals.mode` + `terminal.cwd`/workspace are written by the
 provisioner (config format v2).

@@ -201,4 +201,23 @@ export const validateHermesAtBoot = (): void => {
         "will fail to authenticate model calls until it is configured.",
     );
   }
+
+  // Native tools run via the configured terminal backend. `docker` (default)
+  // isolates them without host user namespaces but requires Docker to be
+  // reachable by the host process.
+  const backend = process.env.HERMES_TERMINAL_BACKEND?.trim() || "docker";
+  if (backend === "docker") {
+    log(
+      "Tool isolation: docker backend. Ensure Docker is available to this process " +
+        "(set HERMES_TERMINAL_BACKEND=local to disable, but the agent's shell/file tools " +
+        "then run unsandboxed on the host).",
+    );
+  } else if (backend === "local") {
+    console.warn(
+      "[EXULU-HERMES] HERMES_TERMINAL_BACKEND=local: the agent's native shell/file tools run " +
+        "UNSANDBOXED on the host. Use 'docker' (default) for isolation in shared/production deployments.",
+    );
+  } else {
+    log(`Tool isolation: ${backend} backend.`);
+  }
 };
