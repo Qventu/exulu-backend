@@ -144,6 +144,31 @@ export const resolveFromRoot = (root: string, p: string): string =>
   isAbsolute(p) ? p : join(root, p);
 
 /**
+ * Bearer token guarding the ExuluTools MCP endpoint (and written into each
+ * profile's config.yaml `mcp_servers` header via the .env). Defaults to
+ * LITELLM_MASTER_KEY so no new secret is required; override with EXULU_MCP_KEY.
+ */
+export const getExuluMcpKey = (): string =>
+  process.env.EXULU_MCP_KEY?.trim() || process.env.LITELLM_MASTER_KEY || "";
+
+/**
+ * Base URL a Hermes gateway uses to reach Exulu's MCP endpoint. Exulu is a
+ * library (the host app binds the port), so this is configured, not inferred.
+ * Defaults to 127.0.0.1:<EXULU_PORT|PORT|3000> since the gateway is co-located.
+ */
+export const getExuluMcpBaseUrl = (): string => {
+  const explicit = process.env.EXULU_MCP_BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+  const host = process.env.EXULU_MCP_HOST ?? "127.0.0.1";
+  const port = process.env.EXULU_PORT ?? process.env.PORT ?? "3000";
+  return `http://${host}:${port}`;
+};
+
+/** Full MCP URL for a given agent, written into the profile config.yaml. */
+export const exuluMcpUrlFor = (agentId: string): string =>
+  `${getExuluMcpBaseUrl()}/mcp/${agentId}`;
+
+/**
  * Validate Hermes configuration at boot when ENABLE_HERMES_AGENT=true.
  *
  * Hermes gateways are lazy-started (nothing spawns at boot), so this only

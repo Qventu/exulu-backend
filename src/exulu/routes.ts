@@ -63,6 +63,7 @@ import {
   resolveHermesSessionId,
   createHermesRunStream,
   uiMessageText,
+  registerExuluMcpRoute,
 } from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -790,6 +791,7 @@ Mood: friendly and intelligent.
             const profileId = profileIdFor(agent.id, scope, user?.id);
             await ensureProfile({
               profileId,
+              agentId: agent.id,
               instructions: instructions ?? agent.instructions,
               modelName: modelId,
               skills: enabledSkills.map((s) => ({
@@ -1063,6 +1065,11 @@ Mood: friendly and intelligent.
   if (isLiteLLMEnabled() && providers.length > 0) {
     registerAgentRunRoute("/agents/litellm/run", providers[0]!);
   }
+
+  // Advanced (Hermes) agent mode: expose each agent's enabled ExuluTools to its
+  // Hermes gateway over HTTP MCP at /mcp/:agentId. No-op unless Hermes is
+  // enabled. These tools ADD to Hermes' native tools, they don't replace them.
+  registerExuluMcpRoute(app, config);
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.
   // The frontend posts the last user+assistant exchange and gets back up to 3

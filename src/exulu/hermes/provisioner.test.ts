@@ -39,6 +39,10 @@ describe("ensureProfile", () => {
     expect(config).toContain("mode: smart");
     expect(config).toContain("backend: local");
     expect(config).toContain(`cwd: "${join(dir, "workspace")}"`);
+    // ExuluTools MCP endpoint (agent id derived from profileId) + key in .env.
+    expect(config).toContain("mcp_servers:");
+    expect(config).toContain("/mcp/agent-1");
+    expect(config).toContain('Authorization: "Bearer ${EXULU_MCP_KEY}"');
 
     // The workspace dir the agent's shell is bound to must exist.
     await expect(stat(join(dir, "workspace"))).resolves.toBeDefined();

@@ -1,5 +1,8 @@
 import { join } from "node:path";
 import {
+  exuluMcpUrlFor,
+  getExuluMcpBaseUrl,
+  getExuluMcpKey,
   getIdleTimeoutMs,
   getMaxGateways,
   getPortRange,
@@ -61,6 +64,30 @@ describe("getIdleTimeoutMs", () => {
   it("defaults to 15 minutes", () => {
     delete process.env.HERMES_IDLE_TIMEOUT_MS;
     expect(getIdleTimeoutMs()).toBe(15 * 60 * 1000);
+  });
+});
+
+describe("ExuluTools MCP helpers", () => {
+  it("getExuluMcpKey prefers EXULU_MCP_KEY, falls back to LITELLM_MASTER_KEY", () => {
+    process.env.LITELLM_MASTER_KEY = "sk-master";
+    delete process.env.EXULU_MCP_KEY;
+    expect(getExuluMcpKey()).toBe("sk-master");
+    process.env.EXULU_MCP_KEY = "mcp-secret";
+    expect(getExuluMcpKey()).toBe("mcp-secret");
+  });
+
+  it("getExuluMcpBaseUrl honors EXULU_MCP_BASE_URL, else 127.0.0.1:<port>", () => {
+    delete process.env.EXULU_MCP_BASE_URL;
+    delete process.env.EXULU_PORT;
+    process.env.PORT = "4567";
+    expect(getExuluMcpBaseUrl()).toBe("http://127.0.0.1:4567");
+    process.env.EXULU_MCP_BASE_URL = "https://exulu.internal:9000/";
+    expect(getExuluMcpBaseUrl()).toBe("https://exulu.internal:9000");
+  });
+
+  it("exuluMcpUrlFor builds the per-agent path", () => {
+    process.env.EXULU_MCP_BASE_URL = "http://127.0.0.1:3000";
+    expect(exuluMcpUrlFor("agent-xyz")).toBe("http://127.0.0.1:3000/mcp/agent-xyz");
   });
 });
 
