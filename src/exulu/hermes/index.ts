@@ -25,7 +25,7 @@ export {
   uiMessageText,
   type HermesRunStreamParams,
 } from "./run-stream";
-export { resolveHermesSessionId } from "./session-map";
+export { resolveHermesSessionId, loadHermesConversationHistory } from "./session-map";
 export { syncProfileSkills, exuluSkillsDir } from "./skills-sync";
 export { registerExuluMcpRoute } from "./mcp-server";
 export { registerHermesSkillsRoutes } from "./skills-api";

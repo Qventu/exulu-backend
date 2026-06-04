@@ -61,6 +61,7 @@ import {
   profileIdFor,
   ensureGateway,
   resolveHermesSessionId,
+  loadHermesConversationHistory,
   createHermesRunStream,
   uiMessageText,
   registerExuluMcpRoute,
@@ -836,14 +837,30 @@ Mood: friendly and intelligent.
             Boolean,
           ) as UIMessage[];
 
+          // Load prior turns for multi-turn memory — the runs API's session_id
+          // is only a correlation label, so we pass conversation_history
+          // explicitly (read from agent_messages, our dual-write). Best-effort:
+          // a load failure just means this turn starts fresh, not a 503.
+          let conversationHistory: Array<{ role: string; content: string }> = [];
+          try {
+            conversationHistory = await loadHermesConversationHistory(
+              db,
+              headers.session,
+              user?.id,
+            );
+          } catch (histErr) {
+            console.error("[EXULU] Hermes history load failed:", histErr);
+          }
+
           const stream = createHermesRunStream({
             baseUrl: gateway.baseUrl,
             apiKey: gateway.apiKey,
             hermesSessionId,
-            // Hermes /v1/runs takes a single `input` string (OpenAI Responses
-            // shape); history is carried by the session, so we send only the
-            // new user turn. The model is configured server-side in config.yaml.
+            // Hermes /v1/runs takes the new turn as `input`; prior turns go in
+            // conversation_history (session_id alone doesn't recall them). The
+            // model is configured server-side in config.yaml.
             input: uiMessageText(message),
+            conversationHistory,
             originalMessages: conversation,
             generateId: createIdGenerator({ prefix: "msg_", size: 16 }),
             signal: ac.signal,

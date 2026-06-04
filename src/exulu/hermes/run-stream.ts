@@ -43,6 +43,13 @@ export type HermesRunStreamParams = {
    * config.yaml), with history carried by the session, not re-sent.
    */
   input: string;
+  /**
+   * Prior turns of the conversation, oldest-first, for the runs API's
+   * `conversation_history`. Required for multi-turn memory: the runs API's
+   * `session_id` is only a correlation label and does NOT make Hermes recall
+   * the conversation, so we pass history explicitly.
+   */
+  conversationHistory?: Array<{ role: string; content: string }>;
   /** Original UI messages — enables persistence-mode id assignment. */
   originalMessages: UIMessage[];
   generateId: IdGenerator;
@@ -445,9 +452,12 @@ const startRun = async (
     },
     body: JSON.stringify({
       input: params.input,
-      // Session continuity: also pass it in the body (the X-Hermes-Session-Id
-      // header carries it too) so Hermes recalls this conversation's history.
+      // session_id is only a correlation label over the runs API; multi-turn
+      // memory comes from conversation_history, which we pass explicitly.
       session_id: params.hermesSessionId,
+      ...(params.conversationHistory && params.conversationHistory.length > 0
+        ? { conversation_history: params.conversationHistory }
+        : {}),
     }),
     signal: params.signal,
   });
