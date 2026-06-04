@@ -65,6 +65,7 @@ import {
   uiMessageText,
   registerExuluMcpRoute,
   registerHermesSkillsRoutes,
+  registerWorkspaceFilesRoutes,
   syncProfileSkills,
 } from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
@@ -1088,6 +1089,10 @@ Mood: friendly and intelligent.
   // Surface the skills a Hermes profile accumulates (incl. auto-distilled ones)
   // for review/edit/delete from the chat UI. RBAC-gated, Hermes-only.
   registerHermesSkillsRoutes(app);
+
+  // Advanced-mode workspace files (the agent's shared per-profile folder),
+  // local-direct, same contract as /sessions/:id/files so the UI is reused.
+  registerWorkspaceFilesRoutes(app);
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.
   // The frontend posts the last user+assistant exchange and gets back up to 3
