@@ -11,11 +11,6 @@ import {
   getExuluMcpKey,
   isHermesEnabled,
 } from "./config";
-import {
-  listWorkspaceFiles,
-  readWorkspaceText,
-  writeWorkspaceFile,
-} from "./workspace-store";
 
 /**
  * Exposes an agent's enabled ExuluTools to a Hermes gateway over HTTP MCP, at
@@ -38,85 +33,6 @@ import {
 
 const log = (line: string) => console.log(`[EXULU-HERMES-MCP] ${line}`);
 
-/**
- * Register the shared-workspace file tools on the MCP server. They operate on
- * the agent's host workspace dir — the same folder the Files panel shows — so
- * the agent and the user share one folder, independent of the agent's private
- * container filesystem.
- */
-const registerWorkspaceFileTools = (server: McpServer, agentId: string): void => {
-  server.registerTool(
-    "list_shared_files",
-    {
-      description:
-        "List files in the shared workspace the user sees in the Files panel " +
-        "(their uploads + files you've saved there). Use this to find files the " +
-        "user refers to.",
-    },
-    async () => {
-      const files = await listWorkspaceFiles(agentId);
-      const text = files.length
-        ? files.map((f) => `${f.path} (${f.size} bytes)`).join("\n")
-        : "(no files in the shared workspace yet)";
-      return { content: [{ type: "text" as const, text }] };
-    },
-  );
-
-  server.registerTool(
-    "read_shared_file",
-    {
-      description:
-        "Read a UTF-8 text file from the shared workspace by its path (as shown " +
-        "by list_shared_files).",
-      inputSchema: { path: z.string().describe("Workspace-relative file path") },
-    },
-    async ({ path }: { path: string }) => {
-      const content = await readWorkspaceText(agentId, path);
-      if (content === undefined) {
-        return {
-          content: [{ type: "text" as const, text: `File not found: ${path}` }],
-          isError: true,
-        };
-      }
-      return { content: [{ type: "text" as const, text: content }] };
-    },
-  );
-
-  server.registerTool(
-    "write_shared_file",
-    {
-      description:
-        "Save a text file to the shared workspace so the user can see and " +
-        "download it in the Files panel. Use this for any deliverable you want " +
-        "the user to keep (summaries, reports, generated code, etc.).",
-      inputSchema: {
-        path: z.string().describe("Workspace-relative file path, e.g. summary.md"),
-        content: z.string().describe("Full file contents"),
-      },
-    },
-    async ({ path, content }: { path: string; content: string }) => {
-      try {
-        await writeWorkspaceFile(agentId, path, Buffer.from(content, "utf8"));
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Saved ${path} to the shared workspace (visible in the Files panel).`,
-            },
-          ],
-        };
-      } catch (err) {
-        return {
-          content: [
-            { type: "text" as const, text: `Error: ${(err as Error).message}` },
-          ],
-          isError: true,
-        };
-      }
-    },
-  );
-};
-
 /** Build an MCP server exposing the agent's enabled ExuluTools. */
 const buildServerForAgent = async (
   agentId: string,
@@ -137,13 +53,6 @@ const buildServerForAgent = async (
   );
 
   const server = new McpServer({ name: "exulu-tools", version: "1.0.0" });
-
-  // Shared-workspace file tools. These bridge the agent to the SAME folder the
-  // user sees in the Files panel (the host workspace dir), independent of the
-  // agent's private container filesystem. The agent uses these for any file it
-  // wants the user to see / for files the user uploaded. Keyed by agentId (the
-  // agent-level workspace).
-  registerWorkspaceFileTools(server, agentId);
 
   for (const tool of tools) {
     const name = sanitizeName(tool.name);

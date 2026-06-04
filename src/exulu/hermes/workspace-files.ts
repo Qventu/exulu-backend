@@ -3,28 +3,31 @@ import { exuluApp } from "../app/singleton.ts";
 import { requestValidators } from "../../validators/requests.ts";
 import { checkRecordAccess } from "../../utils/check-record-access.ts";
 import { isHermesEnabled } from "./config";
+import { profileIdFor } from "./provisioner";
 import {
-  deleteWorkspaceFile,
-  listWorkspaceFiles,
-  readWorkspaceFile,
-  writeWorkspaceFile,
-} from "./workspace-store";
+  deleteContainerFile,
+  listContainerFiles,
+  readContainerFile,
+  writeContainerFile,
+} from "./container-fs";
 
 /**
- * HTTP API for an advanced-mode agent's workspace files, local-direct (served
- * straight from the host bind-mount dir). Deliberately mirrors the non-advanced
- * `/sessions/:id/files*` contract so the same frontend file UI works for both —
- * the only difference is the store behind it and that downloads stream from us
- * rather than from an S3 presigned URL.
+ * HTTP API for an advanced-mode agent's sandbox files, backed DIRECTLY by the
+ * agent's Docker container filesystem (docker exec / docker cp) — the same
+ * `/root` the agent's native tools read & write. So uploads land where the
+ * agent looks, and artifacts the agent creates are listed here. No bind mount,
+ * no host/container split-brain.
  *
- *   GET    /agents/:agentId/workspace-files            list
+ * Mirrors the non-advanced `/sessions/:id/files*` contract so the same frontend
+ * file UI is reused; downloads stream from the container via us.
+ *
+ *   GET    /agents/:agentId/workspace-files            list (tree, dotfiles hidden)
  *   GET    /agents/:agentId/workspace-files/raw?path=  download/preview (stream)
  *   PUT    /agents/:agentId/workspace-files/raw?path=  upload (raw body)
  *   DELETE /agents/:agentId/workspace-files?path=      delete
  *
- * RBAC: the agent's existing access control (read to list/download, write to
- * upload/delete). The workspace is per-profile (shared/private per scope), so
- * access is by agent — not the per-user prefix the session-files API uses.
+ * RBAC: the agent's existing access control. The container is per-profile
+ * (per-user for private scope), so we resolve the caller's profile.
  *
  * Design doc: docs/superpowers/specs/2026-06-04-advanced-mode-workspace-files-design.md
  */
@@ -32,9 +35,9 @@ import {
 const log = (line: string) => console.log(`[EXULU-HERMES-FILES] ${line}`);
 
 /**
- * Resolve agent + caller, enforce RBAC, return the profileId — or send an error
- * and return null. `allowQueryToken` lets `<img>/<iframe>`/PUT requests carry the
- * bearer token as `?auth=` (no Authorization header available there).
+ * Resolve agent + caller, enforce RBAC, return the caller's profileId — or send
+ * an error and return null. `allowQueryToken` lets `<img>/<iframe>`/PUT requests
+ * carry the bearer token as `?auth=` (no Authorization header available there).
  */
 const authorize = async (
   req: Request,
@@ -65,12 +68,18 @@ const authorize = async (
     res.status(403).json({ message: "You don't have access to this agent." });
     return null;
   }
-  // The shared-files workspace is AGENT-level (keyed by agentId), matching the
-  // MCP file tools — the MCP server only knows the agentId, so both ends must
-  // use the same key. (This is decoupled from the gateway's profile scope,
-  // which may be per-user; only the explicitly-shared files folder is shared
-  // across the agent's users.)
-  return agent.id;
+  // Per-profile: the sandbox container is keyed by the gateway's profile
+  // (agentId for shared scope, agentId/userId for private).
+  const scope =
+    (agent as any).advanced_agent_profile_scope === "private"
+      ? "private"
+      : "shared";
+  try {
+    return profileIdFor(agent.id, scope, user?.id);
+  } catch (err) {
+    res.status(400).json({ message: (err as Error).message });
+    return null;
+  }
 };
 
 const getPath = (req: Request): string | null => {
@@ -85,7 +94,7 @@ export const registerWorkspaceFilesRoutes = (app: Express): void => {
   app.get("/agents/:agentId/workspace-files", async (req, res) => {
     const profileId = await authorize(req, res, "read");
     if (!profileId) return;
-    res.status(200).json({ files: await listWorkspaceFiles(profileId) });
+    res.status(200).json({ files: await listContainerFiles(profileId) });
   });
 
   app.get("/agents/:agentId/workspace-files/raw", async (req, res) => {
@@ -96,13 +105,13 @@ export const registerWorkspaceFilesRoutes = (app: Express): void => {
       res.status(400).json({ message: "Missing ?path" });
       return;
     }
-    const file = await readWorkspaceFile(profileId, path);
+    const file = await readContainerFile(profileId, path);
     if (!file) {
       res.status(404).json({ message: "File not found" });
       return;
     }
+    // Streamed from `docker exec cat` — no known length, so chunked.
     res.setHeader("Content-Type", file.contentType);
-    res.setHeader("Content-Length", String(file.size));
     file.stream.on("error", () => {
       if (!res.headersSent) res.status(500).end();
     });
@@ -126,7 +135,7 @@ export const registerWorkspaceFilesRoutes = (app: Express): void => {
         return;
       }
       try {
-        await writeWorkspaceFile(profileId, path, body);
+        await writeContainerFile(profileId, path, body);
         res.status(200).json({ written: true, path });
       } catch (err) {
         res.status(400).json({ message: (err as Error).message });
@@ -143,12 +152,12 @@ export const registerWorkspaceFilesRoutes = (app: Express): void => {
       return;
     }
     try {
-      await deleteWorkspaceFile(profileId, path);
+      await deleteContainerFile(profileId, path);
       res.status(200).json({ deleted: true });
     } catch (err) {
       res.status(400).json({ message: (err as Error).message });
     }
   });
 
-  log("Workspace files routes mounted at /agents/:agentId/workspace-files");
+  log("Workspace (sandbox) files routes mounted at /agents/:agentId/workspace-files");
 };
