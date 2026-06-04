@@ -76,17 +76,17 @@ describe("ExuluTools MCP helpers", () => {
     expect(getExuluMcpKey()).toBe("mcp-secret");
   });
 
-  it("getExuluMcpBaseUrl honors EXULU_MCP_BASE_URL, else 127.0.0.1:<port>", () => {
-    delete process.env.EXULU_MCP_BASE_URL;
+  it("getExuluMcpBaseUrl honors BACKEND, else 127.0.0.1:<port>", () => {
+    delete process.env.BACKEND;
     delete process.env.EXULU_PORT;
     process.env.PORT = "4567";
     expect(getExuluMcpBaseUrl()).toBe("http://127.0.0.1:4567");
-    process.env.EXULU_MCP_BASE_URL = "https://exulu.internal:9000/";
+    process.env.BACKEND = "https://exulu.internal:9000/";
     expect(getExuluMcpBaseUrl()).toBe("https://exulu.internal:9000");
   });
 
   it("exuluMcpUrlFor builds the per-agent path", () => {
-    process.env.EXULU_MCP_BASE_URL = "http://127.0.0.1:3000";
+    process.env.BACKEND = "http://127.0.0.1:3000";
     expect(exuluMcpUrlFor("agent-xyz")).toBe("http://127.0.0.1:3000/mcp/agent-xyz");
   });
 });

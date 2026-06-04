@@ -360,11 +360,14 @@ const translateEvent = (
       }
       if (!toolCallId) return false;
       if (ev.isError) {
-        writer.write({
-          type: "tool-output-error",
-          toolCallId,
-          errorText: String((ev.output as any) ?? "Tool failed"),
-        });
+        const out = ev.output;
+        const errorText =
+          typeof out === "string"
+            ? out
+            : out != null
+              ? JSON.stringify(out)
+              : "Tool failed";
+        writer.write({ type: "tool-output-error", toolCallId, errorText });
         return false;
       }
       writer.write({

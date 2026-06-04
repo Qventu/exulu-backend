@@ -157,7 +157,7 @@ export const getExuluMcpKey = (): string =>
  * Defaults to 127.0.0.1:<EXULU_PORT|PORT|3000> since the gateway is co-located.
  */
 export const getExuluMcpBaseUrl = (): string => {
-  const explicit = process.env.EXULU_MCP_BASE_URL?.trim();
+  const explicit = process.env.BACKEND?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
   const host = process.env.EXULU_MCP_HOST ?? "127.0.0.1";
   const port = process.env.EXULU_PORT ?? process.env.PORT ?? "3000";
