@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { profileWorkspaceDir } from "./config";
 
@@ -127,6 +127,16 @@ export const readWorkspaceFile = async (
     size: st.size,
     contentType: contentTypeFor(relPath),
   };
+};
+
+/** Read a workspace file as UTF-8 text (for the MCP read tool), or undefined. */
+export const readWorkspaceText = async (
+  profileId: string,
+  relPath: string,
+): Promise<string | undefined> => {
+  const abs = resolveInWorkspace(profileId, relPath);
+  if (!abs) return undefined;
+  return readFile(abs, "utf8").catch(() => undefined);
 };
 
 /** Write (create/overwrite) a file in the workspace; rejects unsafe paths. */
