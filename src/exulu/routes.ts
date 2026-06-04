@@ -64,6 +64,7 @@ import {
   createHermesRunStream,
   uiMessageText,
   registerExuluMcpRoute,
+  registerHermesSkillsRoutes,
 } from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -1070,6 +1071,10 @@ Mood: friendly and intelligent.
   // Hermes gateway over HTTP MCP at /mcp/:agentId. No-op unless Hermes is
   // enabled. These tools ADD to Hermes' native tools, they don't replace them.
   registerExuluMcpRoute(app, config);
+
+  // Surface the skills a Hermes profile accumulates (incl. auto-distilled ones)
+  // for review/edit/delete from the chat UI. RBAC-gated, Hermes-only.
+  registerHermesSkillsRoutes(app);
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.
   // The frontend posts the last user+assistant exchange and gets back up to 3
