@@ -70,7 +70,12 @@ export const resolveInWorkspace = (
   // Normalize via join, then verify the result is still inside root.
   const abs = join(root, relPath);
   const rel = relative(root, abs);
-  if (rel.startsWith("..") || rel.split(sep).includes("..")) return undefined;
+  const segments = rel.split(sep);
+  if (rel.startsWith("..") || segments.includes("..")) return undefined;
+  // Refuse hidden paths: when the workspace is mounted at the container /root,
+  // Hermes' own home + cache live in `.hermes` / `.cache` here — never expose
+  // or let anyone delete those through the API. (Listing already skips dotfiles.)
+  if (segments.some((s) => s.startsWith("."))) return undefined;
   return abs;
 };
 

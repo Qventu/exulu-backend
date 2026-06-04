@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 8;
+const PROVISION_FORMAT_VERSION = 10;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -61,15 +61,17 @@ const getDockerImage = (): string =>
   "nikolaik/python-nodejs:python3.11-nodejs20";
 
 /**
- * Container path the agent's tools actually run in under the docker backend.
- * Hermes runs `docker exec` as its `hermes` user from that user's home
- * (`/home/hermes`) and ignores `terminal.cwd`, so we mount the host workspace
- * HERE — that way the agent's default file reads/writes hit the host workspace
- * (and show in the Files panel). Override with HERMES_CONTAINER_WORKDIR if a
- * different image/user puts the home elsewhere (verify with `docker inspect`).
+ * Container path the host workspace is mounted to under the docker backend.
+ *
+ * The agent runs in `/root` (verified), and Hermes keeps its own home in the
+ * HIDDEN `/root/.hermes` subdir. Mounting the host workspace at `/root` makes
+ * the agent's working dir host-backed: its top-level files land in the host
+ * workspace (and the Files panel, which skips dotfiles, shows them), while
+ * `/root/.hermes` + `/root/.cache` are created inside the mount but stay hidden
+ * and persist on the host. Override with HERMES_CONTAINER_WORKDIR.
  */
 const getContainerWorkdir = (): string =>
-  process.env.HERMES_CONTAINER_WORKDIR?.trim() || "/home/hermes";
+  process.env.HERMES_CONTAINER_WORKDIR?.trim() || "/root";
 
 /** The agent id keying the MCP endpoint — explicit, or the profileId's first segment. */
 const agentIdOf = (input: ProvisionInput): string =>
