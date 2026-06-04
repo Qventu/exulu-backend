@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 5;
+const PROVISION_FORMAT_VERSION = 6;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -137,18 +137,20 @@ const renderConfigYaml = (
     "",
     // Native shell/file tools run via this backend. `docker` isolates them in a
     // hardened, Hermes-managed container (cap-drop ALL, no-new-privileges) that
-    // works without host user namespaces. Volumes are bind-mounted host->same
-    // path so the absolute cwd and skills.external_dirs below resolve inside the
-    // container; secrets (config.yaml/.env) are NOT mounted. cwd MUST be
-    // absolute — Hermes treats '.' as the launch dir, not the profile dir.
+    // works without host user namespaces. Under docker, `cwd` is a CONTAINER
+    // path (it sets the container WORKDIR): we mount the host workspace to
+    // /workspace and point cwd there, so the agent's working dir IS the host
+    // workspace (uploads/agent files line up, and the Files panel sees them).
+    // Secrets (config.yaml/.env) are NOT mounted. NOTE: the docker container is
+    // persistent — changing these volumes requires `docker rm -f` to recreate it.
     "terminal:",
     `  backend: ${getTerminalBackend()}`,
-    `  cwd: ${yamlString(workspaceDir)}`,
+    `  cwd: ${yamlString(getTerminalBackend() === "docker" ? "/workspace" : workspaceDir)}`,
     ...(getTerminalBackend() === "docker"
       ? [
           `  docker_image: ${yamlString(getDockerImage())}`,
           "  docker_volumes:",
-          `    - ${yamlString(`${workspaceDir}:${workspaceDir}`)}`,
+          `    - ${yamlString(`${workspaceDir}:/workspace`)}`,
           ...((input.skills?.length ?? 0) > 0
             ? [`    - ${yamlString(`${exuluSkillsDir}:${exuluSkillsDir}:ro`)}`]
             : []),

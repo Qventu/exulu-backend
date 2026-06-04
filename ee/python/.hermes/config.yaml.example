@@ -25,10 +25,13 @@ approvals:
 # secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
 terminal:
   backend: docker
-  cwd: "/abs/path/to/${HERMES_HOME}/profiles/<profileId>/workspace"
+  # Under docker, cwd is a CONTAINER path (sets the WORKDIR). The host workspace
+  # is mounted to /workspace and cwd points there, so the agent's working dir IS
+  # the host workspace (uploads/agent files line up; the Files panel sees them).
+  cwd: "/workspace"
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
   docker_volumes:
-    - "/abs/.../profiles/<profileId>/workspace:/abs/.../profiles/<profileId>/workspace"
+    - "/abs/.../profiles/<profileId>/workspace:/workspace"
     - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:
