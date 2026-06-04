@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 3;
+const PROVISION_FORMAT_VERSION = 4;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -90,7 +90,12 @@ const DEFAULT_SOUL = `You are a helpful, capable assistant.`;
 const yamlString = (value: string): string =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
-const renderConfigYaml = (input: ProvisionInput, workspaceDir: string): string => {
+const renderConfigYaml = (
+  input: ProvisionInput,
+  workspaceDir: string,
+  exuluSkillsDir: string,
+): string => {
+  const hasSkills = (input.skills?.length ?? 0) > 0;
   // Hermes calls model.base_url directly when set, authenticating with
   // model.api_key. We point it at the LiteLLM proxy so every model call still
   // flows through the single model gateway. ${LITELLM_MASTER_KEY} is resolved
@@ -129,8 +134,16 @@ const renderConfigYaml = (input: ProvisionInput, workspaceDir: string): string =
     "    headers:",
     '      Authorization: "Bearer ${EXULU_MCP_KEY}"',
     "",
-    "# skills: added in Phase 4 (external_dirs synced from S3).",
-    "",
+    // Exulu skills synced from S3 (Anthropic Agent Skills format) into a
+    // dedicated dir, ADDED to Hermes' own skills home (learned/bundled skills).
+    ...(hasSkills
+      ? [
+          "skills:",
+          "  external_dirs:",
+          `    - ${yamlString(exuluSkillsDir)}`,
+          "",
+        ]
+      : ["# skills: no Exulu skills enabled for this agent.", ""]),
   ].join("\n");
 };
 
@@ -166,13 +179,21 @@ export const ensureProfile = async (input: ProvisionInput): Promise<void> => {
     // also creates the profile dir (recursive).
     const workspaceDir = join(dir, "workspace");
     await mkdir(workspaceDir, { recursive: true });
+    // Where syncProfileSkills downloads enabled Exulu skills; referenced by
+    // config.yaml skills.external_dirs. The files themselves are synced
+    // separately (the provisioner is S3-free).
+    const exuluSkillsDir = join(dir, "exulu-skills");
 
     const hash = computeHash(input);
     const hashPath = join(dir, HASH_FILE);
     const current = await readFile(hashPath, "utf8").catch(() => undefined);
     if (current?.trim() === hash) return; // up to date
 
-    await writeFile(join(dir, "config.yaml"), renderConfigYaml(input, workspaceDir), "utf8");
+    await writeFile(
+      join(dir, "config.yaml"),
+      renderConfigYaml(input, workspaceDir, exuluSkillsDir),
+      "utf8",
+    );
     // SOUL.md is owned by Exulu (Hermes won't overwrite an existing one), so we
     // always rewrite it to propagate instruction edits.
     await writeFile(join(dir, "SOUL.md"), renderSoul(input.instructions), "utf8");

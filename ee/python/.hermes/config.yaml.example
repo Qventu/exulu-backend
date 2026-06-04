@@ -30,7 +30,9 @@ terminal:
 #     headers:
 #       Authorization: "Bearer ${EXULU_MCP_KEY}"
 
-# Added in Phase 4 — Exulu skills synced from S3 to disk:
+# Enabled Exulu skills, synced from S3 into the profile (Anthropic Agent Skills
+# format). ADDS to Hermes' own skills home (learned/bundled skills); only
+# written when the agent has skills enabled.
 # skills:
 #   external_dirs:
-#     - "/agents/skills/<profileId>"
+#     - "/abs/path/to/${HERMES_HOME}/profiles/<profileId>/exulu-skills"
