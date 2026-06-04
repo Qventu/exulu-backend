@@ -300,9 +300,15 @@ across the user's home dir). Unacceptable for shared/`public` agents. Mitigation
 **Revised / added phases:**
 - **Phase 3 — ExuluTools over MCP** (unchanged intent): `/mcp/:agentId`, provisioner writes
   `mcp_servers.url`.
-- **Phase 3b — Approval round-trip:** track active runs (run id + gateway) so a Hermes
-  `approval.request` event → frontend `ToolCallApproval` → backend `POST /v1/runs/{id}/approval`
-  / `/stop`. Needed for `approvals.mode: smart` not to hang on destructive actions.
+- **Phase 3b — Approval round-trip: NOT APPLICABLE (closed 2026-06-04).** Verified that the
+  headless OpenAI-compatible **API server does not gate tools through approvals**: both
+  `approvals.mode: smart` and `manual` (confirmed written to config.yaml + fresh gateway)
+  produced **zero** approval events, and the docs document no `POST /v1/runs/{id}/approval`
+  endpoint. Approvals are a TUI/interactive-chat feature. For API-driven agents the **Docker
+  terminal backend (Phase 7) is the safety boundary** — a stronger, non-interactive guarantee.
+  The adapter still maps a hypothetical `approval` event to a `tool-approval-request` chunk, so
+  if a future Hermes version surfaces approvals over the API the only missing piece is the POST
+  back — but nothing to build today.
 - **Phase 4 — Skills sync** (unchanged).
 - **Phase 6 — Auto-generated skills surfacing:** Hermes auto-distills past conversations into
   skills under `${profileDir}/skills/`. Expose them in `chat.tsx` (sidebar) with
