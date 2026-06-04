@@ -17,11 +17,19 @@ model:
 approvals:
   mode: smart
 
-# Bound the agent's shell/file tools to its own workspace dir. cwd MUST be
-# absolute — Hermes treats '.' as the launch dir, not the profile dir.
+# Native shell/file tools run via this backend. Default is `docker`: a hardened,
+# Hermes-managed container (cap-drop ALL, no-new-privileges) that isolates the
+# tools from the host WITHOUT needing user namespaces — so it behaves the same
+# on macOS (Docker Desktop) and Linux. Volumes are bind-mounted host->same path
+# so the absolute cwd / skills.external_dirs resolve inside the container;
+# secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
 terminal:
-  backend: local
+  backend: docker
   cwd: "/abs/path/to/${HERMES_HOME}/profiles/<profileId>/workspace"
+  docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  docker_volumes:
+    - "/abs/.../profiles/<profileId>/workspace:/abs/.../profiles/<profileId>/workspace"
+    - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:
 # mcp_servers:

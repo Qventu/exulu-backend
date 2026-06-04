@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 4;
+const PROVISION_FORMAT_VERSION = 5;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -43,6 +43,22 @@ const HASH_FILE = ".exulu-hash";
  */
 const getApprovalsMode = (): string =>
   process.env.HERMES_APPROVALS_MODE?.trim() || "smart";
+
+/**
+ * Terminal backend that runs the agent's native shell/file tools. Defaults to
+ * `docker` so isolation is identical everywhere (Docker Desktop on macOS, the
+ * Docker daemon on Linux) and does NOT depend on unprivileged user namespaces
+ * (which our deploy hosts lack — the reason bwrap-style sandboxes fell back).
+ * `local` (no isolation) and Hermes' other backends (ssh/modal/daytona/
+ * singularity) remain selectable via HERMES_TERMINAL_BACKEND.
+ */
+const getTerminalBackend = (): string =>
+  process.env.HERMES_TERMINAL_BACKEND?.trim() || "docker";
+
+/** Image for the docker terminal backend (needs python + node for tools). */
+const getDockerImage = (): string =>
+  process.env.HERMES_DOCKER_IMAGE?.trim() ||
+  "nikolaik/python-nodejs:python3.11-nodejs20";
 
 /** The agent id keying the MCP endpoint — explicit, or the profileId's first segment. */
 const agentIdOf = (input: ProvisionInput): string =>
@@ -75,6 +91,8 @@ const computeHash = (input: ProvisionInput): string => {
     modelName: input.modelName,
     litellm: getLiteLLMBaseUrl(),
     approvals: getApprovalsMode(),
+    terminal: getTerminalBackend(),
+    dockerImage: getDockerImage(),
     mcp: exuluMcpUrlFor(agentIdOf(input)),
     skills: (input.skills ?? [])
       .map((s) => `${s.id}@${s.version ?? 1}`)
@@ -117,13 +135,25 @@ const renderConfigYaml = (
     "approvals:",
     `  mode: ${getApprovalsMode()}`,
     "",
-    "# Bound the agent's shell/file tools to its own workspace directory. cwd",
-    "# MUST be absolute — Hermes treats '.' as the launch dir, not the profile",
-    "# dir. This keeps the agent out of Hermes' own config/state and (together",
-    "# with per-gateway OS-user isolation) off the rest of the host.",
+    // Native shell/file tools run via this backend. `docker` isolates them in a
+    // hardened, Hermes-managed container (cap-drop ALL, no-new-privileges) that
+    // works without host user namespaces. Volumes are bind-mounted host->same
+    // path so the absolute cwd and skills.external_dirs below resolve inside the
+    // container; secrets (config.yaml/.env) are NOT mounted. cwd MUST be
+    // absolute — Hermes treats '.' as the launch dir, not the profile dir.
     "terminal:",
-    "  backend: local",
+    `  backend: ${getTerminalBackend()}`,
     `  cwd: ${yamlString(workspaceDir)}`,
+    ...(getTerminalBackend() === "docker"
+      ? [
+          `  docker_image: ${yamlString(getDockerImage())}`,
+          "  docker_volumes:",
+          `    - ${yamlString(`${workspaceDir}:${workspaceDir}`)}`,
+          ...((input.skills?.length ?? 0) > 0
+            ? [`    - ${yamlString(`${exuluSkillsDir}:${exuluSkillsDir}:ro`)}`]
+            : []),
+        ]
+      : []),
     "",
     "# ExuluTools exposed over HTTP MCP. These ADD to Hermes' native tools",
     "# (bash, filesystem, …) — they do not replace them. The key is resolved",

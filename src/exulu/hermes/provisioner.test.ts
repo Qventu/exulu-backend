@@ -35,10 +35,13 @@ describe("ensureProfile", () => {
     expect(config).toContain("provider: custom");
     expect(config).toContain('base_url: "http://127.0.0.1:4000/v1"');
     expect(config).toContain('api_key: "${LITELLM_MASTER_KEY}"');
-    // Approval policy + sandboxed working dir.
+    // Approval policy + sandboxed working dir + docker isolation (default).
     expect(config).toContain("mode: smart");
-    expect(config).toContain("backend: local");
+    expect(config).toContain("backend: docker");
     expect(config).toContain(`cwd: "${join(dir, "workspace")}"`);
+    expect(config).toContain("docker_image:");
+    expect(config).toContain("docker_volumes:");
+    expect(config).toContain(`${join(dir, "workspace")}:${join(dir, "workspace")}`);
     // ExuluTools MCP endpoint (agent id derived from profileId) + key in .env.
     expect(config).toContain("mcp_servers:");
     expect(config).toContain("/mcp/agent-1");
@@ -70,6 +73,15 @@ describe("ensureProfile", () => {
     expect(config).toContain("skills:");
     expect(config).toContain("external_dirs:");
     expect(config).toContain(join(profileDir("agent-9"), "exulu-skills"));
+  });
+
+  it("uses the local backend (no docker keys) when overridden", async () => {
+    process.env.HERMES_TERMINAL_BACKEND = "local";
+    await ensureProfile({ profileId: "agent-10", instructions: "x", modelName: "m" });
+    const config = await readFile(join(profileDir("agent-10"), "config.yaml"), "utf8");
+    expect(config).toContain("backend: local");
+    expect(config).not.toContain("docker_image:");
+    expect(config).not.toContain("docker_volumes:");
   });
 
   it("writes the .env file with 0600 permissions", async () => {
