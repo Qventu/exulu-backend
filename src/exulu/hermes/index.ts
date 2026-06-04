@@ -26,3 +26,9 @@ export {
   type HermesRunStreamParams,
 } from "./run-stream";
 export { resolveHermesSessionId } from "./session-map";
+export { registerExuluMcpRoute } from "./mcp-server";
+export {
+  getExuluMcpKey,
+  getExuluMcpBaseUrl,
+  exuluMcpUrlFor,
+} from "./config";
