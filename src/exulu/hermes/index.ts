@@ -27,6 +27,8 @@ export {
 } from "./run-stream";
 export { resolveHermesSessionId } from "./session-map";
 export { registerExuluMcpRoute } from "./mcp-server";
+export { registerHermesSkillsRoutes } from "./skills-api";
+export { listProfileSkills, type HermesSkill } from "./skills-store";
 export {
   getExuluMcpKey,
   getExuluMcpBaseUrl,
