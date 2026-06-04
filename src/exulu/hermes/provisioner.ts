@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 13;
+const PROVISION_FORMAT_VERSION = 14;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -160,6 +160,12 @@ const renderConfigYaml = (
           `  docker_image: ${yamlString(getDockerImage())}`,
           "  container_persistent: true",
           `  lifetime_seconds: ${getContainerLifetime()}`,
+          // Run as root with a predictable /root home, NOT as the host user
+          // (which would put the agent's cwd at the replicated host home path,
+          // e.g. /Users/<you>, where the Files panel can't find it). Also skip
+          // Hermes' cwd->workspace mount so the agent works in /root.
+          "  docker_run_as_host_user: false",
+          "  docker_mount_cwd_to_workspace: false",
           `  docker_extra_args: ${JSON.stringify(["--label", `exulu-profile=${input.profileId}`])}`,
           ...((input.skills?.length ?? 0) > 0
             ? [
