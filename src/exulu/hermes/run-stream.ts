@@ -64,18 +64,21 @@ export const uiMessageText = (message: UIMessage | undefined): string =>
 type NormalizedEvent =
   | { kind: "text"; delta: string }
   | { kind: "reasoning"; delta: string }
-  // Tool calls follow the OpenAI Responses streaming sequence: an item is added
-  // (name known), its arguments stream in as text deltas, then finalize.
+  // Two tool-call shapes are supported:
+  //  - Hermes-native: `tool.started`/`tool.completed` — name only (data.tool),
+  //    no id and no streamed args; paired by order via a LIFO stack.
+  //  - OpenAI Responses streaming: an item is added (name known), arguments
+  //    stream in as text deltas, then finalize. Identified by `itemId`.
   | {
       kind: "tool-start";
-      itemId: string;
-      toolCallId: string;
+      itemId?: string;
+      toolCallId?: string;
       toolName: string;
       input?: unknown;
     }
   | { kind: "tool-args-delta"; itemId: string; delta: string }
   | { kind: "tool-args-done"; itemId: string; toolCallId?: string; arguments: unknown }
-  | { kind: "tool-end"; toolCallId: string; output: unknown }
+  | { kind: "tool-end"; toolCallId?: string; output: unknown; isError?: boolean }
   | { kind: "approval"; approvalId: string; toolCallId: string }
   | { kind: "finish"; usage?: HermesUsage }
   | { kind: "error"; message: string }
@@ -157,29 +160,53 @@ export const normalizeEvent = (
     }
   }
 
-  // Tool result (flat / Hermes-custom shapes). Checked before the start branch
-  // because "function_call_output" also contains "function_call".
+  // Tool result (flat / Hermes-native). Checked before the start branch because
+  // "function_call_output" also contains "function_call".
   if (/(function_call_output|tool.*(complete|result|output|end))/i.test(type)) {
+    const explicitId =
+      data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId;
+    // Hermes-native `tool.completed` carries no result payload — only the tool
+    // name, a duration, and an error flag. Build a small completion summary so
+    // the UI shows something meaningful in the result slot.
+    const output =
+      data?.output ??
+      data?.result ??
+      data?.content ??
+      (data?.tool != null || data?.duration != null
+        ? {
+            ok: !data?.error,
+            ...(typeof data?.duration === "number"
+              ? { duration_s: data.duration }
+              : {}),
+          }
+        : undefined);
     return {
       kind: "tool-end",
-      toolCallId: String(
-        data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId ?? "",
-      ),
-      output: data?.output ?? data?.result ?? data?.content,
+      ...(explicitId != null ? { toolCallId: String(explicitId) } : {}),
+      output,
+      isError: !!data?.error,
     };
   }
 
-  // Tool start (flat / Hermes-custom). May carry full input in one shot.
+  // Tool start (flat / Hermes-native). Hermes puts the name in `tool` and an
+  // optional human-readable `preview` (e.g. `recall: "..."`), with no id/args.
   if (/(function_call|tool.*(start|call))/i.test(type)) {
-    const toolCallId = String(
-      data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId ?? "",
-    );
+    const explicitId =
+      data?.tool_call_id ?? data?.call_id ?? data?.id ?? data?.toolCallId;
+    const preview = data?.preview;
     return {
       kind: "tool-start",
-      itemId: toolCallId,
-      toolCallId,
-      toolName: String(data?.tool_name ?? data?.name ?? data?.toolName ?? "tool"),
-      input: data?.input ?? data?.arguments ?? data?.args,
+      ...(explicitId != null
+        ? { itemId: String(explicitId), toolCallId: String(explicitId) }
+        : {}),
+      toolName: String(
+        data?.tool_name ?? data?.name ?? data?.toolName ?? data?.tool ?? "tool",
+      ),
+      input:
+        data?.input ??
+        data?.arguments ??
+        data?.args ??
+        (preview != null ? { preview } : undefined),
     };
   }
 
@@ -227,6 +254,12 @@ type TranslateState = {
   usage: HermesUsage | undefined;
   /** itemId → tool identity, so argument deltas/done resolve back to a call. */
   tools: Map<string, { toolCallId: string; toolName: string }>;
+  /**
+   * LIFO stack of tool calls opened without an id (Hermes-native
+   * tool.started → tool.completed), so a completion can be paired with the most
+   * recently started call.
+   */
+  openTools: Array<{ toolCallId: string; toolName: string }>;
 };
 
 /** Parse a tool's accumulated argument string into a structured input. */
@@ -264,22 +297,27 @@ const translateEvent = (
       return false;
     }
     case "tool-start": {
-      state.tools.set(ev.itemId, {
-        toolCallId: ev.toolCallId,
-        toolName: ev.toolName,
-      });
+      // Synthesize an id when Hermes doesn't supply one (its native events have
+      // no call id); pair it on completion via the LIFO stack.
+      const toolCallId = ev.toolCallId && ev.toolCallId.length ? ev.toolCallId : generateId();
+      if (ev.itemId) {
+        state.tools.set(ev.itemId, { toolCallId, toolName: ev.toolName });
+      }
+      state.openTools.push({ toolCallId, toolName: ev.toolName });
       // Surface the tool name to the UI immediately (streaming-input start).
       writer.write({
         type: "tool-input-start",
-        toolCallId: ev.toolCallId,
+        toolCallId,
         toolName: ev.toolName,
         dynamic: true,
       });
-      // Non-streaming shape: the start event already carried full input.
-      if (ev.input !== undefined) {
+      // Emit input now when it's already known (Hermes native, no later args)
+      // or when the start carried full input. Responses-style calls (with an
+      // itemId and no input yet) wait for their argument-done event instead.
+      if (ev.input !== undefined || !ev.itemId) {
         writer.write({
           type: "tool-input-available",
-          toolCallId: ev.toolCallId,
+          toolCallId,
           toolName: ev.toolName,
           input: parseToolInput(ev.input),
           dynamic: true,
@@ -311,9 +349,27 @@ const translateEvent = (
       return false;
     }
     case "tool-end": {
+      // Resolve the call id: explicit (Responses) or the most recently opened
+      // (Hermes native). Without either we can't correlate, so skip.
+      let toolCallId = ev.toolCallId && ev.toolCallId.length ? ev.toolCallId : undefined;
+      if (toolCallId) {
+        const idx = state.openTools.findIndex((t) => t.toolCallId === toolCallId);
+        if (idx !== -1) state.openTools.splice(idx, 1);
+      } else {
+        toolCallId = state.openTools.pop()?.toolCallId;
+      }
+      if (!toolCallId) return false;
+      if (ev.isError) {
+        writer.write({
+          type: "tool-output-error",
+          toolCallId,
+          errorText: String((ev.output as any) ?? "Tool failed"),
+        });
+        return false;
+      }
       writer.write({
         type: "tool-output-available",
-        toolCallId: ev.toolCallId,
+        toolCallId,
         output: ev.output,
         dynamic: true,
       });
@@ -419,6 +475,7 @@ export const createHermesRunStream = (
         textId: undefined,
         usage: undefined,
         tools: new Map(),
+        openTools: [],
       };
       writer.write({ type: "start" });
 
