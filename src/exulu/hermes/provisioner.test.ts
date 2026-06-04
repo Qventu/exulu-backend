@@ -35,15 +35,14 @@ describe("ensureProfile", () => {
     expect(config).toContain("provider: custom");
     expect(config).toContain('base_url: "http://127.0.0.1:4000/v1"');
     expect(config).toContain('api_key: "${LITELLM_MASTER_KEY}"');
-    // Approval policy + docker isolation (default). The host workspace is
-    // mounted at the agent's working dir (/root); Hermes' home stays in the
-    // hidden /root/.hermes inside the mount.
+    // Approval policy + docker isolation (default). No workspace bind-mount
+    // (the container keeps its own /root); files are bridged via MCP tools.
     expect(config).toContain("mode: smart");
     expect(config).toContain("backend: docker");
-    expect(config).toContain('cwd: "/root"');
     expect(config).toContain("docker_image:");
-    expect(config).toContain("docker_volumes:");
-    expect(config).toContain(`${join(dir, "workspace")}:/root`);
+    // No skills enabled here → no docker_volumes, and docker has no host cwd.
+    expect(config).not.toContain("docker_volumes:");
+    expect(config).not.toContain(`${join(dir, "workspace")}:`);
     // ExuluTools MCP endpoint (agent id derived from profileId) + key in .env.
     expect(config).toContain("mcp_servers:");
     expect(config).toContain("/mcp/agent-1");
