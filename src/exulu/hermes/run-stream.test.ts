@@ -38,6 +38,20 @@ describe("normalizeEvent", () => {
       kind: "tool-end",
       toolCallId: "t1",
       output: { ok: true },
+      isError: false,
+    });
+  });
+
+  it("maps Hermes-native tool.started / tool.completed (name in `tool`, no id)", () => {
+    expect(normalizeEvent(undefined, { event: "tool.started", tool: "session_search", preview: 'recall: "x"' })).toEqual({
+      kind: "tool-start",
+      toolName: "session_search",
+      input: { preview: 'recall: "x"' },
+    });
+    expect(normalizeEvent(undefined, { event: "tool.completed", tool: "session_search", duration: 0.007, error: false })).toEqual({
+      kind: "tool-end",
+      output: { ok: true, duration_s: 0.007 },
+      isError: false,
     });
   });
 
@@ -102,6 +116,7 @@ describe("normalizeEvent", () => {
       kind: "tool-end",
       toolCallId: "c1",
       output: "done",
+      isError: false,
     });
   });
 
@@ -246,6 +261,52 @@ describe("createHermesRunStream (integration with mocked fetch)", () => {
 
     const output = chunks.find((c) => c.type === "tool-output-available");
     expect(output).toMatchObject({ toolCallId: "call_1", output: "a.ts\nb.ts" });
+  });
+
+  it("translates Hermes-native data-only events (no event: line, name in `tool`)", async () => {
+    // Hermes sends SSE with only a data line; the type lives in data.event.
+    const dataOnly = (objs: unknown[]) =>
+      objs.map((o) => `data: ${JSON.stringify(o)}\n\n`).join("");
+
+    (global as any).fetch = jest.fn(async (url: string, init?: any) => {
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        return new Response(JSON.stringify({ run_id: "run_h" }), { status: 200 });
+      }
+      return new Response(
+        dataOnly([
+          { event: "tool.started", tool: "session_search", preview: 'recall: "deck"' },
+          { event: "tool.completed", tool: "session_search", duration: 0.007, error: false },
+          { event: "message.delta", delta: "We built a deck." },
+          { event: "run.completed", output: "We built a deck." },
+        ]),
+        { status: 200 },
+      );
+    });
+
+    const stream = createHermesRunStream({
+      baseUrl: "http://127.0.0.1:8642/v1",
+      apiKey: "k",
+      hermesSessionId: "sess_h",
+      input: "what did we do?",
+      originalMessages: [],
+      generateId: createIdGenerator({ prefix: "msg_", size: 8 }),
+      onError: (e) => (e instanceof Error ? e.message : String(e)),
+      onFinish: async () => {},
+    });
+
+    const chunks = await collect(stream);
+
+    const start = chunks.find((c) => c.type === "tool-input-start");
+    expect(start).toMatchObject({ toolName: "session_search", dynamic: true });
+    const available = chunks.find((c) => c.type === "tool-input-available");
+    expect(available).toMatchObject({ toolName: "session_search", input: { preview: 'recall: "deck"' } });
+    const output = chunks.find((c) => c.type === "tool-output-available");
+    expect(output).toMatchObject({ output: { ok: true, duration_s: 0.007 } });
+    // started and completed must resolve to the same synthesized call id.
+    expect((start as any).toolCallId).toBe((output as any).toolCallId);
+
+    const text = chunks.filter((c) => c.type === "text-delta").map((c) => c.delta).join("");
+    expect(text).toBe("We built a deck.");
   });
 
   it("surfaces a run error as an error chunk", async () => {
