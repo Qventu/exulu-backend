@@ -273,6 +273,24 @@ if [ "${ENABLE_HERMES_AGENT}" = "true" ]; then
             print_warning "Hermes installer failed. Advanced agent mode will be unavailable until 'hermes' is on PATH. Install manually: https://hermes-agent.nousresearch.com/docs/getting-started/installation"
         fi
     fi
+
+    # Pre-pull the docker terminal-backend image so the first agent request
+    # isn't blocked on a cold image pull (~minute). Only when the backend is
+    # docker (the default) and docker is available; non-fatal otherwise.
+    HERMES_BACKEND="${HERMES_TERMINAL_BACKEND:-docker}"
+    if [ "${HERMES_BACKEND}" = "docker" ]; then
+        HERMES_IMG="${HERMES_DOCKER_IMAGE:-nikolaik/python-nodejs:python3.11-nodejs20}"
+        if command -v docker &> /dev/null; then
+            print_info "Pre-pulling Hermes docker backend image: ${HERMES_IMG}..."
+            if docker pull "${HERMES_IMG}" > /dev/null 2>&1; then
+                print_success "Docker backend image ready (${HERMES_IMG})"
+            else
+                print_warning "Could not pre-pull ${HERMES_IMG}; the first advanced-mode request will pull it (slower)."
+            fi
+        else
+            print_warning "Docker not found, but HERMES_TERMINAL_BACKEND=docker. Install Docker, or set HERMES_TERMINAL_BACKEND=local (unsandboxed)."
+        fi
+    fi
 fi
 
 # Step 7: Validate installation
