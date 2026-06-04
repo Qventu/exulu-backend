@@ -43,6 +43,9 @@ describe("ensureProfile", () => {
     expect(config).toContain("mcp_servers:");
     expect(config).toContain("/mcp/agent-1");
     expect(config).toContain('Authorization: "Bearer ${EXULU_MCP_KEY}"');
+    // No skills enabled here → no external_dirs block.
+    expect(config).toContain("no Exulu skills enabled");
+    expect(config).not.toContain("external_dirs");
 
     // The workspace dir the agent's shell is bound to must exist.
     await expect(stat(join(dir, "workspace"))).resolves.toBeDefined();
@@ -54,6 +57,19 @@ describe("ensureProfile", () => {
     expect(env).toContain("LITELLM_MASTER_KEY=sk-test-master");
 
     await expect(readFile(join(dir, ".exulu-hash"), "utf8")).resolves.toHaveLength(64);
+  });
+
+  it("adds skills.external_dirs when skills are enabled", async () => {
+    await ensureProfile({
+      profileId: "agent-9",
+      instructions: "x",
+      modelName: "m",
+      skills: [{ id: "skill-a", version: 1 }],
+    });
+    const config = await readFile(join(profileDir("agent-9"), "config.yaml"), "utf8");
+    expect(config).toContain("skills:");
+    expect(config).toContain("external_dirs:");
+    expect(config).toContain(join(profileDir("agent-9"), "exulu-skills"));
   });
 
   it("writes the .env file with 0600 permissions", async () => {

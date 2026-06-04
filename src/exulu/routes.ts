@@ -65,6 +65,7 @@ import {
   uiMessageText,
   registerExuluMcpRoute,
   registerHermesSkillsRoutes,
+  syncProfileSkills,
 } from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -803,6 +804,18 @@ Mood: friendly and intelligent.
                 .map((t) => t.id)
                 .filter(Boolean) as string[],
             });
+            // Sync enabled Exulu skills (S3 -> profile/exulu-skills) before the
+            // gateway starts and scans skills.external_dirs. Additive to Hermes'
+            // own learned/bundled skills.
+            await syncProfileSkills(
+              profileId,
+              enabledSkills.map((s) => ({
+                id: s.id,
+                name: s.name,
+                current_version: (s as any).current_version,
+              })),
+              config,
+            );
             gateway = await ensureGateway(profileId);
             hermesSessionId = await resolveHermesSessionId(db, headers.session);
           } catch (err) {
