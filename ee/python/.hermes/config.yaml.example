@@ -12,6 +12,17 @@ model:
   api_key: "${LITELLM_MASTER_KEY}"  # resolved from the profile .env / process env
   api_mode: chat_completions
 
+# Tool-approval policy: `smart` auto-approves low-risk actions and emits an
+# approval event (requiring a decision) before destructive ones.
+approvals:
+  mode: smart
+
+# Bound the agent's shell/file tools to its own workspace dir. cwd MUST be
+# absolute — Hermes treats '.' as the launch dir, not the profile dir.
+terminal:
+  backend: local
+  cwd: "/abs/path/to/${HERMES_HOME}/profiles/<profileId>/workspace"
+
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:
 # mcp_servers:
 #   exulu:
