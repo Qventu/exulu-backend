@@ -35,11 +35,15 @@ describe("ensureProfile", () => {
     expect(config).toContain("provider: custom");
     expect(config).toContain('base_url: "http://127.0.0.1:4000/v1"');
     expect(config).toContain('api_key: "${LITELLM_MASTER_KEY}"');
-    // Approval policy + docker isolation (default). No workspace bind-mount
-    // (the container keeps its own /root); files are bridged via MCP tools.
+    // Approval policy + docker isolation (default). No workspace bind-mount; the
+    // Files panel talks to the container's /root via docker exec/cp, so the
+    // container is labelled (for discovery) and persistent.
     expect(config).toContain("mode: smart");
     expect(config).toContain("backend: docker");
     expect(config).toContain("docker_image:");
+    expect(config).toContain("container_persistent: true");
+    expect(config).toContain('exulu-profile=agent-1');
+    expect(config).toContain("docker_extra_args:");
     // No skills enabled here → no docker_volumes, and docker has no host cwd.
     expect(config).not.toContain("docker_volumes:");
     expect(config).not.toContain(`${join(dir, "workspace")}:`);
@@ -56,7 +60,6 @@ describe("ensureProfile", () => {
 
     const soul = await readFile(join(dir, "SOUL.md"), "utf8");
     expect(soul).toContain("Be a precise research assistant.");
-    expect(soul).toContain("write_shared_file"); // shared-files guidance appended
 
     const env = await readFile(join(dir, ".env"), "utf8");
     expect(env).toContain("LITELLM_MASTER_KEY=sk-test-master");

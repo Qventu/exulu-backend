@@ -25,11 +25,14 @@ approvals:
 # secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
 terminal:
   backend: docker
-  # We do NOT bind-mount the workspace under docker: Hermes runs the agent in
-  # its own /root home inside the container and mounting over it destabilizes
-  # the container. Shared files are bridged via the Exulu MCP file tools (agent
-  # <-> host workspace) instead. (The `local` backend keeps a workspace cwd.)
+  # No bind mount: the Files panel talks to the container's /root directly via
+  # docker exec/cp. We stamp a deterministic label so Exulu can find the
+  # container (docker ps --filter label=exulu-profile=<profileId>), and keep it
+  # persistent so files survive between runs.
   docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  container_persistent: true
+  lifetime_seconds: 86400
+  docker_extra_args: ["--label", "exulu-profile=<profileId>"]
     - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
 
 # Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:

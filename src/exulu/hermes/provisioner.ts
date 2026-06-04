@@ -32,7 +32,7 @@ import {
  */
 
 /** Bump when the generated file *format* changes, to force a re-provision. */
-const PROVISION_FORMAT_VERSION = 12;
+const PROVISION_FORMAT_VERSION = 13;
 
 const HASH_FILE = ".exulu-hash";
 
@@ -59,6 +59,16 @@ const getTerminalBackend = (): string =>
 const getDockerImage = (): string =>
   process.env.HERMES_DOCKER_IMAGE?.trim() ||
   "nikolaik/python-nodejs:python3.11-nodejs20";
+
+/**
+ * How long Hermes keeps the (persistent) container alive between uses, seconds.
+ * Generous by default so the sandbox + its files survive across a conversation.
+ */
+const getContainerLifetime = (): number => {
+  const raw = process.env.HERMES_CONTAINER_LIFETIME?.trim();
+  const n = raw ? Number(raw) : 86400;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 86400;
+};
 
 
 /** The agent id keying the MCP endpoint — explicit, or the profileId's first segment. */
@@ -105,25 +115,6 @@ const computeHash = (input: ProvisionInput): string => {
 
 const DEFAULT_SOUL = `You are a helpful, capable assistant.`;
 
-/**
- * Appended to every advanced-mode SOUL.md so the agent reliably uses the shared
- * workspace (visible to the user in the Files panel) instead of its private
- * container filesystem for anything the user should see. Tool-selection
- * guidance, not a security boundary.
- */
-const SHARED_FILES_GUIDANCE = `
-
-## Shared files
-Files the user uploads, and any file you want the user to see or keep
-(summaries, reports, generated code, data, etc.), live in a shared workspace.
-Use the \`list_shared_files\`, \`read_shared_file\`, and \`write_shared_file\` tools
-for those:
-- To find or read a file the user mentions or uploaded, use \`list_shared_files\`
-  then \`read_shared_file\`.
-- To give the user a file, always save it with \`write_shared_file\` (your own
-  filesystem, e.g. /root, is private scratch the user cannot see or download).
-`;
-
 /** YAML-safe double-quoted scalar (handles the limited set of chars we emit). */
 const yamlString = (value: string): string =>
   `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -157,16 +148,19 @@ const renderConfigYaml = (
     "",
     // Native shell/file tools run via this backend. `docker` isolates them in a
     // hardened, Hermes-managed container (cap-drop ALL, no-new-privileges) that
-    // works without host user namespaces. We do NOT bind-mount the workspace:
-    // Hermes runs the agent in its own /root home inside the container and
-    // mounting over it destabilizes the container. Shared files are bridged via
-    // the Exulu MCP file tools instead (agent <-> host workspace), independent
-    // of the container. The `local` backend keeps a workspace-bound cwd.
+    // works without host user namespaces. We do NOT bind-mount the workspace —
+    // instead the Files panel talks to the container's /root directly via
+    // docker exec/cp. To find the container, we stamp a deterministic label
+    // (exulu-profile=<profileId>) via docker_extra_args, and keep it persistent
+    // so files survive between runs. The `local` backend keeps a workspace cwd.
     "terminal:",
     `  backend: ${getTerminalBackend()}`,
     ...(getTerminalBackend() === "docker"
       ? [
           `  docker_image: ${yamlString(getDockerImage())}`,
+          "  container_persistent: true",
+          `  lifetime_seconds: ${getContainerLifetime()}`,
+          `  docker_extra_args: ${JSON.stringify(["--label", `exulu-profile=${input.profileId}`])}`,
           ...((input.skills?.length ?? 0) > 0
             ? [
                 "  docker_volumes:",
@@ -210,10 +204,7 @@ const renderEnv = (): string => {
 
 const renderSoul = (instructions: string | undefined): string => {
   const body = instructions?.trim();
-  const base = body && body.length > 0 ? body : DEFAULT_SOUL;
-  // Append the shared-files tool guidance so deliverables/uploads flow through
-  // the workspace the user sees, not the agent's private container fs.
-  return `${base}\n${SHARED_FILES_GUIDANCE}`;
+  return body && body.length > 0 ? `${body}\n` : `${DEFAULT_SOUL}\n`;
 };
 
 /** In-flight provisioning per profile, so concurrent requests don't race. */
