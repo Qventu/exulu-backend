@@ -30,6 +30,11 @@ export { syncProfileSkills, exuluSkillsDir } from "./skills-sync";
 export { registerExuluMcpRoute } from "./mcp-server";
 export { registerHermesSkillsRoutes } from "./skills-api";
 export { listProfileSkills, type HermesSkill } from "./skills-store";
+export { registerWorkspaceFilesRoutes } from "./workspace-files";
+export {
+  listWorkspaceFiles,
+  type WorkspaceFile,
+} from "./workspace-store";
 export {
   getExuluMcpKey,
   getExuluMcpBaseUrl,

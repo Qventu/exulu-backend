@@ -55,6 +55,14 @@ export const getProfileDir = (profileId: string): string =>
   join(getHermesHome(), "profiles", profileId);
 
 /**
+ * The profile's workspace directory — `terminal.cwd` and the rw docker volume
+ * point here, and the agent's files live here (the host side of the bind
+ * mount). Shared across all sessions on the profile, by design.
+ */
+export const profileWorkspaceDir = (profileId: string): string =>
+  join(getProfileDir(profileId), "workspace");
+
+/**
  * Resolve the `hermes` binary. The official installer drops it in ~/.local/bin
  * (user install) or /usr/local/bin (root install); operators can override with
  * HERMES_BIN. We deliberately do NOT fall back to a bare `hermes` on PATH for
