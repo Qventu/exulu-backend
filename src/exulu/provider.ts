@@ -3,7 +3,6 @@ import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
 import type { audioTypes } from "@EXULU_TYPES/models/agent";
 import type { videoTypes } from "@EXULU_TYPES/models/agent";
-import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules.ts";
 import { z } from "zod";
 import { ExuluTool } from "./tool.ts";
 import { resolveModel } from "./resolve-model.ts";
@@ -12,7 +11,6 @@ import type { ExuluContext } from "./context.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
 import {
   convertToModelMessages,
-  Output,
   generateText,
   type LanguageModel,
   streamText,
@@ -25,7 +23,6 @@ import { generateSlug } from "@SRC/utils/generate-slug";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import { getEnabledTools } from "@SRC/utils/enabled-tools";
 import { postgresClient } from "@SRC/postgres/client";
-import CryptoJS from "crypto-js";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -39,8 +36,6 @@ import type { Request } from "express";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { setSessionCurrentTask } from "./task-description.ts";
-
-import fs from "fs";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 
@@ -67,7 +62,6 @@ interface ExuluProviderParams {
     audio: audioTypes[];
     video: videoTypes[];
   };
-  rateLimit?: RateLimiterRule;
 }
 
 export class ExuluProvider {
@@ -85,7 +79,6 @@ export class ExuluProvider {
   public maxContextLength?: number;
   public workflows?: ExuluProviderWorkflowConfig;
   public queue?: ExuluQueueConfig;
-  public rateLimit?: RateLimiterRule;
   public config?: ExuluProviderConfig | undefined;
   public model?: {
     create: ({ apiKey, user, role, project, agent }: {
@@ -109,7 +102,6 @@ export class ExuluProvider {
     name,
     description,
     config,
-    rateLimit,
     capabilities,
     type,
     maxContextLength,
@@ -122,7 +114,6 @@ export class ExuluProvider {
     this.name = name;
     this.workflows = workflows;
     this.description = description;
-    this.rateLimit = rateLimit;
     this.provider = provider;
     this.authenticationInformation = authenticationInformation;
     this.config = config;

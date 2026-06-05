@@ -71,13 +71,7 @@ import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { buildTags, createTaggedFetch } from "./tags.ts";
 import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
-import { checkProviderRateLimit } from "@SRC/utils/check-provider-rate-limit.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
-import {
-  preCheckAgentRateLimit,
-  recordAgentTokenUsage,
-  resolveCallerId,
-} from "@SRC/utils/check-agent-rate-limit.ts";
 import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -139,15 +133,6 @@ export const createExpressRoutes = async (
   config: ExuluConfig,
   evals: ExuluEval[],
   tracer?: Tracer,
-  queues?: {
-    queue: Queue;
-    ratelimit: number;
-    timeoutInSeconds?: number;
-    concurrency: {
-      worker: number;
-      queue: number;
-    };
-  }[],
   rerankers?: ExuluReranker[],
 ): Promise<Express> => {
   // todo make this more secure / configurable
@@ -572,8 +557,6 @@ Mood: friendly and intelligent.
         session: (req.headers["session"] as string) || null,
       };
 
-      await checkProviderRateLimit(provider);
-
       const instance = req.params.instance;
       if (!instance) {
         res.status(400).json({
@@ -633,29 +616,6 @@ Mood: friendly and intelligent.
       if (!hasAccessToAgent) {
         res.status(401).json({
           message: "You don't have access to this agent.",
-        });
-        return;
-      }
-
-      // Rate limit pre-check (per agent, per caller).
-      // Enterprise feature — when the license is not active, agent.rate_limits is
-      // ignored entirely (no pre-check, no post-record).
-      const callerId = resolveCallerId(req, user?.id);
-      const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
-      const effectiveLimits = rateLimitsEnabled
-        ? ((agent as any).rate_limits ?? null)
-        : null;
-      const preCheck = await preCheckAgentRateLimit({
-        agentId: instance,
-        callerId,
-        limits: effectiveLimits,
-      });
-      if (!preCheck.ok) {
-        res.setHeader("Retry-After", String(preCheck.retryAfter));
-        res.status(429).json({
-          detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
-          metric: preCheck.metric,
-          retryAfter: preCheck.retryAfter,
         });
         return;
       }
@@ -994,26 +954,6 @@ Mood: friendly and intelligent.
     const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
     if (!hasAccessToAgent) {
       res.status(401).json({ detail: "You don't have access to this agent." });
-      return;
-    }
-
-    const callerId = resolveCallerId(req, user?.id);
-    const rateLimitsEnabled = checkLicense()["rate-limits"] === true;
-    const effectiveLimits = rateLimitsEnabled
-      ? ((agent as any).rate_limits ?? null)
-      : null;
-    const preCheck = await preCheckAgentRateLimit({
-      agentId,
-      callerId,
-      limits: effectiveLimits,
-    });
-    if (!preCheck.ok) {
-      res.setHeader("Retry-After", String(preCheck.retryAfter));
-      res.status(429).json({
-        detail: `Rate limit exceeded for ${preCheck.metric} on agent ${agent.name}.`,
-        metric: preCheck.metric,
-        retryAfter: preCheck.retryAfter,
-      });
       return;
     }
 

@@ -69,10 +69,6 @@ const addProviderFields = async (
       : provider?.slug || "";
   }
 
-  if (requestedFields.includes("rateLimit")) {
-    result.rateLimit = provider?.rateLimit || "";
-  }
-
   if (requestedFields.includes("tools")) {
     if (result.tools) {
       result.tools = await Promise.all(
