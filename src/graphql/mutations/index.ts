@@ -450,6 +450,10 @@ export function createMutations(
         throw new Error("You are not authorized to create users");
       }
 
+      if (table.name.singular === "user" && input.email) {
+        input.email = String(input.email).trim().toLowerCase();
+      }
+
       if (table.name.singular === "user" && input.password) {
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
@@ -539,6 +543,10 @@ export function createMutations(
       delete input.created_by;
 
       input = encryptSensitiveFields(input);
+
+      if (table.name.singular === "user" && input.email) {
+        input.email = String(input.email).trim().toLowerCase();
+      }
 
       if (table.name.singular === "user" && input.password) {
         console.log("[EXULU] Hashing password", input.password);
@@ -640,6 +648,10 @@ export function createMutations(
       delete input.created_by;
 
       input = encryptSensitiveFields(input);
+
+      if (table.name.singular === "user" && input.email) {
+        input.email = String(input.email).trim().toLowerCase();
+      }
 
       if (table.name.singular === "user" && input.password) {
         console.log("[EXULU] Hashing password", input.password);
