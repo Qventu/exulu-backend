@@ -273,11 +273,7 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "animation_responding",
       type: "text",
-    },
-    {
-      name: "rate_limits",
-      type: "json",
-    },
+    }
   ],
 };
 
