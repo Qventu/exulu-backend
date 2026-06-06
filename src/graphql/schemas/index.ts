@@ -328,8 +328,9 @@ export function createSDL(
     `;
     if (table.type === "items") {
       typeDefs += `
-      ${tableNamePlural}VectorSearch(limit: Int, query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand): ${tableNameSingular}VectorSearchResult
+      ${tableNamePlural}VectorSearch(limit: Int, query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand, entityFilter: ${tableNameSingular}EntityFilterInput): ${tableNameSingular}VectorSearchResult
       ${tableNameSingular}ChunkById(id: ID!): ${tableNameSingular}VectorSearchChunk
+      ${tableNameSingular}StaleEntityCount: Int
     `;
     }
     // todo add the fields of each table as filter options
@@ -348,6 +349,8 @@ export function createSDL(
     ${tableNameSingular}GenerateChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}GenerateChunksReturnPayload
     ${tableNameSingular}ExecuteSource(source: ID!, inputs: JSON!): ${tableNameSingular}ExecuteSourceReturnPayload
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}DeleteChunksReturnPayload
+    ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
+    ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
     `;
 
       if (table.processor) {
@@ -406,6 +409,7 @@ export function createSDL(
         chunkFilters: JSON!
         query: String!
         method: VectorMethodEnum!
+        entityInsights: ${tableNameSingular}EntityInsights
     }
 
     type ${tableNameSingular}VectorSearchChunk {
@@ -424,12 +428,59 @@ export function createSDL(
         chunk_cosine_distance: Float
         chunk_fts_rank: Float
         chunk_hybrid_score: Float
+        chunk_entities: [${tableNameSingular}ChunkEntity!]
     }
 
     type VectoSearchResultContext {
         name: String!
         id: ID!
         embedder: String!
+    }
+
+    input ${tableNameSingular}EntityRefInput {
+        type: String!
+        name: String!
+    }
+
+    input ${tableNameSingular}EntityFilterInput {
+        entityIds: [ID!]
+        entities: [${tableNameSingular}EntityRefInput!]
+        mode: String
+    }
+
+    type ${tableNameSingular}ChunkEntity {
+        id: ID!
+        name: String!
+        type: String!
+    }
+
+    type ${tableNameSingular}RelatedEntity {
+        id: ID!
+        name: String!
+        type: String!
+        weight: Float!
+    }
+
+    type ${tableNameSingular}QueryEntityInsight {
+        id: ID!
+        type: String!
+        name: String!
+        matchedInResults: Int!
+        relatedDocCount: Int!
+        relatedEntities: [${tableNameSingular}RelatedEntity!]!
+    }
+
+    type ${tableNameSingular}EntityInsights {
+        queryEntities: [${tableNameSingular}QueryEntityInsight!]!
+    }
+
+    type ${tableNameSingular}EntityBackfillPayload {
+        processed: Int!
+        skipped: Int!
+    }
+
+    type ${tableNameSingular}EntityPurgePayload {
+        removed: Int!
     }
 
 `;
