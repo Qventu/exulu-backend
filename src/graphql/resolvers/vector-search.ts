@@ -11,6 +11,20 @@ import { convertContextToTableDefinition } from "../utilities/convert-context-to
 import type { User } from "@EXULU_TYPES/models/user";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "@SRC/exulu/statistics";
+import {
+  applyEntityFilter,
+  buildEntityInsights,
+  entitiesEnabled,
+  extractEntitiesForItem,
+  getEntitiesForChunks,
+  getSharedEntityCounts,
+  hydrateEntityTypes,
+  resolveEntityFilter,
+  resolveQueryEntities,
+  type EntityFilter,
+  type EntityInsights,
+  type EntityRow,
+} from "@SRC/exulu/entities";
 
 export type VectorSearchChunkResult = {
   chunk_content: string;
@@ -28,6 +42,8 @@ export type VectorSearchChunkResult = {
   chunk_cosine_distance?: number;
   chunk_fts_rank?: number;
   chunk_hybrid_score?: number;
+  /** Entities mentioned in this chunk (present only when the entity layer is on). */
+  chunk_entities?: { id: string; name: string; type: string }[];
   context?: {
     name: string;
     id: string;
@@ -50,6 +66,7 @@ export const vectorSearch = async ({
   trigger,
   cutoffs,
   expand,
+  entityFilter,
 }: {
   limit: number;
   page: number;
@@ -73,6 +90,7 @@ export const vectorSearch = async ({
     tsvector?: number;
     hybrid?: number;
   };
+  entityFilter?: EntityFilter;
 }): Promise<{
   itemFilters: SearchFilters;
   chunkFilters: SearchFilters;
@@ -85,6 +103,7 @@ export const vectorSearch = async ({
     embedder: string;
   };
   chunks: VectorSearchChunkResult[];
+  entityInsights?: EntityInsights;
 }> => {
   const table = convertContextToTableDefinition(context);
 
@@ -145,6 +164,15 @@ export const vectorSearch = async ({
     after: expand?.after || context.configuration?.expand?.after || 0,
   };
 
+  // Entity layer: detect whether it's active for this context, and pre-resolve
+  // an optional caller-supplied entity filter (used for agent-driven exploration).
+  const entitiesOn = await entitiesEnabled(context);
+  const rawQuery = query; // pre-stemming query, used for entity extraction
+  let filterEntityIds: string[] | null = null;
+  if (entitiesOn && entityFilter) {
+    filterEntityIds = await resolveEntityFilter(context, entityFilter);
+  }
+
   // Create separate data query
   // const columns = await db(chunksTable).columnInfo();
 
@@ -175,6 +203,11 @@ export const vectorSearch = async ({
   chunksQuery = applyFilters(chunksQuery, chunkFilters, table, "chunks");
   chunksQuery = applyAccessControl(table, chunksQuery, user, "items");
   chunksQuery = applySorting(chunksQuery, sort, "items");
+
+  // Restrict to chunks mentioning the requested entities (agent exploration).
+  if (filterEntityIds) {
+    applyEntityFilter(chunksQuery, "chunks", context, filterEntityIds, entityFilter?.mode || "any");
+  }
 
   if (queryRewriter && query) {
     query = await queryRewriter(query);
@@ -367,6 +400,9 @@ export const vectorSearch = async ({
       fullTextQuery = applyFilters(fullTextQuery, itemFilters, table, "items");
       fullTextQuery = applyFilters(fullTextQuery, chunkFilters, table, "chunks");
       fullTextQuery = applyAccessControl(table, fullTextQuery, user, "items");
+      if (filterEntityIds) {
+        applyEntityFilter(fullTextQuery, "chunks", context, filterEntityIds, entityFilter?.mode || "any");
+      }
 
       // Build the semantic CTE subquery
       let semanticQuery = db(chunksTable + " as chunks")
@@ -385,6 +421,9 @@ export const vectorSearch = async ({
       semanticQuery = applyFilters(semanticQuery, itemFilters, table, "items");
       semanticQuery = applyFilters(semanticQuery, chunkFilters, table, "chunks");
       semanticQuery = applyAccessControl(table, semanticQuery, user, "items");
+      if (filterEntityIds) {
+        applyEntityFilter(semanticQuery, "chunks", context, filterEntityIds, entityFilter?.mode || "any");
+      }
 
       // Build the main query with CTEs
       let hybridQuery = db
@@ -525,6 +564,54 @@ export const vectorSearch = async ({
     // results = await resultReranker(results);
   }
 
+  // ── Entity soft-boost re-ranking ──
+  // Extract the query's entities and lift candidates that share them. Pure
+  // re-rank over the candidate set (nothing is excluded); blends a saturating
+  // shared-entity term into the min-max-normalized base score. Best-effort.
+  let queryEntities: EntityRow[] = [];
+  let entityInsights: EntityInsights | undefined;
+  if (entitiesOn && rawQuery) {
+    try {
+      const types = await hydrateEntityTypes(context);
+      const queryMentions = await extractEntitiesForItem({
+        context,
+        chunks: [{ index: 0, content: rawQuery }],
+        types,
+      });
+      queryEntities = await resolveQueryEntities(context, queryMentions);
+
+      if (queryEntities.length && results.length) {
+        const candidateIds = results.map((r) => r.chunk_id);
+        const queryEntityIds = queryEntities.map((e) => e.id);
+        const sharedCounts = await getSharedEntityCounts(context, candidateIds, queryEntityIds);
+
+        const scoreKey =
+          method === "cosineDistance"
+            ? "chunk_cosine_distance"
+            : method === "tsvector"
+              ? "chunk_fts_rank"
+              : "chunk_hybrid_score";
+        const scores = results.map((r) => Number((r as any)[scoreKey] ?? 0));
+        const min = Math.min(...scores);
+        const max = Math.max(...scores);
+        const range = max - min;
+        const boostWeight = context.entities?.boostWeight ?? 0.3;
+
+        results = results
+          .map((r, i) => {
+            const base = range > 0 ? ((scores[i] ?? 0) - min) / range : 1;
+            const shared = sharedCounts.get(r.chunk_id) || 0;
+            const boost = boostWeight * (shared / (shared + 1));
+            return { r, score: base + boost };
+          })
+          .sort((a, b) => b.score - a.score)
+          .map((x) => x.r);
+      }
+    } catch (err) {
+      console.error("[EXULU] Entity boost step failed (continuing):", (err as Error).message);
+    }
+  }
+
   results = results.slice(0, limit);
 
   // Added config option to Exulu retrieval “expand” which allows the result to include X
@@ -656,6 +743,24 @@ export const vectorSearch = async ({
     });
   }
 
+  // ── Entity annotation + intelligence payload ──
+  // Annotate the final chunks with their entities and build the entityInsights
+  // block so the calling agent can decide whether to explore further.
+  if (entitiesOn) {
+    try {
+      const finalIds = results.map((r) => r.chunk_id).filter(Boolean);
+      if (finalIds.length) {
+        const entMap = await getEntitiesForChunks(context, finalIds);
+        results = results.map((r) => ({ ...r, chunk_entities: entMap.get(r.chunk_id) || [] }));
+      }
+      entityInsights = queryEntities.length
+        ? await buildEntityInsights(context, queryEntities, finalIds)
+        : { queryEntities: [] };
+    } catch (err) {
+      console.error("[EXULU] Entity insights step failed (continuing):", (err as Error).message);
+    }
+  }
+
   await updateStatistic({
     name: "count",
     label: table.name.singular,
@@ -677,5 +782,6 @@ export const vectorSearch = async ({
       embedder: embedder.name,
     },
     chunks: results,
+    entityInsights,
   };
 };
