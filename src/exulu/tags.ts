@@ -68,6 +68,23 @@ export function buildTags(input: {
   return out;
 }
 
+export type BudgetEntityType = "user" | "role" | "team" | "project" | "agent";
+
+/**
+ * Canonical LiteLLM tag a budget attaches to for a given entity. Budgets use
+ * the stable `*_id_*` dimension only (ids survive renames; names do not). This
+ * is the single source of truth for budget tag naming — the frontend sends
+ * `{ entityType, entityId }` and the backend derives the tag here, so tag
+ * sanitization is never duplicated.
+ */
+export function budgetTagFor(
+  entityType: BudgetEntityType,
+  id: string | number,
+): string {
+  const value = sanitizeTagValue(`${entityType}_id_${id}`);
+  return value ?? "";
+}
+
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
 function decodeBody(body: unknown): string | undefined {

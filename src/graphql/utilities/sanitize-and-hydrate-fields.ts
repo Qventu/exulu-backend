@@ -14,6 +14,44 @@ import {
   findLiteLLMModel,
   type LiteLLMCatalogEntry,
 } from "@SRC/exulu/litellm/catalog";
+import { budgetTagFor, type BudgetEntityType } from "@SRC/exulu/tags";
+import { getTagBudgetMap } from "@SRC/exulu/litellm/budget-service";
+
+const BUDGET_ENTITY_SINGULARS = new Set<string>([
+  "user",
+  "role",
+  "team",
+  "project",
+  "agent",
+]);
+
+/**
+ * Resolve the computed `budget` field for an entity row. The budget lives in
+ * LiteLLM (keyed by the entity's *_id_* tag); getTagBudgetMap is cached ~30s so
+ * resolving a full page of rows is a single LiteLLM call + cheap map lookups.
+ * Gated to super_admin / budget_management so non-privileged users querying the
+ * field just get null.
+ */
+const addBudgetField = async (
+  requestedFields: string[],
+  result: any,
+  entityType: string,
+  user: User | undefined,
+): Promise<any> => {
+  if (!requestedFields.includes("budget")) return result;
+
+  const scope = (user as any)?.role?.budget_management;
+  const canRead = !!user?.super_admin || scope === "read" || scope === "write";
+  if (!canRead || result?.id == null) {
+    result.budget = null;
+    return result;
+  }
+
+  const map = await getTagBudgetMap();
+  const tag = budgetTagFor(entityType as BudgetEntityType, result.id);
+  result.budget = tag ? (map[tag] ?? null) : null;
+  return result;
+};
 
 const addProviderFields = async (
   args: Record<string, any>,
@@ -359,6 +397,9 @@ export const finalizeRequestedFields = async ({
       if (!requestedFields.includes("provider")) {
         delete result.provider;
       }
+    }
+    if (BUDGET_ENTITY_SINGULARS.has(table.name.singular)) {
+      result = await addBudgetField(requestedFields, result, table.name.singular, user);
     }
     if (table.type === "items") {
       if (requestedFields.includes("chunks")) {

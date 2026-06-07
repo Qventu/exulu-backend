@@ -68,7 +68,17 @@ import {
 } from "./litellm/parse-image-models.ts";
 import { resolve as resolvePath } from "node:path";
 import { RBACResolver } from "@EE/rbac-resolver.ts";
-import { buildTags, createTaggedFetch } from "./tags.ts";
+import { buildTags, createTaggedFetch, budgetTagFor, type BudgetEntityType } from "./tags.ts";
+import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.ts";
+import {
+  provisionDefaultUserBudget,
+  getUserBudgetView,
+  getBudgetSettings,
+  setBudgetSettings,
+  upsertBudget,
+  invalidateBudgetCaches,
+  type BudgetSettings,
+} from "./litellm/budget-service.ts";
 import multer from "multer";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
@@ -838,13 +848,6 @@ Mood: friendly and intelligent.
                   : []),
               ]);
             }
-            await recordAgentTokenUsage({
-              agentId: instance,
-              callerId,
-              limits: effectiveLimits,
-              inputTokens: metadata?.inputTokens,
-              outputTokens: metadata?.outputTokens,
-            });
           },
         });
         // Returns a response that can be used by the "useChat" hook
@@ -884,13 +887,6 @@ Mood: friendly and intelligent.
             trigger: "agent",
           },
           onTokenUsage: async ({ inputTokens, outputTokens }) => {
-            await recordAgentTokenUsage({
-              agentId: instance,
-              callerId,
-              limits: effectiveLimits,
-              inputTokens,
-              outputTokens,
-            });
           },
         });
         res.status(200).json(response);
@@ -1028,13 +1024,6 @@ Mood: friendly and intelligent.
             }),
           ]
           : []),
-        recordAgentTokenUsage({
-          agentId,
-          callerId,
-          limits: effectiveLimits,
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-        }),
       ]);
 
       res.status(200).json({ suggestions });
@@ -2079,14 +2068,20 @@ Mood: friendly and intelligent.
       upstreamHeaders["x-litellm-tags"] = tags.join(",");
       upstreamHeaders["x-litellm-spend-logs-metadata"] = JSON.stringify({
         user_id: user.id,
-        role_id: user.role?.id,
-        project_id: project?.id || "DEFAULT",
         user_name: user.email,
+        role_id: user.role?.id,
         role_name: user.role?.name,
+        team_id: user.team?.id,
+        team_name: user.team?.name,
+        project_id: project?.id || "DEFAULT",
         project_name: project?.name,
       });
     }
     console.log("[EXULU] Built tags", tags);
+
+    // Lazily provision the global per-user budget tag if a default is configured.
+    // Safe to await — the service swallows its own errors and never throws.
+    await provisionDefaultUserBudget(user.id);
 
     const taggedFetch = createTaggedFetch(tags) as unknown as typeof globalThis.fetch;
 
@@ -2139,6 +2134,209 @@ Mood: friendly and intelligent.
       }
     }
   });
+
+  // ─────────────────────────── Tag budgets ───────────────────────────
+  // Budgets are LiteLLM tag budgets on the stable *_id_* tags. LiteLLM is the
+  // source of truth (live spend + limits); only the global-default settings
+  // live in Postgres. Access is gated by super_admin or the budget_management
+  // role scope. See budget-service.ts / admin-client.ts.
+
+  const BUDGET_ENTITY_TABLES: Record<BudgetEntityType, string> = {
+    user: "users",
+    role: "roles",
+    team: "teams",
+    project: "projects",
+    agent: "agents",
+  };
+  const BUDGET_ALLOWED_DURATIONS = new Set<BudgetDuration>(["1d", "7d", "30d"]);
+
+  const parseBudgetEntityType = (raw: string | undefined): BudgetEntityType | null =>
+    raw && raw in BUDGET_ENTITY_TABLES ? (raw as BudgetEntityType) : null;
+
+  const parseBudgetBody = (
+    body: any,
+  ): { max_budget: number; budget_duration: BudgetDuration } | null => {
+    const max_budget = Number(body?.max_budget);
+    const budget_duration = String(body?.budget_duration ?? "") as BudgetDuration;
+    if (!Number.isFinite(max_budget) || max_budget <= 0) return null;
+    if (!BUDGET_ALLOWED_DURATIONS.has(budget_duration)) return null;
+    return { max_budget, budget_duration };
+  };
+
+  const parseBudgetSettingsBody = (body: any): BudgetSettings | null => {
+    if (!body || typeof body !== "object") return null;
+    const g = body.global_user_budget ?? {};
+    const max_budget = Number(g.max_budget);
+    const budget_duration = String(g.budget_duration ?? "30d") as BudgetDuration;
+    if (!BUDGET_ALLOWED_DURATIONS.has(budget_duration)) return null;
+    // When the default is enabled, a positive amount is required.
+    if (g.enabled && (!Number.isFinite(max_budget) || max_budget <= 0)) return null;
+    return {
+      global_user_budget: {
+        enabled: !!g.enabled,
+        max_budget: Number.isFinite(max_budget) ? max_budget : 0,
+        budget_duration,
+      },
+      show_user_budget_in_chat: !!body.show_user_budget_in_chat,
+    };
+  };
+
+  /**
+   * Authenticate and require budget access. `required: "write"` is satisfied by
+   * super_admin or role.budget_management === "write"; `"read"` additionally
+   * accepts role.budget_management === "read". Writes the error response and
+   * returns null when not allowed.
+   */
+  const authorizeBudgetAccess = async (
+    req: Request,
+    res: Response,
+    required: "read" | "write",
+  ): Promise<{ user: any; db: Knex } | null> => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return null;
+    }
+    const user = authResult.user;
+    const scope = user.role?.budget_management;
+    const allowed =
+      user.super_admin ||
+      scope === "write" ||
+      (required === "read" && scope === "read");
+    if (!allowed) {
+      res.status(403).json({ detail: "Budget management access required." });
+      return null;
+    }
+    const { db } = await postgresClient();
+    return { user, db };
+  };
+
+  // Settings (registered before /:entityType so "settings" isn't captured as a type).
+  app.get("/admin/budgets/settings", async (req: Request, res: Response) => {
+    const auth = await authorizeBudgetAccess(req, res, "read");
+    if (!auth) return;
+    res.status(200).json({ settings: await getBudgetSettings() });
+  });
+
+  app.put("/admin/budgets/settings", async (req: Request, res: Response) => {
+    const auth = await authorizeBudgetAccess(req, res, "write");
+    if (!auth) return;
+    const parsed = parseBudgetSettingsBody(req.body);
+    if (!parsed) {
+      res.status(400).json({ detail: "Invalid budget settings." });
+      return;
+    }
+    res.status(200).json({ settings: await setBudgetSettings(parsed) });
+  });
+
+  // Self-view: the caller's own budget, for the in-chat indicator. Returns
+  // null unless show_user_budget_in_chat is on and the user has a budget.
+  app.get("/me/budget", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    res.status(200).json({ budget: await getUserBudgetView(authResult.user.id) });
+  });
+
+  // Bulk upsert (registered before /:entityType/:entityId so "bulk" isn't an id).
+  app.put(
+    "/admin/budgets/:entityType/bulk",
+    async (req: Request, res: Response) => {
+      const auth = await authorizeBudgetAccess(req, res, "write");
+      if (!auth) return;
+      const entityType = parseBudgetEntityType(req.params.entityType);
+      if (!entityType) {
+        res.status(400).json({ detail: "Invalid entity type." });
+        return;
+      }
+      const body = parseBudgetBody(req.body);
+      if (!body) {
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        return;
+      }
+      const entityIds: unknown[] = Array.isArray(req.body?.entityIds)
+        ? req.body.entityIds
+        : [];
+      if (entityIds.length === 0) {
+        res.status(400).json({ detail: "entityIds must be a non-empty array." });
+        return;
+      }
+      const results: { entityId: string; ok: boolean; error?: string }[] = [];
+      for (const id of entityIds) {
+        const tag = budgetTagFor(entityType, id as string | number);
+        try {
+          await upsertBudget(tag, body.max_budget, body.budget_duration);
+          results.push({ entityId: String(id), ok: true });
+        } catch (err) {
+          results.push({
+            entityId: String(id),
+            ok: false,
+            error: err instanceof Error ? err.message : "Failed.",
+          });
+        }
+      }
+      res.status(200).json({ results });
+    },
+  );
+
+  // Reads (overview + per-entity status) are served by the GraphQL `budget`
+  // field on each entity type — see finalizeRequestedFields / getTagBudgetMap.
+  // Only mutations live here as REST.
+
+  // Upsert a single entity budget.
+  app.put(
+    "/admin/budgets/:entityType/:entityId",
+    async (req: Request, res: Response) => {
+      const auth = await authorizeBudgetAccess(req, res, "write");
+      if (!auth) return;
+      const entityType = parseBudgetEntityType(req.params.entityType);
+      if (!entityType) {
+        res.status(400).json({ detail: "Invalid entity type." });
+        return;
+      }
+      const body = parseBudgetBody(req.body);
+      if (!body) {
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        return;
+      }
+      const tag = budgetTagFor(entityType, req.params.entityId ?? "");
+      try {
+        await upsertBudget(tag, body.max_budget, body.budget_duration);
+        const info = await tagInfo([tag]);
+        res.status(200).json({ budget: info[tag] ?? null });
+      } catch (err) {
+        res.status(502).json({
+          detail: err instanceof Error ? err.message : "Failed to save budget.",
+        });
+      }
+    },
+  );
+
+  // Delete a single entity budget.
+  app.delete(
+    "/admin/budgets/:entityType/:entityId",
+    async (req: Request, res: Response) => {
+      const auth = await authorizeBudgetAccess(req, res, "write");
+      if (!auth) return;
+      const entityType = parseBudgetEntityType(req.params.entityType);
+      if (!entityType) {
+        res.status(400).json({ detail: "Invalid entity type." });
+        return;
+      }
+      const tag = budgetTagFor(entityType, req.params.entityId ?? "");
+      try {
+        await tagDelete(tag);
+        invalidateBudgetCaches(tag);
+        res.status(204).end();
+      } catch (err) {
+        res.status(502).json({
+          detail: err instanceof Error ? err.message : "Failed to delete budget.",
+        });
+      }
+    },
+  );
 
   if (
     config?.fileUploads &&
