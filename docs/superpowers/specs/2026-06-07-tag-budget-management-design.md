@@ -36,8 +36,8 @@ across the platform. End users also have no visibility into how much budget they
   Exulu (`platform_configurations`).
 - **No budgets on `*_name_*` tags.** Budgets attach to stable `*_id_*` tags only; name
   tags stay report-only (names change, ids do not).
-- **No role-based access.** Budget management is super-admin only; no new role permission
-  field.
+- **No bespoke per-user ACLs.** Access is governed by `super_admin` or the new
+  `budget_management` role scope — nothing finer-grained.
 - **No reconcile/backfill job.** The global per-user default is applied lazily. Changing
   the default later does not retro-update already-created budgets (noted as a future
   option).
@@ -51,7 +51,7 @@ across the platform. End users also have no visibility into how much budget they
 | Budget tag dimension | `*_id_*` tags only (stable across renames) |
 | Source of truth (per-entity) | LiteLLM `/tag/*` admin API — no Exulu mirror table |
 | Source of truth (platform settings) | `platform_configurations`, key `budget_settings` (json) |
-| Authorization (management) | super_admin only — page + every mutation endpoint |
+| Authorization (management) | `super_admin` **or** new `budget_management` role scope (`read`/`write`) — page + every mutation endpoint. `write` required for mutations; `read` to view |
 | Authorization (self-view) | caller's own user id only; backend resolves the tag |
 | Global per-user provisioning | Lazy, on request, with an in-memory provisioning cache |
 | Backend ↔ LiteLLM | New `src/exulu/litellm/admin-client.ts` wrapping `/tag/new`, `/tag/update`, `/tag/info`, `/tag/delete` using `LITELLM_HOST/PORT` + `LITELLM_MASTER_KEY` |
@@ -106,9 +106,36 @@ Reuses the existing `sanitizeTagValue`, so tag naming is single-sourced. The fro
 sends `{ entityType, entityId }`; the backend derives the tag. The frontend never
 replicates sanitization.
 
+### New role scope — `budget_management`
+
+A new `read`/`write` role permission, wired identically to existing scopes (`agents`,
+`workflows`, `variables`, `users`, `api`, `evals`). This lets a role like "finance" be
+granted budget access without `super_admin`. Touch-points:
+
+**Backend**
+- `ee/schemas.ts` — add `{ name: "budget_management", type: "text" }` to `rolesSchema.fields`.
+- `types/models/user-role.ts` — add `budget_management?: "read" | "write" | null`.
+- `src/postgres/init-exulu-db.ts` — column auto-added via `addMissingFields` on boot
+  (no manual migration). Seed defaults: `admin` role → `"write"`; `default` role → `null`.
+- The budget REST endpoints' shared authorization helper checks this scope.
+- *(No `access-control.ts` change — budgets aren't a GraphQL-backed table; authorization
+  is enforced in the REST handlers.)*
+
+**Frontend**
+- `types/models/user-role.ts` — mirror the optional `budget_management` field.
+- `components/role-form.tsx` — add a `budget_management` row to `PERMISSION_AREAS` plus the
+  three permission state spots (init, effect, submit payload).
+- `app/(application)/roles/page.tsx` — pass `budget_management` in create/update handlers.
+- `queries/queries.ts` — add `budget_management` to `GET_USER_ROLES`,
+  `CREATE_USER_ROLE`, `UPDATE_USER_ROLE_BY_ID` (params + selected fields).
+- `lib/server-side-auth-check.ts` — add `'budget_management', roles.budget_management` to
+  the role `json_build_object` so the scope reaches `UserContext`.
+- `components/custom/main-nav.tsx` — gate the new `/budgets` nav item on the scope.
+
 ### Backend — REST endpoints
 
-All under super-admin authorization (same gate as `/configuration`):
+All gated by `super_admin || role.budget_management === "write"` (the `GET` reads also
+accept `role.budget_management === "read"`). A shared middleware/helper enforces this:
 
 | Method & path | Purpose |
 |---|---|
@@ -166,7 +193,9 @@ self-view path). No Postgres column — it is live LiteLLM data attached at cont
 
 Modeled on the `teams` / `roles` pages (Next.js, shadcn, Apollo for entity lists,
 `util/api.ts` for the new REST calls). Nav entry added in `main-nav.tsx`, gated
-`user.super_admin`.
+`user.super_admin || role.budget_management === "read" || role.budget_management === "write"`.
+Write-only actions in the page (edit/bulk/delete/settings) are additionally disabled when
+the scope is only `read`.
 
 **Global default card (top):**
 - Enable toggle + monthly amount + duration select → `PUT /admin/budgets/settings`.
@@ -247,6 +276,9 @@ serverSideAuthCheck → GET /me/budget (read cache ~30s) → user.budget
 - **Unit:** `budgetTagFor` derivation; upsert new-vs-update decision; `ensureUserBudget`
   cache behavior + "never overwrite an existing budget"; `useBudgetProjection` math
   (under-pace, over-pace, near-zero elapsed time).
+- **Authorization:** a `budget_management: "write"` role can manage budgets without
+  `super_admin`; `"read"` can view but mutations are blocked (UI disabled + endpoint 403);
+  no scope → no nav item and endpoints 403.
 - **Manual:** set a $X budget on a user, exceed it, confirm LiteLLM returns the
   `budget_exceeded` 400; enable the global default and confirm a fresh user is
   auto-provisioned; bulk-apply a budget to multiple selected projects; toggle
@@ -256,4 +288,3 @@ serverSideAuthCheck → GET /me/budget (read cache ~30s) → user.budget
 
 - Reconcile job to retro-apply a changed global default to existing users.
 - Global defaults for other entity types.
-- Role-based (non-super-admin) budget management.
