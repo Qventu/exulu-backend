@@ -41,7 +41,7 @@ import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
 import type { Queue } from "bullmq";
-import { createIdGenerator, type UIMessage } from "ai";
+import { createIdGenerator, pipeUIMessageStreamToResponse, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import cookieParser from "cookie-parser";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition.ts";
@@ -55,6 +55,20 @@ import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
+import {
+  isHermesEnabled,
+  ensureProfile,
+  profileIdFor,
+  ensureGateway,
+  resolveHermesSessionId,
+  loadHermesConversationHistory,
+  createHermesRunStream,
+  uiMessageText,
+  registerExuluMcpRoute,
+  registerHermesSkillsRoutes,
+  registerWorkspaceFilesRoutes,
+  syncProfileSkills,
+} from "./hermes/index.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -732,6 +746,137 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
+        // Advanced (Hermes) agent mode. Routes this request through the Hermes
+        // harness instead of the default AI SDK → LiteLLM flow. Backwards
+        // compatible: only taken when the agent opted in AND ENABLE_HERMES_AGENT
+        // is set; otherwise we fall through to provider.generateStream below.
+        if ((agent as any).advanced_mode && isHermesEnabled()) {
+          const scope =
+            (agent as any).advanced_agent_profile_scope === "private"
+              ? "private"
+              : "shared";
+
+          // Provisioning + gateway start happen BEFORE we begin streaming, so a
+          // failure can still return a clean 503 (graceful degradation) rather
+          // than a half-open stream.
+          let gateway: { baseUrl: string; apiKey: string };
+          let hermesSessionId: string;
+          try {
+            const profileId = profileIdFor(agent.id, scope, user?.id);
+            await ensureProfile({
+              profileId,
+              agentId: agent.id,
+              instructions: instructions ?? agent.instructions,
+              modelName: modelId,
+              skills: enabledSkills.map((s) => ({
+                id: s.id,
+                version: (s as any).current_version,
+              })),
+              toolIds: enabledTools
+                .map((t) => t.id)
+                .filter(Boolean) as string[],
+            });
+            // Sync enabled Exulu skills (S3 -> profile/exulu-skills) before the
+            // gateway starts and scans skills.external_dirs. Additive to Hermes'
+            // own learned/bundled skills.
+            await syncProfileSkills(
+              profileId,
+              enabledSkills.map((s) => ({
+                id: s.id,
+                name: s.name,
+                current_version: (s as any).current_version,
+              })),
+              config,
+            );
+            gateway = await ensureGateway(profileId);
+            hermesSessionId = await resolveHermesSessionId(db, headers.session);
+          } catch (err) {
+            console.error("[EXULU] Hermes advanced mode setup failed:", err);
+            res.status(503).json({
+              message: "Advanced agent mode is temporarily unavailable.",
+              detail: (err as Error).message,
+            });
+            return;
+          }
+
+          // Abort the run + event stream if the client disconnects.
+          const ac = new AbortController();
+          res.on("close", () => ac.abort());
+
+          const conversation = [...previousMessages, message].filter(
+            Boolean,
+          ) as UIMessage[];
+
+          // Load prior turns for multi-turn memory — the runs API's session_id
+          // is only a correlation label, so we pass conversation_history
+          // explicitly (read from agent_messages, our dual-write). Best-effort:
+          // a load failure just means this turn starts fresh, not a 503.
+          let conversationHistory: Array<{ role: string; content: string }> = [];
+          try {
+            conversationHistory = await loadHermesConversationHistory(
+              db,
+              headers.session,
+              user?.id,
+            );
+          } catch (histErr) {
+            console.error("[EXULU] Hermes history load failed:", histErr);
+          }
+
+          const stream = createHermesRunStream({
+            baseUrl: gateway.baseUrl,
+            apiKey: gateway.apiKey,
+            hermesSessionId,
+            // Hermes /v1/runs takes the new turn as `input`; prior turns go in
+            // conversation_history (session_id alone doesn't recall them). The
+            // model is configured server-side in config.yaml.
+            input: uiMessageText(message),
+            conversationHistory,
+            originalMessages: conversation,
+            generateId: createIdGenerator({ prefix: "msg_", size: 16 }),
+            signal: ac.signal,
+            onError: (error) => {
+              console.error("[EXULU] Hermes run error.", error);
+              if (error == null) return "unknown error";
+              if (typeof error === "string") return error;
+              if (error instanceof Error) return error.message;
+              return JSON.stringify(error);
+            },
+            onFinish: async ({ messages }) => {
+              if (headers.session && user?.id) {
+                await saveChat({
+                  session: headers.session as string,
+                  user: user.id,
+                  messages,
+                  model: resolvedModelId,
+                });
+                clearSessionCurrentTask(headers.session as string).catch(() => {});
+              }
+              const metadata = messages[messages.length - 1]?.metadata as any;
+              if (statistics) {
+                await updateStatistic({
+                  name: "count",
+                  label: statistics.label,
+                  type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                  trigger: statistics.trigger,
+                  count: 1,
+                  user: user?.id,
+                  role: user?.role?.id,
+                });
+              }
+              await recordAgentTokenUsage({
+                agentId: instance,
+                callerId,
+                limits: effectiveLimits,
+                inputTokens: metadata?.inputTokens,
+                outputTokens: metadata?.outputTokens,
+              });
+            },
+          });
+
+          pipeUIMessageStreamToResponse({ response: res, stream });
+          return;
+        }
+
         const result = await provider.generateStream({
           contexts: contexts,
           rerankers: rerankers || [],
@@ -908,6 +1053,19 @@ Mood: friendly and intelligent.
   if (isLiteLLMEnabled() && providers.length > 0) {
     registerAgentRunRoute("/agents/litellm/run", providers[0]!);
   }
+
+  // Advanced (Hermes) agent mode: expose each agent's enabled ExuluTools to its
+  // Hermes gateway over HTTP MCP at /mcp/:agentId. No-op unless Hermes is
+  // enabled. These tools ADD to Hermes' native tools, they don't replace them.
+  registerExuluMcpRoute(app, config);
+
+  // Surface the skills a Hermes profile accumulates (incl. auto-distilled ones)
+  // for review/edit/delete from the chat UI. RBAC-gated, Hermes-only.
+  registerHermesSkillsRoutes(app);
+
+  // Advanced-mode workspace files (the agent's shared per-profile folder),
+  // local-direct, same contract as /sessions/:id/files so the UI is reused.
+  registerWorkspaceFilesRoutes(app);
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.
   // The frontend posts the last user+assistant exchange and gets back up to 3

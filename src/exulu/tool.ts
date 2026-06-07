@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ExuluConfig } from "./app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
@@ -150,7 +151,14 @@ export class ExuluTool {
       agent,
     );
 
-    const tool = tools[sanitizeName(this.name)] || tools[this.name] || tools[this.id];
+    // convertExuluToolsToAiSdkTools keys tools by sanitizeToolName (which
+    // preserves case, e.g. "Internet_Search"); try that first, then fall back to
+    // the looser sanitizeName/name/id keys for older call sites.
+    const tool =
+      tools[sanitizeToolName(this.name)] ||
+      tools[sanitizeName(this.name)] ||
+      tools[this.name] ||
+      tools[this.id];
     if (!tool?.execute) {
       throw new Error("Tool " + sanitizeName(this.name) + " not found in " + JSON.stringify(tools));
     }
