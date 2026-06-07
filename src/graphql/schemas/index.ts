@@ -99,6 +99,14 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     fields.push("  variables: [String]");
   }
 
+  // Computed budget field: resolved from LiteLLM at query time (not a DB
+  // column). Null when the entity has no budget. See finalizeRequestedFields.
+  if (
+    ["user", "role", "team", "project", "agent"].includes(table.name.singular)
+  ) {
+    fields.push("  budget: JSON");
+  }
+
   // Add RBAC field if enabled
   const rbacField = table.RBAC ? "  RBAC: RBACData" : "";
 

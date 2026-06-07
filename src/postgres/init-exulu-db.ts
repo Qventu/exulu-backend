@@ -292,6 +292,7 @@ export const execute = async ({ contexts }: { contexts: ExuluContext[] }) => {
         variables: "write",
         users: "write",
         evals: "write",
+        budget_management: "write",
       })
       .returning("id");
     adminRoleId = role[0].id;
