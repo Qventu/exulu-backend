@@ -1,0 +1,55 @@
+# EXAMPLE ONLY — Exulu generates the real config.yaml per profile at runtime.
+# Documentation: https://hermes-agent.nousresearch.com/docs/user-guide/configuration
+#
+# The model block points Hermes at the LiteLLM proxy so every model call still
+# flows through the single model gateway. NOTE: the model-name key is `default`,
+# not `model`. When base_url is set, Hermes calls it directly using api_key.
+
+model:
+  default: "claude-haiku"            # a LiteLLM model_name from config.litellm.yaml
+  provider: custom
+  base_url: "http://127.0.0.1:4000/v1"
+  api_key: "${LITELLM_MASTER_KEY}"  # resolved from the profile .env / process env
+  api_mode: chat_completions
+
+# Tool-approval policy: `smart` auto-approves low-risk actions and emits an
+# approval event (requiring a decision) before destructive ones.
+approvals:
+  mode: smart
+
+# Native shell/file tools run via this backend. Default is `docker`: a hardened,
+# Hermes-managed container (cap-drop ALL, no-new-privileges) that isolates the
+# tools from the host WITHOUT needing user namespaces — so it behaves the same
+# on macOS (Docker Desktop) and Linux. Volumes are bind-mounted host->same path
+# so the absolute cwd / skills.external_dirs resolve inside the container;
+# secrets are not mounted. Set HERMES_TERMINAL_BACKEND=local to disable.
+terminal:
+  backend: docker
+  # No bind mount: the Files panel talks to the container's /root directly via
+  # docker exec/cp. We stamp a deterministic label so Exulu can find the
+  # container (docker ps --filter label=exulu-profile=<profileId>), and keep it
+  # persistent so files survive between runs.
+  docker_image: "nikolaik/python-nodejs:python3.11-nodejs20"
+  container_persistent: true
+  lifetime_seconds: 86400
+  # Run as root (home /root) so the agent's working dir is a predictable /root
+  # the Files panel reads — NOT the host user's home (e.g. /Users/<you>), which
+  # is what docker_run_as_host_user (default) would replicate.
+  docker_run_as_host_user: false
+  docker_mount_cwd_to_workspace: false
+  docker_extra_args: ["--label", "exulu-profile=<profileId>"]
+    - "/abs/.../profiles/<profileId>/exulu-skills:/abs/.../profiles/<profileId>/exulu-skills:ro"
+
+# Added in Phase 3 — ExuluTools exposed over HTTP MCP at /mcp/<agentId>:
+# mcp_servers:
+#   exulu:
+#     url: "http://127.0.0.1:<exulu-port>/mcp/<agentId>"
+#     headers:
+#       Authorization: "Bearer ${EXULU_MCP_KEY}"
+
+# Enabled Exulu skills, synced from S3 into the profile (Anthropic Agent Skills
+# format). ADDS to Hermes' own skills home (learned/bundled skills); only
+# written when the agent has skills enabled.
+# skills:
+#   external_dirs:
+#     - "/abs/path/to/${HERMES_HOME}/profiles/<profileId>/exulu-skills"
