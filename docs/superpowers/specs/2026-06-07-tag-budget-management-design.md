@@ -82,8 +82,8 @@ Platform settings    → platform_configurations row, config_key = "budget_setti
 New module `src/exulu/litellm/admin-client.ts`. Thin typed wrappers over the LiteLLM tag
 admin API, the single place that knows how to talk to it:
 
-- `tagNew({ name, max_budget, budget_duration, soft_budget? })`
-- `tagUpdate({ name, max_budget, budget_duration, soft_budget? })`
+- `tagNew({ name, max_budget, budget_duration })`
+- `tagUpdate({ name, max_budget, budget_duration })`
 - `tagInfo(names: string[]) → Record<name, TagInfo | null>`
 - `tagDelete(name)`
 
@@ -91,7 +91,7 @@ Uses existing `LITELLM_HOST` / `LITELLM_PORT` and `LITELLM_MASTER_KEY` (Bearer).
 errors surface as typed failures so callers can log-and-continue where appropriate.
 
 `TagInfo` shape (subset of LiteLLM `/tag/info`): `{ name, spend, max_budget,
-budget_duration, soft_budget, budget_reset_at }`.
+budget_duration, budget_reset_at }`.
 
 ### Backend — canonical tag derivation
 
@@ -114,8 +114,8 @@ All under super-admin authorization (same gate as `/configuration`):
 |---|---|
 | `GET /admin/budgets/:entityType` | Batch: derive the id-tag for every entity of that type, `tagInfo(names[])`, return `{ entityId → TagInfo \| null }` map. Powers the overview table. |
 | `GET /admin/budgets/:entityType/:entityId` | Single entity budget (`tagInfo`). |
-| `PUT /admin/budgets/:entityType/:entityId` | Upsert one: `tagInfo` to decide, then `tagNew` or `tagUpdate`. Body `{ max_budget, budget_duration, soft_budget? }`. |
-| `PUT /admin/budgets/:entityType/bulk` | Apply the **same value as an individual budget** to each `entityIds[]` (loops upsert server-side). Returns per-entity success/failure. Powers multi-select. |
+| `PUT /admin/budgets/:entityType/:entityId` | Upsert one: `tagInfo` to decide, then `tagNew` or `tagUpdate`. Body `{ max_budget, budget_duration }`. |
+| `PUT /admin/budgets/:entityType/bulk` | Apply the **same value as an individual budget** to each `entityIds[]` (loops upsert server-side). Body `{ entityIds, max_budget, budget_duration }`. Returns per-entity success/failure. Powers multi-select. |
 | `DELETE /admin/budgets/:entityType/:entityId` | `tagDelete`. |
 | `GET /admin/budgets/settings` | Read `budget_settings` (global default + show-in-chat). |
 | `PUT /admin/budgets/settings` | Write `budget_settings`. |
@@ -187,7 +187,7 @@ Modeled on the `teams` / `roles` pages (Next.js, shadcn, Apollo for entity lists
 the live bar + prognosis for that entity.
 
 **Budget fields:** `max_budget` (USD), `budget_duration` (select: `1d` / `7d` / `30d`,
-default `30d`), optional `soft_budget` (warning threshold).
+default `30d`).
 
 ### Frontend — basic prognosis
 
