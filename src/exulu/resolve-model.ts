@@ -7,6 +7,7 @@ import type { ExuluTeam, User, UserRole } from "@EXULU_TYPES/models/user";
 import type { ExuluProvider } from "./provider";
 import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor";
 import { buildTags, createTaggedFetch } from "./tags";
+import { provisionDefaultUserBudget } from "./litellm/budget-service";
 import type { Role } from "@mistralai/mistralai/models/components";
 import type { Project } from "@EXULU_TYPES/models/project";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
@@ -174,7 +175,11 @@ export async function resolveModel(input: ResolveModelInput): Promise<ResolvedMo
       );
     }
 
-    const litellm = getLiteLLMProvider({ 
+    // Lazily provision the global per-user budget tag if a default is configured.
+    // Swallows its own errors; never blocks resolution.
+    if (user?.id) await provisionDefaultUserBudget(user.id);
+
+    const litellm = getLiteLLMProvider({
       user: user,
       role: user?.role,
       project: project,

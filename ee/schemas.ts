@@ -73,6 +73,10 @@ export const rolesSchema: ExuluTableDefinition = {
             name: "evals",
             type: "text", // write | read access to evals
         },
+        {
+            name: "budget_management",
+            type: "text", // write | read access to budgets
+        },
     ],
 };
 

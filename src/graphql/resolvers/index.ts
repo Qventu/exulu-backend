@@ -108,6 +108,13 @@ export const sanitizeRequestedFields = (
   if (table.name.singular === "agent") {
     requestedFields = removeProviderFields(requestedFields);
   }
+  // `budget` is computed from LiteLLM in finalizeRequestedFields, not a DB
+  // column — keep it out of the SQL selection.
+  if (
+    ["user", "role", "team", "project", "agent"].includes(table.name.singular)
+  ) {
+    requestedFields = requestedFields.filter((field) => field !== "budget");
+  }
   if (table.name.singular === "workflow_template") {
     requestedFields.push("steps_json");
   }

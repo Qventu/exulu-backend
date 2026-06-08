@@ -59,6 +59,7 @@ import {
   setLiteLLMPackageRoot,
   startLiteLLMSupervisor,
 } from "@SRC/exulu/litellm/supervisor.ts";
+import { validateHermesAtBoot } from "@SRC/exulu/hermes/index.ts";
 import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { builtInContexts } from "@SRC/templates/contexts";
 import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
@@ -448,6 +449,12 @@ export class ExuluApp {
         }
       }
 
+      // Advanced (Hermes) agent mode. Gateways are lazy-started per profile on
+      // first use, so nothing spawns at boot — this only validates the binary,
+      // port range, and LiteLLM key, warning loudly on misconfiguration while
+      // letting Exulu keep booting. No-op when ENABLE_HERMES_AGENT is unset.
+      validateHermesAtBoot();
+
       // Whisper transcription server. Unlike LiteLLM, we never auto-spawn
       // it from the main app — it runs as its own process (typically on a
       // GPU host) via `npx @exulu/backend exulu-start-whisper`. The main
@@ -826,7 +833,6 @@ export class ExuluApp {
           this._config,
           this._evals,
           tracer,
-          this._queues,
           this._rerankers,
         );
 

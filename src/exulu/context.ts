@@ -7,7 +7,6 @@ import type { ExuluConfig } from "./app";
 import pgvector from "pgvector/knex"; // DONT REMOVE THIS
 import type { Item } from "@EXULU_TYPES/models/item";
 import type { ExuluContextProcessor } from "@EXULU_TYPES/context-processor";
-import type { RateLimiterRule } from "@EXULU_TYPES/models/rate-limiter-rules";
 import type { ExuluEmbedder } from "./embedder";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
@@ -72,7 +71,6 @@ export class ExuluContext {
   public active: boolean;
   public fields: ExuluContextFieldDefinition[];
   public processor?: ExuluContextProcessor;
-  public rateLimit?: RateLimiterRule;
   public description: string;
   public embedder?: ExuluEmbedder;
   public queryRewriter?: (query: string) => Promise<string>;
@@ -127,7 +125,6 @@ export class ExuluContext {
     embedder,
     processor,
     active,
-    rateLimit,
     fields,
     queryRewriter,
     resultReranker,
@@ -143,7 +140,6 @@ export class ExuluContext {
     category?: string;
     active: boolean;
     processor?: ExuluContextProcessor;
-    rateLimit?: RateLimiterRule;
     queryRewriter?: (query: string) => Promise<string>;
     resultReranker?: (results: any[]) => Promise<any[]>;
     configuration?: {
@@ -185,7 +181,6 @@ export class ExuluContext {
     this.description = description;
     this.embedder = embedder;
     this.active = active;
-    this.rateLimit = rateLimit;
     this.queryRewriter = queryRewriter;
     this.resultReranker = resultReranker;
   }
