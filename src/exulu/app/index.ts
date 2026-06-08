@@ -826,7 +826,6 @@ export class ExuluApp {
           this._config,
           this._evals,
           tracer,
-          this._queues,
           this._rerankers,
         );
 
