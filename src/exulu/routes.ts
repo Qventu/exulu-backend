@@ -863,13 +863,6 @@ Mood: friendly and intelligent.
                   role: user?.role?.id,
                 });
               }
-              await recordAgentTokenUsage({
-                agentId: instance,
-                callerId,
-                limits: effectiveLimits,
-                inputTokens: metadata?.inputTokens,
-                outputTokens: metadata?.outputTokens,
-              });
             },
           });
 
