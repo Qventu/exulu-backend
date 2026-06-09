@@ -350,7 +350,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 data: string | Uint8Array | Buffer;
                 type: allFileTypes;
                 tags?: string[];
-              }) => Promise<Item | undefined>) = undefined;
+              }) => Promise<{ url: string; key: string } | undefined>) = undefined;
 
             if (
               exuluConfig?.fileUploads?.s3endpoint &&
@@ -379,7 +379,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 type: allFileTypes;
                 data: string | Uint8Array | Buffer;
                 tags?: string[];
-              }): Promise<Item | undefined> => {
+              }): Promise<{ url: string; key: string } | undefined> => {
                 const mime = getMimeType(type);
                 const prefix = exuluConfig?.fileUploads?.s3prefix
                   ? `${exuluConfig.fileUploads.s3prefix.replace(/\/$/, "")}/`
@@ -395,9 +395,12 @@ export const convertExuluToolsToAiSdkTools = async (
                   if (!s3Client) {
                     throw new Error("S3 client not initialized");
                   }
-                  const response = await s3Client.send(command);
-                  console.log(response);
-                  return response;
+                  await s3Client.send(command);
+                  // Return a presigned GET URL (usable immediately) plus the durable
+                  // bucket-prefixed key (re-presignable later via /s3/download).
+                  const bucket = exuluConfig?.fileUploads?.s3Bucket ?? "";
+                  const presignedUrl = await getPresignedUrl(bucket, key, exuluConfig);
+                  return { url: presignedUrl, key: `${bucket}/${key}` };
                 } catch (caught: any) {
                   if (caught instanceof S3ServiceException && caught.name === "EntityTooLarge") {
                     throw new Error(`[EXULU] Error from S3 while uploading object to ${exuluConfig?.fileUploads?.s3Bucket}. \
