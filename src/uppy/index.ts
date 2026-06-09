@@ -915,7 +915,12 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       }
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.json({
-        key,
+        // Return the FULL key (incl. user/global + s3 prefix) the upload was
+        // actually created at. Unlike the simple-PUT path — where the signed
+        // URL already embeds the full key — the multipart protocol re-signs
+        // each part from this key, so handing back the bare key would sign
+        // parts for a key that doesn't exist → S3 "NoSuchUpload".
+        key: fullKey,
         uploadId: data?.UploadId,
       });
     });

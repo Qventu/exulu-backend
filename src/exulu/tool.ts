@@ -12,7 +12,7 @@ import { resolveModel } from "./resolve-model";
 // Tool kinds a package consumer is allowed to declare. "function" is the
 // normal custom tool; "web_search" and "skill" are categorization hints that
 // don't change how the id is resolved.
-export const PUBLIC_TOOL_TYPES = ["function", "web_search", "skill"] as const;
+export const PUBLIC_TOOL_TYPES = ["function", "web_search", "skill", "context"] as const;
 export type PublicToolType = (typeof PUBLIC_TOOL_TYPES)[number];
 
 // "agent" and "context" are framework-managed and intentionally NOT part of

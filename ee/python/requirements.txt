@@ -1,5 +1,9 @@
 docling
-transformers
+# transformers <5: the 5.x line requires huggingface_hub>=1.0, which removed the
+# `use_auth_token` kwarg that pyannote.audio 3.x still passes to hf_hub_download()
+# (→ "unexpected keyword argument 'use_auth_token'", diarization silently
+# disabled). whisperx only needs transformers>=4.48, so the 4.x line is fine.
+transformers>=4.48,<5
 pyinstaller
 docling-hierarchical-pdf
 defusedxml
@@ -17,6 +21,9 @@ torchaudio==2.5.1
 torchvision==0.20.1
 whisperx>=3.4.0
 pyannote.audio>=3.3.0
+# Belt-and-suspenders: keep huggingface_hub on the 0.x line so pyannote 3.x's
+# `use_auth_token=` calls keep working (1.x removed that kwarg → diarization off).
+huggingface_hub<1.0
 fastapi
 uvicorn
 python-multipart
