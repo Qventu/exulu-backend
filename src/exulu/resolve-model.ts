@@ -90,10 +90,17 @@ export class ResolveModelError extends Error {
 }
 
 /**
- * Memoized OpenAI-compatible provider pointing at the spawned LiteLLM proxy.
- * Built once on first use in LiteLLM mode.
+ * Build an OpenAI-compatible provider pointing at the spawned LiteLLM proxy.
+ *
+ * IMPORTANT: this MUST be built per request, never memoized. The provider's
+ * `fetch` wrapper closes over the caller's identity `tags` (user/role/project/
+ * agent/team) and stamps them onto every outgoing request. A module-level
+ * singleton would bake in the first caller's tags and reuse them for every
+ * subsequent user in the process — a cross-user identity leak that also routes
+ * LiteLLM access-control and budget decisions to the wrong user.
+ * `createOpenAICompatible` is a cheap object construction, so building it on
+ * each call has negligible cost.
  */
-let _litellmProvider: ReturnType<typeof createOpenAICompatible> | undefined;
 const getLiteLLMProvider = ({
   user,
   role,
@@ -107,7 +114,6 @@ const getLiteLLMProvider = ({
   agent?: ExuluAgent;
   team?: ExuluTeam;
 }) => {
-  if (_litellmProvider) return _litellmProvider;
   const host = process.env.LITELLM_HOST ?? "127.0.0.1";
   const port = process.env.LITELLM_PORT ?? "4000";
   const masterKey = process.env.LITELLM_MASTER_KEY;
@@ -129,7 +135,7 @@ const getLiteLLMProvider = ({
       "LITELLM_MASTER_KEY is required when EXULU_USE_LITELLM=true",
     );
   }
-  _litellmProvider = createOpenAICompatible({
+  return createOpenAICompatible({
     name: "litellm",
     baseURL: `http://${host}:${port}/v1`,
     apiKey: masterKey,
@@ -145,16 +151,13 @@ const getLiteLLMProvider = ({
     // proxy contract.
     supportsStructuredOutputs: true,
   });
-  return _litellmProvider;
 };
 
 /**
- * Test-only: reset the memoized provider so tests can rebuild it with
- * different env vars between cases.
+ * Test-only: no-op kept for backwards compatibility. The provider is no longer
+ * memoized, so there is nothing to reset between cases.
  */
-export const __resetLiteLLMProviderForTesting = () => {
-  _litellmProvider = undefined;
-};
+export const __resetLiteLLMProviderForTesting = () => {};
 
 export async function resolveModel(input: ResolveModelInput): Promise<ResolvedModel> {
   const { modelId, user, providers, agent, project, rbacBypass } = input;
