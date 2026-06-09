@@ -33,7 +33,7 @@ export const createProjectItemsRetrievalTool = async ({
     return;
   }
 
-  const projectRetrievalTool = new ExuluTool({
+  const projectRetrievalTool = ExuluTool.internal({
     id: "context_search_in_knowledge_items_added_to_project_" + projectId,
     name: "context_search in knowledge items added to project " + project.name,
     description:
