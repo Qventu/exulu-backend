@@ -152,7 +152,7 @@ export function createAgenticRetrievalToolV4({
 
     const contextNames = contexts.map((c) => c.id).join(", ");
 
-    return new ExuluTool({
+    return ExuluTool.internal({
         id: "agentic_context_search",
         name: "Context Search",
         description: `Intelligent context search with query classification, strategy-based retrieval, and virtual filesystem filtering. Searches: ${contextNames}`,
