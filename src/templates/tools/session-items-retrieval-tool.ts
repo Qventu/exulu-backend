@@ -16,7 +16,7 @@ export const createSessionItemsRetrievalTool = async ({
 }): Promise<ExuluTool | undefined> => {
   console.log("[EXULU] Session search tool created for session", items);
 
-  const sessionItemsRetrievalTool = new ExuluTool({
+  const sessionItemsRetrievalTool = ExuluTool.internal({
     id: "session_items_information_context_search",
     name: "context_search in knowledge items added to session.",
     description: "Context search in knowledge items added to session.",

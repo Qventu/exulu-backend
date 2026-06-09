@@ -165,7 +165,7 @@ export class ExuluProvider {
       console.warn(`[EXULU] You are not licensed to use multi-agent tooling so cannot export this agent as a tool. Please set your EXULU_ENTERPRISE_LICENSE env variable.`);
     }
 
-    return new ExuluTool({
+    return ExuluTool.internal({
       id: agent.id,
       name: `${agent.name}`,
       type: "agent",

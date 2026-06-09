@@ -10,6 +10,21 @@ import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
 
+// Tool kinds a package consumer is allowed to declare. "function" is the
+// normal custom tool; "web_search" and "skill" are categorization hints that
+// don't change how the id is resolved.
+export const PUBLIC_TOOL_TYPES = ["function", "web_search", "skill"] as const;
+export type PublicToolType = (typeof PUBLIC_TOOL_TYPES)[number];
+
+// "agent" and "context" are framework-managed and intentionally NOT part of
+// PublicToolType. Exulu creates these itself: "agent" for agent-as-tool
+// instrumentation (ExuluProvider.tool) and "context" for the internal
+// retrieval tools. Their id carries a contract — e.g. an "agent" tool's id
+// MUST be a real agent UUID, since hydration looks the agent up by it — so a
+// consumer setting type:"agent" by mistake produces a UUID lookup crash. Build
+// them via ExuluTool.internal() instead of the public constructor.
+export type ToolType = PublicToolType | "agent" | "context";
+
 export class ExuluTool {
   // Must begin with a letter (a-z) or underscore (_). Subsequent characters in a name can be letters, digits (0-9), or
   // underscores and be a max length of 80 characters and at least 5 characters long.
@@ -19,7 +34,7 @@ export class ExuluTool {
   public description: string;
   public category: string;
   public inputSchema?: z.ZodType;
-  public type: "context" | "function" | "agent" | "web_search" | "skill";
+  public type: ToolType;
   public tool: Tool;
   public needsApproval: boolean;
   public config: {
@@ -45,7 +60,7 @@ export class ExuluTool {
     description: string;
     category?: string;
     inputSchema?: z.ZodType;
-    type: "context" | "function" | "agent" | "web_search" | "skill";
+    type: PublicToolType;
     config: {
       name: string;
       description: string;
@@ -71,6 +86,15 @@ export class ExuluTool {
           items?: Item[];
         }>;
   }) {
+    // Guard for JS consumers (no compile-time check) and for any cast that
+    // sneaks a framework-managed type past the narrowed param type above.
+    if (!(PUBLIC_TOOL_TYPES as readonly string[]).includes(type)) {
+      throw new Error(
+        `ExuluTool "${id}": invalid type "${type}". Allowed types are ${PUBLIC_TOOL_TYPES.join(
+          ", ",
+        )}. The "agent" and "context" types are managed by Exulu internally and cannot be set on a tool.`,
+      );
+    }
     this.id = id;
     this.config = config;
     this.needsApproval = needsApproval ?? true;
@@ -84,6 +108,22 @@ export class ExuluTool {
       inputSchema: inputSchema || z.object({}),
       execute,
     });
+  }
+
+  /**
+   * Framework-only factory for tools whose `type` is managed by Exulu itself —
+   * "agent" (agent-as-tool instrumentation) and "context" (internal retrieval
+   * tools). NOT part of the public API: package consumers must use
+   * `new ExuluTool(...)`, which only accepts a {@link PublicToolType}. Building
+   * the tool as a "function" and then setting the managed type bypasses the
+   * constructor guard without weakening it for consumers.
+   */
+  static internal(
+    params: Omit<ConstructorParameters<typeof ExuluTool>[0], "type"> & { type: ToolType },
+  ): ExuluTool {
+    const instance = new ExuluTool({ ...params, type: "function" });
+    instance.type = params.type;
+    return instance;
   }
 
   public execute = async ({
