@@ -900,7 +900,10 @@ export const createUppyRoutes = async (app: Express, config: ExuluConfig) => {
       Bucket: config.fileUploads.s3Bucket,
       Key: fullKey,
       ContentType: type,
-      Metadata: metadata,
+      // S3 metadata values must be US-ASCII. Sanitize here (same as uploadFile)
+      // so non-ASCII characters in the filename — e.g. the en-dash "–" in
+      // "… CEST – Recording.mp4" — don't trigger a SignatureDoesNotMatch.
+      Metadata: sanitizeMetadata(metadata),
     };
 
     const command = new CreateMultipartUploadCommand(params);
