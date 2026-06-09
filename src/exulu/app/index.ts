@@ -453,6 +453,14 @@ export class ExuluApp {
       // GPU host) via `npx @exulu/backend exulu-start-whisper`. The main
       // app only consumes it over HTTP when TRANSCRIPTION_SERVER is set.
       if (process.env.TRANSCRIPTION_SERVER) {
+        // Start the polling loop unconditionally — it's resilient to the
+        // whisper server being temporarily down (pollOnce treats an
+        // unreachable server as transient and retries next tick). Gating the
+        // start on a one-shot boot-time health probe was a race: if whisper
+        // wasn't up yet when the main app booted (e.g. still loading models),
+        // the probe threw, the loop never started, and completed jobs were
+        // never reconciled — rows stuck in "transcribing" forever.
+        startTranscriptionPollingLoop();
         try {
           const health = await transcriptionClient.health();
           console.log(
@@ -460,11 +468,10 @@ export class ExuluApp {
               `device=${health.device}, GPU=${health.gpu.available ? "enabled" : "disabled"}, ` +
               `diarization=${health.diarization ? "enabled" : "disabled"})`,
           );
-          startTranscriptionPollingLoop();
         } catch (err) {
           console.warn(
-            `[EXULU] TRANSCRIPTION_SERVER set but unreachable: ${(err as Error).message}. ` +
-              `Transcriptions will fail until the server is up.`,
+            `[EXULU] TRANSCRIPTION_SERVER set but not reachable yet: ${(err as Error).message}. ` +
+              `Polling loop is running; jobs will reconcile once the server is up.`,
           );
         }
       } else {
