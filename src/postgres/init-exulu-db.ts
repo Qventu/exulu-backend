@@ -33,6 +33,7 @@ const {
   promptFavoritesSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
+  oauthTokensSchema,
 } = coreSchemas.get();
 
 const addMissingFields = async (
@@ -86,6 +87,7 @@ const up = async function (knex: Knex) {
     promptFavoritesSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
+    oauthTokensSchema(),
     rbacSchema(),
     agentsSchema(),
     feedbackSchema(),
@@ -119,6 +121,12 @@ const up = async function (knex: Knex) {
     console.log(`[EXULU] Creating ${schema.name.plural} table.`, schema.fields);
     await createTable(schema);
   }
+
+  // The oauth token store upserts on (tool_id, user_id); enforce that key at
+  // the DB level so concurrent callbacks can't produce duplicate rows.
+  await knex.raw(
+    "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_tool_id_user_id_unique ON oauth_tokens (tool_id, user_id)",
+  );
 
   // One-time data migration: agents.provider + agents.providerapikey  ->  models row + agents.model
   // Idempotent: gated on existence of the old columns. After first successful run the columns

@@ -612,6 +612,26 @@ const imageGenerationsSchema: ExuluTableDefinition = {
   ],
 };
 
+const oauthTokensSchema: ExuluTableDefinition = {
+  type: "oauth_tokens",
+  name: {
+    plural: "oauth_tokens",
+    singular: "oauth_token",
+  },
+  // Rows are only ever read/written by the oauth token store for the owning
+  // (tool_id, user_id) pair — never exposed via GraphQL — so no RBAC fields.
+  RBAC: false,
+  fields: [
+    { name: "tool_id", type: "text", required: true, index: true },
+    { name: "user_id", type: "number", required: true, index: true },
+    { name: "access_token", type: "longText", required: true }, // AES-encrypted
+    { name: "refresh_token", type: "longText", required: false }, // AES-encrypted
+    { name: "token_type", type: "text", required: false },
+    { name: "scopes", type: "text", required: false },
+    { name: "expires_at", type: "date", required: false }, // null = non-expiring
+  ],
+};
+
 const contextPresetsSchema: ExuluTableDefinition = {
   type: "context_presets",
   name: {
@@ -708,6 +728,7 @@ export const coreSchemas = {
       embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
+      oauthTokensSchema: (): ExuluTableDefinition => addCoreFields(oauthTokensSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),
     }

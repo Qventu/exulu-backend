@@ -15,6 +15,7 @@ export { ExuluProvider } from "./exulu/provider.ts"
 export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluTool } from "./exulu/tool"
+export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/oauth/types"
 export { ExuluReranker } from "./exulu/reranker"
 export { ExuluEval } from "./exulu/evals"
 import { SentenceChunker } from "./chunking/sentence";

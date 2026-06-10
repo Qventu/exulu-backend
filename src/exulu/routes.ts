@@ -54,7 +54,7 @@ import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
-import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor.ts";
+import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -87,8 +87,8 @@ import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
-
-export const LITELLM_UI_PATH = "/litellm-admin";
+import { handleOauthCallback } from "./oauth/callback-handler.ts";
+import { OAUTH_CALLBACK_PATH } from "./oauth/flow.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -257,6 +257,11 @@ export const createExpressRoutes = async (
       },
     }),
   );
+
+  // Completes the OAuth flow for oauth-enabled ExuluTools. Unauthenticated by
+  // design: the user lands here from the provider's redirect, and their
+  // identity comes from the encrypted state parameter.
+  app.get(OAUTH_CALLBACK_PATH, handleOauthCallback);
 
   app.post("/test", async (req: Request, res: Response) => {
     const { item_name, context_id } = req.body;
