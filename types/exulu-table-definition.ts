@@ -30,7 +30,8 @@ export type ExuluTableDefinition = {
     | "prompt_favorites"
     | "embedder_settings"
     | "transcription_jobs"
-    | "image_generations";
+    | "image_generations"
+    | "oauth_tokens";
     id?: string;
     name: {
       plural:
@@ -60,7 +61,8 @@ export type ExuluTableDefinition = {
       | "prompt_favorites"
       | "embedder_settings"
       | "transcription_jobs"
-      | "image_generations";
+      | "image_generations"
+      | "oauth_tokens";
       singular:
       | "skill"
       | "context_preset"
@@ -88,7 +90,8 @@ export type ExuluTableDefinition = {
       | "prompt_favorite"
       | "embedder_setting"
       | "transcription_job"
-      | "image_generation";
+      | "image_generation"
+      | "oauth_token";
     };
     processor?: ExuluContextProcessor;
     fields: ExuluContextFieldDefinition[];

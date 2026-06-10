@@ -1,7 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { LITELLM_UI_PATH } from "../routes";
+
+// Where the LiteLLM admin UI is mounted on the Exulu server. Lives here (not
+// in routes.ts, which also needs it) so this module keeps its zero-app-import
+// graph — pulling routes.ts into a unit test loads the whole server.
+export const LITELLM_UI_PATH = "/litellm-admin";
 /**
  * Spawns the LiteLLM proxy as a child process when EXULU_USE_LITELLM=true,
  * supervises it (exponential-backoff respawn capped at 5 consecutive crashes),

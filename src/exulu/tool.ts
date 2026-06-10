@@ -8,6 +8,10 @@ import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
+import type { ExuluOauthConfig } from "./oauth/types";
+import { validateOauthConfig } from "./oauth/validate";
+import { oauthRegistry } from "./oauth/registry";
+import { wrapExecuteWithOauth } from "./oauth/wrap-execute";
 
 // Tool kinds a package consumer is allowed to declare. "function" is the
 // normal custom tool; "web_search" and "skill" are categorization hints that
@@ -36,6 +40,7 @@ export class ExuluTool {
   public type: ToolType;
   public tool: Tool;
   public needsApproval: boolean;
+  public oauth?: ExuluOauthConfig;
   public config: {
     name: string;
     description: string;
@@ -53,6 +58,7 @@ export class ExuluTool {
     execute,
     config,
     needsApproval,
+    oauth,
   }: {
     id: string;
     name: string;
@@ -67,6 +73,11 @@ export class ExuluTool {
       default?: string | boolean | number;
     }[];
     needsApproval?: boolean;
+    // When set, Exulu wraps execute with the OAuth 2.0 authorization-code
+    // flow: execute only runs with a valid access token for the calling
+    // (toolId, userId) — injected as inputs.oauth — and otherwise
+    // short-circuits with an authorization URL the agent shows the user.
+    oauth?: ExuluOauthConfig;
     // The AI SDK's wrapped tool.execute is invoked with (input, options),
     // where options carries fields like `toolCallId` and `messages`. We
     // expose `options` as a second arg so tools that need it (e.g.
@@ -94,6 +105,11 @@ export class ExuluTool {
         )}. The "agent" and "context" types are managed by Exulu internally and cannot be set on a tool.`,
       );
     }
+    if (oauth) {
+      validateOauthConfig(id, oauth);
+      oauthRegistry.register(id, oauth);
+    }
+    this.oauth = oauth;
     this.id = id;
     this.config = config;
     this.needsApproval = needsApproval ?? true;
@@ -105,7 +121,7 @@ export class ExuluTool {
     this.tool = tool({
       description: description,
       inputSchema: inputSchema || z.object({}),
-      execute,
+      execute: oauth ? wrapExecuteWithOauth(id, oauth, execute) : execute,
     });
   }
 
