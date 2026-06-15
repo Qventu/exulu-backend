@@ -2157,6 +2157,11 @@ Mood: friendly and intelligent.
     team: "teams",
     project: "projects",
     agent: "agents",
+    // `routine` is the user-facing name for workflow_templates rows (Phase 3.3.2).
+    // The tag is emitted as `routine_id_<uuid>` from buildTags() at the workflow
+    // job runner callsites; this allow-list lets /admin/budgets PUT/DELETE
+    // accept entityType=routine and budgetTagFor() derives the matching tag.
+    routine: "workflow_templates",
   };
   const BUDGET_ALLOWED_DURATIONS = new Set<BudgetDuration>(["1d", "7d", "30d"]);
 
@@ -2367,6 +2372,8 @@ Mood: friendly and intelligent.
     "agent_name_",
     "team_id_",
     "team_name_",
+    "routine_id_",
+    "routine_name_",
   ] as const;
 
   /** Hard cap on byTag[] row count to keep payloads bounded. */
