@@ -29,7 +29,7 @@ import { listTags } from "./admin-client.ts";
 
 const SANITIZE_MAX_LEN = 63;
 
-function sanitizeTagPrefix(raw: string): string {
+export function sanitizeTagPrefix(raw: string): string {
   return String(raw)
     .normalize("NFKC")
     .toLowerCase()
