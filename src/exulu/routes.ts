@@ -2476,23 +2476,18 @@ Mood: friendly and intelligent.
     const metadata = raw?.metadata ?? raw?.meta ?? {};
 
     // ─── Dedup invariant ───────────────────────────────────────────────────
-    // Each LLM event is tagged with N tags (user_id_*, role_id_*, project_id_*,
-    // agent_id_*, team_id_*, plus the *_name_* variants). LiteLLM's
-    // /tag/daily/activity returns one row per (tag, date) pair, so summing
-    // all rows multiplies every event by N. Totals must reflect EVENTS,
-    // not tag*events.
+    // LiteLLM's /tag/daily/activity returns ONE row per date with aggregate
+    // metrics across the supplied `tags` set — NOT one row per (tag, date).
+    // Per-tag breakdown lives nested under `row.breakdown.entities`. Because
+    // we always forward a single-dimension tag set (e.g. all user_id_* tags
+    // for canonical totals, or all agent_id_* tags for breakdown), LiteLLM
+    // already gives us deduplicated event-level metrics — no row-level
+    // dedup filter required here.
     //
-    // To deduplicate, we pick ONE prefix and sum only rows belonging to it:
-    //   • If the caller scoped the query with tag_prefix, that prefix is the
-    //     natural dedup key (the upstream tag set is already constrained to it).
-    //   • Otherwise we fall back to CANONICAL_DEDUPE_PREFIX (user_id_), which
-    //     buildTags() guarantees on every authenticated call.
-    //
-    // byTag[] and byModel[] are NOT filtered — they drive the donut/breakdown
-    // and must include every prefix; the frontend filters per dimension.
+    // The dedupePrefix is still echoed back to the client as a contract
+    // marker (frontend can verify which prefix the totals reflect) and is
+    // used to seed the byTag map.id/name parsing.
     const dedupePrefix: string = tagPrefix ?? CANONICAL_DEDUPE_PREFIX;
-    const isDedupRow = (tagName: string | null): boolean =>
-      !!tagName && tagName.startsWith(dedupePrefix);
 
     // ─── daily[] — sum across all tags per date ───
     const dailyMap = new Map<string, {
@@ -2659,12 +2654,8 @@ Mood: friendly and intelligent.
 
     for (const row of results) {
       const date = typeof row?.date === "string" ? row.date : null;
-      const tagName =
-        typeof row?.tag === "string"
-          ? row.tag
-          : typeof row?.tag_name === "string"
-            ? row.tag_name
-            : null;
+      if (!date) continue;
+
       const rowMetrics = (row?.metrics ?? {}) as Record<string, unknown>;
       // Some shapes embed totals directly on the row; treat the row itself as
       // a metrics bag too.
@@ -2679,19 +2670,31 @@ Mood: friendly and intelligent.
       };
       const m = { ...flatMetrics, ...rowMetrics };
 
-      // byTag[] always accepts every row — the breakdown is per-tag by design.
-      if (tagName) addToTag(tagName, m);
-      if (tagName && date) addToTagByDay(tagName, date, m);
+      // daily[] — one entry per date with aggregate metrics (LiteLLM has
+      // already deduplicated across the supplied tag set).
+      addToDaily(date, m);
 
-      // daily[] and byModel[] aggregate across tags, so we must dedup. Only
-      // rows belonging to the canonical prefix contribute (see invariant above).
-      const counts = isDedupRow(tagName);
-      if (counts && date) addToDaily(date, m);
+      const breakdown = (row?.breakdown ?? {}) as Record<string, unknown>;
 
-      const modelsBreakdown = (row?.breakdown?.models ?? row?.models ?? {}) as
+      // byTag[] + byTagByDay[] — per-tag breakdown lives under
+      // breakdown.entities (the row itself has no `tag` field). Each entry
+      // is keyed by tag name with its own metrics bag.
+      const entities = (breakdown?.entities ?? {}) as
         | Record<string, { metrics?: Record<string, unknown>; [k: string]: unknown }>
         | undefined;
-      if (counts && modelsBreakdown && typeof modelsBreakdown === "object") {
+      if (entities && typeof entities === "object") {
+        for (const [tagName, ed] of Object.entries(entities)) {
+          const em = (ed?.metrics ?? ed) as Record<string, unknown>;
+          addToTag(tagName, em);
+          addToTagByDay(tagName, date, em);
+        }
+      }
+
+      // byModel[] — under breakdown.models (key = model name).
+      const modelsBreakdown = (breakdown?.models ?? row?.models ?? {}) as
+        | Record<string, { metrics?: Record<string, unknown>; [k: string]: unknown }>
+        | undefined;
+      if (modelsBreakdown && typeof modelsBreakdown === "object") {
         for (const [modelName, mb] of Object.entries(modelsBreakdown)) {
           const mm = (mb?.metrics ?? mb) as Record<string, unknown>;
           addToModel(modelName, mm);
@@ -2699,19 +2702,13 @@ Mood: friendly and intelligent.
       }
     }
 
-    // ─── totals — always sum the deduplicated dailyMap ───
-    // We deliberately IGNORE raw.totals / metadata.total_spend_metrics here:
-    // LiteLLM computes those by summing every (tag, date) row, which inflates
-    // every metric by N (the tag-set size per event). dailyMap is already
-    // filtered to the canonical dedup prefix above, so summing it gives the
-    // correct event-level totals.
-    //
-    // Cache-token fields are not present on per-date rows in this LiteLLM
-    // version, so we pull them from suppliedTotals only as a best-effort
-    // signal — they are scalar deltas LiteLLM does not multiply per tag.
-    const suppliedTotals = (raw?.totals ?? metadata?.total_spend_metrics ?? null) as
-      | Record<string, unknown>
-      | null;
+    // ─── totals — prefer metadata.total_* (LiteLLM's canonical aggregate,
+    // already deduped within the supplied tag set). Fall back to summing
+    // dailyMap if metadata is missing.
+    const metaHasTotals =
+      metadata?.total_spend !== undefined ||
+      metadata?.total_tokens !== undefined ||
+      metadata?.total_api_requests !== undefined;
     const totals: {
       spend: number;
       prompt_tokens: number;
@@ -2730,21 +2727,29 @@ Mood: friendly and intelligent.
       successful_requests: 0,
       failed_requests: 0,
       api_requests: 0,
-      cache_read_input_tokens: suppliedTotals
-        ? pickMetric(suppliedTotals, ["cache_read_input_tokens"])
-        : 0,
-      cache_creation_input_tokens: suppliedTotals
-        ? pickMetric(suppliedTotals, ["cache_creation_input_tokens"])
-        : 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
     };
-    for (const d of dailyMap.values()) {
-      totals.spend += d.spend;
-      totals.prompt_tokens += d.prompt_tokens;
-      totals.completion_tokens += d.completion_tokens;
-      totals.total_tokens += d.total_tokens;
-      totals.successful_requests += d.successful_requests;
-      totals.failed_requests += d.failed_requests;
-      totals.api_requests += d.api_requests;
+    if (metaHasTotals) {
+      totals.spend = pickMetric(metadata, ["total_spend"]);
+      totals.prompt_tokens = pickMetric(metadata, ["total_prompt_tokens"]);
+      totals.completion_tokens = pickMetric(metadata, ["total_completion_tokens"]);
+      totals.total_tokens = pickMetric(metadata, ["total_tokens"]);
+      totals.successful_requests = pickMetric(metadata, ["total_successful_requests"]);
+      totals.failed_requests = pickMetric(metadata, ["total_failed_requests"]);
+      totals.api_requests = pickMetric(metadata, ["total_api_requests"]);
+      totals.cache_read_input_tokens = pickMetric(metadata, ["total_cache_read_input_tokens"]);
+      totals.cache_creation_input_tokens = pickMetric(metadata, ["total_cache_creation_input_tokens"]);
+    } else {
+      for (const d of dailyMap.values()) {
+        totals.spend += d.spend;
+        totals.prompt_tokens += d.prompt_tokens;
+        totals.completion_tokens += d.completion_tokens;
+        totals.total_tokens += d.total_tokens;
+        totals.successful_requests += d.successful_requests;
+        totals.failed_requests += d.failed_requests;
+        totals.api_requests += d.api_requests;
+      }
     }
 
     const daily = [...dailyMap.values()].sort((a, b) =>
