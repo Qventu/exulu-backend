@@ -70,6 +70,11 @@ import { resolve as resolvePath } from "node:path";
 import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { buildTags, createTaggedFetch, budgetTagFor, type BudgetEntityType } from "./tags.ts";
 import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.ts";
+import { LiteLLMAdminError } from "./litellm/env.ts";
+import {
+  getTagDailyActivity,
+  listTagsByPrefix,
+} from "./litellm/activity-client.ts";
 import {
   provisionDefaultUserBudget,
   getUserBudgetView,
@@ -2338,6 +2343,490 @@ Mood: friendly and intelligent.
       } catch (err) {
         res.status(502).json({
           detail: err instanceof Error ? err.message : "Failed to delete budget.",
+        });
+      }
+    },
+  );
+
+  // ─────────────────────────── Analytics (LiteLLM tag-activity proxy) ───────────────────────────
+  // Single source of truth for /analytics and Today's Vitals (Home).
+  // Frontend NEVER hits LiteLLM directly; the master key stays server-side.
+  // Auth gate is SA-only — matches the nav-config "analytics" predicate
+  // can(rightsUser, "super_admin"). When a role-scoped analytics right ships,
+  // extend `authorizeAnalyticsAccess` (do not bolt onto budget_management).
+
+  /** Known Exulu tag prefixes — informational only (frontend hydrates names). */
+  const KNOWN_TAG_PREFIXES = [
+    "user_id_",
+    "user_name_",
+    "role_id_",
+    "role_name_",
+    "project_id_",
+    "project_name_",
+    "agent_id_",
+    "agent_name_",
+    "team_id_",
+    "team_name_",
+  ] as const;
+
+  /** Hard cap on byTag[] row count to keep payloads bounded. */
+  const BY_TAG_MAX_ROWS = 50;
+
+  const authorizeAnalyticsAccess = async (
+    req: Request,
+    res: Response,
+  ): Promise<{ user: any } | null> => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return null;
+    }
+    if (!authResult.user.super_admin) {
+      res.status(403).json({ detail: "Analytics access required." });
+      return null;
+    }
+    return { user: authResult.user };
+  };
+
+  const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  /** Accepts YYYY-MM-DD verbatim or any ISO datetime; returns YYYY-MM-DD. */
+  const normaliseDateParam = (raw: unknown): string | null => {
+    if (typeof raw !== "string" || raw.length === 0) return null;
+    if (DATE_ONLY_RE.test(raw)) return raw;
+    // ISO datetime (e.g. resolveWindow(lens).from === "2026-06-15T00:00:00.000Z")
+    const dt = new Date(raw);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString().slice(0, 10);
+  };
+
+  const parsePositiveInt = (
+    raw: unknown,
+    fallback: number,
+    max: number,
+  ): number | null => {
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > max) {
+      return null;
+    }
+    return n;
+  };
+
+  const matchTagPrefix = (
+    tagName: string,
+  ): { prefix: string | null; remainder: string | null } => {
+    for (const p of KNOWN_TAG_PREFIXES) {
+      if (tagName.startsWith(p)) {
+        return { prefix: p, remainder: tagName.slice(p.length) };
+      }
+    }
+    return { prefix: null, remainder: null };
+  };
+
+  const numberOrZero = (raw: unknown): number => {
+    const n = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const pickMetric = (
+    metrics: Record<string, unknown> | undefined,
+    keys: string[],
+  ): number => {
+    if (!metrics) return 0;
+    for (const k of keys) {
+      const v = metrics[k];
+      if (v !== undefined && v !== null) return numberOrZero(v);
+    }
+    return 0;
+  };
+
+  /** Project raw LiteLLM response into Exulu's stable analytics shape. */
+  const projectTagActivity = (
+    raw: any,
+    window: { start_date: string; end_date: string },
+    tagPrefix: string | null,
+  ) => {
+    // LiteLLM's response shape is intentionally tolerant — we accept
+    //   { results: [...], metadata: {...} }
+    // or { daily_spend: [...], totals: {...} }
+    // (the proxy version has churned). The projection below reads optionally
+    // and zero-fills missing fields rather than throwing.
+    const results: any[] = Array.isArray(raw?.results)
+      ? raw.results
+      : Array.isArray(raw)
+        ? raw
+        : [];
+    const metadata = raw?.metadata ?? raw?.meta ?? {};
+
+    // ─── daily[] — sum across all tags per date ───
+    const dailyMap = new Map<string, {
+      date: string;
+      spend: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      successful_requests: number;
+      failed_requests: number;
+      api_requests: number;
+    }>();
+
+    // ─── byTag[] — keyed by tag.name across all dates ───
+    const tagMap = new Map<string, {
+      tag: string;
+      prefix: string | null;
+      id: string | null;
+      name: string | null;
+      spend: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      successful_requests: number;
+      failed_requests: number;
+      api_requests: number;
+    }>();
+
+    // ─── byModel[] — keyed by model across all tags + dates ───
+    const modelMap = new Map<string, {
+      model: string;
+      spend: number;
+      total_tokens: number;
+      successful_requests: number;
+      failed_requests: number;
+    }>();
+
+    const addToDaily = (date: string, m: Record<string, unknown>) => {
+      const cur = dailyMap.get(date) ?? {
+        date,
+        spend: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        successful_requests: 0,
+        failed_requests: 0,
+        api_requests: 0,
+      };
+      cur.spend += pickMetric(m, ["spend"]);
+      cur.prompt_tokens += pickMetric(m, ["prompt_tokens"]);
+      cur.completion_tokens += pickMetric(m, ["completion_tokens"]);
+      cur.total_tokens += pickMetric(m, ["total_tokens", "tokens"]);
+      cur.successful_requests += pickMetric(m, [
+        "successful_requests",
+        "api_requests",
+      ]);
+      cur.failed_requests += pickMetric(m, ["failed_requests"]);
+      cur.api_requests += pickMetric(m, ["api_requests"]);
+      dailyMap.set(date, cur);
+    };
+
+    const addToTag = (tagName: string, m: Record<string, unknown>) => {
+      const cur = tagMap.get(tagName);
+      if (cur) {
+        cur.spend += pickMetric(m, ["spend"]);
+        cur.prompt_tokens += pickMetric(m, ["prompt_tokens"]);
+        cur.completion_tokens += pickMetric(m, ["completion_tokens"]);
+        cur.total_tokens += pickMetric(m, ["total_tokens", "tokens"]);
+        cur.successful_requests += pickMetric(m, [
+          "successful_requests",
+          "api_requests",
+        ]);
+        cur.failed_requests += pickMetric(m, ["failed_requests"]);
+        cur.api_requests += pickMetric(m, ["api_requests"]);
+        return;
+      }
+      const { prefix, remainder } = matchTagPrefix(tagName);
+      const isIdPrefix = prefix?.endsWith("_id_") ?? false;
+      const isNamePrefix = prefix?.endsWith("_name_") ?? false;
+      tagMap.set(tagName, {
+        tag: tagName,
+        prefix,
+        id: isIdPrefix ? remainder : null,
+        name: isNamePrefix ? remainder : null,
+        spend: pickMetric(m, ["spend"]),
+        prompt_tokens: pickMetric(m, ["prompt_tokens"]),
+        completion_tokens: pickMetric(m, ["completion_tokens"]),
+        total_tokens: pickMetric(m, ["total_tokens", "tokens"]),
+        successful_requests: pickMetric(m, [
+          "successful_requests",
+          "api_requests",
+        ]),
+        failed_requests: pickMetric(m, ["failed_requests"]),
+        api_requests: pickMetric(m, ["api_requests"]),
+      });
+    };
+
+    const addToModel = (modelName: string, m: Record<string, unknown>) => {
+      const cur = modelMap.get(modelName) ?? {
+        model: modelName,
+        spend: 0,
+        total_tokens: 0,
+        successful_requests: 0,
+        failed_requests: 0,
+      };
+      cur.spend += pickMetric(m, ["spend"]);
+      cur.total_tokens += pickMetric(m, ["total_tokens", "tokens"]);
+      cur.successful_requests += pickMetric(m, [
+        "successful_requests",
+        "api_requests",
+      ]);
+      cur.failed_requests += pickMetric(m, ["failed_requests"]);
+      modelMap.set(modelName, cur);
+    };
+
+    for (const row of results) {
+      const date = typeof row?.date === "string" ? row.date : null;
+      const tagName =
+        typeof row?.tag === "string"
+          ? row.tag
+          : typeof row?.tag_name === "string"
+            ? row.tag_name
+            : null;
+      const rowMetrics = (row?.metrics ?? {}) as Record<string, unknown>;
+      // Some shapes embed totals directly on the row; treat the row itself as
+      // a metrics bag too.
+      const flatMetrics: Record<string, unknown> = {
+        spend: row?.spend,
+        prompt_tokens: row?.prompt_tokens,
+        completion_tokens: row?.completion_tokens,
+        total_tokens: row?.total_tokens ?? row?.tokens,
+        successful_requests: row?.successful_requests,
+        failed_requests: row?.failed_requests,
+        api_requests: row?.api_requests,
+      };
+      const m = { ...flatMetrics, ...rowMetrics };
+
+      if (date) addToDaily(date, m);
+      if (tagName) addToTag(tagName, m);
+
+      const modelsBreakdown = (row?.breakdown?.models ?? row?.models ?? {}) as
+        | Record<string, { metrics?: Record<string, unknown>; [k: string]: unknown }>
+        | undefined;
+      if (modelsBreakdown && typeof modelsBreakdown === "object") {
+        for (const [modelName, mb] of Object.entries(modelsBreakdown)) {
+          const mm = (mb?.metrics ?? mb) as Record<string, unknown>;
+          addToModel(modelName, mm);
+        }
+      }
+    }
+
+    // ─── totals — prefer LiteLLM-supplied if present, else sum daily ───
+    const suppliedTotals = (raw?.totals ?? metadata?.total_spend_metrics ?? null) as
+      | Record<string, unknown>
+      | null;
+    let totals: {
+      spend: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      successful_requests: number;
+      failed_requests: number;
+      api_requests: number;
+      cache_read_input_tokens: number;
+      cache_creation_input_tokens: number;
+    };
+    if (suppliedTotals) {
+      totals = {
+        spend: pickMetric(suppliedTotals, ["spend"]),
+        prompt_tokens: pickMetric(suppliedTotals, ["prompt_tokens"]),
+        completion_tokens: pickMetric(suppliedTotals, ["completion_tokens"]),
+        total_tokens: pickMetric(suppliedTotals, ["total_tokens", "tokens"]),
+        successful_requests: pickMetric(suppliedTotals, [
+          "successful_requests",
+          "api_requests",
+        ]),
+        failed_requests: pickMetric(suppliedTotals, ["failed_requests"]),
+        api_requests: pickMetric(suppliedTotals, ["api_requests"]),
+        cache_read_input_tokens: pickMetric(suppliedTotals, [
+          "cache_read_input_tokens",
+        ]),
+        cache_creation_input_tokens: pickMetric(suppliedTotals, [
+          "cache_creation_input_tokens",
+        ]),
+      };
+    } else {
+      totals = {
+        spend: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        successful_requests: 0,
+        failed_requests: 0,
+        api_requests: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      };
+      for (const d of dailyMap.values()) {
+        totals.spend += d.spend;
+        totals.prompt_tokens += d.prompt_tokens;
+        totals.completion_tokens += d.completion_tokens;
+        totals.total_tokens += d.total_tokens;
+        totals.successful_requests += d.successful_requests;
+        totals.failed_requests += d.failed_requests;
+        totals.api_requests += d.api_requests;
+      }
+    }
+
+    const daily = [...dailyMap.values()].sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+    const byTagFull = [...tagMap.values()].sort((a, b) => b.spend - a.spend);
+    const truncated = byTagFull.length > BY_TAG_MAX_ROWS;
+    const byTag = truncated ? byTagFull.slice(0, BY_TAG_MAX_ROWS) : byTagFull;
+    const byModel = [...modelMap.values()].sort((a, b) => b.spend - a.spend);
+
+    const page = numberOrZero(metadata?.page ?? raw?.page) || 1;
+    const total_pages = numberOrZero(
+      metadata?.total_pages ?? raw?.total_pages,
+    ) || 1;
+    const total_count = numberOrZero(
+      metadata?.total_count ?? raw?.total_count,
+    );
+    const has_more = Boolean(metadata?.has_more ?? raw?.has_more ?? false);
+
+    return {
+      window,
+      totals,
+      daily,
+      byTag,
+      byModel,
+      pagination: {
+        page,
+        total_pages,
+        total_count,
+        has_more,
+      },
+      tagPrefix,
+      truncated,
+    };
+  };
+
+  app.get(
+    "/admin/litellm/tag-activity",
+    async (req: Request, res: Response) => {
+      const auth = await authorizeAnalyticsAccess(req, res);
+      if (!auth) return;
+
+      const start_date = normaliseDateParam(req.query.start_date);
+      const end_date = normaliseDateParam(req.query.end_date);
+      if (!start_date || !end_date) {
+        res.status(400).json({
+          detail: "start_date and end_date are required (YYYY-MM-DD or ISO).",
+        });
+        return;
+      }
+
+      const page = parsePositiveInt(req.query.page, 1, 1_000_000);
+      const page_size = parsePositiveInt(req.query.page_size, 50, 1000);
+      if (page == null || page_size == null) {
+        res
+          .status(400)
+          .json({ detail: "page must be >=1 and page_size must be 1..1000." });
+        return;
+      }
+
+      const tagsCsv =
+        typeof req.query.tags === "string" && req.query.tags.length > 0
+          ? req.query.tags
+          : null;
+      const tagPrefixRaw =
+        typeof req.query.tag_prefix === "string" && req.query.tag_prefix.length > 0
+          ? req.query.tag_prefix
+          : null;
+      const model =
+        typeof req.query.model === "string" && req.query.model.length > 0
+          ? req.query.model
+          : undefined;
+      const excludeTeamTagsRaw = req.query.exclude_team_tags;
+      const excludeTeamTags =
+        excludeTeamTagsRaw === "true"
+          ? true
+          : excludeTeamTagsRaw === "false"
+            ? false
+            : undefined;
+
+      try {
+        // tag_prefix is Exulu sugar — translate to a concrete tags CSV via
+        // /tag/list before forwarding upstream. If both tags AND tag_prefix
+        // are present, intersect (prefix narrows the explicit list).
+        let tags: string[] | undefined;
+        let echoedPrefix: string | null = null;
+        if (tagPrefixRaw) {
+          const { sanitisedPrefix, names } = await listTagsByPrefix(tagPrefixRaw);
+          echoedPrefix = sanitisedPrefix || null;
+          const fromPrefix = names;
+          if (tagsCsv) {
+            const explicit = tagsCsv
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean);
+            const allowed = new Set(fromPrefix);
+            tags = explicit.filter((t) => allowed.has(t));
+          } else {
+            tags = fromPrefix;
+          }
+          if (tags.length === 0) {
+            // No tags match — short-circuit with an empty payload rather than
+            // calling LiteLLM with no tags (which returns global totals and
+            // would mis-attribute).
+            res.status(200).json({
+              window: { start_date, end_date },
+              totals: {
+                spend: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                api_requests: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+              daily: [],
+              byTag: [],
+              byModel: [],
+              pagination: {
+                page,
+                total_pages: 1,
+                total_count: 0,
+                has_more: false,
+              },
+              tagPrefix: echoedPrefix,
+              truncated: false,
+            });
+            return;
+          }
+        } else if (tagsCsv) {
+          tags = tagsCsv
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean);
+        }
+
+        const raw = await getTagDailyActivity({
+          startDate: start_date,
+          endDate: end_date,
+          tags,
+          model,
+          page,
+          pageSize: page_size,
+          excludeTeamTags,
+        });
+
+        const projected = projectTagActivity(
+          raw,
+          { start_date, end_date },
+          echoedPrefix,
+        );
+        res.status(200).json(projected);
+      } catch (err) {
+        if (err instanceof LiteLLMAdminError) {
+          res
+            .status(502)
+            .json({ detail: err.message });
+          return;
+        }
+        console.error("[EXULU] /admin/litellm/tag-activity failed", err);
+        res.status(500).json({
+          detail: err instanceof Error ? err.message : "Analytics query failed.",
         });
       }
     },

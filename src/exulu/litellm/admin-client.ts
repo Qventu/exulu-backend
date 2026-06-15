@@ -12,6 +12,11 @@
  * (see tags.ts / buildTags).
  */
 
+import { LiteLLMAdminError, litellmBase } from "./env.ts";
+
+// Re-export so existing import sites (`from "./admin-client"`) keep working.
+export { LiteLLMAdminError };
+
 export type BudgetDuration = "1d" | "7d" | "30d";
 
 export type TagInfo = {
@@ -27,27 +32,6 @@ export type TagBudgetInput = {
   max_budget: number;
   budget_duration: BudgetDuration | string;
 };
-
-/** Thrown when a LiteLLM admin call fails so callers can log-and-continue. */
-export class LiteLLMAdminError extends Error {
-  constructor(
-    message: string,
-    public status?: number,
-  ) {
-    super(message);
-    this.name = "LiteLLMAdminError";
-  }
-}
-
-function litellmBase(): { url: string; masterKey: string } {
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
-  if (!masterKey) {
-    throw new LiteLLMAdminError("LITELLM_MASTER_KEY is not configured.");
-  }
-  return { url: `http://${host}:${port}`, masterKey };
-}
 
 async function call<T>(path: string, body: unknown): Promise<T> {
   const { url, masterKey } = litellmBase();
