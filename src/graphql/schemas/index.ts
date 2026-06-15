@@ -102,7 +102,7 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Computed budget field: resolved from LiteLLM at query time (not a DB
   // column). Null when the entity has no budget. See finalizeRequestedFields.
   if (
-    ["user", "role", "team", "project", "agent"].includes(table.name.singular)
+    ["user", "role", "team", "project", "agent", "workflow_template"].includes(table.name.singular)
   ) {
     fields.push("  budget: JSON");
   }

@@ -73,7 +73,7 @@ import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.
 import { LiteLLMAdminError } from "./litellm/env.ts";
 import {
   getTagDailyActivity,
-  listTagsByPrefix,
+  sanitizeTagPrefix,
 } from "./litellm/activity-client.ts";
 import {
   provisionDefaultUserBudget,
@@ -2529,6 +2529,25 @@ Mood: friendly and intelligent.
       failed_requests: number;
     }>();
 
+    // ─── byTagByDay[] — keyed by `${tag}|${date}`, per-(tag,date) cells ───
+    // Powers the client-side CSV pivot export (analytics-<dim>-<measure>.csv).
+    // Intentionally NOT deduped by dedupePrefix: the CSV is a per-tag
+    // breakdown — each tag is its own row in the export, so multi-counting
+    // across prefixes is not a concern (a user_id_X row and an agent_id_Y row
+    // each represent the same event from different dimensional axes; the
+    // export pivots within a single dimension at a time).
+    const byTagByDayMap = new Map<string, {
+      tag: string;
+      date: string;
+      spend: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+      successful_requests: number;
+      failed_requests: number;
+      api_requests: number;
+    }>();
+
     const addToDaily = (date: string, m: Record<string, unknown>) => {
       const cur = dailyMap.get(date) ?? {
         date,
@@ -2589,6 +2608,36 @@ Mood: friendly and intelligent.
       });
     };
 
+    const addToTagByDay = (
+      tagName: string,
+      date: string,
+      m: Record<string, unknown>,
+    ) => {
+      const key = `${tagName}|${date}`;
+      const cur = byTagByDayMap.get(key) ?? {
+        tag: tagName,
+        date,
+        spend: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        successful_requests: 0,
+        failed_requests: 0,
+        api_requests: 0,
+      };
+      cur.spend += pickMetric(m, ["spend"]);
+      cur.prompt_tokens += pickMetric(m, ["prompt_tokens"]);
+      cur.completion_tokens += pickMetric(m, ["completion_tokens"]);
+      cur.total_tokens += pickMetric(m, ["total_tokens", "tokens"]);
+      cur.successful_requests += pickMetric(m, [
+        "successful_requests",
+        "api_requests",
+      ]);
+      cur.failed_requests += pickMetric(m, ["failed_requests"]);
+      cur.api_requests += pickMetric(m, ["api_requests"]);
+      byTagByDayMap.set(key, cur);
+    };
+
     const addToModel = (modelName: string, m: Record<string, unknown>) => {
       const cur = modelMap.get(modelName) ?? {
         model: modelName,
@@ -2631,6 +2680,7 @@ Mood: friendly and intelligent.
 
       // byTag[] always accepts every row — the breakdown is per-tag by design.
       if (tagName) addToTag(tagName, m);
+      if (tagName && date) addToTagByDay(tagName, date, m);
 
       // daily[] and byModel[] aggregate across tags, so we must dedup. Only
       // rows belonging to the canonical prefix contribute (see invariant above).
@@ -2702,6 +2752,9 @@ Mood: friendly and intelligent.
     const byTagFull = [...tagMap.values()].sort((a, b) => b.spend - a.spend);
     const truncated = byTagFull.length > BY_TAG_MAX_ROWS;
     const byTag = truncated ? byTagFull.slice(0, BY_TAG_MAX_ROWS) : byTagFull;
+    const byTagByDay = [...byTagByDayMap.values()].sort((a, b) =>
+      a.tag === b.tag ? a.date.localeCompare(b.date) : a.tag.localeCompare(b.tag),
+    );
     const byModel = [...modelMap.values()].sort((a, b) => b.spend - a.spend);
 
     const page = numberOrZero(metadata?.page ?? raw?.page) || 1;
@@ -2718,6 +2771,7 @@ Mood: friendly and intelligent.
       totals,
       daily,
       byTag,
+      byTagByDay,
       byModel,
       pagination: {
         page,
@@ -2779,58 +2833,19 @@ Mood: friendly and intelligent.
             : undefined;
 
       try {
-        // tag_prefix is Exulu sugar — translate to a concrete tags CSV via
-        // /tag/list before forwarding upstream. If both tags AND tag_prefix
-        // are present, intersect (prefix narrows the explicit list).
+        // tag_prefix is Exulu sugar — it informs server-side dedupe (see
+        // projectTagActivity dedupePrefix invariant) and is echoed back to the
+        // client for verification, but we DO NOT translate it to a tags CSV via
+        // /tag/list: LiteLLM's /tag/list returns only BUDGETED tags, and most
+        // user_id_<n>/agent_id_<n> tags are emitted without budgets — so the
+        // translation would short-circuit to empty (Bug 1). Instead we always
+        // call /tag/daily/activity unfiltered when no explicit tagsCsv is given,
+        // and let projectTagActivity's per-row dedupePrefix filter cull noise.
         let tags: string[] | undefined;
-        let echoedPrefix: string | null = null;
-        if (tagPrefixRaw) {
-          const { sanitisedPrefix, names } = await listTagsByPrefix(tagPrefixRaw);
-          echoedPrefix = sanitisedPrefix || null;
-          const fromPrefix = names;
-          if (tagsCsv) {
-            const explicit = tagsCsv
-              .split(",")
-              .map((t) => t.trim())
-              .filter(Boolean);
-            const allowed = new Set(fromPrefix);
-            tags = explicit.filter((t) => allowed.has(t));
-          } else {
-            tags = fromPrefix;
-          }
-          if (tags.length === 0) {
-            // No tags match — short-circuit with an empty payload rather than
-            // calling LiteLLM with no tags (which returns global totals and
-            // would mis-attribute).
-            res.status(200).json({
-              window: { start_date, end_date },
-              totals: {
-                spend: 0,
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-                successful_requests: 0,
-                failed_requests: 0,
-                api_requests: 0,
-                cache_read_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-              },
-              daily: [],
-              byTag: [],
-              byModel: [],
-              pagination: {
-                page,
-                total_pages: 1,
-                total_count: 0,
-                has_more: false,
-              },
-              tagPrefix: echoedPrefix,
-              dedupePrefix: echoedPrefix ?? CANONICAL_DEDUPE_PREFIX,
-              truncated: false,
-            });
-            return;
-          }
-        } else if (tagsCsv) {
+        const echoedPrefix: string | null = tagPrefixRaw
+          ? sanitizeTagPrefix(tagPrefixRaw) || null
+          : null;
+        if (tagsCsv) {
           tags = tagsCsv
             .split(",")
             .map((t) => t.trim())
