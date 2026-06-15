@@ -10,6 +10,22 @@ function sanitizeTagValue(
   return s.slice(0, MAX_LEN);
 }
 
+/**
+ * GAP — workflow / routine attribution (see design/pages/analytics.md §4):
+ * buildTags emits NO `workflow_id_`, `workflow_name_`, `routine_id_`, or
+ * `routine_name_` prefix today. LLM calls inside workflow/job runners are
+ * attributed to user/role/project/agent/team only, which means /analytics
+ * cannot break down spend by workflow. The /analytics page lens type union
+ * deliberately omits `workflows` for this reason; ?type=WORKFLOW_RUN deep
+ * links fall back to ?type=all instead of mis-attributing to agents.
+ *
+ * To close the gap: add the optional workflow_id/workflow_name (and
+ * routine_id/routine_name if distinct) fields here, then thread them through
+ * every LLM-invoking callsite (job runner, supervisor, evals). This is
+ * tracked as a follow-up — do NOT silently route through agent_id_ to make
+ * the workflows tab "work"; that would conflate direct chat with workflow
+ * runs and break trust in analytics numbers.
+ */
 export function buildTags(input: {
   user_id?: number | string;
   role_id?: string;
