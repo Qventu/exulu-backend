@@ -73,6 +73,7 @@ import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.
 import { LiteLLMAdminError } from "./litellm/env.ts";
 import {
   getTagDailyActivity,
+  listTagsByPrefix,
   sanitizeTagPrefix,
 } from "./litellm/activity-client.ts";
 import {
@@ -2833,19 +2834,65 @@ Mood: friendly and intelligent.
             : undefined;
 
       try {
-        // tag_prefix is Exulu sugar — it informs server-side dedupe (see
-        // projectTagActivity dedupePrefix invariant) and is echoed back to the
-        // client for verification, but we DO NOT translate it to a tags CSV via
-        // /tag/list: LiteLLM's /tag/list returns only BUDGETED tags, and most
-        // user_id_<n>/agent_id_<n> tags are emitted without budgets — so the
-        // translation would short-circuit to empty (Bug 1). Instead we always
-        // call /tag/daily/activity unfiltered when no explicit tagsCsv is given,
-        // and let projectTagActivity's per-row dedupePrefix filter cull noise.
+        // tag_prefix is Exulu sugar — we translate it to a concrete tags CSV
+        // via /tag/list (NOT budget-only — /tag/list returns every emitted
+        // tag, both budgeted user_id_1 and ad-hoc user_name_*). LiteLLM's
+        // /tag/daily/activity REQUIRES tags to return per-(tag, date) rows;
+        // when called without a tags filter it returns aggregate rows with
+        // no `tag` field, which makes the per-row dedup filter reject every
+        // row and totals fall to zero (3.3.4 regression). So we always
+        // forward concrete tag names. If tagsCsv is also provided we
+        // intersect (the explicit list narrowed by the prefix).
         let tags: string[] | undefined;
-        const echoedPrefix: string | null = tagPrefixRaw
-          ? sanitizeTagPrefix(tagPrefixRaw) || null
-          : null;
-        if (tagsCsv) {
+        let echoedPrefix: string | null = null;
+        if (tagPrefixRaw) {
+          const { sanitisedPrefix, names } = await listTagsByPrefix(tagPrefixRaw);
+          echoedPrefix = sanitisedPrefix || null;
+          const fromPrefix = names;
+          if (tagsCsv) {
+            const explicit = tagsCsv
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean);
+            const allowed = new Set(fromPrefix);
+            tags = explicit.filter((t) => allowed.has(t));
+          } else {
+            tags = fromPrefix;
+          }
+          if (tags.length === 0) {
+            // No tags match the prefix in this LiteLLM instance — return an
+            // empty payload rather than calling /tag/daily/activity (which
+            // would mis-attribute by returning unfiltered aggregates).
+            res.status(200).json({
+              window: { start_date, end_date },
+              totals: {
+                spend: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                successful_requests: 0,
+                failed_requests: 0,
+                api_requests: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+              daily: [],
+              byTag: [],
+              byTagByDay: [],
+              byModel: [],
+              pagination: {
+                page,
+                total_pages: 1,
+                total_count: 0,
+                has_more: false,
+              },
+              tagPrefix: echoedPrefix,
+              dedupePrefix: echoedPrefix ?? "user_id_",
+              truncated: false,
+            });
+            return;
+          }
+        } else if (tagsCsv) {
           tags = tagsCsv
             .split(",")
             .map((t) => t.trim())
