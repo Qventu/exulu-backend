@@ -23,7 +23,27 @@ const BUDGET_ENTITY_SINGULARS = new Set<string>([
   "team",
   "project",
   "agent",
+  // `workflow_template` is the GraphQL table singular; budgets attach to it
+  // under the user-facing BudgetEntityType "routine" (see tags.ts). The mapping
+  // happens in BUDGET_ENTITY_TYPE_BY_SINGULAR below so budgetTagFor() emits the
+  // correct `routine_id_<uuid>` tag.
+  "workflow_template",
 ]);
+
+/**
+ * Some GraphQL table singulars don't match their BudgetEntityType verbatim
+ * (e.g. workflow_template → routine). Map here so addBudgetField builds the
+ * correct LiteLLM tag (`routine_id_<uuid>`) that matches what buildTags() emits
+ * from the workflow job runner.
+ */
+const BUDGET_ENTITY_TYPE_BY_SINGULAR: Record<string, BudgetEntityType> = {
+  user: "user",
+  role: "role",
+  team: "team",
+  project: "project",
+  agent: "agent",
+  workflow_template: "routine",
+};
 
 /**
  * Resolve the computed `budget` field for an entity row. The budget lives in
@@ -35,7 +55,7 @@ const BUDGET_ENTITY_SINGULARS = new Set<string>([
 const addBudgetField = async (
   requestedFields: string[],
   result: any,
-  entityType: string,
+  tableSingular: string,
   user: User | undefined,
 ): Promise<any> => {
   if (!requestedFields.includes("budget")) return result;
@@ -47,8 +67,15 @@ const addBudgetField = async (
     return result;
   }
 
+  // Translate GraphQL table singular → BudgetEntityType (e.g. workflow_template → routine).
+  const entityType = BUDGET_ENTITY_TYPE_BY_SINGULAR[tableSingular];
+  if (!entityType) {
+    result.budget = null;
+    return result;
+  }
+
   const map = await getTagBudgetMap();
-  const tag = budgetTagFor(entityType as BudgetEntityType, result.id);
+  const tag = budgetTagFor(entityType, result.id);
   result.budget = tag ? (map[tag] ?? null) : null;
   return result;
 };

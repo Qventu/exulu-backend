@@ -502,6 +502,7 @@ export const createWorkers = async (
                 agent,
                 provider,
                 user,
+                workflow,
                 messages: inputMessages,
               } = await validateWorkflowPayload(data, providers);
 
@@ -535,6 +536,8 @@ export const createWorkers = async (
                       tools,
                       config,
                       variables: data.inputs,
+                      // Tag LLM spend to this routine (cron + ad-hoc share this path).
+                      routine: { id: workflow.id, name: workflow.name },
                     });
                     resolve(messages);
                     break;
@@ -1331,6 +1334,7 @@ export const processUiMessagesFlow = async ({
   tools,
   config,
   variables,
+  routine,
 }: {
   providers: ExuluProvider[];
   agent: ExuluAgent;
@@ -1342,6 +1346,14 @@ export const processUiMessagesFlow = async ({
   tools: ExuluTool[];
   config: ExuluConfig;
   variables?: Record<string, any>;
+  /**
+   * Set when this flow is invoked from a workflow_template run (one-shot via
+   * runWorkflow or cron via upsertWorkflowSchedule). Forwarded to resolveModel
+   * so buildTags() emits routine_id_/routine_name_ alongside user/agent tags
+   * for /analytics + /admin/budgets attribution. /chat and /openai-gateway
+   * callers leave this undefined — they have no routine context.
+   */
+  routine?: { id: string; name: string };
 }): Promise<{
   messages: UIMessage[];
   metadata: {
@@ -1390,7 +1402,8 @@ export const processUiMessagesFlow = async ({
     modelId: agent.model,
     user,
     providers,
-    agent: agent
+    agent: agent,
+    routine,
   });
   const providerapikey = resolved.apiKey;
   const resolvedLanguageModel = resolved.languageModel;

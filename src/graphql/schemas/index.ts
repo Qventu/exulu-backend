@@ -1021,6 +1021,7 @@ type LiteLLMModel {
           agent,
           provider,
           user,
+          workflow,
           messages: inputMessages,
         } = await validateWorkflowPayload(jobData, providers);
 
@@ -1054,6 +1055,8 @@ type LiteLLMModel {
                 tools,
                 config,
                 variables: args.variables,
+                // Tag LLM spend to this routine (direct one-shot path mirrors the queued path).
+                routine: { id: workflow.id, name: workflow.name },
               });
               resolve(messages);
               break;

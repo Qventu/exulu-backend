@@ -41,6 +41,14 @@ export type ResolveModelInput = {
   providers: ExuluProvider[];
   agent?: ExuluAgent;
   project?: Project;
+  /**
+   * Set when the LLM call originates from a workflow_template run (one-shot or
+   * cron). Threaded through to buildTags() as routine_id_/routine_name_ so
+   * /analytics and /admin/budgets can attribute spend per routine. Independent
+   * of `agent` — both tags are emitted side-by-side, matching the dedupe
+   * invariant that user_id_<X> is always present.
+   */
+  routine?: { id: string; name: string };
   rbacRequest?: "read" | "write";
   rbacBypass?: boolean;
 };
@@ -106,13 +114,15 @@ const getLiteLLMProvider = ({
   role,
   project,
   agent,
-  team
+  team,
+  routine,
 }: {
   user?: User;
   role?: UserRole;
   project?: Project;
   agent?: ExuluAgent;
   team?: ExuluTeam;
+  routine?: { id: string; name: string };
 }) => {
   const host = process.env.LITELLM_HOST ?? "127.0.0.1";
   const port = process.env.LITELLM_PORT ?? "4000";
@@ -128,6 +138,8 @@ const getLiteLLMProvider = ({
     agent_name: agent?.name,
     team_id: team?.id,
     team_name: team?.name,
+    routine_id: routine?.id,
+    routine_name: routine?.name,
   });
   if (!masterKey) {
     throw new ResolveModelError(
@@ -160,7 +172,7 @@ const getLiteLLMProvider = ({
 export const __resetLiteLLMProviderForTesting = () => {};
 
 export async function resolveModel(input: ResolveModelInput): Promise<ResolvedModel> {
-  const { modelId, user, providers, agent, project, rbacBypass } = input;
+  const { modelId, user, providers, agent, project, routine, rbacBypass } = input;
   const rbacRequest = input.rbacRequest ?? "read";
 
   // ─────────── LiteLLM branch ───────────
@@ -188,6 +200,7 @@ export async function resolveModel(input: ResolveModelInput): Promise<ResolvedMo
       project: project,
       agent: agent,
       team: user?.team,
+      routine: routine,
     });
     const languageModel = litellm(modelId);
 

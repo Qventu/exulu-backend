@@ -11,20 +11,18 @@ function sanitizeTagValue(
 }
 
 /**
- * GAP — workflow / routine attribution (see design/pages/analytics.md §4):
- * buildTags emits NO `workflow_id_`, `workflow_name_`, `routine_id_`, or
- * `routine_name_` prefix today. LLM calls inside workflow/job runners are
- * attributed to user/role/project/agent/team only, which means /analytics
- * cannot break down spend by workflow. The /analytics page lens type union
- * deliberately omits `workflows` for this reason; ?type=WORKFLOW_RUN deep
- * links fall back to ?type=all instead of mis-attributing to agents.
+ * GAP — workflow / context / embedder attribution (see design/pages/analytics.md §4):
+ * `routine_id_` / `routine_name_` are now SHIPPED (Phase 3.3.2): LLM calls
+ * triggered through workflow_templates (one-shot runWorkflow + cron
+ * upsertWorkflowSchedule) emit these alongside the user/role/project/agent/team
+ * tags, so /analytics and /admin/budgets can attribute spend per routine.
  *
- * To close the gap: add the optional workflow_id/workflow_name (and
- * routine_id/routine_name if distinct) fields here, then thread them through
- * every LLM-invoking callsite (job runner, supervisor, evals). This is
- * tracked as a follow-up — do NOT silently route through agent_id_ to make
- * the workflows tab "work"; that would conflate direct chat with workflow
- * runs and break trust in analytics numbers.
+ * Still gap: `workflow_id_` (DAG/graph workflows distinct from routines),
+ * `context_id_` (RAG context spend), and `embedder_id_` (embedding-side calls).
+ * To close those, add the optional fields here and thread them through every
+ * LLM-invoking callsite. Do NOT silently route through agent_id_ to make a tab
+ * "work"; that would conflate direct chat with the other call types and break
+ * trust in analytics numbers.
  */
 export function buildTags(input: {
   user_id?: number | string;
@@ -32,11 +30,13 @@ export function buildTags(input: {
   team_id?: string;
   project_id?: string;
   agent_id?: string;
+  routine_id?: string;
   user_name?: string;
   role_name?: string;
   project_name?: string;
   agent_name?: string;
   team_name?: string;
+  routine_name?: string;
 }): string[] {
   const candidates: (string | number | undefined)[] = [];
 
@@ -70,6 +70,12 @@ export function buildTags(input: {
   if (input.team_name) {
     candidates.push("team_name_" + input.team_name);
   }
+  if (input.routine_id) {
+    candidates.push("routine_id_" + input.routine_id);
+  }
+  if (input.routine_name) {
+    candidates.push("routine_name_" + input.routine_name);
+  }
 
   console.log("[EXULU] Candidates", candidates);
   
@@ -84,7 +90,13 @@ export function buildTags(input: {
   return out;
 }
 
-export type BudgetEntityType = "user" | "role" | "team" | "project" | "agent";
+export type BudgetEntityType =
+  | "user"
+  | "role"
+  | "team"
+  | "project"
+  | "agent"
+  | "routine";
 
 /**
  * Canonical LiteLLM tag a budget attaches to for a given entity. Budgets use
