@@ -2440,6 +2440,15 @@ Mood: friendly and intelligent.
     return 0;
   };
 
+  /**
+   * Canonical dedupe prefix for totals math. buildTags() emits user_id_<n>
+   * for every authenticated LLM call (resolve-model.ts:120, routes.ts:2066),
+   * so restricting totals to this single prefix counts each event exactly
+   * once. Any future callsite that omits user_id will under-report (auditable)
+   * rather than overcount.
+   */
+  const CANONICAL_DEDUPE_PREFIX = "user_id_";
+
   /** Project raw LiteLLM response into Exulu's stable analytics shape. */
   const projectTagActivity = (
     raw: any,
@@ -2457,6 +2466,25 @@ Mood: friendly and intelligent.
         ? raw
         : [];
     const metadata = raw?.metadata ?? raw?.meta ?? {};
+
+    // ─── Dedup invariant ───────────────────────────────────────────────────
+    // Each LLM event is tagged with N tags (user_id_*, role_id_*, project_id_*,
+    // agent_id_*, team_id_*, plus the *_name_* variants). LiteLLM's
+    // /tag/daily/activity returns one row per (tag, date) pair, so summing
+    // all rows multiplies every event by N. Totals must reflect EVENTS,
+    // not tag*events.
+    //
+    // To deduplicate, we pick ONE prefix and sum only rows belonging to it:
+    //   • If the caller scoped the query with tag_prefix, that prefix is the
+    //     natural dedup key (the upstream tag set is already constrained to it).
+    //   • Otherwise we fall back to CANONICAL_DEDUPE_PREFIX (user_id_), which
+    //     buildTags() guarantees on every authenticated call.
+    //
+    // byTag[] and byModel[] are NOT filtered — they drive the donut/breakdown
+    // and must include every prefix; the frontend filters per dimension.
+    const dedupePrefix: string = tagPrefix ?? CANONICAL_DEDUPE_PREFIX;
+    const isDedupRow = (tagName: string | null): boolean =>
+      !!tagName && tagName.startsWith(dedupePrefix);
 
     // ─── daily[] — sum across all tags per date ───
     const dailyMap = new Map<string, {
@@ -2594,13 +2622,18 @@ Mood: friendly and intelligent.
       };
       const m = { ...flatMetrics, ...rowMetrics };
 
-      if (date) addToDaily(date, m);
+      // byTag[] always accepts every row — the breakdown is per-tag by design.
       if (tagName) addToTag(tagName, m);
+
+      // daily[] and byModel[] aggregate across tags, so we must dedup. Only
+      // rows belonging to the canonical prefix contribute (see invariant above).
+      const counts = isDedupRow(tagName);
+      if (counts && date) addToDaily(date, m);
 
       const modelsBreakdown = (row?.breakdown?.models ?? row?.models ?? {}) as
         | Record<string, { metrics?: Record<string, unknown>; [k: string]: unknown }>
         | undefined;
-      if (modelsBreakdown && typeof modelsBreakdown === "object") {
+      if (counts && modelsBreakdown && typeof modelsBreakdown === "object") {
         for (const [modelName, mb] of Object.entries(modelsBreakdown)) {
           const mm = (mb?.metrics ?? mb) as Record<string, unknown>;
           addToModel(modelName, mm);
@@ -2608,11 +2641,20 @@ Mood: friendly and intelligent.
       }
     }
 
-    // ─── totals — prefer LiteLLM-supplied if present, else sum daily ───
+    // ─── totals — always sum the deduplicated dailyMap ───
+    // We deliberately IGNORE raw.totals / metadata.total_spend_metrics here:
+    // LiteLLM computes those by summing every (tag, date) row, which inflates
+    // every metric by N (the tag-set size per event). dailyMap is already
+    // filtered to the canonical dedup prefix above, so summing it gives the
+    // correct event-level totals.
+    //
+    // Cache-token fields are not present on per-date rows in this LiteLLM
+    // version, so we pull them from suppliedTotals only as a best-effort
+    // signal — they are scalar deltas LiteLLM does not multiply per tag.
     const suppliedTotals = (raw?.totals ?? metadata?.total_spend_metrics ?? null) as
       | Record<string, unknown>
       | null;
-    let totals: {
+    const totals: {
       spend: number;
       prompt_tokens: number;
       completion_tokens: number;
@@ -2622,47 +2664,29 @@ Mood: friendly and intelligent.
       api_requests: number;
       cache_read_input_tokens: number;
       cache_creation_input_tokens: number;
+    } = {
+      spend: 0,
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+      successful_requests: 0,
+      failed_requests: 0,
+      api_requests: 0,
+      cache_read_input_tokens: suppliedTotals
+        ? pickMetric(suppliedTotals, ["cache_read_input_tokens"])
+        : 0,
+      cache_creation_input_tokens: suppliedTotals
+        ? pickMetric(suppliedTotals, ["cache_creation_input_tokens"])
+        : 0,
     };
-    if (suppliedTotals) {
-      totals = {
-        spend: pickMetric(suppliedTotals, ["spend"]),
-        prompt_tokens: pickMetric(suppliedTotals, ["prompt_tokens"]),
-        completion_tokens: pickMetric(suppliedTotals, ["completion_tokens"]),
-        total_tokens: pickMetric(suppliedTotals, ["total_tokens", "tokens"]),
-        successful_requests: pickMetric(suppliedTotals, [
-          "successful_requests",
-          "api_requests",
-        ]),
-        failed_requests: pickMetric(suppliedTotals, ["failed_requests"]),
-        api_requests: pickMetric(suppliedTotals, ["api_requests"]),
-        cache_read_input_tokens: pickMetric(suppliedTotals, [
-          "cache_read_input_tokens",
-        ]),
-        cache_creation_input_tokens: pickMetric(suppliedTotals, [
-          "cache_creation_input_tokens",
-        ]),
-      };
-    } else {
-      totals = {
-        spend: 0,
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-        successful_requests: 0,
-        failed_requests: 0,
-        api_requests: 0,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-      };
-      for (const d of dailyMap.values()) {
-        totals.spend += d.spend;
-        totals.prompt_tokens += d.prompt_tokens;
-        totals.completion_tokens += d.completion_tokens;
-        totals.total_tokens += d.total_tokens;
-        totals.successful_requests += d.successful_requests;
-        totals.failed_requests += d.failed_requests;
-        totals.api_requests += d.api_requests;
-      }
+    for (const d of dailyMap.values()) {
+      totals.spend += d.spend;
+      totals.prompt_tokens += d.prompt_tokens;
+      totals.completion_tokens += d.completion_tokens;
+      totals.total_tokens += d.total_tokens;
+      totals.successful_requests += d.successful_requests;
+      totals.failed_requests += d.failed_requests;
+      totals.api_requests += d.api_requests;
     }
 
     const daily = [...dailyMap.values()].sort((a, b) =>
@@ -2695,6 +2719,10 @@ Mood: friendly and intelligent.
         has_more,
       },
       tagPrefix,
+      // Echo the prefix that actually drove dedupe so the frontend can verify
+      // the dedupe contract held (matches CANONICAL_DEDUPE_PREFIX when the
+      // caller did not scope the query).
+      dedupePrefix,
       truncated,
     };
   };
@@ -2790,6 +2818,7 @@ Mood: friendly and intelligent.
                 has_more: false,
               },
               tagPrefix: echoedPrefix,
+              dedupePrefix: echoedPrefix ?? CANONICAL_DEDUPE_PREFIX,
               truncated: false,
             });
             return;
