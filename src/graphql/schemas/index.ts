@@ -1351,7 +1351,11 @@ type LiteLLMModel {
       .first();
     if (!row) throw new Error(`transcription_job ${id} not found`);
     if (row.rights_mode === "public") return;
-    if (row.created_by === user.id) return;
+    // `created_by` is a text column while `user.id` is an integer SERIAL, so
+    // compare as strings — a raw `===` fails for the legitimate creator
+    // ("1" === 1 → false). Matches utils/check-record-access.ts and the
+    // auto-CRUD validateWriteAccess check.
+    if (row.created_by != null && String(row.created_by) === String(user.id)) return;
     throw new Error("Not authorized to act on this transcription job");
   };
 
