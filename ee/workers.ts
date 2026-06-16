@@ -13,6 +13,7 @@ import type { ExuluTool } from "@SRC/exulu/tool.ts";
 import { resolveModel } from "@SRC/exulu/resolve-model.ts";
 import { postgresClient } from "@SRC/postgres/client";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
+import { maybePruneJobResults } from "@EE/queues/prune-job-results.ts";
 import { type Tracer } from "@opentelemetry/api";
 import { v4 as uuidv4 } from "uuid";
 import { type UIMessage } from "ai";
@@ -1012,6 +1013,9 @@ export const createWorkers = async (
             result: returnvalue.result != null ? JSON.stringify(returnvalue.result) : null,
             metadata: returnvalue.metadata != null ? JSON.stringify(returnvalue.metadata) : null,
           });
+
+        // Cap the table as rows become terminal (every Nth, idempotent).
+        void maybePruneJobResults(db);
       },
     );
 
@@ -1025,6 +1029,9 @@ export const createWorkers = async (
           state: JOB_STATUS_ENUM.failed,
           error,
         });
+
+        // Cap the table as rows become terminal (every Nth, idempotent).
+        void maybePruneJobResults(db);
         return;
       }
       console.error(

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { UIMessage } from "ai";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { postgresClient } from "@SRC/postgres/client";
+import { maybePruneJobResults } from "./prune-job-results";
 
 type ExuluJobType = "embedder" | "workflow" | "eval" | "processor";
 
@@ -148,6 +149,8 @@ export const bullmqDecorator = async ({
         result: null,
         metadata: {},
       });
+      // Bound the table: every Nth added row, prune the oldest terminal rows.
+      void maybePruneJobResults(db);
     } catch (err) {
       console.error("[EXULU] enqueue job_results insert failed", err);
     }
