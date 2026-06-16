@@ -6,6 +6,7 @@ import cron from "cron-validator";
 import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
+import { getTableName } from "@SRC/exulu/context.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
@@ -551,6 +552,7 @@ type PageInfo {
 
   mutationDefs += `
     deleteJob(queue: QueueEnum!, id: String!): JobActionReturnPayload
+    retryJob(queue: QueueEnum!, id: String!, deleteOriginal: Boolean): JobActionReturnPayload
     `;
 
   mutationDefs += `
@@ -1307,6 +1309,33 @@ type LiteLLMModel {
     return { success: true };
   };
 
+  // KB-5: generic job retry. Re-enqueues a FRESH job with the same name +
+  // data (rather than BullMQ's job.retry(), which only works for failed jobs)
+  // so it's robust across states and leaves a clean audit trail. Optionally
+  // removes the original. Frontend gates this behind write permission.
+  resolvers.Mutation["retryJob"] = async (_, args) => {
+    if (!args.id) {
+      throw new Error("Job ID is required");
+    }
+    if (!args.queue) {
+      throw new Error("Queue name is required");
+    }
+    const queue = ExuluQueues.list.get(args.queue);
+    if (!queue) {
+      throw new Error("Queue not found");
+    }
+    const config = await queue.use();
+    const job = await config.queue.getJob(args.id);
+    if (!job) {
+      throw new Error("Job not found");
+    }
+    await config.queue.add(job.name, job.data);
+    if (args.deleteOriginal) {
+      await config.queue.remove(args.id);
+    }
+    return { success: true };
+  };
+
   // Authorize the calling user against a transcription_jobs row. Mirrors the
   // checks the auto-CRUD does in createMutations.validateWriteAccess for RBAC
   // tables — required because the three custom transcription mutations bypass
@@ -1440,7 +1469,55 @@ type LiteLLMModel {
     };
   };
 
+  // ── Knowledge V2 (KB-3/KB-4): per-context health aggregates ──────────────
+  // Computed only when a context query selects one of the aggregate fields,
+  // so plain context reads pay nothing. All counts are over NON-archived
+  // items; mirrors the frontend's pipeline-health probes exactly.
+  const AGGREGATE_FIELDS = ["item_count", "chunk_total", "stuck_count", "stale_count"];
+  const STALE_DAYS = 30;
+  const computeContextAggregates = async (
+    contextId: string,
+  ): Promise<{
+    item_count: number;
+    chunk_total: number;
+    stuck_count: number;
+    stale_count: number;
+  }> => {
+    const empty = { item_count: 0, chunk_total: 0, stuck_count: 0, stale_count: 0 };
+    try {
+      const { db } = await postgresClient();
+      const tableName = getTableName(contextId);
+      if (!(await db.schema.hasTable(tableName))) return empty;
+
+      const nonArchived = () => db(tableName).whereNot("archived", true);
+      const staleCutoff = new Date(Date.now() - STALE_DAYS * 86_400_000).toISOString();
+
+      const [itemRow, chunkRow, stuckRow, staleRow] = await Promise.all([
+        nonArchived().count("* as c").first(),
+        nonArchived().sum("chunks_count as s").first(),
+        nonArchived()
+          .andWhere((b) => b.whereNull("chunks_count").orWhere("chunks_count", "<=", 0))
+          .count("* as c")
+          .first(),
+        nonArchived().where("embeddings_updated_at", "<=", staleCutoff).count("* as c").first(),
+      ]);
+
+      const num = (v: unknown) => (v == null ? 0 : Number(v));
+      return {
+        item_count: num((itemRow as { c?: unknown })?.c),
+        chunk_total: num((chunkRow as { s?: unknown })?.s),
+        stuck_count: num((stuckRow as { c?: unknown })?.c),
+        stale_count: num((staleRow as { c?: unknown })?.c),
+      };
+    } catch (err) {
+      console.error("[EXULU] computeContextAggregates failed for", contextId, err);
+      return empty;
+    }
+  };
+
   resolvers.Query["contexts"] = async (_, args, context, info) => {
+    const requestedTop = getRequestedFields(info);
+    const wantsAggregates = AGGREGATE_FIELDS.some((f) => requestedTop.includes(f));
     const data = await Promise.all(
       contexts.map(async (context) => {
         let processor: {
@@ -1489,8 +1566,13 @@ type LiteLLMModel {
           }),
         );
 
+        const aggregates = wantsAggregates
+          ? await computeContextAggregates(context.id)
+          : {};
+
         return {
           id: context.id,
+          ...aggregates,
           name: context.name,
           description: context.description,
           embedder: context.embedder
@@ -1595,8 +1677,15 @@ type LiteLLMModel {
       embedderQueue = await data.embedder.queue;
     }
 
+    // KB-3/KB-4: compute health aggregates only when selected.
+    const wantsAggregates = AGGREGATE_FIELDS.some((f) =>
+      getRequestedFields(info).includes(f),
+    );
+    const aggregates = wantsAggregates ? await computeContextAggregates(data.id) : {};
+
     const clean = {
       id: data.id,
+      ...aggregates,
       name: data.name,
       description: data.description,
       embedder: data.embedder
@@ -1926,6 +2015,17 @@ type Context {
     configuration: JSON
     sources: [ContextSource]
     processor: ContextProcessor
+    """
+    Health aggregates over non-archived items (knowledge V2 KB-3/KB-4).
+    Computed lazily — only when one of these fields is selected — so plain
+    context queries pay nothing. item_count: total; chunk_total: SUM of
+    chunks_count; stuck_count: items with 0/NULL chunks; stale_count: items
+    whose embeddings are older than 30 days.
+    """
+    item_count: Int
+    chunk_total: Int
+    stuck_count: Int
+    stale_count: Int
 }
 type Reranker {
     id: ID!
