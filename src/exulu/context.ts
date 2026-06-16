@@ -19,6 +19,16 @@ import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-
 import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
 import { mapType } from "@SRC/utils/map-types";
 import { bullmqDecorator } from "@EE/queues/decorator";
+import type { ExuluEntitiesConfig, EntityFilter, EntityInsights } from "./entities/types";
+import {
+  captureEntitiesBeforeReembed,
+  extractAndIngestEntities,
+  hydrateEntityTypes,
+  computeTypesSignature,
+  entitiesEnabled,
+  entitiesTableExists,
+  getEntitiesTableName,
+} from "./entities";
 
 export type ExuluContextFieldDefinition = {
   name: string;
@@ -116,6 +126,12 @@ export class ExuluContext {
     };
     languages?: ("german" | "english")[];
   };
+  /**
+   * Optional entity-layer configuration. When present (or when an admin has
+   * configured entity types for this context) the graph/entity retrieval
+   * features are switched on. Absent → identical behavior to before.
+   */
+  public entities?: ExuluEntitiesConfig;
   public sources: ExuluContextSource[] = [];
 
   constructor({
@@ -129,6 +145,7 @@ export class ExuluContext {
     queryRewriter,
     resultReranker,
     configuration,
+    entities,
     sources,
   }: {
     id: string;
@@ -157,6 +174,7 @@ export class ExuluContext {
         hybrid?: number;
       };
     };
+    entities?: ExuluEntitiesConfig;
   }) {
     this.id = id;
     this.name = name;
@@ -183,6 +201,7 @@ export class ExuluContext {
     this.active = active;
     this.queryRewriter = queryRewriter;
     this.resultReranker = resultReranker;
+    this.entities = entities;
   }
 
   public processField = async (
@@ -347,6 +366,7 @@ export class ExuluContext {
       before?: number;
       after?: number;
     };
+    entityFilter?: EntityFilter;
   }): Promise<{
     itemFilters: SearchFilters;
     chunkFilters: SearchFilters;
@@ -359,6 +379,7 @@ export class ExuluContext {
       embedder: string;
     };
     chunks: VectorSearchChunkResult[];
+    entityInsights?: EntityInsights;
   }> => {
     const { db } = await postgresClient();
 
@@ -373,6 +394,7 @@ export class ExuluContext {
       limit: options?.limit || this.configuration.maxRetrievalResults || 10,
       cutoffs: options.cutoffs,
       expand: options.expand,
+      entityFilter: options.entityFilter,
     });
 
     return result;
@@ -385,7 +407,12 @@ export class ExuluContext {
   }> => {
     const { db } = await postgresClient();
     await db.from(getTableName(this.id)).delete();
+    // Deleting chunks cascades to the chunk_entities junction; clear the entity
+    // catalog separately if it exists.
     await db.from(getChunksTableName(this.id)).delete();
+    if (await entitiesTableExists(this)) {
+      await db.from(getEntitiesTableName(this.id)).delete();
+    }
     return {
       count: 0,
       results: [],
@@ -455,6 +482,12 @@ export class ExuluContext {
       role,
     );
 
+    // Capture the entities linked to this item BEFORE deleting its chunks. The
+    // junction's ON DELETE CASCADE clears those mention rows when chunks are
+    // deleted, so we grab the affected entity ids first to recompute their
+    // counters after re-ingestion. No-op when the entity layer is disabled.
+    const previousEntityIds = await captureEntitiesBeforeReembed(this, item.id);
+
     // first delete all chunks with source = id
     await db.from(getChunksTableName(this.id)).where({ source }).delete();
 
@@ -502,6 +535,11 @@ export class ExuluContext {
         embeddings_updated_at: new Date().toISOString(),
       })
       .returning("id");
+
+    // Extract & persist entities for the freshly embedded chunks. Best-effort:
+    // failures are logged inside and never propagate, so embeddings are durable
+    // even if entity extraction fails. No-op when the entity layer is disabled.
+    await extractAndIngestEntities({ context: this, itemId: item.id, previousEntityIds });
 
     return {
       id: item.id,
@@ -976,6 +1014,94 @@ export class ExuluContext {
           items: items.length,
         };
       },
+    },
+  };
+
+  /**
+   * Entity-layer administration: backfill extraction over existing items,
+   * count stale items (for the admin "run backfill?" prompt), and purge a type.
+   */
+  public entityLayer = {
+    /** Count items whose entities were extracted with an out-of-date type set. */
+    countStale: async (): Promise<number> => {
+      if (!(await entitiesEnabled(this))) return 0;
+      const { db } = await postgresClient();
+      const itemsTable = getTableName(this.id);
+      if (!(await db.schema.hasColumn(itemsTable, "entity_types_signature"))) {
+        // Column not created yet → every item is effectively stale.
+        const rows = await db(itemsTable).count("id as count");
+        return Number((rows[0] as any)?.count) || 0;
+      }
+      const types = await hydrateEntityTypes(this);
+      const signature = computeTypesSignature(types);
+      const rows = await db(itemsTable)
+        .where(function () {
+          this.whereNull("entity_types_signature").orWhere(
+            "entity_types_signature",
+            "!=",
+            signature,
+          );
+        })
+        .count("id as count");
+      return Number((rows[0] as any)?.count) || 0;
+    },
+
+    /**
+     * Full re-extraction over items. `onlyStale` (default true) limits to items
+     * whose type-set signature is out of date. Runs inline in batches with a
+     * safeguard cap; entity extraction (not re-embedding) is what runs here.
+     */
+    backfill: async ({
+      onlyStale = true,
+      limit,
+    }: {
+      onlyStale?: boolean;
+      limit?: number;
+    } = {}): Promise<{ processed: number; skipped: number }> => {
+      if (!(await entitiesEnabled(this))) {
+        return { processed: 0, skipped: 0 };
+      }
+      const { db } = await postgresClient();
+      const itemsTable = getTableName(this.id);
+
+      const SAFEGUARD_CAP = limit ?? 5000;
+      const types = await hydrateEntityTypes(this);
+      const signature = computeTypesSignature(types);
+
+      let query = db(itemsTable).select("id");
+      if (onlyStale && (await db.schema.hasColumn(itemsTable, "entity_types_signature"))) {
+        query = query.where(function () {
+          this.whereNull("entity_types_signature").orWhere(
+            "entity_types_signature",
+            "!=",
+            signature,
+          );
+        });
+      }
+      const all = await query;
+      const batch = all.slice(0, SAFEGUARD_CAP);
+      const skipped = all.length - batch.length;
+      if (skipped > 0) {
+        console.warn(
+          `[EXULU] Entity backfill cap (${SAFEGUARD_CAP}) reached for context ${this.id}: ${skipped} items not processed this run.`,
+        );
+      }
+
+      for (const it of batch) {
+        await extractAndIngestEntities({ context: this, itemId: it.id });
+      }
+
+      return { processed: batch.length, skipped };
+    },
+
+    /** Remove all entities (and their mentions via cascade) of a given type. */
+    purgeType: async (typeName: string): Promise<{ removed: number }> => {
+      if (!(await entitiesTableExists(this))) return { removed: 0 };
+      const { db } = await postgresClient();
+      const removed = await db(getEntitiesTableName(this.id))
+        .where({ type: typeName })
+        .delete();
+      return { removed: Number(removed) || 0 };
     },
   };
 
