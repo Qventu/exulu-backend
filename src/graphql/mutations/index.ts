@@ -586,8 +586,12 @@ export function createMutations(
       // operations that might need to be performed on the fields.
       const columns = await db(tableNamePlural).columnInfo();
 
-      // Update item
-      const result = await db(tableNamePlural)
+      // Update item. Knex `.update().returning(cols)` resolves to an ARRAY
+      // of updated rows (one entry per matched row). Update-by-primary-key
+      // matches at most one, so destructure the first element — downstream
+      // code (`result.id`, RBAC lookups, postprocessUpdate, finalizeRequestedFields)
+      // expects a single object, not an array.
+      const [result] = await db(tableNamePlural)
         .where({ id: item.id })
         .update({
           ...input,
@@ -595,7 +599,7 @@ export function createMutations(
         })
         .returning(Object.keys(columns));
 
-      if (!result.id) {
+      if (!result?.id) {
         throw new Error("Something went wrong with the update, no id returned.");
       }
 
