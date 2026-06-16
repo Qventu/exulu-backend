@@ -568,8 +568,15 @@ export function createMutations(
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
 
-      // Get item and validate access
-      const item = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
+      // Get item and validate access. `where` arrives as the GraphQL
+      // [FilterX] shape (e.g. `[{id: {eq: 1}}]`), not Knex's `{col: val}`
+      // shape — pass it through applyFilters so each `{field: {op: value}}`
+      // translates to the correct Knex builder calls. Without this, Knex
+      // iterates the array by numeric index and produces SQL like
+      // `WHERE "0" = $1` (the bug fixed here).
+      let itemQuery = db.from(tableNamePlural).select(sanitizedFields);
+      itemQuery = applyFilters(itemQuery, where, table);
+      const item = await itemQuery.first();
       if (!item) {
         throw new Error("Record not found");
       }
@@ -789,7 +796,12 @@ export function createMutations(
 
       const requestedFields = getRequestedFields(info);
       const sanitizedFields = sanitizeRequestedFields(table, requestedFields);
-      const result = await db.from(tableNamePlural).select(sanitizedFields).where(where).first();
+      // `where` is the GraphQL [FilterX] shape, not Knex's {col: val}.
+      // applyFilters translates `[{id: {eq: 1}}]` into the correct builder
+      // calls; passing it raw to .where() produces SQL like `WHERE "0" = $1`.
+      let lookupQuery = db.from(tableNamePlural).select(sanitizedFields);
+      lookupQuery = applyFilters(lookupQuery, where, table);
+      const result = await lookupQuery.first();
       if (!result) {
         throw new Error("Record not found");
       }
@@ -807,8 +819,9 @@ export function createMutations(
         }
       }
 
-      // Delete the record
-      await db(tableNamePlural).where(where).del();
+      // Delete by the resolved id — safer than re-applying the filter and
+      // matches the UpdateOne pattern above (`.where({id: item.id})`).
+      await db(tableNamePlural).where({ id: result.id }).del();
       await postprocessDeletion({
         table,
         requestedFields,
