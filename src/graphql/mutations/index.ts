@@ -274,9 +274,13 @@ export function createMutations(
         return true;
       }
 
-      // Check if record is private and user is creator
+      // Check if record is private and user is creator. `created_by` is a
+      // text column on context item tables (exulu/context.ts) while `user.id`
+      // is an integer SERIAL, so compare them as strings — a raw `===` fails
+      // for the legitimate creator ("1" === 1 → false). Matches the
+      // normalization in utils/check-record-access.ts.
       if (record.rights_mode === "private") {
-        if (record.created_by === user.id) {
+        if (record.created_by != null && String(record.created_by) === String(user.id)) {
           return true;
         }
         throw new Error("Only the creator can edit this private record");
