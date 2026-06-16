@@ -2194,6 +2194,8 @@ Mood: friendly and intelligent.
         budget_duration,
       },
       show_user_budget_in_chat: !!body.show_user_budget_in_chat,
+      user_budget_display:
+        body.user_budget_display === "percent" ? "percent" : "amount",
     };
   };
 
