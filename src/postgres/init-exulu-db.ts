@@ -6,6 +6,7 @@ import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { encryptString, generateApiKey } from "@SRC/auth/generate-key";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
+import { ensureEntityTables } from "@SRC/exulu/entities";
 
 const {
   agentsSchema,
@@ -30,6 +31,7 @@ const {
   promptLibrarySchema,
   contextPresetsSchema,
   embedderSettingsSchema,
+  entityTypeSettingsSchema,
   promptFavoritesSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
@@ -84,6 +86,7 @@ const up = async function (knex: Knex) {
     promptLibrarySchema(),
     contextPresetsSchema(),
     embedderSettingsSchema(),
+    entityTypeSettingsSchema(),
     promptFavoritesSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
@@ -275,6 +278,9 @@ const contextDatabases = async (contexts: ExuluContext[]) => {
       console.log("[EXULU] chunks table does not exist, creating it.");
       await context.createChunksTable();
     }
+    // Create the entity-layer tables/columns for graph-enabled contexts.
+    // No-op when the entity layer is disabled (no types declared/configured).
+    await ensureEntityTables(context);
   }
 };
 

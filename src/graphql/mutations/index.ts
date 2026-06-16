@@ -1165,6 +1165,34 @@ export function createMutations(
         };
       }
     };
+
+    mutations[`${tableNameSingular}BackfillEntities`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user) {
+        throw new Error("Authentication required to backfill entities.");
+      }
+      return await ctx.entityLayer.backfill({
+        onlyStale: args.onlyStale ?? true,
+        limit: args.limit,
+      });
+    };
+
+    mutations[`${tableNameSingular}PurgeEntityType`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user?.super_admin) {
+        throw new Error("You are not authorized to purge entity types, user must be super admin.");
+      }
+      if (!args.type) {
+        throw new Error("Entity type is required.");
+      }
+      return await ctx.entityLayer.purgeType(args.type);
+    };
   }
 
   return mutations;

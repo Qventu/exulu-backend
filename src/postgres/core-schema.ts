@@ -500,6 +500,34 @@ const embedderSettingsSchema: ExuluTableDefinition = {
   ],
 };
 
+const entityTypeSettingsSchema: ExuluTableDefinition = {
+  type: "entity_type_settings",
+  name: {
+    plural: "entity_type_settings",
+    singular: "entity_type_setting",
+  },
+  RBAC: false,
+  fields: [
+    {
+      name: "context",
+      type: "text", // id of the ExuluContext class
+    },
+    {
+      name: "name",
+      type: "text", // entity type name, e.g. "Person"
+    },
+    {
+      name: "description",
+      type: "text", // extraction guidance for this type
+    },
+    {
+      name: "active",
+      type: "boolean",
+      default: true,
+    },
+  ],
+};
+
 const promptLibrarySchema: ExuluTableDefinition = {
   type: "prompt_library",
   name: {
@@ -738,6 +766,7 @@ export const coreSchemas = {
       platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
       promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
       embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
+      entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       oauthTokensSchema: (): ExuluTableDefinition => addCoreFields(oauthTokensSchema),

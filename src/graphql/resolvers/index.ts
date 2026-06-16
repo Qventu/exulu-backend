@@ -352,7 +352,15 @@ export function createQueries(
         trigger: "api",
         cutoffs: args.cutoffs,
         expand: args.expand,
+        entityFilter: args.entityFilter,
       });
+    };
+    queries[`${tableNameSingular}StaleEntityCount`] = async (_, _args, _context) => {
+      const exists = contexts.find((ctx) => ctx.id === table.id);
+      if (!exists) {
+        throw new Error("Context " + table.id + " not found in registry.");
+      }
+      return await exists.entityLayer.countStale();
     };
     queries[`${tableNameSingular}ChunkById`] = async (_, args, context) => {
       const exists = contexts.find((ctx) => ctx.id === table.id);

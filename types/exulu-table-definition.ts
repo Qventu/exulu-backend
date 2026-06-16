@@ -29,6 +29,7 @@ export type ExuluTableDefinition = {
     | "prompt_library"
     | "prompt_favorites"
     | "embedder_settings"
+    | "entity_type_settings"
     | "transcription_jobs"
     | "image_generations"
     | "oauth_tokens";
@@ -60,6 +61,7 @@ export type ExuluTableDefinition = {
       | "prompt_library"
       | "prompt_favorites"
       | "embedder_settings"
+      | "entity_type_settings"
       | "transcription_jobs"
       | "image_generations"
       | "oauth_tokens";
@@ -89,6 +91,7 @@ export type ExuluTableDefinition = {
       | "prompt_library_item"
       | "prompt_favorite"
       | "embedder_setting"
+      | "entity_type_setting"
       | "transcription_job"
       | "image_generation"
       | "oauth_token";
