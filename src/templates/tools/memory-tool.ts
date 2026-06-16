@@ -8,6 +8,7 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
   const fields: Record<string, ZodSchema> = {
     name: z.string().describe("The name of the item to create"),
     description: z.string().describe("The description of the item to create"),
+    surroundingContext: z.string().describe("A description of the context surrounding this memory, for example if it relates to a question a user asked, a specific product, or entity etc..."),
   };
   for (const field of context.fields) {
     switch (field.type) {
@@ -59,14 +60,14 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     type: "function",
     inputSchema: z.object(fields),
     config: [],
-    execute: async ({ name, description, mode, information, exuluConfig, user }) => {
+    execute: async ({ name, description, surroundingContext, mode, information, exuluConfig, user }) => {
       let result: { result: string } = { result: "" };
 
       try {
         const newItem = {
           name: name,
-          description: description,
-          information: information,
+          description: "Description: " + description + "\n\nSurrounding Context: " + surroundingContext,
+          information: "Information: " + information,
           rights_mode: "public",
         };
         const { item: createdItem, job: createdJob } = await context.createItem(
