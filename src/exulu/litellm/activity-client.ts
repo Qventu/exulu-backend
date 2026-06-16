@@ -112,6 +112,73 @@ export async function getTagDailyActivity(
 }
 
 /**
+ * Running spend per tag over each tag's own window, read from
+ * `GET /tag/daily/activity` — LiteLLM's source of truth for accumulated tag
+ * spend. The tag-config endpoints (`/tag/info`, `/tag/list`) carry the budget
+ * limit but NOT the spend tallied against it, so budget views must read spend
+ * from here or they show "$0 of $X".
+ *
+ * `windows` maps each tag → its window-start date (YYYY-MM-DD). One activity
+ * call spans [earliest window start, endDate] for all tags; each tag then sums
+ * only the daily entries on/after its own start (windows can differ per tag
+ * because budgets reset on their own schedules). Best-effort spend: a daily
+ * entry without a numeric `spend` contributes 0.
+ */
+export async function getTagSpendByWindow(
+  windows: Record<string, string>,
+  endDate: string,
+): Promise<Record<string, number>> {
+  const windowEntries = Object.entries(windows);
+  const out: Record<string, number> = {};
+  for (const [tag] of windowEntries) out[tag] = 0;
+  if (windowEntries.length === 0) return out;
+
+  let startDate = windowEntries[0]![1];
+  for (const [, start] of windowEntries) {
+    if (start < startDate) startDate = start;
+  }
+  const tags = windowEntries.map(([tag]) => tag);
+
+  const MAX_PAGES = 50;
+  const PAGE_SIZE = 1000;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const json = await getTagDailyActivity({
+      startDate,
+      endDate,
+      tags,
+      page,
+      pageSize: PAGE_SIZE,
+    });
+    const results: any[] = Array.isArray(json?.results) ? json.results : [];
+    for (const row of results) {
+      const date = typeof row?.date === "string" ? row.date : null;
+      if (!date) continue;
+      // Per-tag metrics live under breakdown.entities[tag].metrics (mirrors the
+      // projection in routes.ts /admin/litellm/tag-activity).
+      const entities = row?.breakdown?.entities as
+        | Record<string, any>
+        | undefined;
+      if (!entities || typeof entities !== "object") continue;
+      for (const [tag, windowStart] of windowEntries) {
+        if (date < windowStart) continue; // before this tag's window (YYYY-MM-DD sorts chronologically)
+        const ed = entities[tag];
+        if (!ed) continue;
+        const m = (ed?.metrics ?? ed) as Record<string, unknown>;
+        const raw = m?.spend;
+        const spend = typeof raw === "number" ? raw : Number(raw);
+        if (Number.isFinite(spend)) out[tag] = (out[tag] ?? 0) + spend;
+      }
+    }
+    const meta = json?.metadata ?? {};
+    const totalPages = Number(meta?.total_pages ?? json?.total_pages ?? 0);
+    const hasMore = Boolean(meta?.has_more ?? json?.has_more ?? false);
+    if (results.length === 0) break;
+    if (totalPages ? page >= totalPages : !hasMore) break;
+  }
+  return out;
+}
+
+/**
  * Find all LiteLLM tags whose name starts with the sanitised version of
  * `prefix`. Used by the /admin/litellm/tag-activity route to translate
  * dimension=agents|users|projects|teams|roles into a concrete tags CSV — the
