@@ -352,6 +352,18 @@ const usersSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      // Knowledge V2 (KB-1): favourited knowledge sources + items. JSON arrays
+      // of ids, mirroring favourite_projects. Auto-added to existing DBs by
+      // the init-exulu-db column sync. Read via userById, written via
+      // usersUpdateOne.
+      name: "favourite_contexts",
+      type: "json",
+    },
+    {
+      name: "favourite_items",
+      type: "json",
+    },
+    {
       name: "firstname",
       type: "text",
     },
