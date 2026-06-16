@@ -275,13 +275,7 @@ export const createWorkers = async (
 
               const label = `embedder-${bullmqJob.name}`;
 
-              await db.from("job_results").insert({
-                job_id: bullmqJob.id,
-                label: label,
-                state: await bullmqJob.getState(),
-                result: null,
-                metadata: {},
-              });
+              await upsertJobStart(db, bullmqJob, label, "embedder");
 
               const context = contexts.find((context) => context.id === data.context);
 
@@ -331,13 +325,7 @@ export const createWorkers = async (
 
               const label = `processor-${bullmqJob.name}`;
 
-              await db.from("job_results").insert({
-                job_id: bullmqJob.id,
-                label: label,
-                state: await bullmqJob.getState(),
-                result: null,
-                metadata: {},
-              });
+              await upsertJobStart(db, bullmqJob, label, "processor");
 
               const context = contexts.find((context) => context.id === data.context);
 
@@ -1644,4 +1632,37 @@ function getSum(arr: number[]): number {
 function getAverage(arr: number[]): number {
   if (arr.length === 0) return 0; // Handle empty array
   return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+// KB-7: at worker pickup, advance the enqueue-time job_results row (state
+// "waiting", written by the queue decorator) to the live state instead of
+// inserting a duplicate. Falls back to an insert for jobs enqueued before
+// this change. Used by the processor + embedder handlers; the completed/
+// failed worker events then drive the same row to its terminal state.
+async function upsertJobStart(
+  db: any,
+  bullmqJob: { id?: string; data?: any; getState: () => Promise<string> },
+  label: string,
+  fallbackType: string,
+): Promise<void> {
+  const state = await bullmqJob.getState();
+  const rawItem = bullmqJob.data?.item;
+  const itemId =
+    rawItem == null ? null : typeof rawItem === "object" ? (rawItem.id ?? null) : rawItem;
+  const updated = await db
+    .from("job_results")
+    .where({ job_id: bullmqJob.id })
+    .update({ label, state });
+  if (!updated) {
+    await db.from("job_results").insert({
+      job_id: bullmqJob.id,
+      label,
+      state,
+      result: null,
+      metadata: {},
+      type: bullmqJob.data?.type ?? fallbackType,
+      item: itemId == null ? null : String(itemId),
+      context: bullmqJob.data?.context ? String(bullmqJob.data.context) : null,
+    });
+  }
 }

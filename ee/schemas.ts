@@ -241,6 +241,25 @@ export const jobResultsSchema: ExuluTableDefinition = {
             name: "metadata",
             type: "json",
         },
+        // Knowledge V2 (KB-7): per-item pipeline tracking. Written at ENQUEUE
+        // time (state "waiting") by the queue decorator so the item page can
+        // detect waiting jobs — not only worker-started ones. `type` is the
+        // job kind (processor/embedder/...); item + context indexed for the
+        // item-page query.
+        {
+            name: "item",
+            type: "text",
+            index: true,
+        },
+        {
+            name: "context",
+            type: "text",
+            index: true,
+        },
+        {
+            name: "type",
+            type: "text",
+        },
     ],
 };
 
