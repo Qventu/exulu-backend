@@ -328,6 +328,14 @@ const modelsSchema: ExuluTableDefinition = {
       name: "budget_window",
       type: "text",
     },
+    {
+      name: "price_input_token",
+      type: "number",
+    },
+    {
+      name: "price_output_token",
+      type: "number",
+    },
   ],
 };
 
