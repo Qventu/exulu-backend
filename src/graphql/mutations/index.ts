@@ -1,7 +1,7 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
+import { resolveEntityModel, setEntityModelSetting } from "@SRC/exulu/entities";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluConfig } from "@SRC/exulu/app";
@@ -209,7 +209,6 @@ export function createMutations(
   table: ExuluTableDefinition,
   providers: ExuluProvider[],
   contexts: ExuluContext[],
-  rerankers: ExuluReranker[],
   tools: ExuluTool[],
   config: ExuluConfig,
 ) {
@@ -425,7 +424,6 @@ export function createMutations(
           requestedFields,
           providers,
           contexts,
-          rerankers,
           tools,
           result: result[0],
           user: context.user,
@@ -523,7 +521,6 @@ export function createMutations(
           requestedFields,
           providers,
           contexts,
-          rerankers,
           tools,
           result: results[0],
           user: context.user,
@@ -638,7 +635,6 @@ export function createMutations(
           requestedFields,
           providers,
           contexts,
-          rerankers,
           tools,
           result,
           user: context.user.id,
@@ -732,7 +728,6 @@ export function createMutations(
           requestedFields,
           providers,
           contexts,
-          rerankers,
           tools,
           result,
           user: context.user.id,
@@ -792,7 +787,6 @@ export function createMutations(
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result,
         user: context.user.id,
@@ -844,7 +838,6 @@ export function createMutations(
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result,
         user: context.user.id,
@@ -1192,6 +1185,47 @@ export function createMutations(
         throw new Error("Entity type is required.");
       }
       return await ctx.entityLayer.purgeType(args.type);
+    };
+
+    mutations[`${tableNameSingular}SetEntityModel`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user) {
+        throw new Error("Authentication required to set the entity extraction model.");
+      }
+      // Empty / null clears the override and falls back to code / env.
+      await setEntityModelSetting(ctx.id, args.model ?? null);
+      return await resolveEntityModel(ctx);
+    };
+
+    mutations[`${tableNameSingular}ExtractEntities`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user) {
+        throw new Error("Authentication required to extract entities.");
+      }
+      if (!args.item) {
+        throw new Error("Item id is required.");
+      }
+      return await ctx.entityLayer.extractItem(args.item);
+    };
+
+    mutations[`${tableNameSingular}DetachEntities`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user) {
+        throw new Error("Authentication required to detach entities.");
+      }
+      if (!args.item) {
+        throw new Error("Item id is required.");
+      }
+      return await ctx.entityLayer.detachItem(args.item);
     };
   }
 

@@ -87,6 +87,13 @@ export const authentication = async ({
         }
       }
 
+      if (user?.project) {
+        const project = await db.from("projects").select("*").where("id", user?.project).first();
+        if (project) {
+          user.project = project;
+        }
+      }
+
       if (!user) {
         return {
           error: true,
@@ -160,6 +167,22 @@ export const authentication = async ({
           const role = await db.from("roles").select("*").where("id", user?.role).first();
           if (role) {
             user.role = role;
+          }
+        }
+
+        // Hydrate the key's optional attribution targets (uuid → row) so
+        // buildTags can emit team_id_/project_id_ for API-triggered requests.
+        if (user?.team) {
+          const team = await db.from("teams").select("*").where("id", user?.team).first();
+          if (team) {
+            user.team = team;
+          }
+        }
+
+        if (user?.project) {
+          const project = await db.from("projects").select("*").where("id", user?.project).first();
+          if (project) {
+            user.project = project;
           }
         }
 

@@ -2,7 +2,7 @@ import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import { exuluProviderFields } from "../utilities/provider-fields";
 import { getChunksTableName, getTableName } from "@SRC/exulu/context";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
+import { getEntitiesForItem, resolveEntityModel } from "@SRC/exulu/entities";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import { vectorSearch } from "./vector-search";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields";
@@ -137,7 +137,6 @@ export function createQueries(
   providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[],
-  rerankers: ExuluReranker[],
 ) {
   const tableNamePlural = table.name.plural.toLowerCase();
   const tableNameSingular = table.name.singular.toLowerCase();
@@ -178,7 +177,6 @@ export function createQueries(
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result,
         user: context.user,
@@ -220,7 +218,6 @@ export function createQueries(
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result,
         user: context.user,
@@ -243,7 +240,6 @@ export function createQueries(
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result,
         user: context.user,
@@ -273,7 +269,6 @@ export function createQueries(
           requestedFields,
           providers,
           contexts,
-          rerankers,
           tools,
           result: items,
           user: context.user,
@@ -361,6 +356,23 @@ export function createQueries(
         throw new Error("Context " + table.id + " not found in registry.");
       }
       return await exists.entityLayer.countStale();
+    };
+    queries[`${tableNameSingular}EntityModel`] = async (_, _args, _context) => {
+      const exists = contexts.find((ctx) => ctx.id === table.id);
+      if (!exists) {
+        throw new Error("Context " + table.id + " not found in registry.");
+      }
+      return await resolveEntityModel(exists);
+    };
+    queries[`${tableNameSingular}EntitiesForItem`] = async (_, args, _context) => {
+      const exists = contexts.find((ctx) => ctx.id === table.id);
+      if (!exists) {
+        throw new Error("Context " + table.id + " not found in registry.");
+      }
+      if (!args.item) {
+        throw new Error("Item id is required.");
+      }
+      return await getEntitiesForItem(exists, args.item);
     };
     queries[`${tableNameSingular}ChunkById`] = async (_, args, context) => {
       const exists = contexts.find((ctx) => ctx.id === table.id);

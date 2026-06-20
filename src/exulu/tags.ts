@@ -17,9 +17,12 @@ function sanitizeTagValue(
  * upsertWorkflowSchedule) emit these alongside the user/role/project/agent/team
  * tags, so /analytics and /admin/budgets can attribute spend per routine.
  *
- * Still gap: `workflow_id_` (DAG/graph workflows distinct from routines),
- * `context_id_` (RAG context spend), and `embedder_id_` (embedding-side calls).
- * To close those, add the optional fields here and thread them through every
+ * `context_id_` / `context_name_` are now SHIPPED too: embedding-side calls
+ * (document ingestion + query embedding via resolveEmbedder) emit these so RAG
+ * context spend is attributable per context.
+ *
+ * Still gap: `workflow_id_` (DAG/graph workflows distinct from routines). To
+ * close it, add the optional fields here and thread them through every
  * LLM-invoking callsite. Do NOT silently route through agent_id_ to make a tab
  * "work"; that would conflate direct chat with the other call types and break
  * trust in analytics numbers.
@@ -31,12 +34,14 @@ export function buildTags(input: {
   project_id?: string;
   agent_id?: string;
   routine_id?: string;
+  context_id?: string;
   user_name?: string;
   role_name?: string;
   project_name?: string;
   agent_name?: string;
   team_name?: string;
   routine_name?: string;
+  context_name?: string;
 }): string[] {
   const candidates: (string | number | undefined)[] = [];
 
@@ -75,6 +80,12 @@ export function buildTags(input: {
   }
   if (input.routine_name) {
     candidates.push("routine_name_" + input.routine_name);
+  }
+  if (input.context_id) {
+    candidates.push("context_id_" + input.context_id);
+  }
+  if (input.context_name) {
+    candidates.push("context_name_" + input.context_name);
   }
 
   console.log("[EXULU] Candidates", candidates);

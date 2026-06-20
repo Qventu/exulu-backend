@@ -197,7 +197,10 @@ export async function resolveModel(input: ResolveModelInput): Promise<ResolvedMo
     const litellm = getLiteLLMProvider({
       user: user,
       role: user?.role,
-      project: project,
+      // Fall back to the caller's own project (set on API keys) when no
+      // explicit request project is supplied, so API-triggered requests are
+      // attributed to the key's project.
+      project: project ?? user?.project,
       agent: agent,
       team: user?.team,
       routine: routine,

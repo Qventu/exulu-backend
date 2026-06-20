@@ -364,6 +364,15 @@ const usersSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      // Knowledge: per-user "recently viewed" data items. Ordered JSON array
+      // of global item ids ("<contextId>/<itemId>"), most-recent first, capped
+      // client-side. Auto-added to existing DBs by the init-exulu-db column
+      // sync; read via userById, written via usersUpdateOne (mirrors
+      // favourite_items).
+      name: "recently_viewed_items",
+      type: "json",
+    },
+    {
       name: "firstname",
       type: "text",
     },
@@ -443,6 +452,12 @@ const usersSchema: ExuluTableDefinition = {
       name: "team",
       type: "uuid",
     },
+    {
+      // Optional attribution target for API keys (type "api"): tags requests
+      // triggered by the key with project_id_ for LiteLLM cost attribution.
+      name: "project",
+      type: "uuid",
+    },
   ],
 };
 
@@ -473,33 +488,6 @@ const platformConfigurationsSchema: ExuluTableDefinition = {
   ],
 };
 
-const embedderSettingsSchema: ExuluTableDefinition = {
-  type: "embedder_settings",
-  name: {
-    plural: "embedder_settings",
-    singular: "embedder_setting",
-  },
-  RBAC: false,
-  fields: [
-    {
-      name: "context",
-      type: "text", // id of the ExuluContext class
-    },
-    {
-      name: "embedder",
-      type: "text", // id of the ExuluEmbedder class
-    },
-    {
-      name: "name",
-      type: "text",
-    },
-    {
-      name: "value",
-      type: "text", // reference to an exulu variable
-    },
-  ],
-};
-
 const entityTypeSettingsSchema: ExuluTableDefinition = {
   type: "entity_type_settings",
   name: {
@@ -524,6 +512,13 @@ const entityTypeSettingsSchema: ExuluTableDefinition = {
       name: "active",
       type: "boolean",
       default: true,
+    },
+    {
+      // "active" = a configured type (used in extraction); "suggested" = a type
+      // the extractor proposed (active:false) awaiting promotion on the UI.
+      name: "status",
+      type: "text",
+      default: "active",
     },
   ],
 };
@@ -619,6 +614,20 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "target_rbac_roles", type: "json" },
     { name: "saved_item_id", type: "uuid", required: false },
     { name: "error", type: "text" },
+    // Recall.ai meeting-bot fields. source discriminates the pipeline: whisper
+    // rows are driven by the polling loop, recall rows by webhooks.
+    // Design doc: docs/superpowers/specs/2026-06-19-recall-meeting-recording-design.md
+    { name: "source", type: "text", default: "whisper", index: true },
+    { name: "meeting_url", type: "text" },
+    { name: "recall_bot_id", type: "text", index: true },
+    { name: "recall_recording_id", type: "text", index: true },
+    { name: "recall_transcript_id", type: "text", index: true },
+    { name: "bot_status", type: "text" },
+    { name: "join_at", type: "date" },
+    // Selected per-meeting post-processing: [{ prompt_id, agent_id }].
+    { name: "post_processing_prompts", type: "json" },
+    // Results: [{ prompt_id, agent_id, prompt_name, status, output, error, ran_at }].
+    { name: "post_processing_outputs", type: "json" },
   ],
 };
 
@@ -765,7 +774,6 @@ export const coreSchemas = {
       variablesSchema: (): ExuluTableDefinition => addCoreFields(variablesSchema),
       platformConfigurationsSchema: (): ExuluTableDefinition => addCoreFields(platformConfigurationsSchema),
       promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
-      embedderSettingsSchema: (): ExuluTableDefinition => addCoreFields(embedderSettingsSchema),
       entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),

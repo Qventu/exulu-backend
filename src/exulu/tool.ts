@@ -195,7 +195,6 @@ export class ExuluTool {
       agent.tools,
       providerapikey,
       undefined,
-      undefined,
       user,
       config,
       undefined,

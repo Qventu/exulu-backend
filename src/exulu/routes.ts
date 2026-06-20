@@ -40,7 +40,6 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 export const REQUEST_SIZE_LIMIT = "50mb";
 import JSZip from "jszip";
-import type { Queue } from "bullmq";
 import { createIdGenerator, type UIMessage } from "ai";
 import type { Project } from "@EXULU_TYPES/models/project";
 import cookieParser from "cookie-parser";
@@ -48,7 +47,6 @@ import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-
 import type { ExuluTool } from "./tool.ts";
 import { getChunksTableName, getTableName, type ExuluContext } from "./context.ts";
 import type { ExuluEval } from "./evals.ts";
-import type { ExuluReranker } from "./reranker.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { ExuluProvider, saveChat } from "./provider.ts";
@@ -95,6 +93,9 @@ import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./oauth/callback-handler.ts";
 import { OAUTH_CALLBACK_PATH } from "./oauth/flow.ts";
+import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
+import { verifyRecallRequest } from "./recall/verify.ts";
+import { recallService } from "./recall/service.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -135,7 +136,6 @@ const {
   promptLibrarySchema,
   contextPresetsSchema,
   teamsSchema,
-  embedderSettingsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
   statisticsSchema,
@@ -150,7 +150,6 @@ export const createExpressRoutes = async (
   config: ExuluConfig,
   evals: ExuluEval[],
   tracer?: Tracer,
-  rerankers?: ExuluReranker[],
 ): Promise<Express> => {
   // todo make this more secure / configurable
   let corsOptions = {
@@ -166,7 +165,16 @@ export const createExpressRoutes = async (
 
   // important to set the limit here, otherwise the proxy will
   // fail for large requests such as those from Claude Code
-  app.use(express.json({ limit: REQUEST_SIZE_LIMIT }));
+  // Capture the raw request body so the Recall webhook handler can verify the
+  // Svix signature against the exact bytes Recall signed (not re-serialized JSON).
+  app.use(
+    express.json({
+      limit: REQUEST_SIZE_LIMIT,
+      verify: (req: Request, _res, buf) => {
+        (req as Request & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(cors(corsOptions));
   app.use(bodyParser.urlencoded({ extended: true, limit: REQUEST_SIZE_LIMIT }));
   app.use(bodyParser.json({ limit: REQUEST_SIZE_LIMIT }));
@@ -204,7 +212,6 @@ export const createExpressRoutes = async (
       promptLibrarySchema(),
       contextPresetsSchema(),
       teamsSchema(),
-      embedderSettingsSchema(),
       entityTypeSettingsSchema(),
       promptFavoritesSchema(),
       evalRunsSchema(),
@@ -225,7 +232,6 @@ export const createExpressRoutes = async (
     tools,
     config,
     evals,
-    rerankers || [],
   );
 
   interface GraphqlContext {
@@ -484,6 +490,45 @@ Mood: friendly and intelligent.
     });
   });
 
+  // Recall.ai webhook endpoint. Configured in the Recall dashboard as
+  // PUBLIC_API_BASE_URL/recall/webhooks, subscribed to bot.*, recording.done,
+  // recording.failed, transcript.done, transcript.failed.
+  //
+  // Per RECALL-AI.AGENT.md: verify the signature against the raw body, ACK
+  // immediately with 2xx, then process the payload asynchronously so Recall
+  // never times out and retries.
+  //
+  // Design doc: docs/superpowers/specs/2026-06-19-recall-meeting-recording-design.md
+  app.post("/recall/webhooks", async (req: Request, res: Response) => {
+    if (!recallEnabled()) {
+      res.status(503).json({ detail: RECALL_NOT_CONFIGURED_MESSAGE });
+      return;
+    }
+
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    const verification = verifyRecallRequest(
+      req.headers as Record<string, string | string[] | undefined>,
+      rawBody ?? JSON.stringify(req.body ?? {}),
+    );
+    if (!verification.ok) {
+      // Log the rejected request + body for debugging, but never process it.
+      console.warn(
+        `[EXULU-RECALL] webhook rejected (${verification.reason})`,
+        JSON.stringify(req.body ?? {}),
+      );
+      res.status(401).json({ detail: "invalid signature" });
+      return;
+    }
+
+    // ACK first; process in the background. The handler is idempotent and every
+    // Recall id is persisted, so a crash mid-processing is recoverable.
+    const event = req.body;
+    res.status(200).json({ ok: true });
+    void recallService.handleWebhookEvent(event).catch((err) => {
+      console.error("[EXULU-RECALL] webhook processing failed", err);
+    });
+  });
+
   // Ping route that can be used to check if the request
   // is authenticated and the server is running.
   app.get("/ping", async (req: Request, res: Response) => {
@@ -556,6 +601,9 @@ Mood: friendly and intelligent.
       },
       liteLLM: {
         enabled: process.env.EXULU_USE_LITELLM === "true",
+      },
+      recall: {
+        enabled: recallEnabled(),
       },
     });
   });
@@ -677,7 +725,6 @@ Mood: friendly and intelligent.
         agent,
         tools,
         contexts || [],
-        rerankers || [],
         disabledTools,
         providers,
         user,
@@ -747,7 +794,6 @@ Mood: friendly and intelligent.
 
         const result = await provider.generateStream({
           contexts: contexts,
-          rerankers: rerankers || [],
           agent: agent,
           user,
           instructions: instructions,
@@ -881,7 +927,6 @@ Mood: friendly and intelligent.
 
         const response = await provider.generateSync({
           contexts: contexts,
-          rerankers: rerankers || [],
           agent: agent,
           user,
           req: req,
@@ -2066,13 +2111,17 @@ Mood: friendly and intelligent.
     // Inject Exulu identity into the LiteLLM request body as metadata.tags
     // for cost attribution. createTaggedFetch is a no-op for GETs and for
     // bodies it can't parse as JSON, so it's safe to wrap unconditionally.
+    // Fall back to the caller's own project (set on API keys) when no explicit
+    // request project is supplied, so API-triggered requests are attributed to
+    // the key's project. `user.team` / `user.project` are hydrated at auth time.
+    const attributedProject = project ?? user.project;
     const tags = buildTags({
       user_id: user.id,
       role_id: user.role?.id,
-      project_id: project?.id,
+      project_id: attributedProject?.id,
       user_name: user.email,
       role_name: user.role?.name,
-      project_name: project?.name,
+      project_name: attributedProject?.name,
       team_id: user.team?.id,
       team_name: user.team?.name,
     });
@@ -2086,8 +2135,8 @@ Mood: friendly and intelligent.
         role_name: user.role?.name,
         team_id: user.team?.id,
         team_name: user.team?.name,
-        project_id: project?.id || "DEFAULT",
-        project_name: project?.name,
+        project_id: attributedProject?.id || "DEFAULT",
+        project_name: attributedProject?.name,
       });
     }
     console.log("[EXULU] Built tags", tags);
@@ -3287,6 +3336,88 @@ Mood: friendly and intelligent.
   });
 
   /**
+   * GET /skills/:skillId/download?version=N
+   * Bundles every file in a skill version into a .zip for download, so users
+   * can take a skill into other tools. Mirrors the flat-key → folder
+   * reconstruction used by the sandbox loader (ee/invoke-skills/create-sandbox.ts
+   * → downloadSkill): each S3 object's path relative to `skills/<id>/v<version>/`
+   * becomes its in-archive path, preserving the original folder structure. A
+   * version.txt records which version was exported.
+   */
+  app.get("/skills/:skillId/download", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const { skillId } = req.params;
+    const { db } = await postgresClient();
+    const skill = await db("skills").where({ id: skillId }).first();
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+
+    const version = req.query.version
+      ? Number(req.query.version)
+      : (skill.current_version ?? 1);
+    if (!Number.isFinite(version) || version < 1) {
+      res.status(400).json({ detail: "Invalid version." });
+      return;
+    }
+
+    const versionPrefix = `skills/${skillId}/v${version}/`;
+    const files = await listS3ObjectsByPrefix(versionPrefix, config);
+
+    const zip = new JSZip();
+    let fileCount = 0;
+    for (const file of files) {
+      // Recover the path relative to the version prefix, accounting for any
+      // S3 general prefix prepended to the listed key (same slice as
+      // downloadSkill). Listed keys are full keys; getS3ObjectBytes uses them
+      // as-is, so no re-prefixing here.
+      const prefixIndex = file.key.indexOf(versionPrefix);
+      const relativePath =
+        prefixIndex >= 0
+          ? file.key.slice(prefixIndex + versionPrefix.length)
+          : file.key;
+      if (!relativePath) continue; // skip directory markers
+
+      // Binary-safe — skill bundles can ship images, fonts, and other assets.
+      const bytes = await getS3ObjectBytes(file.key, config);
+      zip.file(relativePath, bytes);
+      fileCount += 1;
+    }
+
+    const exportedAt = new Date().toISOString();
+    zip.file(
+      "version.txt",
+      [
+        `Skill: ${skill.name ?? skillId}`,
+        `Skill id: ${skillId}`,
+        `Version: v${version}`,
+        `Files: ${fileCount}`,
+        `Exported at: ${exportedAt}`,
+        "",
+      ].join("\n"),
+    );
+
+    const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    const safeName =
+      String(skill.name ?? "skill")
+        .replace(/[^a-zA-Z0-9-_]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "skill";
+    const filename = `${safeName}-v${version}.zip`;
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    res.send(buffer);
+  });
+
+  /**
    * POST /skills/:skillId/sign
    * Returns a presigned PUT URL for uploading a file at an exact path within
    * the current version of the skill.
@@ -4215,7 +4346,7 @@ Mood: friendly and intelligent.
 
   app.use(express.static("public"));
 
-  await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config, rerankers);
+  await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config);
 
   return app;
 };

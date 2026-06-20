@@ -30,7 +30,6 @@ const {
   jobResultsSchema,
   promptLibrarySchema,
   contextPresetsSchema,
-  embedderSettingsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
   transcriptionJobsSchema,
@@ -85,7 +84,6 @@ const up = async function (knex: Knex) {
     jobResultsSchema(),
     promptLibrarySchema(),
     contextPresetsSchema(),
-    embedderSettingsSchema(),
     entityTypeSettingsSchema(),
     promptFavoritesSchema(),
     transcriptionJobsSchema(),
@@ -254,6 +252,27 @@ const up = async function (knex: Knex) {
       table.text("session_state");
       table.text("token_type");
     });
+  }
+
+  // Add the post_processing column to the existing transcriptions context
+  // items table. Context tables are only created-if-absent (no add-missing
+  // for existing context tables), so this targeted, idempotent migration backs
+  // the Recall meeting-bot post-processing feature on already-provisioned DBs.
+  // New installs get the column from the context field definition directly.
+  // Design doc: docs/superpowers/specs/2026-06-19-recall-meeting-recording-design.md
+  if (await knex.schema.hasTable("transcriptions_items")) {
+    const hasPostProcessing = await knex.schema.hasColumn(
+      "transcriptions_items",
+      "post_processing",
+    );
+    if (!hasPostProcessing) {
+      console.log(
+        "[EXULU] Adding 'post_processing' column to transcriptions_items.",
+      );
+      await knex.schema.alterTable("transcriptions_items", (table) => {
+        table.jsonb("post_processing");
+      });
+    }
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {

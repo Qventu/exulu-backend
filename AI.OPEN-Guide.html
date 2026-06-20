@@ -1,0 +1,1602 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>AI.OPEN — Der Guide</title>
+<style>
+  /* ===========================================================
+     A4 Print Layout
+     =========================================================== */
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  :root {
+    --bg: #ffffff;
+    --ink: #0e0e10;
+    --ink-soft: #3a3a40;
+    --muted: #6b6b73;
+    --line: #e6e6ea;
+    --accent: #d4ff3a;     /* OPEN lime */
+    --accent-ink: #0e0e10;
+    --dark: #15151a;
+    --dark-2: #1d1d24;
+    --code-bg: #0f0f12;
+    --code-ink: #e8e8ec;
+    --code-mute: #7b7b86;
+    --kw: #ffb86c;
+    --str: #a3e635;
+    --com: #6b7280;
+    --warn-bg: #fff8e1;
+    --warn-border: #f5c518;
+    --info-bg: #eef6ff;
+    --info-border: #3b82f6;
+    --tag-end: #dbeafe;
+    --tag-end-ink: #1e40af;
+    --tag-dev: #dcfce7;
+    --tag-dev-ink: #166534;
+    --tag-adm: #fef3c7;
+    --tag-adm-ink: #92400e;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #f1f1f3;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    font-size: 11pt;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A4 page wrapper – mimics PDF look on screen */
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 22mm 20mm 22mm 20mm;
+    margin: 14mm auto;
+    background: var(--bg);
+    box-shadow: 0 6px 30px rgba(0,0,0,0.10);
+    position: relative;
+    page-break-after: always;
+    overflow: hidden;
+  }
+
+  .page:last-child { page-break-after: auto; }
+
+  @media print {
+    html, body { background: #fff; }
+    .page {
+      margin: 0;
+      box-shadow: none;
+      width: 210mm;
+      min-height: 297mm;
+    }
+  }
+
+  /* ===========================================================
+     Typography
+     =========================================================== */
+  h1, h2, h3, h4 {
+    font-family: "Inter", sans-serif;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  h1 { font-size: 28pt; font-weight: 800; line-height: 1.1; }
+  h2 { font-size: 18pt; font-weight: 700; margin: 0 0 6mm 0; padding-bottom: 3mm; border-bottom: 2px solid var(--ink); }
+  h3 { font-size: 13pt; font-weight: 700; margin: 6mm 0 2mm 0; }
+  h4 { font-size: 11pt; font-weight: 700; margin: 4mm 0 1mm 0; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.08em; font-size: 9pt; }
+  p { margin: 0 0 3mm 0; }
+  a { color: #1e40af; text-decoration: none; border-bottom: 1px dotted #1e40af; }
+
+  ul, ol { margin: 2mm 0 4mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1.5mm; }
+
+  /* ===========================================================
+     Cover page
+     =========================================================== */
+  .cover {
+    background: var(--dark);
+    color: #fff;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .cover-inner {
+    padding: 35mm 22mm;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 257mm;
+  }
+  .cover .brand {
+    font-size: 10pt;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .cover h1 {
+    color: #fff;
+    font-size: 46pt;
+    line-height: 0.98;
+    margin-top: 12mm;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+  .cover h1 span { color: var(--accent); }
+  .cover .subtitle {
+    color: #b8b8c0;
+    font-size: 14pt;
+    margin-top: 8mm;
+    line-height: 1.4;
+    max-width: 140mm;
+  }
+  .cover-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    color: #8d8d99;
+    font-size: 9pt;
+    border-top: 1px solid #2a2a32;
+    padding-top: 6mm;
+  }
+  .cover-meta .label { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 8pt; margin-bottom: 1mm; display: block; font-weight: 600; }
+  .cover-meta .value { color: #fff; font-size: 11pt; }
+
+  /* ===========================================================
+     Page header / footer
+     =========================================================== */
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8mm;
+    padding-bottom: 3mm;
+    border-bottom: 1px solid var(--line);
+  }
+  .page-header .left { font-weight: 600; color: var(--ink); }
+  .page-header .right { color: var(--muted); }
+
+  .page-footer {
+    position: absolute;
+    bottom: 12mm;
+    left: 20mm;
+    right: 20mm;
+    display: flex;
+    justify-content: space-between;
+    font-size: 8pt;
+    color: var(--muted);
+    border-top: 1px solid var(--line);
+    padding-top: 3mm;
+  }
+
+  /* ===========================================================
+     Components
+     =========================================================== */
+
+  /* Audience pill */
+  .pill {
+    display: inline-block;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1mm 3mm;
+    border-radius: 999px;
+    vertical-align: middle;
+    margin-left: 3mm;
+  }
+  .pill.end { background: var(--tag-end); color: var(--tag-end-ink); }
+  .pill.dev { background: var(--tag-dev); color: var(--tag-dev-ink); }
+  .pill.adm { background: var(--tag-adm); color: var(--tag-adm-ink); }
+
+  /* Hero section header bar (per audience) */
+  .audience-banner {
+    background: var(--dark);
+    color: #fff;
+    padding: 8mm 8mm;
+    margin: 0 0 8mm 0;
+    border-radius: 2mm;
+    position: relative;
+    overflow: hidden;
+  }
+  .audience-banner::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 6mm;
+    background: var(--accent);
+  }
+  .audience-banner h2 {
+    color: #fff;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font-size: 20pt;
+  }
+  .audience-banner .lead {
+    color: #c0c0c8;
+    font-size: 10.5pt;
+    margin-top: 2mm;
+    margin-bottom: 0;
+  }
+  .audience-banner .kicker {
+    color: var(--accent);
+    font-size: 8.5pt;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 2mm;
+    display: block;
+  }
+
+  /* Lead paragraph */
+  .lead {
+    font-size: 12pt;
+    color: var(--ink-soft);
+    line-height: 1.5;
+    margin-bottom: 5mm;
+  }
+
+  /* Info / warn box */
+  .callout {
+    border-left: 4px solid var(--info-border);
+    background: var(--info-bg);
+    padding: 4mm 5mm;
+    margin: 4mm 0;
+    border-radius: 0 2mm 2mm 0;
+    font-size: 10pt;
+  }
+  .callout.warn {
+    border-left-color: var(--warn-border);
+    background: var(--warn-bg);
+  }
+  .callout strong { color: var(--ink); }
+  .callout .title {
+    display: block;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    margin-bottom: 1.5mm;
+    color: var(--ink);
+  }
+  .callout.warn .title::before { content: "⚠  "; }
+  .callout .title::before { content: "ℹ  "; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 3mm 0 5mm 0;
+    font-size: 10pt;
+  }
+  th, td {
+    text-align: left;
+    padding: 2.5mm 3mm;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: #f7f7f8;
+    font-weight: 700;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    border-bottom: 2px solid var(--ink);
+  }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:nth-child(even) td { background: #fafafb; }
+
+  /* Models table — dark variant */
+  .models-table {
+    background: var(--dark);
+    border-radius: 2mm;
+    padding: 4mm;
+    margin: 3mm 0 5mm 0;
+  }
+  .models-table table { margin: 0; font-size: 9pt; }
+  .models-table th {
+    background: transparent;
+    color: #8d8d99;
+    border-bottom: 1px solid #2a2a32;
+  }
+  .models-table td {
+    color: #e8e8ec;
+    border-bottom: 1px solid #2a2a32;
+  }
+  .models-table tbody tr:nth-child(even) td { background: transparent; }
+  .models-table tr:last-child td { border-bottom: 0; }
+  .models-table .modality {
+    display: inline-block;
+    background: #2a2a32;
+    color: #c0c0c8;
+    font-size: 7.5pt;
+    padding: 0.5mm 2mm;
+    border-radius: 1mm;
+    margin-right: 1mm;
+  }
+  .models-table .active {
+    color: #a3e635;
+    font-weight: 700;
+    font-size: 8.5pt;
+  }
+  .models-table .review {
+    color: #fbbf24;
+    font-weight: 700;
+    font-size: 8.5pt;
+  }
+  .models-table tr.pending td { opacity: 0.7; font-style: italic; }
+  .models-table tr.pending .name { font-style: normal; }
+  .models-table .tbd { color: #6b6b73; font-family: "JetBrains Mono", monospace; }
+  .models-table .cost { color: var(--accent); font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; }
+  .models-table .name { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-weight: 600; }
+
+  /* Code blocks */
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 2mm;
+    padding: 4mm 5mm;
+    margin: 3mm 0 4mm 0;
+    font-size: 9pt;
+    line-height: 1.5;
+    overflow: hidden;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  code {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    background: #f1f1f3;
+    padding: 0.5mm 1.5mm;
+    border-radius: 1mm;
+    font-size: 0.9em;
+  }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  pre .k { color: var(--kw); }
+  pre .s { color: var(--str); }
+  pre .c { color: var(--com); }
+  pre .p { color: #c0c0c8; }
+
+  /* Screenshot frame */
+  figure {
+    margin: 4mm 0 5mm 0;
+    padding: 0;
+  }
+  figure img {
+    width: 100%;
+    height: auto;
+    border-radius: 2mm;
+    border: 1px solid var(--line);
+    box-shadow: 0 1mm 3mm rgba(0,0,0,0.08);
+    display: block;
+  }
+  figure.dark img { border-color: #2a2a32; background: #15151a; }
+  figcaption {
+    font-size: 9pt;
+    color: var(--muted);
+    margin-top: 2mm;
+    text-align: center;
+    font-style: italic;
+  }
+  figure.compact img { max-width: 60%; margin: 0 auto; }
+  figure.logo img { max-width: 50mm; margin: 0; border: 0; box-shadow: none; background: var(--dark); padding: 4mm; }
+
+  /* Two-column grid */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5mm;
+    margin: 3mm 0;
+  }
+  .grid-2 figure { margin: 0; }
+
+  /* TOC */
+  .toc { margin-top: 6mm; }
+  .toc-row {
+    display: flex;
+    align-items: baseline;
+    margin-bottom: 3mm;
+    font-size: 11pt;
+  }
+  .toc-row .num {
+    font-family: "JetBrains Mono", monospace;
+    color: var(--accent-ink);
+    background: var(--accent);
+    width: 8mm;
+    height: 8mm;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    font-size: 9pt;
+    font-weight: 700;
+    margin-right: 4mm;
+    flex-shrink: 0;
+  }
+  .toc-row .title {
+    font-weight: 600;
+    color: var(--ink);
+    flex: 1;
+  }
+  .toc-row .desc {
+    color: var(--muted);
+    font-size: 9.5pt;
+    margin-top: 0.5mm;
+  }
+  .toc-row .dots {
+    flex: 1;
+    border-bottom: 1px dotted var(--line);
+    margin: 0 3mm 1mm 3mm;
+    transform: translateY(-2mm);
+  }
+  .toc-row .pg { font-family: "JetBrains Mono", monospace; color: var(--muted); font-size: 9.5pt; }
+
+  /* Step list */
+  ol.steps {
+    list-style: none;
+    padding: 0;
+    margin: 3mm 0 5mm 0;
+    counter-reset: step;
+  }
+  ol.steps li {
+    counter-increment: step;
+    padding-left: 10mm;
+    position: relative;
+    margin-bottom: 3mm;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: -0.5mm;
+    width: 7mm;
+    height: 7mm;
+    background: var(--ink);
+    color: var(--accent);
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9pt;
+    font-weight: 700;
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  /* Cards (for contacts / vision) */
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4mm;
+    margin: 4mm 0;
+  }
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 2mm;
+    padding: 4mm 5mm;
+    background: #fafafb;
+  }
+  .card .label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 700;
+    margin-bottom: 1mm;
+  }
+  .card .value {
+    font-weight: 600;
+    color: var(--ink);
+    font-size: 11pt;
+  }
+  .card .meta {
+    font-size: 9pt;
+    color: var(--muted);
+    margin-top: 1mm;
+  }
+
+  /* Stat row (cover & dashboards) */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3mm;
+    margin: 4mm 0;
+  }
+  .stat {
+    background: var(--dark);
+    color: #fff;
+    padding: 4mm;
+    border-radius: 2mm;
+  }
+  .stat .num {
+    font-size: 18pt;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .stat .label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #b8b8c0;
+    margin-top: 2mm;
+  }
+
+  /* Roadmap */
+  .roadmap-item {
+    display: flex;
+    gap: 4mm;
+    padding: 3mm 0;
+    border-bottom: 1px solid var(--line);
+    align-items: baseline;
+  }
+  .roadmap-item:last-child { border-bottom: 0; }
+  .roadmap-item .num {
+    font-family: "JetBrains Mono", monospace;
+    color: var(--muted);
+    font-size: 9pt;
+    width: 8mm;
+    flex-shrink: 0;
+  }
+  .roadmap-item .name {
+    font-weight: 700;
+    color: var(--ink);
+    width: 60mm;
+    flex-shrink: 0;
+  }
+  .roadmap-item .desc {
+    color: var(--ink-soft);
+    font-size: 10pt;
+  }
+
+  /* Contact table */
+  table.contacts td:first-child { width: 60%; }
+  table.contacts td:last-child { font-weight: 600; color: var(--ink); }
+
+  /* Auth methods table */
+  table.auth th, table.auth td { font-size: 9.5pt; }
+  table.auth code { font-size: 8.5pt; }
+
+  /* Anchors */
+  a.no-underline { border: 0; color: inherit; }
+
+  /* Section number badge */
+  .sec-num {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--ink);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9pt;
+    font-weight: 700;
+    padding: 1mm 2.5mm;
+    border-radius: 1mm;
+    margin-right: 3mm;
+    vertical-align: middle;
+  }
+
+  /* Print page numbers */
+  body { counter-reset: pageno; }
+  .page { counter-increment: pageno; }
+  .page-footer .pg::after {
+    content: counter(pageno) " / 11";
+  }
+
+  /* Avoid breaks inside */
+  figure, table, pre, .callout, .card { page-break-inside: avoid; }
+  h2, h3 { page-break-after: avoid; }
+</style>
+</head>
+<body>
+
+<!-- =====================================================
+     PAGE 1 — COVER
+     ===================================================== -->
+<section class="page cover">
+  <div class="cover-inner">
+    <div>
+      <div class="brand">AI.OPEN · Internal Guide</div>
+      <h1>Datenschutz&shy;konforme<br><span>State-of-the-Art</span><br>KI bei OPEN.</h1>
+      <p class="subtitle">
+        Der vollständige Leitfaden für End User, Developer und Admins —
+        zur zentralen KI-Plattform <strong style="color:#fff">ai.open.de</strong>.
+      </p>
+    </div>
+
+    <div>
+      <div class="stats" style="margin-bottom: 10mm;">
+        <div class="stat"><div class="num">8</div><div class="label">Sprachmodelle</div></div>
+        <div class="stat"><div class="num">3</div><div class="label">Zielgruppen</div></div>
+        <div class="stat"><div class="num">1</div><div class="label">Gateway</div></div>
+      </div>
+
+      <div class="cover-meta">
+        <div>
+          <span class="label">Stand</span>
+          <span class="value">12. Juni 2026</span>
+        </div>
+        <div>
+          <span class="label">Plattform</span>
+          <span class="value">https://ai.open.de</span>
+        </div>
+        <div>
+          <span class="label">Owner</span>
+          <span class="value">KI-Team @ OPEN</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 2 — INTRO + TOC
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Einleitung &amp; Inhalt</span>
+  </div>
+
+  <h2><span class="sec-num">01</span>Was ist AI.OPEN?</h2>
+
+  <p class="lead">
+    AI.OPEN ist die zentrale, datenschutzkonforme KI-Plattform von OPEN. Sie stellt allen
+    Mitarbeitenden Zugriff auf die aktuellsten State-of-the-Art Sprachmodelle bereit —
+    über ein einheitliches Gateway, das Anfragen automatisch über sichere Umgebungen routet
+    und der korrekten Unit, dem Team, der Rolle und dem Projekt zuordnet.
+  </p>
+
+  <p>Damit ist AI.OPEN sowohl für:</p>
+  <ul>
+    <li><strong>End User</strong> (Chat &amp; Agents im Browser oder Claude Desktop)</li>
+    <li><strong>Developer</strong> (IDE-Integrationen und Agentic-Coding-Tools)</li>
+    <li><strong>Admins</strong> (Budget- &amp; User-Management, Controlling)</li>
+  </ul>
+  <p>… der zentrale Einstiegspunkt für jegliche KI-Nutzung bei OPEN.</p>
+
+  <div class="callout">
+    <span class="title">Abgrenzung — was AI.OPEN nicht ist</span>
+    AI.OPEN ersetzt <strong>nicht</strong> die bei OPEN etablierte <strong>Gemini-Nutzung</strong>
+    im Google Workspace (Gmail, Docs, Meet etc.) — das bleibt eine separate, eigenständige
+    Schiene. AI.OPEN adressiert gezielt die Nutzung von Sprachmodellen über das zentrale
+    Gateway, für eigene Agents, Coding-Workflows und projektbezogene KI-Anwendungen.
+  </div>
+
+  <h3 style="margin-top: 8mm;">Inhalt</h3>
+
+  <div class="toc">
+    <div class="toc-row">
+      <span class="num">01</span>
+      <div style="flex:1">
+        <div class="title">Verfügbare Modelle</div>
+        <div class="desc">Übersicht aller aktuell auf AI.OPEN verfügbaren Sprachmodelle</div>
+      </div>
+      <span class="pg">S. 03</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">02</span>
+      <div style="flex:1">
+        <div class="title">Architektur, Datenschutz &amp; Kostenzuordnung</div>
+        <div class="desc">Gateway-Diagramm, GCP-Routing, Unit-Mapping, SSO</div>
+      </div>
+      <span class="pg">S. 04</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">03</span>
+      <div style="flex:1">
+        <div class="title">Für End User <span class="pill end">End User</span></div>
+        <div class="desc">AI Studio im Browser oder Claude Desktop App</div>
+      </div>
+      <span class="pg">S. 05</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">04</span>
+      <div style="flex:1">
+        <div class="title">Prompts &amp; Skills Library</div>
+        <div class="desc">Zentrale Wiederverwendung von Prompts und Skills</div>
+      </div>
+      <span class="pg">S. 07</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">05</span>
+      <div style="flex:1">
+        <div class="title">Für Developer <span class="pill dev">Developer</span></div>
+        <div class="desc">Claude Code, continue.dev, OpenAI-kompatible Endpunkte</div>
+      </div>
+      <span class="pg">S. 08</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">06</span>
+      <div style="flex:1">
+        <div class="title">Für Admins &amp; Team-Leads <span class="pill adm">Admin</span></div>
+        <div class="desc">Budgets, User Management, Controlling &amp; Reporting</div>
+      </div>
+      <span class="pg">S. 10</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">07</span>
+      <div style="flex:1">
+        <div class="title">Roadmap &amp; Vision</div>
+        <div class="desc">Geplante Agents und mittelfristige Stoßrichtung</div>
+      </div>
+      <span class="pg">S. 11</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">08</span>
+      <div style="flex:1">
+        <div class="title">Ansprechpartner — Wer macht was?</div>
+        <div class="desc">Kontakte für Agents, Budgets, GCP-Projekte und Controlling</div>
+      </div>
+      <span class="pg">S. 11</span>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Internal</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 3 — MODELS + ARCHITECTURE
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Modelle &amp; Architektur</span>
+  </div>
+
+  <h2><span class="sec-num">01</span>Verfügbare Modelle</h2>
+
+  <p>
+    Eine schreibgeschützte Übersicht aller verfügbaren Modelle findet sich unter
+    <a href="https://ai.open.de/models">ai.open.de/models</a>. Stand 12.06.2026:
+  </p>
+
+  <div class="models-table">
+    <table>
+      <thead>
+        <tr><th>Modell</th><th>Kontext (in / out)</th><th>Modalitäten</th><th>Kosten (in / out / 1M)</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">vertex-gemini-3.5-flash</td><td>1.0M / 66K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">audio</span><span class="modality">tools</span></td>
+          <td class="cost">$1.50 / $9.00</td><td class="active">● Active</td></tr>
+        <tr><td class="name">gemini-3.1-flash-lite</td><td>1.0M / 66K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">audio</span><span class="modality">tools</span></td>
+          <td class="cost">$0.25 / $1.50</td><td class="active">● Active</td></tr>
+        <tr><td class="name">qwen3-235b</td><td>262K / 16K</td>
+          <td><span class="modality">tools</span></td>
+          <td class="cost">$0.25 / $1.00</td><td class="active">● Active</td></tr>
+        <tr><td class="name">vertex-gemini-2.5-pro</td><td>1.0M / 66K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">audio</span><span class="modality">tools</span></td>
+          <td class="cost">$1.25 / $10.00</td><td class="active">● Active</td></tr>
+        <tr><td class="name">vertex-gemini-2.5-flash</td><td>1.0M / 66K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="cost">$0.30 / $2.50</td><td class="active">● Active</td></tr>
+        <tr><td class="name">claude-opus-4-7</td><td>1.0M / 128K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="cost">$5.00 / $25.00</td><td class="active">● Active</td></tr>
+        <tr><td class="name">claude-sonnet-4-6</td><td>1.0M / 64K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="cost">$3.00 / $15.00</td><td class="active">● Active</td></tr>
+        <tr><td class="name">claude-haiku-4-5</td><td>200K / 8K</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="cost">$1.00 / $5.00</td><td class="active">● Active</td></tr>
+        <tr class="pending"><td class="name">codestral-2</td><td class="tbd">TBD</td>
+          <td><span class="modality">tools</span></td>
+          <td class="tbd">TBD</td><td class="review">● Prüfung</td></tr>
+        <tr class="pending"><td class="name">mistral-medium-3</td><td class="tbd">TBD</td>
+          <td><span class="modality">tools</span></td>
+          <td class="tbd">TBD</td><td class="review">● Prüfung</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="font-size: 9.5pt; color: var(--muted); margin-top: -2mm;">
+    Modelle mit Status <strong style="color:#b45309">● Prüfung</strong> werden derzeit vom KI-Team evaluiert und sind noch nicht produktiv freigeschaltet.
+  </p>
+
+  <p style="font-size: 9.5pt; color: var(--muted);">
+    Die Liste wird zentral durch das KI-Team gepflegt. Neue Modelle werden nach interner
+    Evaluation freigeschaltet.
+  </p>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Internal</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 4 — ARCHITECTURE (with diagram)
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Architektur &amp; Datenschutz</span>
+  </div>
+
+  <h2><span class="sec-num">02</span>Architektur &amp; Datenschutz</h2>
+
+  <p>
+    AI.OPEN steht als <strong>zentrales Gateway</strong> zwischen den End-User-Tools
+    (Browser, IDEs, Desktop-Apps) und der eigentlichen <strong>Google Cloud Platform (GCP)</strong>,
+    auf der die Sprachmodelle laufen. Das Gateway übernimmt Authentifizierung, Routing zum
+    richtigen GCP-Projekt, Tagging für die Kostenzuordnung und die Budget-Kontrolle.
+  </p>
+
+  <figure style="margin: 4mm 0 5mm 0;">
+    <svg viewBox="0 0 820 470" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto; display:block; border:0; box-shadow:none; background:#fafafb; border-radius:2mm; padding:2mm; font-family: 'Inter', -apple-system, sans-serif;">
+      <defs>
+        <marker id="arrLime" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#15151a"/>
+        </marker>
+      </defs>
+
+      <text x="120" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">CLIENTS</text>
+      <text x="410" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">AI.OPEN GATEWAY</text>
+      <text x="700" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">GOOGLE CLOUD PLATFORM</text>
+
+      <line x1="30" y1="32" x2="210" y2="32" stroke="#e6e6ea" stroke-width="1"/>
+      <line x1="290" y1="32" x2="530" y2="32" stroke="#d4ff3a" stroke-width="2"/>
+      <line x1="610" y1="32" x2="800" y2="32" stroke="#e6e6ea" stroke-width="1"/>
+
+      <g font-size="12">
+        <rect x="30" y="55" width="180" height="55" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="78" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">AI Studio</text>
+        <text x="120" y="95" text-anchor="middle" font-size="9.5" fill="#6b6b73">Browser · ai.open.de</text>
+
+        <rect x="30" y="120" width="180" height="55" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="143" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Claude Desktop App</text>
+        <text x="120" y="160" text-anchor="middle" font-size="9.5" fill="#6b6b73">Gateway-Config</text>
+
+        <rect x="30" y="185" width="180" height="55" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="208" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Claude Code</text>
+        <text x="120" y="225" text-anchor="middle" font-size="9.5" fill="#6b6b73">CLI · IDE</text>
+
+        <rect x="30" y="250" width="180" height="55" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="273" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">continue.dev</text>
+        <text x="120" y="290" text-anchor="middle" font-size="9.5" fill="#6b6b73">VS Code · JetBrains</text>
+
+        <rect x="30" y="315" width="180" height="55" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="338" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Custom Apps</text>
+        <text x="120" y="355" text-anchor="middle" font-size="9.5" fill="#6b6b73">OpenAI-kompat. API</text>
+      </g>
+
+      <g>
+        <rect x="270" y="55" width="280" height="370" rx="10" fill="#15151a"/>
+        <rect x="270" y="55" width="6" height="370" fill="#d4ff3a"/>
+
+        <text x="410" y="92" text-anchor="middle" font-size="22" font-weight="800" fill="#ffffff">AI.OPEN</text>
+        <text x="410" y="115" text-anchor="middle" font-size="9" font-weight="700" fill="#d4ff3a" letter-spacing="2.5">GATEWAY · LiteLLM</text>
+
+        <line x1="310" y1="130" x2="510" y2="130" stroke="#2a2a32" stroke-width="1"/>
+
+        <g font-size="11">
+          <circle cx="300" cy="155" r="3" fill="#d4ff3a"/>
+          <text x="312" y="159" fill="#ffffff" font-weight="600">SSO Authentication</text>
+          <text x="520" y="159" text-anchor="end" fill="#8d8d99" font-size="8.5">Google SSO</text>
+
+          <circle cx="300" cy="195" r="3" fill="#d4ff3a"/>
+          <text x="312" y="199" fill="#ffffff" font-weight="600">Project Routing</text>
+          <text x="520" y="199" text-anchor="end" fill="#8d8d99" font-size="8.5">CX · ADX · SC · ST</text>
+
+          <circle cx="300" cy="235" r="3" fill="#d4ff3a"/>
+          <text x="312" y="239" fill="#ffffff" font-weight="600">Cost Tagging</text>
+          <text x="520" y="239" text-anchor="end" fill="#8d8d99" font-size="8.5">User · Team · Projekt</text>
+
+          <circle cx="300" cy="275" r="3" fill="#d4ff3a"/>
+          <text x="312" y="279" fill="#ffffff" font-weight="600">Budget Enforcement</text>
+          <text x="520" y="279" text-anchor="end" fill="#8d8d99" font-size="8.5">$20 / User · $3.500 max</text>
+
+          <circle cx="300" cy="315" r="3" fill="#d4ff3a"/>
+          <text x="312" y="319" fill="#ffffff" font-weight="600">GDPR / Datenschutz</text>
+          <text x="520" y="319" text-anchor="end" fill="#8d8d99" font-size="8.5">EU-Routing</text>
+
+          <circle cx="300" cy="355" r="3" fill="#d4ff3a"/>
+          <text x="312" y="359" fill="#ffffff" font-weight="600">Prompts &amp; Skills Library</text>
+          <text x="520" y="359" text-anchor="end" fill="#8d8d99" font-size="8.5">zentral verwaltet</text>
+
+          <circle cx="300" cy="395" r="3" fill="#d4ff3a"/>
+          <text x="312" y="399" fill="#ffffff" font-weight="600">Custom Agents</text>
+          <text x="520" y="399" text-anchor="end" fill="#8d8d99" font-size="8.5">eigene Use Cases</text>
+        </g>
+      </g>
+
+      <g font-size="12">
+        <rect x="610" y="55" width="190" height="115" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="705" y="80" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Vertex AI · Gemini</text>
+        <text x="705" y="96" text-anchor="middle" font-size="9" fill="#6b6b73">Google · EU-Region</text>
+        <line x1="625" y1="108" x2="785" y2="108" stroke="#e6e6ea"/>
+        <text x="705" y="125" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">gemini-3.5-flash</text>
+        <text x="705" y="142" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">gemini-2.5-pro</text>
+        <text x="705" y="159" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">gemini-2.5-flash</text>
+
+        <rect x="610" y="180" width="190" height="115" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="705" y="205" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Anthropic Claude</text>
+        <text x="705" y="221" text-anchor="middle" font-size="9" fill="#6b6b73">via Vertex · EU-Region</text>
+        <line x1="625" y1="233" x2="785" y2="233" stroke="#e6e6ea"/>
+        <text x="705" y="250" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">claude-opus-4-7</text>
+        <text x="705" y="267" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">claude-sonnet-4-6</text>
+        <text x="705" y="284" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">claude-haiku-4-5</text>
+
+        <rect x="610" y="305" width="190" height="90" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="705" y="330" text-anchor="middle" font-weight="700" fill="#0e0e10" font-size="12">Weitere Provider</text>
+        <text x="705" y="346" text-anchor="middle" font-size="9" fill="#6b6b73">über GCP</text>
+        <line x1="625" y1="358" x2="785" y2="358" stroke="#e6e6ea"/>
+        <text x="705" y="375" text-anchor="middle" font-size="10" fill="#0e0e10" font-family="'JetBrains Mono', monospace">qwen3-235b</text>
+        <text x="705" y="390" text-anchor="middle" font-size="9" fill="#b45309" font-style="italic">mistral · in Prüfung</text>
+      </g>
+
+      <g stroke="#15151a" stroke-width="1.8" fill="none">
+        <line x1="212" y1="82" x2="266" y2="82" marker-end="url(#arrLime)"/>
+        <line x1="212" y1="147" x2="266" y2="147" marker-end="url(#arrLime)"/>
+        <line x1="212" y1="212" x2="266" y2="212" marker-end="url(#arrLime)"/>
+        <line x1="212" y1="277" x2="266" y2="277" marker-end="url(#arrLime)"/>
+        <line x1="212" y1="342" x2="266" y2="342" marker-end="url(#arrLime)"/>
+      </g>
+
+      <g stroke="#15151a" stroke-width="1.8" fill="none">
+        <line x1="554" y1="112" x2="606" y2="112" marker-end="url(#arrLime)"/>
+        <line x1="554" y1="237" x2="606" y2="237" marker-end="url(#arrLime)"/>
+        <line x1="554" y1="350" x2="606" y2="350" marker-end="url(#arrLime)"/>
+      </g>
+
+      <g font-size="9" fill="#6b6b73" letter-spacing="1.5">
+        <text x="120" y="445" text-anchor="middle" font-weight="600">END USER DEVICES</text>
+        <text x="120" y="458" text-anchor="middle" font-size="8" fill="#8d8d99">Browser · IDEs · Desktop</text>
+
+        <text x="410" y="445" text-anchor="middle" font-weight="600">CENTRAL MIDDLEWARE</text>
+        <text x="410" y="458" text-anchor="middle" font-size="8" fill="#8d8d99">backend.ai.open.de</text>
+
+        <text x="700" y="445" text-anchor="middle" font-weight="600">MODEL PROVIDERS</text>
+        <text x="700" y="458" text-anchor="middle" font-size="8" fill="#8d8d99">GCP · Vertex AI</text>
+      </g>
+    </svg>
+    <figcaption>Architektur-Übersicht — AI.OPEN als zentrales Gateway zwischen End-User-Clients und Google Cloud (Vertex AI).</figcaption>
+  </figure>
+
+  <h4 style="margin-top:6mm">GCP-Projekt-Ownership pro Unit</h4>
+  <p style="font-size: 9.5pt; color: var(--muted); margin-bottom: 2mm;">
+    Jede Unit hat ihr eigenes GCP-Projekt. Anfragen werden im Gateway dem Projekt der Unit zugeordnet, in der der Benutzer arbeitet — Authentifizierung durchgängig über Google SSO.
+  </p>
+  <table>
+    <thead><tr><th>Unit</th><th>GCP-Projekt-Owner</th></tr></thead>
+    <tbody>
+      <tr><td><strong>CX</strong></td><td>Elias Dreisbach</td></tr>
+      <tr><td><strong>ADX</strong></td><td>Jens Parree</td></tr>
+      <tr><td><strong>SC</strong></td><td>Andreas Hucks</td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Architektur</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 5 — END USERS
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Für End User</span>
+  </div>
+
+  <div class="audience-banner">
+    <span class="kicker">Sektion 03 · End User</span>
+    <h2>AI Studio im Browser oder Claude Desktop App</h2>
+    <p class="lead">
+      Für alle, die Sprachmodelle <strong style="color:#fff">interaktiv</strong> nutzen
+      wollen — entweder im <strong style="color:#fff">AI Studio</strong> auf ai.open.de
+      (eigene OPEN-Oberfläche mit Chat &amp; Agents) oder über die
+      <strong style="color:#fff">Claude Desktop App</strong>, die ihre Anfragen über das
+      AI.OPEN Gateway routet.
+    </p>
+  </div>
+
+  <h3>Variante A · AI Studio im Browser auf ai.open.de</h3>
+  <ol class="steps">
+    <li>Öffne <a href="https://ai.open.de">ai.open.de</a> und logge dich via <strong>Google SSO</strong> ein.</li>
+    <li>Wähle im Chat den gewünschten Agent oder das Modell.</li>
+    <li>Dein aktueller Token-Verbrauch wird dir jederzeit in der Menüleiste angezeigt.</li>
+  </ol>
+
+  <h4>Custom Agents nutzen</h4>
+  <p>
+    Unter <a href="https://ai.open.de/agents">ai.open.de/agents</a> findest du vom KI-Team
+    bereitgestellte Custom Agents. Diese kombinieren Sprachmodelle mit hinterlegten
+    <strong>Wissensquellen</strong> und <strong>Integrationen</strong> zu anderen Systemen,
+    um konkrete Use Cases abzubilden — z.B. Angebotsgenerierung, Kundenanalyse oder
+    Call-Transkripte.
+  </p>
+
+  <div class="callout warn">
+    <span class="title">Custom Agents sind kein ChatGPT-Ersatz</span>
+    Die Custom Agents auf ai.open sind für <strong>klar abgegrenzte Use Cases</strong> gebaut
+    (z.B. OPEN PULSE für Kundenanalyse). Sie ersetzen <strong>nicht</strong> generelle
+    KI-Assistenten wie ChatGPT oder Claude für den Alltag.
+    Für allgemeine KI-Nutzung (Recherche, Texten, Brainstorming) verwende stattdessen den
+    <strong>Claude Desktop Client mit AI.OPEN</strong> (siehe Variante B) — dort hast du
+    Zugriff auf alle Sprachmodelle als vollwertiger Chat-Assistent, datenschutzkonform und
+    mit Budget-Zuordnung.
+  </div>
+
+  <figure class="dark">
+    <img src="ai-open-guide-assets/agents-overview.png" alt="Übersicht aller Custom Agents im AI Studio">
+    <figcaption>Custom Agents im AI Studio · ai.open.de/agents</figcaption>
+  </figure>
+
+  <table>
+    <thead><tr><th>Agent</th><th>Use Case</th><th>Hauptansprechpartner</th></tr></thead>
+    <tbody>
+      <tr><td><strong>OPEN PULSE</strong></td><td>Kundenanalyse</td><td>Robert Schaperjahn</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <span class="title">Neue Agent-Ideen?</span>
+    Wenn du Ideen für weitere Agents hast oder mitentwickeln willst, melde dich bei
+    <strong>Daniel Claessen</strong> oder <strong>Michael Möckel</strong>.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · End User</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 5 — END USERS continued (Claude Desktop)
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Für End User · Claude Desktop</span>
+  </div>
+
+  <h3>Variante B · Claude Desktop App mit AI.OPEN</h3>
+
+  <div class="callout warn">
+    <span class="title">Claude im Browser geht nicht über AI.OPEN</span>
+    Die offizielle Claude-Weboberfläche auf <strong>claude.ai</strong> unterstützt
+    <strong>kein</strong> Custom Gateway. Wer Claude direkt nutzen will, muss zwingend
+    die <strong>Claude Desktop App</strong> installieren — nur dort lässt sich das
+    AI.OPEN Gateway konfigurieren.
+  </div>
+
+  <p>
+    Um den <a href="https://claude.com/download">Claude Desktop Client</a> datenschutzkonform
+    und mit Budget-Zuordnung über AI.OPEN zu betreiben, folgende Schritte:
+  </p>
+
+  <ol class="steps">
+    <li><strong>Claude Desktop App</strong> öffnen.</li>
+    <li>In der Menüleiste: <strong>Help → Troubleshooting → Enable Developer Mode</strong>.</li>
+    <li>Die App führt einen Restart durch.</li>
+    <li>Im neuen Menüpunkt <strong>Developer → Configure Third Party Inference</strong> auswählen.</li>
+    <li>Bei <strong>Connection</strong>: <code>Gateway</code> wählen.</li>
+    <li>Bei <strong>Credential Kind</strong>: <code>Static API Key</code>.</li>
+    <li>
+      <strong>Gateway Base URL</strong>:
+      <pre><span class="s">https://backend.ai.open.de/litellm/&lt;PROJECT_ID&gt;</span></pre>
+      <code>&lt;PROJECT_ID&gt;</code> ersetzen mit entweder <code>DEFAULT</code> oder einer
+      Projekt-ID aus <a href="https://ai.open.de/projects">ai.open.de/projects</a>.
+    </li>
+    <li>
+      <strong>Gateway API Key</strong>: dein persönliches Token von
+      <a href="https://ai.open.de/token">ai.open.de/token</a>.
+    </li>
+    <li>Auf <strong>Test model discovery</strong> klicken — Ergebnis sollte so aussehen:</li>
+  </ol>
+
+  <div class="grid-2">
+    <figure class="dark">
+      <img src="ai-open-guide-assets/claude-desktop-gateway.png" alt="Configure third-party inference">
+      <figcaption>Configure third-party inference</figcaption>
+    </figure>
+    <figure class="dark">
+      <img src="ai-open-guide-assets/claude-desktop-discovery.png" alt="Model discovery result">
+      <figcaption>Model discovery — found 3 models</figcaption>
+    </figure>
+  </div>
+
+  <p style="margin-top: 4mm;">Mit <strong>Apply Changes</strong> bestätigen. Fertig.</p>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · End User</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 6 — PROMPTS & SKILLS LIBRARY
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Prompts &amp; Skills Library</span>
+  </div>
+
+  <h2><span class="sec-num">04</span>Prompts &amp; Skills Library</h2>
+
+  <p class="lead">
+    AI.OPEN bietet zwei zentrale Bibliotheken, mit denen Prompts und Skills
+    <strong>team-übergreifend</strong> verwaltet, versioniert und geteilt werden — statt
+    sie in lokalen Notizen oder Chat-Verläufen zu verstecken.
+  </p>
+
+  <h3>Prompts Library · <a href="https://ai.open.de/prompts" style="font-weight:normal; font-size:11pt">ai.open.de/prompts</a></h3>
+
+  <p>
+    Die Prompt Library erlaubt das <strong>Erstellen, Organisieren und Deployen von Prompts</strong>
+    über die gesamte KI-Infrastruktur hinweg.
+  </p>
+
+  <figure class="dark">
+    <img src="ai-open-guide-assets/prompts-library.png" alt="Prompt Library im AI Studio">
+    <figcaption>Prompt Library mit Folders (Coding, Sales), Versionierung und Variablen</figcaption>
+  </figure>
+
+  <div class="grid-2" style="margin-top:3mm;">
+    <div>
+      <h4 style="margin-top:0">Features</h4>
+      <ul style="font-size:9.5pt">
+        <li><strong>Folders</strong> für thematische Gruppierung</li>
+        <li><strong>Public / Private</strong> Sichtbarkeit</li>
+        <li><strong>Versionierung</strong> — frühere Stände bleiben erhalten</li>
+        <li><strong>Variablen</strong> — Prompts als Templates</li>
+        <li><strong>Agent-Zuweisung</strong> direkt aus dem Prompt</li>
+        <li><strong>Likes &amp; Feedback</strong> — gute Prompts werden im Team sichtbar</li>
+      </ul>
+    </div>
+    <div>
+      <h4 style="margin-top:0">Typische Use Cases</h4>
+      <ul style="font-size:9.5pt">
+        <li>Master-Prompts für Standard-Reports (z.B. <em>OPEN Pulse Report</em>)</li>
+        <li>Commit-Message-Generierung für Coding-Workflows</li>
+        <li>Wiederverwendbare Sales-Prompts (Angebote, Kunden-Reverse-Engineering)</li>
+        <li>Dokumentations-Generatoren</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Plattform</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 7 — SKILLS LIBRARY (cont.) + DEVELOPERS intro
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Skills Library</span>
+  </div>
+
+  <h3>Skills Library · <a href="https://ai.open.de/skills" style="font-weight:normal; font-size:11pt">ai.open.de/skills</a></h3>
+
+  <p>
+    Die Skills Library erlaubt das <strong>Bauen, Versionieren und Verwalten von
+    wiederverwendbaren Skill-Paketen</strong> für AI Agents.
+  </p>
+
+  <figure class="dark">
+    <img src="ai-open-guide-assets/skills-library.png" alt="Skills Library im AI Studio">
+    <figcaption>Skills Library mit versionierten, wiederverwendbaren Skill-Paketen</figcaption>
+  </figure>
+
+  <div class="grid-2" style="margin-top:3mm;">
+    <div>
+      <h4 style="margin-top:0">Features</h4>
+      <ul style="font-size:9.5pt">
+        <li><strong>Versionierung</strong> (v1, v2 …) — kontrollierte Weiterentwicklung</li>
+        <li><strong>Public / Private</strong> Sichtbarkeit</li>
+        <li><strong>SKILL.md Format</strong> — Skills als Markdown-Pakete (was, wann, wie)</li>
+        <li><strong>Direkt nutzbar</strong> in Custom Agents</li>
+      </ul>
+    </div>
+    <div>
+      <h4 style="margin-top:0">Vorteil</h4>
+      <p style="font-size:9.5pt; margin:0;">
+        Skills einmal bauen, in mehreren Agents nutzen — ohne Copy-Paste oder Drift
+        zwischen Implementierungen. Updates eines Skills landen automatisch bei allen
+        Konsumenten in der nächsten Version.
+      </p>
+    </div>
+  </div>
+
+  <h4 style="margin-top:6mm;">Wann nutze ich was?</h4>
+  <table>
+    <thead><tr><th>Du willst…</th><th>… nutze</th></tr></thead>
+    <tbody>
+      <tr><td>Einen häufig wiederkehrenden Text-Baustein zentral pflegen</td><td><strong>Prompts Library</strong></td></tr>
+      <tr><td>Eine fachliche Vorlage für mehrere Kollegen teilen</td><td><strong>Prompts Library</strong></td></tr>
+      <tr><td>Einen wiederverwendbaren Skill für mehrere Agents zur Verfügung stellen</td><td><strong>Skills Library</strong></td></tr>
+      <tr><td>Einen kompletten Use Case (Modell + Wissen + Skills) als Anwendung bauen</td><td><strong>Custom Agents</strong></td></tr>
+    </tbody>
+  </table>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Plattform</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 8 — DEVELOPERS (intro + Claude Code)
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Für Developer</span>
+  </div>
+
+  <div class="audience-banner">
+    <span class="kicker">Sektion 05 · Developer</span>
+    <h2>Sprachmodelle in IDEs &amp; Agentic-Coding-Tools</h2>
+    <p class="lead">
+      Für Developer, die Sprachmodelle in IDEs und Agentic-Coding-Tools wie
+      <strong style="color:#fff">Claude Code</strong> oder <strong style="color:#fff">continue.dev</strong>
+      einsetzen wollen.
+    </p>
+  </div>
+
+  <h3>Grundlagen · OpenAI-kompatible Endpunkte</h3>
+  <p>
+    Die meisten Coding-Tools sprechen die OpenAI-API. AI.OPEN stellt dafür einen
+    kompatiblen Endpunkt bereit:
+  </p>
+
+  <pre><span class="s">https://backend.ai.open.de/litellm/&lt;PROJECT_ID&gt;/v1/</span></pre>
+
+  <p>
+    <code>&lt;PROJECT_ID&gt;</code> ersetzen mit <code>DEFAULT</code> oder einer
+    Projekt-ID aus <a href="https://ai.open.de/projects">ai.open.de/projects</a>.
+  </p>
+
+  <div class="callout warn">
+    <span class="title">Projekt-Zuordnung ist entscheidend</span>
+    Die korrekte Projekt-ID ist <strong>essenziell für das Kosten-Controlling</strong> —
+    bitte immer das richtige Projekt setzen, sobald für einen konkreten Kunden gearbeitet wird.
+  </div>
+
+  <h4>Authentifizierung</h4>
+  <table class="auth">
+    <thead><tr><th>Methode</th><th>Erstellen</th><th>Header</th><th>Einsatz</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Persönliches Token</strong><br><span style="color:var(--muted);font-size:9pt">user-bezogen</span></td>
+        <td><a href="https://ai.open.de/token">ai.open.de/token</a></td>
+        <td><code>Authorization: Bearer &lt;token&gt;</code></td>
+        <td>Default für IDE-Integrationen</td>
+      </tr>
+      <tr>
+        <td><strong>API Key</strong><br><span style="color:var(--muted);font-size:9pt">anwendungsbezogen</span></td>
+        <td><a href="https://ai.open.de/keys">ai.open.de/keys</a></td>
+        <td><code>exulu-api-key: &lt;key&gt;</code></td>
+        <td>Für Services / Anwendungen</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 style="margin-top: 8mm;">Setup · Claude Code</h3>
+  <p>
+    Lege folgende <code>settings.json</code> im <code>.claude</code> Ordner an
+    (typischerweise im Repository-Root):
+  </p>
+
+<pre><span class="p">{</span>
+  <span class="k">"model"</span>: <span class="s">"claude-opus-4-7"</span>,
+  <span class="k">"availableModels"</span>: <span class="p">[</span>
+    <span class="s">"claude-sonnet-4-6"</span>,
+    <span class="s">"claude-haiku-4-5"</span>,
+    <span class="s">"claude-opus-4-7"</span>
+  <span class="p">]</span>,
+  <span class="k">"env"</span>: <span class="p">{</span>
+    <span class="k">"ANTHROPIC_BASE_URL"</span>: <span class="s">"https://backend.ai.open.de/litellm/&lt;PROJECT_ID&gt;"</span>,
+    <span class="k">"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"</span>: <span class="s">1</span>,
+    <span class="k">"DISABLE_AUTOUPDATER"</span>: <span class="s">0</span>
+  <span class="p">}</span>,
+  <span class="k">"apiKeyHelper"</span>: <span class="s">"echo &lt;MY_TOKEN&gt;"</span>
+<span class="p">}</span></pre>
+
+  <p>
+    <code>&lt;PROJECT_ID&gt;</code> und <code>&lt;MY_TOKEN&gt;</code> entsprechend ersetzen.
+    Bei <code>availableModels</code> können prinzipiell alle Modelle aus AI.OPEN gelistet werden.
+  </p>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Developer</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 7 — continue.dev
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Für Developer · continue.dev</span>
+  </div>
+
+  <h3>Setup · continue.dev</h3>
+
+  <figure class="logo">
+    <img src="ai-open-guide-assets/continue-logo.png" alt="Continue">
+  </figure>
+
+  <h4>Plugin installieren</h4>
+
+  <div class="grid-2">
+    <div>
+      <strong>JetBrains</strong> (PhpStorm, IntelliJ etc.)
+      <ol class="steps" style="font-size:9.5pt">
+        <li>Settings öffnen (<code>Cmd+,</code> / <code>Ctrl+Alt+S</code>)</li>
+        <li>Im linken Menü zu <strong>Plugins</strong> navigieren</li>
+        <li>Im Marketplace nach <strong>Continue</strong> suchen</li>
+        <li><strong>Install</strong> klicken</li>
+        <li>IDE ggf. neu starten</li>
+      </ol>
+    </div>
+    <div>
+      <strong>Visual Studio Code</strong>
+      <ol class="steps" style="font-size:9.5pt">
+        <li>Extensions-Ansicht öffnen (<code>Cmd+Shift+X</code>)</li>
+        <li>Nach <strong>Continue</strong> im Marketplace suchen</li>
+        <li><strong>Install</strong> klicken</li>
+        <li>Continue-Icon erscheint in der linken Aktivitätsleiste</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <figure class="dark">
+      <img src="ai-open-guide-assets/continue-jetbrains.png" alt="Continue in JetBrains">
+      <figcaption>Continue Plugin in JetBrains-IDEs</figcaption>
+    </figure>
+    <figure class="dark">
+      <img src="ai-open-guide-assets/continue-vscode.png" alt="Continue in VS Code">
+      <figcaption>Continue Extension in VS Code</figcaption>
+    </figure>
+  </div>
+
+  <h4 style="margin-top:5mm">config.yaml konfigurieren</h4>
+  <p style="margin-bottom:2mm">
+    Continue-Icon → Zahnrad-Icon (Settings) → <strong>Configs</strong> →
+    hinter <strong>Local Config</strong> auf das Zahnrad-Icon. Dann folgenden Eintrag in
+    <code>config.yaml</code> einfügen:
+  </p>
+
+<pre><span class="k">name</span>: <span class="s">Local Config</span>
+<span class="k">version</span>: <span class="s">1.0.0</span>
+<span class="k">schema</span>: <span class="s">v1</span>
+<span class="k">models</span>:
+  - <span class="k">name</span>: <span class="s">AI.OPEN</span>
+    <span class="k">provider</span>: <span class="s">openai</span>
+    <span class="k">apiBase</span>: <span class="s">https://backend.ai.open.de/litellm/&lt;PROJECT_ID&gt;/v1</span>
+    <span class="k">apiKey</span>: <span class="s">&lt;TOKEN&gt;</span>
+    <span class="k">model</span>: <span class="s">AUTODETECT</span>
+    <span class="k">roles</span>:
+      - <span class="s">chat</span>
+      - <span class="s">edit</span>
+      - <span class="s">apply</span>
+    <span class="k">capabilities</span>:
+      - <span class="s">tool_use</span>
+      - <span class="s">image_input</span></pre>
+
+  <div class="callout">
+    <span class="title">Auto-Discovery</span>
+    Nach dem Speichern erkennt die IDE den neuen Provider automatisch. Alle Projekte
+    erscheinen als Modelle nach Schema <code>Projekt/Agent</code>, dadurch wird der
+    Token-Verbrauch sauber auf die jeweiligen Projekte gebucht.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Developer</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 8 — ADMINS
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Für Admins</span>
+  </div>
+
+  <div class="audience-banner">
+    <span class="kicker">Sektion 06 · Admin</span>
+    <h2>Budgets, User-Management &amp; Controlling</h2>
+    <p class="lead">
+      Für <strong style="color:#fff">KI-Leads</strong> der Units und
+      <strong style="color:#fff">Super-Admins</strong> des KI-Teams.
+    </p>
+  </div>
+
+  <h3>Token-Budgets</h3>
+
+  <div class="stats">
+    <div class="stat"><div class="num">$20</div><div class="label">Default / User / Monat</div></div>
+    <div class="stat"><div class="num">$3.500</div><div class="label">Hard-Cap / User / Monat</div></div>
+    <div class="stat"><div class="num">Live</div><div class="label">Verbrauch in Menüleiste</div></div>
+  </div>
+
+  <h4>Budget-Verwaltung</h4>
+  <p>
+    Admins und Team-Leads können unter <a href="https://ai.open.de/budgets">ai.open.de/budgets</a>
+    individuell pro Benutzer die Budgets erhöhen. Budgets sind setzbar pro
+    <strong>User, Role, Team, Project oder Agent</strong> — durchgesetzt werden sie durch
+    LiteLLM auf Basis der jeweiligen Entity-Nutzung.
+  </p>
+
+  <table>
+    <thead><tr><th>Aktion</th><th>Zuständig</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Budget-Anpassung <strong>innerhalb</strong> des Teams (bis $3.500/Monat)</td>
+        <td>KI-Lead der Unit</td>
+      </tr>
+      <tr>
+        <td>Budget-Erhöhung <strong>über</strong> das OPEN-weite Maximum ($3.500/Monat)</td>
+        <td>KI-Team</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <figure class="dark">
+    <img src="ai-open-guide-assets/budgets-ui.png" alt="Budgets UI auf ai.open.de/budgets">
+    <figcaption>Budgets-UI · ai.open.de/budgets</figcaption>
+  </figure>
+
+  <h3 style="margin-top: 6mm;">Controlling &amp; Reporting</h3>
+  <p>
+    Super-Admins haben Zugriff auf das Controlling-Backend unter
+    <a href="https://backend.ai.open.de/litellm-admin/ui/">backend.ai.open.de/litellm-admin/ui/</a>.
+    Pro <strong>Projekt, Benutzer, Rolle und Team</strong> können Daten für die
+    Kostenzuordnung exportiert werden.
+  </p>
+
+  <div class="callout warn">
+    <span class="title">LiteLLM Tag-Ansicht · Doppelzählung</span>
+    Durch einen Bug im LiteLLM-Proxy werden in der Tag-Ansicht Kosten <strong>doppelt
+    gezählt</strong>, weil dieselben Kosten mit mehreren Tags (z.B. Projekt + User)
+    gerechnet werden. <strong>Beim CSV-Export entsprechend berücksichtigen.</strong>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Admin</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 9 — ROADMAP + CONTACTS
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN Guide</span>
+    <span class="right">Roadmap &amp; Ansprechpartner</span>
+  </div>
+
+  <h2><span class="sec-num">07</span>Roadmap &amp; Vision</h2>
+
+  <p class="lead">
+    AI.OPEN ist die strategische Plattform für sämtliche KI-Nutzung bei OPEN. Das KI-Team
+    pflegt eine Roadmap an Custom Agents, die schrittweise verfügbar gemacht werden.
+  </p>
+
+  <h4>In der nahen Zukunft geplant</h4>
+  <div class="roadmap-item">
+    <span class="num">01</span>
+    <span class="name">Ausschreibungs-Agent</span>
+    <span class="desc">Unterstützung im Ausschreibungsprozess</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">02</span>
+    <span class="name">Projekt-Management-Agent</span>
+    <span class="desc">Begleitung im Projektalltag</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">03</span>
+    <span class="name">Marketing-Support-Agent</span>
+    <span class="desc">Unterstützung für das Marketing-Team</span>
+  </div>
+
+  <h4 style="margin-top: 6mm;">Mittelfristige Vision</h4>
+  <ul>
+    <li>Konsolidierung <strong>aller</strong> KI-Use-Cases bei OPEN unter einer einheitlichen, datenschutzkonformen Plattform.</li>
+    <li>Saubere Kostenzuordnung pro Kunde, Projekt und Unit.</li>
+    <li>Self-Service für Teams beim Anlegen eigener Agents und Wissensquellen.</li>
+  </ul>
+
+  <h2 style="margin-top: 10mm;"><span class="sec-num">08</span>Ansprechpartner</h2>
+
+  <div style="margin: 4mm 0 6mm 0; padding: 5mm 6mm; background: var(--dark); color: #fff; border-radius: 2mm; border-left: 4mm solid var(--accent);">
+    <div style="color: var(--accent); font-size: 8pt; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; margin-bottom: 2mm;">
+      💬 Zentraler Austausch · Google Chat
+    </div>
+    <div style="font-size: 11pt; margin-bottom: 2mm;">
+      Alle wichtigen Diskussionen, Updates und Fragen rund um AI.OPEN laufen über den
+      <strong style="color: #fff">Google Chat Kanal</strong>:
+    </div>
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 10pt; word-break: break-all;">
+      <a href="https://chat.google.com/u/0/app/chat/AAAAKWkq6-k" style="color: var(--accent); border-bottom-color: var(--accent);">
+        chat.google.com/u/0/app/chat/AAAAKWkq6-k
+      </a>
+    </div>
+    <div style="font-size: 9pt; color: #b8b8c0; margin-top: 2mm;">
+      Tritt dem Kanal bei — dort werden neue Modelle, neue Agents, Roadmap-Updates und Best Practices geteilt.
+    </div>
+  </div>
+
+  <h4>KI-Leads pro Unit</h4>
+  <p style="font-size:10pt; color:var(--ink-soft); margin-bottom:3mm;">
+    Erste Anlaufstelle innerhalb deiner Unit für alles rund um AI.OPEN — insbesondere für
+    <strong>Budget-Anpassungen</strong> innerhalb des Teams.
+  </p>
+
+  <table class="contacts">
+    <thead><tr><th>Unit</th><th>KI-Lead</th></tr></thead>
+    <tbody>
+      <tr><td><strong>ADX</strong></td><td>patrick.dyckerhoff@open.de</td></tr>
+      <tr><td><strong>CX</strong></td><td>sergej.keterling@open.de</td></tr>
+      <tr><td><strong>SC</strong></td><td>andreas.hucks@open.de</td></tr>
+      <tr><td><strong>ST</strong></td><td>alexander.stevenson@open.de &amp; nils.heine@open.de</td></tr>
+    </tbody>
+  </table>
+
+  <h4 style="margin-top:5mm;">Weitere Ansprechpartner</h4>
+  <table class="contacts">
+    <thead><tr><th>Anliegen</th><th>Ansprechpartner</th></tr></thead>
+    <tbody>
+      <tr><td>Allgemeine AI.OPEN Fragen, neue Agent-Ideen, Mitentwicklung</td><td>Daniel Claessen, Michael Möckel</td></tr>
+      <tr><td>OPEN PULSE (Kundenanalyse-Agent)</td><td>Robert Schaperjahn</td></tr>
+      <tr><td>Budget-Erhöhung innerhalb eines Teams</td><td>KI-Lead der jeweiligen Unit (siehe oben)</td></tr>
+      <tr><td>Budget-Erhöhung über OPEN-weites Maximum ($3.500)</td><td>KI-Team</td></tr>
+      <tr><td>GCP-Projekt <strong>CX</strong></td><td>Elias Dreisbach</td></tr>
+      <tr><td>GCP-Projekt <strong>ADX</strong></td><td>Jens Parree</td></tr>
+      <tr><td>GCP-Projekt <strong>SC</strong></td><td>Andreas Hucks</td></tr>
+      <tr><td>Controlling-Exports &amp; Reporting</td><td>Super-Admins / KI-Team</td></tr>
+    </tbody>
+  </table>
+
+  <div style="margin-top: 14mm; padding: 6mm; background: var(--dark); color: #fff; border-radius: 2mm; text-align: center;">
+    <div style="color: var(--accent); font-size: 8pt; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-bottom: 2mm;">
+      AI.OPEN
+    </div>
+    <div style="font-size: 13pt; font-weight: 700;">Datenschutzkonforme KI bei OPEN.</div>
+    <div style="font-size: 9pt; color: #8d8d99; margin-top: 1mm;">
+      Letzte Aktualisierung · 12.06.2026 · KI-Team @ OPEN
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN Guide · Internal</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+</body>
+</html>

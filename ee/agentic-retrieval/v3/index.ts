@@ -2,7 +2,8 @@ import { z } from "zod";
 import { createBashTool } from "bash-tool";
 import type { LanguageModel, Tool } from "ai";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
+import { resolveReranker } from "@SRC/exulu/resolve-reranker";
+import type { ResolvedReranker } from "@SRC/exulu/resolve-reranker";
 import { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
 import { checkLicense } from "@EE/entitlements";
@@ -34,7 +35,7 @@ async function* executeV3({
 }: {
   query: string;
   contexts: ExuluContext[];
-  reranker?: ExuluReranker;
+  reranker?: ResolvedReranker;
   toolVariablesConfig?: Record<string, any>;
   model: LanguageModel;
   user?: User;
@@ -189,7 +190,6 @@ async function* executeV3({
 export function createAgenticRetrievalToolV3({
   contexts,
   instructions: adminInstructions,
-  rerankers,
   user,
   role,
   model,
@@ -197,7 +197,6 @@ export function createAgenticRetrievalToolV3({
   memoryItems
 }: {
   contexts: ExuluContext[];
-  rerankers: ExuluReranker[];
   user?: User;
   role?: string;
   model?: LanguageModel;
@@ -355,7 +354,7 @@ export function createAgenticRetrievalToolV3({
       }
 
       let activeContexts = contexts;
-      let configuredReranker: ExuluReranker | undefined;
+      let configuredReranker: ResolvedReranker | undefined;
       let configInstructions = "";
       let logTrajectory = false;
       let requiresPreselectedContexts = false;
@@ -382,7 +381,22 @@ export function createAgenticRetrievalToolV3({
         const rerankerId = toolVariablesConfig["reranker"];
 
         if (rerankerId && rerankerId !== "none") {
-          configuredReranker = rerankers.find((r) => r.id === rerankerId);
+          // rerankerId is a LiteLLM model_name from config.litellm.yaml
+          // (model_info.type: reranker). Resolution is best-effort: a
+          // misconfigured model or an unready proxy must not break retrieval —
+          // it just runs unreranked, matching the old find()→undefined path.
+          try {
+            configuredReranker = await resolveReranker({
+              model: rerankerId,
+              user,
+              roleId: role,
+            });
+          } catch (err) {
+            console.warn(
+              `[EXULU] v3 — could not resolve reranker "${rerankerId}", continuing without reranking:`,
+              err,
+            );
+          }
         }
       }
 

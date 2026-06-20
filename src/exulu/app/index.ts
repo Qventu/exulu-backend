@@ -45,7 +45,6 @@ import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
 import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
-import type { ExuluReranker } from "../reranker";
 import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
 import type { ExuluTool } from "../tool";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
@@ -58,11 +57,13 @@ import {
   isLiteLLMEnabled,
   setLiteLLMPackageRoot,
   startLiteLLMSupervisor,
+  enableLiteLLMClientMode,
 } from "@SRC/exulu/litellm/supervisor.ts";
 import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { builtInContexts } from "@SRC/templates/contexts";
 import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
+import { logRecallStartup } from "@SRC/exulu/recall/env.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -166,7 +167,6 @@ export class ExuluApp {
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
   private _queues: ExuluQueueConfig[] = [];
-  private _rerankers: ExuluReranker[] = [];
   private _contexts?: Record<string, ExuluContext> = {};
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
@@ -182,14 +182,12 @@ export class ExuluApp {
     agents,
     tools,
     evals,
-    rerankers,
   }: {
     // mcps
     contexts?: Record<string, ExuluContext>;
     config: ExuluConfig;
     agents?: ExuluAgent[];
     providers?: ExuluProvider[];
-    rerankers?: ExuluReranker[];
     evals?: ExuluEval[];
     tools?: ExuluTool[];
     // mcps?: ExuluMcpToolsClient[]
@@ -213,8 +211,6 @@ export class ExuluApp {
       ...contexts,
       ...builtInContexts,
     };
-
-    this._rerankers = [...(rerankers ?? [])];
 
     this._agents = [...(agents ?? [])];
 
@@ -316,7 +312,7 @@ export class ExuluApp {
     const checks: {
       name: string;
       id: string;
-      type: "context" | "agent" | "tool" | "reranker";
+      type: "context" | "agent" | "tool";
     }[] = [
         ...Object.keys(this._contexts || {}).map((x) => ({
           name: this._contexts?.[x]?.name ?? "",
@@ -332,11 +328,6 @@ export class ExuluApp {
           name: tool.name ?? "",
           id: tool.id ?? "",
           type: "tool" as const,
-        })),
-        ...this._rerankers.map((reranker) => ({
-          name: reranker.name ?? "",
-          id: reranker.id ?? "",
-          type: "reranker" as const,
         })),
       ];
 
@@ -480,6 +471,10 @@ export class ExuluApp {
             "Start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
         );
       }
+
+      // Recall.ai meeting bots: always print the region + enabled/disabled
+      // summary on startup (RECALL-AI.AGENT.md §"Human-required setup").
+      logRecallStartup();
 
       return this._expressApp;
     },
@@ -693,6 +688,18 @@ export class ExuluApp {
           );
         }
 
+        // Worker processes run separately from the HTTP server and never go
+        // through express.init() (where the LiteLLM supervisor is started), but
+        // they still resolve models/OCR/embeddings through the proxy. Flip this
+        // process into client mode so waitForLiteLLMReady() health-probes the
+        // server-managed proxy instead of trying to spawn its own (which would
+        // collide on LITELLM_PORT, and fails with "package root not set"
+        // because the worker boot path never sets one). No-op when LiteLLM is
+        // disabled or this process already supervises its own proxy.
+        if (isLiteLLMEnabled()) {
+          enableLiteLLMClientMode();
+        }
+
         let tracer: Tracer | undefined;
 
         if (this._config?.telemetry?.enabled) {
@@ -783,7 +790,6 @@ export class ExuluApp {
           filteredQueues,
           this._config,
           Object.values(this._contexts ?? {}),
-          this._rerankers,
           this._evals,
           this._tools,
           tracer,
@@ -833,7 +839,6 @@ export class ExuluApp {
           this._config,
           this._evals,
           tracer,
-          this._rerankers,
         );
 
         if (this._config?.MCP.enabled) {
@@ -843,7 +848,6 @@ export class ExuluApp {
             allTools: this._tools,
             allProviders: this._providers,
             allContexts: Object.values(this._contexts ?? {}),
-            allRerankers: this._rerankers,
             config: this._config,
           });
         }

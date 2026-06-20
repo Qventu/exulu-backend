@@ -5,7 +5,6 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import { type Express, type Request, type Response } from "express";
 import { type Tracer } from "@opentelemetry/api";
@@ -42,7 +41,6 @@ export class ExuluMCP {
     allTools,
     allProviders,
     allContexts,
-    allRerankers,
     config,
   }: {
     agent: ExuluAgent;
@@ -51,7 +49,6 @@ export class ExuluMCP {
     allTools: ExuluTool[];
     allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
-    allRerankers: ExuluReranker[];
     config: ExuluConfig;
   }): Promise<McpServer> => {
     let server = this.server[agent.id];
@@ -73,7 +70,6 @@ export class ExuluMCP {
       agent,
       allTools,
       allContexts,
-      allRerankers,
       disabledTools,
       allProviders,
       user,
@@ -102,7 +98,6 @@ export class ExuluMCP {
         agent.id,
         allProviders,
         allContexts,
-        allRerankers,
       );
       if (agentTool) {
         enabledTools = [...enabledTools, agentTool];
@@ -143,7 +138,6 @@ export class ExuluMCP {
             configValues,
             providerapikey,
             allContexts,
-            allRerankers,
             user,
             config,
             undefined,
@@ -335,14 +329,12 @@ export class ExuluMCP {
     allTools,
     allProviders,
     allContexts,
-    allRerankers,
     config,
   }: {
     express: Express;
     allTools: ExuluTool[];
     allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
-    allRerankers: ExuluReranker[];
     config: ExuluConfig;
   }): Promise<Express> => {
     if (!express) {
@@ -399,7 +391,6 @@ export class ExuluMCP {
         allTools,
         allProviders,
         allContexts,
-        allRerankers,
         config,
       });
 

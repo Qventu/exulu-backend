@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>AI.OPEN — Künstliche Intelligenz bei OPEN für unsere Kunden</title>
+<style>
+  @page { size: A4; margin: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --ink: #0e0e10;
+    --ink-soft: #3a3a40;
+    --muted: #6b6b73;
+    --line: #e6e6ea;
+    --accent: #d4ff3a;
+    --accent-ink: #0e0e10;
+    --dark: #15151a;
+    --dark-2: #1d1d24;
+    --info-bg: #eef6ff;
+    --info-border: #3b82f6;
+    --trust-bg: #ecfdf5;
+    --trust-border: #10b981;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #f1f1f3;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    font-size: 11pt;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    padding: 22mm 20mm 22mm 20mm;
+    margin: 14mm auto;
+    background: var(--bg);
+    box-shadow: 0 6px 30px rgba(0,0,0,0.10);
+    position: relative;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  @media print {
+    html, body { background: #fff; }
+    .page { margin: 0; box-shadow: none; width: 210mm; min-height: 297mm; }
+  }
+
+  h1, h2, h3, h4 {
+    font-family: "Inter", sans-serif;
+    color: var(--ink); letter-spacing: -0.01em; margin: 0;
+  }
+  h1 { font-size: 28pt; font-weight: 800; line-height: 1.1; }
+  h2 { font-size: 19pt; font-weight: 700; margin: 0 0 6mm 0; padding-bottom: 3mm; border-bottom: 2px solid var(--ink); }
+  h3 { font-size: 13pt; font-weight: 700; margin: 6mm 0 2mm 0; }
+  h4 { font-size: 9pt; font-weight: 700; margin: 4mm 0 1mm 0; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.08em; }
+  p { margin: 0 0 3mm 0; }
+  a { color: #1e40af; text-decoration: none; border-bottom: 1px dotted #1e40af; }
+  ul, ol { margin: 2mm 0 4mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1.5mm; }
+
+  /* Cover */
+  .cover {
+    background: var(--dark);
+    color: #fff;
+    padding: 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .cover-inner {
+    padding: 35mm 22mm;
+    height: 100%;
+    display: flex; flex-direction: column; justify-content: space-between;
+    min-height: 257mm;
+  }
+  .cover .brand {
+    font-size: 10pt; color: var(--accent);
+    letter-spacing: 0.2em; text-transform: uppercase; font-weight: 600;
+  }
+  .cover h1 {
+    color: #fff; font-size: 44pt; line-height: 0.98;
+    margin-top: 12mm; font-weight: 800; letter-spacing: -0.025em;
+  }
+  .cover h1 span { color: var(--accent); }
+  .cover .subtitle {
+    color: #b8b8c0; font-size: 14pt;
+    margin-top: 8mm; line-height: 1.4; max-width: 150mm;
+  }
+  .cover .tagline {
+    color: #fff; font-size: 16pt; font-weight: 600;
+    margin-top: 5mm; max-width: 150mm; line-height: 1.35;
+  }
+  .cover-meta {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    color: #8d8d99; font-size: 9pt;
+    border-top: 1px solid #2a2a32; padding-top: 6mm;
+  }
+  .cover-meta .label { color: var(--accent); text-transform: uppercase; letter-spacing: 0.12em; font-size: 8pt; margin-bottom: 1mm; display: block; font-weight: 600; }
+  .cover-meta .value { color: #fff; font-size: 11pt; }
+
+  /* Page header / footer */
+  .page-header {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 8pt; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 8mm; padding-bottom: 3mm; border-bottom: 1px solid var(--line);
+  }
+  .page-header .left { font-weight: 600; color: var(--ink); }
+
+  .page-footer {
+    position: absolute; bottom: 12mm; left: 20mm; right: 20mm;
+    display: flex; justify-content: space-between;
+    font-size: 8pt; color: var(--muted);
+    border-top: 1px solid var(--line); padding-top: 3mm;
+  }
+
+  /* Lead */
+  .lead {
+    font-size: 13pt; color: var(--ink-soft);
+    line-height: 1.45; margin-bottom: 5mm;
+  }
+
+  /* Callout */
+  .callout {
+    border-left: 4px solid var(--info-border);
+    background: var(--info-bg);
+    padding: 4mm 5mm;
+    margin: 4mm 0;
+    border-radius: 0 2mm 2mm 0;
+    font-size: 10pt;
+  }
+  .callout.trust {
+    border-left-color: var(--trust-border);
+    background: var(--trust-bg);
+  }
+  .callout .title {
+    display: block; font-size: 9pt; text-transform: uppercase;
+    letter-spacing: 0.1em; font-weight: 700; margin-bottom: 1.5mm;
+    color: var(--ink);
+  }
+  .callout.trust .title::before { content: "✓  "; color: var(--trust-border); }
+  .callout .title::before { content: "ℹ  "; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm 0; font-size: 10pt; }
+  th, td { text-align: left; padding: 2.5mm 3mm; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    background: #f7f7f8; font-weight: 700; font-size: 9pt;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-soft); border-bottom: 2px solid var(--ink);
+  }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:nth-child(even) td { background: #fafafb; }
+
+  /* Models table — dark */
+  .models-table {
+    background: var(--dark);
+    border-radius: 2mm; padding: 4mm;
+    margin: 3mm 0 5mm 0;
+  }
+  .models-table table { margin: 0; font-size: 9.5pt; }
+  .models-table th { background: transparent; color: #8d8d99; border-bottom: 1px solid #2a2a32; }
+  .models-table td { color: #e8e8ec; border-bottom: 1px solid #2a2a32; }
+  .models-table tbody tr:nth-child(even) td { background: transparent; }
+  .models-table tr:last-child td { border-bottom: 0; }
+  .models-table .modality {
+    display: inline-block; background: #2a2a32; color: #c0c0c8;
+    font-size: 7.5pt; padding: 0.5mm 2mm; border-radius: 1mm; margin-right: 1mm;
+  }
+  .models-table .name { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-weight: 600; }
+  .models-table .provider { color: var(--accent); font-size: 8.5pt; font-weight: 600; }
+
+  /* Figure */
+  figure { margin: 4mm 0 5mm 0; padding: 0; }
+  figure img {
+    width: 100%; height: auto; border-radius: 2mm;
+    border: 1px solid var(--line);
+    box-shadow: 0 1mm 3mm rgba(0,0,0,0.08);
+    display: block;
+  }
+  figure.dark img { border-color: #2a2a32; background: #15151a; }
+  figcaption {
+    font-size: 9pt; color: var(--muted);
+    margin-top: 2mm; text-align: center; font-style: italic;
+  }
+
+  /* Sections badges (chapter numbers) */
+  .sec-num {
+    display: inline-block;
+    background: var(--accent); color: var(--ink);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9pt; font-weight: 700;
+    padding: 1mm 2.5mm; border-radius: 1mm;
+    margin-right: 3mm; vertical-align: middle;
+  }
+
+  /* Big stats on cover */
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 3mm; margin: 4mm 0;
+  }
+  .stat {
+    background: var(--dark); color: #fff;
+    padding: 4mm; border-radius: 2mm;
+  }
+  .stat .num {
+    font-size: 16pt; font-weight: 800; color: var(--accent);
+    line-height: 1.1; letter-spacing: -0.02em;
+  }
+  .stat .label {
+    font-size: 8pt; text-transform: uppercase; letter-spacing: 0.1em;
+    color: #b8b8c0; margin-top: 2mm;
+  }
+
+  /* Benefit cards */
+  .benefits {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 4mm; margin: 5mm 0;
+  }
+  .benefit {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 3mm;
+    padding: 6mm 5mm;
+    position: relative;
+  }
+  .benefit::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 4mm;
+    background: var(--accent);
+    border-radius: 3mm 3mm 0 0;
+  }
+  .benefit .icon {
+    font-size: 22pt; margin-bottom: 3mm; line-height: 1; margin-top: 2mm;
+  }
+  .benefit h3 {
+    font-size: 12pt; margin: 0 0 2mm 0;
+    line-height: 1.3;
+  }
+  .benefit p {
+    font-size: 9.5pt; color: var(--ink-soft);
+    line-height: 1.45; margin: 0;
+  }
+
+  /* Use case cards */
+  .usecases { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin: 4mm 0; }
+  .usecase {
+    border: 1px solid var(--line); border-radius: 2mm;
+    padding: 5mm; background: #fafafb;
+  }
+  .usecase .tag {
+    display: inline-block;
+    background: var(--dark); color: var(--accent);
+    font-size: 7.5pt; font-weight: 700;
+    padding: 0.5mm 2mm; border-radius: 1mm;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 2mm;
+  }
+  .usecase h3 { font-size: 12pt; margin: 0 0 2mm 0; }
+  .usecase p { font-size: 9.5pt; color: var(--ink-soft); margin: 0; line-height: 1.45; }
+
+  /* Trust checklist */
+  .trust-list {
+    list-style: none; padding: 0; margin: 3mm 0;
+  }
+  .trust-list li {
+    padding: 2mm 0 2mm 8mm;
+    position: relative;
+    border-bottom: 1px solid var(--line);
+    font-size: 10pt;
+  }
+  .trust-list li:last-child { border-bottom: 0; }
+  .trust-list li::before {
+    content: "✓";
+    position: absolute; left: 0; top: 2mm;
+    color: var(--trust-border);
+    font-weight: 700;
+    width: 5mm; height: 5mm;
+    background: var(--trust-bg);
+    border-radius: 999px;
+    text-align: center;
+    line-height: 5mm;
+    font-size: 9pt;
+  }
+  .trust-list li strong { color: var(--ink); }
+
+  /* Roadmap */
+  .roadmap-item {
+    display: flex; gap: 4mm; padding: 3mm 0;
+    border-bottom: 1px solid var(--line); align-items: baseline;
+  }
+  .roadmap-item:last-child { border-bottom: 0; }
+  .roadmap-item .num {
+    font-family: "JetBrains Mono", monospace; color: var(--muted);
+    font-size: 9pt; width: 8mm; flex-shrink: 0;
+  }
+  .roadmap-item .name { font-weight: 700; color: var(--ink); width: 60mm; flex-shrink: 0; }
+  .roadmap-item .desc { color: var(--ink-soft); font-size: 10pt; }
+
+  /* TOC */
+  .toc { margin-top: 6mm; }
+  .toc-row {
+    display: flex; align-items: baseline;
+    margin-bottom: 3mm; font-size: 11pt;
+  }
+  .toc-row .num {
+    font-family: "JetBrains Mono", monospace;
+    color: var(--accent-ink); background: var(--accent);
+    width: 8mm; height: 8mm;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px; font-size: 9pt; font-weight: 700;
+    margin-right: 4mm; flex-shrink: 0;
+  }
+  .toc-row .title { font-weight: 600; color: var(--ink); flex: 1; }
+  .toc-row .desc { color: var(--muted); font-size: 9.5pt; margin-top: 0.5mm; }
+  .toc-row .pg { font-family: "JetBrains Mono", monospace; color: var(--muted); font-size: 9.5pt; }
+
+  /* Trust badges row */
+  .badges {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 3mm; margin: 4mm 0 0 0;
+  }
+  .badge {
+    background: var(--trust-bg);
+    border: 1px solid var(--trust-border);
+    border-radius: 2mm; padding: 3mm;
+    text-align: center;
+  }
+  .badge .num { font-size: 14pt; font-weight: 800; color: var(--trust-border); line-height: 1; }
+  .badge .lab { font-size: 8.5pt; color: #064e3b; font-weight: 600; margin-top: 1mm; }
+
+  /* Page numbers */
+  body { counter-reset: pageno; }
+  .page { counter-increment: pageno; }
+  .page-footer .pg::after { content: counter(pageno) " / 10"; }
+
+  figure, table, .callout, .benefit, .usecase { page-break-inside: avoid; }
+  h2, h3 { page-break-after: avoid; }
+
+  /* Quote / pull */
+  .pull {
+    border-left: 4px solid var(--accent);
+    padding: 3mm 6mm;
+    font-size: 13pt;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--ink);
+    margin: 5mm 0;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<!-- =====================================================
+     PAGE 1 — COVER
+     ===================================================== -->
+<section class="page cover">
+  <div class="cover-inner">
+    <div>
+      <div class="brand">AI.OPEN · Für unsere Kunden</div>
+      <h1>Künstliche<br>Intelligenz<br>bei <span>OPEN.</span></h1>
+      <p class="tagline">Datenschutzkonform. Gruppen-weit. State-of-the-Art.</p>
+      <p class="subtitle">
+        Wie wir KI für Sie einsetzen — und warum wir sie auf einer eigenen, sicheren
+        Plattform betreiben.
+      </p>
+    </div>
+
+    <div>
+      <div class="stats" style="margin-bottom: 10mm;">
+        <div class="stat"><div class="num">EU-only</div><div class="label">Datenverarbeitung</div></div>
+        <div class="stat"><div class="num">8+</div><div class="label">Top-Tier Modelle</div></div>
+        <div class="stat"><div class="num">100 %</div><div class="label">Projektbezogene Kosten</div></div>
+      </div>
+
+      <div class="cover-meta">
+        <div>
+          <span class="label">Stand</span>
+          <span class="value">Juni 2026</span>
+        </div>
+        <div>
+          <span class="label">Herausgeber</span>
+          <span class="value">OPEN · KI-Team</span>
+        </div>
+        <div>
+          <span class="label">Vertraulichkeit</span>
+          <span class="value">Kunden-Information</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 2 — INTRO + TOC
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Einleitung &amp; Inhalt</span>
+  </div>
+
+  <h2><span class="sec-num">01</span>Wie wir mit KI arbeiten</h2>
+
+  <p class="lead">
+    Künstliche Intelligenz ist bei OPEN kein Nebenprojekt — sie ist eine zentrale,
+    gruppen-weit verfügbare Infrastruktur, die wir konsequent <strong>datenschutz&shy;konform,
+    transparent und qualitätsgesichert</strong> betreiben.
+  </p>
+
+  <p>
+    Statt einzelne Mitarbeitende mit öffentlichen KI-Diensten arbeiten zu lassen, haben wir
+    mit <strong>AI.OPEN</strong> eine eigene Plattform aufgebaut: eine sichere Middleware
+    zwischen unseren Kolleginnen, Kollegen und Anwendungen auf der einen Seite — und den
+    aktuellsten KI-Modellen in einer EU-Cloud auf der anderen Seite.
+  </p>
+
+  <div class="pull">
+    Eine Anfrage, die über AI.OPEN läuft, verlässt zu keinem Zeitpunkt die EU — und keine
+    Ihrer Daten werden zum Training von Modellen verwendet.
+  </div>
+
+  <h3 style="margin-top: 8mm;">Inhalt</h3>
+
+  <div class="toc">
+    <div class="toc-row">
+      <span class="num">01</span>
+      <div style="flex:1">
+        <div class="title">Wie wir mit KI arbeiten</div>
+        <div class="desc">Was AI.OPEN ist — kurz erklärt</div>
+      </div>
+      <span class="pg">S. 02</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">02</span>
+      <div style="flex:1">
+        <div class="title">Ihre Vorteile auf einen Blick</div>
+        <div class="desc">Drei Kernversprechen für unsere Kunden</div>
+      </div>
+      <span class="pg">S. 03</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">03</span>
+      <div style="flex:1">
+        <div class="title">Datenschutz &amp; Architektur</div>
+        <div class="desc">Wie wir Ihre Daten schützen — visualisiert</div>
+      </div>
+      <span class="pg">S. 04</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">04</span>
+      <div style="flex:1">
+        <div class="title">Die besten KI-Modelle</div>
+        <div class="desc">Multi-Provider-Strategie statt Lock-in</div>
+      </div>
+      <span class="pg">S. 05</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">05</span>
+      <div style="flex:1">
+        <div class="title">Unsere Anwendungsfälle</div>
+        <div class="desc">Wofür wir KI heute schon einsetzen</div>
+      </div>
+      <span class="pg">S. 06</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">06</span>
+      <div style="flex:1">
+        <div class="title">Transparente Kostenzuordnung</div>
+        <div class="desc">Jeder Token wird Ihrem Projekt zugeordnet</div>
+      </div>
+      <span class="pg">S. 07</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">07</span>
+      <div style="flex:1">
+        <div class="title">Gruppen-weite Governance</div>
+        <div class="desc">Wie wir KI bei OPEN skalieren</div>
+      </div>
+      <span class="pg">S. 08</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">08</span>
+      <div style="flex:1">
+        <div class="title">Roadmap &amp; Vision</div>
+        <div class="desc">Was als Nächstes auf der Plattform kommt</div>
+      </div>
+      <span class="pg">S. 09</span>
+    </div>
+    <div class="toc-row">
+      <span class="num">09</span>
+      <div style="flex:1">
+        <div class="title">Kontakt &amp; Gespräch</div>
+        <div class="desc">Lassen Sie uns sprechen</div>
+      </div>
+      <span class="pg">S. 10</span>
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 3 — BENEFITS
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Ihre Vorteile</span>
+  </div>
+
+  <h2><span class="sec-num">02</span>Ihre Vorteile auf einen Blick</h2>
+
+  <p class="lead">
+    Mit AI.OPEN profitieren Sie als unser Kunde von drei Kernversprechen — Datenschutz,
+    Modellqualität und Kostentransparenz — ohne dass Sie sich selbst um Anbieter, Verträge
+    oder Compliance kümmern müssen.
+  </p>
+
+  <div class="benefits">
+    <div class="benefit">
+      <div class="icon">🛡️</div>
+      <h3>Datenschutz auf höchstem Niveau</h3>
+      <p>
+        Alle Anfragen werden ausschließlich in der <strong>EU</strong> verarbeitet
+        (Google Cloud, EU-Region). Keine Ihrer Daten verlassen die EU, kein Anbieter
+        nutzt Ihre Inhalte für Modell-Training.
+      </p>
+    </div>
+    <div class="benefit">
+      <div class="icon">⚡</div>
+      <h3>Immer das beste Modell</h3>
+      <p>
+        Wir setzen auf eine <strong>Multi-Provider-Strategie</strong> — Claude, Gemini,
+        Qwen und mehr. Wir wählen pro Use Case das passende Modell und sind nie an
+        einen einzelnen Anbieter gebunden.
+      </p>
+    </div>
+    <div class="benefit">
+      <div class="icon">📊</div>
+      <h3>Projektbezogene Transparenz</h3>
+      <p>
+        Jeder einzelne KI-Aufruf wird automatisch <strong>Ihrem Projekt</strong>
+        zugeordnet. Sie sehen exakt, welche Kosten in welchem Engagement entstanden
+        sind — keine Pauschalen, keine Schätzungen.
+      </p>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 8mm;">Warum eine eigene Plattform?</h3>
+
+  <p>
+    Wir hätten KI auch einfach bei einzelnen öffentlichen Anbietern „einkaufen" können.
+    Das hätte aber drei Probleme bedeutet:
+  </p>
+  <ul>
+    <li><strong>Datenschutz wäre nicht durchgängig garantiert</strong> — viele öffentliche
+      Dienste sitzen in den USA und nutzen Eingaben für Training.</li>
+    <li><strong>Kostenzuordnung wäre intransparent</strong> — keine saubere Trennung pro
+      Kunde, pro Projekt, pro Use Case.</li>
+    <li><strong>Wir wären an einen Anbieter gebunden</strong> — KI entwickelt sich rasant,
+      heute beste Modelle sind morgen veraltet.</li>
+  </ul>
+  <p>
+    AI.OPEN löst alle drei Probleme strukturell.
+  </p>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 4 — ARCHITECTURE & PRIVACY
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Datenschutz &amp; Architektur</span>
+  </div>
+
+  <h2><span class="sec-num">03</span>Datenschutz &amp; Architektur</h2>
+
+  <p>
+    AI.OPEN ist als <strong>sichere Middleware</strong> aufgebaut: jede KI-Anfrage — egal
+    aus welchem Tool — läuft über unser zentrales Gateway, das sie mit den richtigen
+    Sicherheits-, Compliance- und Routing-Regeln versieht, bevor sie die Sprachmodelle
+    in der EU-Cloud erreicht.
+  </p>
+
+  <figure style="margin: 4mm 0 5mm 0;">
+    <svg viewBox="0 0 820 470" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:auto; display:block; border:0; box-shadow:none; background:#fafafb; border-radius:2mm; padding:2mm; font-family: 'Inter', -apple-system, sans-serif;">
+      <defs>
+        <marker id="arrLime2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="#15151a"/>
+        </marker>
+      </defs>
+
+      <text x="120" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">UNSERE TOOLS</text>
+      <text x="410" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">AI.OPEN · SICHERE MIDDLEWARE</text>
+      <text x="700" y="22" text-anchor="middle" font-size="10" font-weight="700" fill="#6b6b73" letter-spacing="2">KI-MODELLE · EU-REGION</text>
+
+      <line x1="30" y1="32" x2="210" y2="32" stroke="#e6e6ea" stroke-width="1"/>
+      <line x1="290" y1="32" x2="530" y2="32" stroke="#d4ff3a" stroke-width="2"/>
+      <line x1="610" y1="32" x2="800" y2="32" stroke="#10b981" stroke-width="2"/>
+
+      <g font-size="12">
+        <rect x="30" y="55" width="180" height="60" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="80" text-anchor="middle" font-weight="700" fill="#0e0e10">Chat &amp; Custom Agents</text>
+        <text x="120" y="97" text-anchor="middle" font-size="9.5" fill="#6b6b73">OPEN Mitarbeitende</text>
+
+        <rect x="30" y="125" width="180" height="60" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="150" text-anchor="middle" font-weight="700" fill="#0e0e10">Coding-Assistenten</text>
+        <text x="120" y="167" text-anchor="middle" font-size="9.5" fill="#6b6b73">IDE-Integrationen</text>
+
+        <rect x="30" y="195" width="180" height="60" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="220" text-anchor="middle" font-weight="700" fill="#0e0e10">Analyse-Agents</text>
+        <text x="120" y="237" text-anchor="middle" font-size="9.5" fill="#6b6b73">z.B. OPEN PULSE</text>
+
+        <rect x="30" y="265" width="180" height="60" rx="6" fill="#ffffff" stroke="#d6d6dc" stroke-width="1.5"/>
+        <text x="120" y="290" text-anchor="middle" font-weight="700" fill="#0e0e10">Kundenanwendungen</text>
+        <text x="120" y="307" text-anchor="middle" font-size="9.5" fill="#6b6b73">eigene Services</text>
+
+        <rect x="30" y="335" width="180" height="40" rx="6" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
+        <text x="120" y="354" text-anchor="middle" font-weight="700" fill="#064e3b" font-size="10">Ihre Anfrage</text>
+        <text x="120" y="368" text-anchor="middle" font-size="8.5" fill="#065f46">über jedes der obigen Tools</text>
+      </g>
+
+      <g>
+        <rect x="270" y="55" width="280" height="370" rx="10" fill="#15151a"/>
+        <rect x="270" y="55" width="6" height="370" fill="#d4ff3a"/>
+
+        <text x="410" y="92" text-anchor="middle" font-size="22" font-weight="800" fill="#ffffff">AI.OPEN</text>
+        <text x="410" y="115" text-anchor="middle" font-size="9" font-weight="700" fill="#d4ff3a" letter-spacing="2.5">SICHERE MIDDLEWARE · EU</text>
+
+        <line x1="310" y1="130" x2="510" y2="130" stroke="#2a2a32" stroke-width="1"/>
+
+        <g font-size="11">
+          <circle cx="300" cy="155" r="3" fill="#d4ff3a"/>
+          <text x="312" y="159" fill="#ffffff" font-weight="600">SSO Authentifizierung</text>
+
+          <circle cx="300" cy="195" r="3" fill="#d4ff3a"/>
+          <text x="312" y="199" fill="#ffffff" font-weight="600">EU-Routing</text>
+          <text x="520" y="199" text-anchor="end" fill="#10b981" font-size="8.5" font-weight="700">100 %</text>
+
+          <circle cx="300" cy="235" r="3" fill="#d4ff3a"/>
+          <text x="312" y="239" fill="#ffffff" font-weight="600">Projekt-Tagging</text>
+          <text x="520" y="239" text-anchor="end" fill="#8d8d99" font-size="8.5">pro Anfrage</text>
+
+          <circle cx="300" cy="275" r="3" fill="#d4ff3a"/>
+          <text x="312" y="279" fill="#ffffff" font-weight="600">Budget-Kontrolle</text>
+
+          <circle cx="300" cy="315" r="3" fill="#d4ff3a"/>
+          <text x="312" y="319" fill="#ffffff" font-weight="600">Multi-Modell-Auswahl</text>
+
+          <circle cx="300" cy="355" r="3" fill="#d4ff3a"/>
+          <text x="312" y="359" fill="#ffffff" font-weight="600">Audit &amp; Logging</text>
+
+          <circle cx="300" cy="395" r="3" fill="#d4ff3a"/>
+          <text x="312" y="399" fill="#ffffff" font-weight="600">Datenschutz-Governance</text>
+        </g>
+      </g>
+
+      <g font-size="12">
+        <rect x="610" y="55" width="190" height="105" rx="6" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+        <text x="705" y="80" text-anchor="middle" font-weight="700" fill="#0e0e10">Google · Gemini</text>
+        <text x="705" y="96" text-anchor="middle" font-size="9" fill="#10b981" font-weight="600">EU-Region · Vertex AI</text>
+        <line x1="625" y1="108" x2="785" y2="108" stroke="#e6e6ea"/>
+        <text x="705" y="126" text-anchor="middle" font-size="9.5" fill="#0e0e10">gemini-3.5-flash</text>
+        <text x="705" y="143" text-anchor="middle" font-size="9.5" fill="#0e0e10">gemini-2.5-pro</text>
+
+        <rect x="610" y="170" width="190" height="105" rx="6" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+        <text x="705" y="195" text-anchor="middle" font-weight="700" fill="#0e0e10">Anthropic · Claude</text>
+        <text x="705" y="211" text-anchor="middle" font-size="9" fill="#10b981" font-weight="600">EU-Region · via Vertex</text>
+        <line x1="625" y1="223" x2="785" y2="223" stroke="#e6e6ea"/>
+        <text x="705" y="241" text-anchor="middle" font-size="9.5" fill="#0e0e10">claude-opus-4-7</text>
+        <text x="705" y="258" text-anchor="middle" font-size="9.5" fill="#0e0e10">claude-sonnet-4-6</text>
+
+        <rect x="610" y="285" width="190" height="95" rx="6" fill="#ffffff" stroke="#10b981" stroke-width="1.5"/>
+        <text x="705" y="310" text-anchor="middle" font-weight="700" fill="#0e0e10">Weitere Provider</text>
+        <text x="705" y="326" text-anchor="middle" font-size="9" fill="#10b981" font-weight="600">EU-Region</text>
+        <line x1="625" y1="338" x2="785" y2="338" stroke="#e6e6ea"/>
+        <text x="705" y="356" text-anchor="middle" font-size="9.5" fill="#0e0e10">qwen3-235b</text>
+        <text x="705" y="372" text-anchor="middle" font-size="9" fill="#6b6b73" font-style="italic">(weitere in Evaluation)</text>
+      </g>
+
+      <g stroke="#15151a" stroke-width="1.8" fill="none">
+        <line x1="212" y1="85" x2="266" y2="85" marker-end="url(#arrLime2)"/>
+        <line x1="212" y1="155" x2="266" y2="155" marker-end="url(#arrLime2)"/>
+        <line x1="212" y1="225" x2="266" y2="225" marker-end="url(#arrLime2)"/>
+        <line x1="212" y1="295" x2="266" y2="295" marker-end="url(#arrLime2)"/>
+      </g>
+
+      <g stroke="#15151a" stroke-width="1.8" fill="none">
+        <line x1="554" y1="105" x2="606" y2="105" marker-end="url(#arrLime2)"/>
+        <line x1="554" y1="220" x2="606" y2="220" marker-end="url(#arrLime2)"/>
+        <line x1="554" y1="330" x2="606" y2="330" marker-end="url(#arrLime2)"/>
+      </g>
+
+      <g font-size="9" fill="#6b6b73" letter-spacing="1.5">
+        <text x="120" y="430" text-anchor="middle" font-weight="600">EINGANG</text>
+        <text x="410" y="430" text-anchor="middle" font-weight="600">VERARBEITUNG</text>
+        <text x="700" y="430" text-anchor="middle" font-weight="600">MODELL-RESPONSE</text>
+        <text x="120" y="445" text-anchor="middle" font-size="8" fill="#10b981" font-weight="700">EU</text>
+        <text x="410" y="445" text-anchor="middle" font-size="8" fill="#10b981" font-weight="700">EU</text>
+        <text x="700" y="445" text-anchor="middle" font-size="8" fill="#10b981" font-weight="700">EU</text>
+      </g>
+    </svg>
+    <figcaption>Architektur — Ihre Anfrage bleibt durchgängig in der EU. Nichts verlässt jemals die europäische Cloud-Region.</figcaption>
+  </figure>
+
+  <div class="callout trust">
+    <span class="title">Was das für Sie bedeutet</span>
+  </div>
+
+  <ul class="trust-list">
+    <li><strong>EU-only Datenverarbeitung</strong> — alle Anfragen werden in europäischen Rechenzentren von Google Cloud verarbeitet.</li>
+    <li><strong>Kein Modell-Training auf Ihren Daten</strong> — vertraglich zugesicherte „Enterprise"-Verträge mit allen Modellanbietern.</li>
+    <li><strong>Vollständiges Audit-Logging</strong> — wir können jede Anfrage nachverfolgen und die Verarbeitung belegen.</li>
+    <li><strong>DSGVO-konforme Authentifizierung</strong> über das interne OPEN Identity-Management.</li>
+  </ul>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 5 — MODELS
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Die besten KI-Modelle</span>
+  </div>
+
+  <h2><span class="sec-num">04</span>Die besten KI-Modelle — ohne Lock-in</h2>
+
+  <p class="lead">
+    Wir setzen bewusst auf eine <strong>Multi-Provider-Strategie</strong>: über AI.OPEN
+    haben wir Zugriff auf die führenden Sprachmodelle der Welt — und können für jeden
+    Use Case das passende Modell wählen.
+  </p>
+
+  <div class="models-table">
+    <table>
+      <thead>
+        <tr><th>Modell</th><th>Stärken</th><th>Modalitäten</th><th>Anbieter</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">claude-opus-4-7</td><td>Komplexe Analysen, lange Kontexte</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+        <tr><td class="name">claude-sonnet-4-6</td><td>Ausgewogen, sehr vielseitig</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+        <tr><td class="name">claude-haiku-4-5</td><td>Schnelle, günstige Routine-Tasks</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+        <tr><td class="name">gemini-2.5-pro</td><td>Sehr lange Dokumente, multimodal</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">audio</span><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+        <tr><td class="name">gemini-3.5-flash</td><td>State-of-the-Art, multimodal</td>
+          <td><span class="modality">vision</span><span class="modality">pdf</span><span class="modality">audio</span><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+        <tr><td class="name">qwen3-235b</td><td>Open-Source-Alternative, tool use</td>
+          <td><span class="modality">tools</span></td>
+          <td class="provider">Google</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p style="font-size: 9.5pt; color: var(--muted);">
+    Auswahl Stand Juni 2026. Unsere Modellauswahl wird vom internen KI-Team kontinuierlich
+    aktualisiert, sobald neue State-of-the-Art-Modelle in der EU-Region verfügbar werden.
+  </p>
+
+  <h3 style="margin-top: 6mm;">Was bedeutet das für Sie?</h3>
+
+  <div class="badges">
+    <div class="badge"><div class="num">∞</div><div class="lab">Bis zu 1 Mio Tokens Kontext</div></div>
+    <div class="badge"><div class="num">Bild</div><div class="lab">Vision &amp; PDF-Verarbeitung</div></div>
+    <div class="badge"><div class="num">Tools</div><div class="lab">Direkte System-Integrationen</div></div>
+    <div class="badge"><div class="num">Audio</div><div class="lab">Transkription &amp; Analyse</div></div>
+  </div>
+
+  <p style="margin-top: 5mm;">
+    Sie müssen sich nicht für einen Anbieter entscheiden — wir wählen pro Use Case das
+    Modell mit dem besten Verhältnis aus Qualität, Geschwindigkeit und Kosten.
+  </p>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 6 — USE CASES
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Unsere Anwendungsfälle</span>
+  </div>
+
+  <h2><span class="sec-num">05</span>Unsere Anwendungsfälle</h2>
+
+  <p class="lead">
+    AI.OPEN ist kein abstraktes Werkzeug — die Plattform trägt heute schon konkrete
+    Anwendungen, mit denen wir für Sie arbeiten.
+  </p>
+
+  <div class="usecases">
+    <div class="usecase">
+      <span class="tag">Im Einsatz</span>
+      <h3>OPEN PULSE</h3>
+      <p>
+        Ein KI-Agent für die <strong>strukturierte Kundenanalyse</strong> — kombiniert
+        Sprachmodell mit unseren Wissensquellen und liefert reproduzierbare,
+        dimensionsbasierte Analysen statt ad-hoc Bauchgefühl.
+      </p>
+    </div>
+    <div class="usecase">
+      <span class="tag">Im Einsatz</span>
+      <h3>Coding-Assistenten</h3>
+      <p>
+        Unsere Developer arbeiten direkt aus ihrer IDE heraus mit KI — schnellere
+        Entwicklung, höhere Code-Qualität. Alle Kosten sauber Ihrem Projekt zugeordnet,
+        sobald wir für Sie entwickeln.
+      </p>
+    </div>
+    <div class="usecase">
+      <span class="tag">Im Einsatz</span>
+      <h3>Custom Agents</h3>
+      <p>
+        Fachlich abgestimmte Agents für wiederkehrende Aufgaben (Analyse, Reporting,
+        Recherche). Jeder Agent ist eine Kombination aus Modell, Wissensquellen und
+        Tool-Integration — gebaut für einen klaren Zweck.
+      </p>
+    </div>
+    <div class="usecase">
+      <span class="tag">Im Einsatz</span>
+      <h3>Prompts &amp; Skills Library</h3>
+      <p>
+        Bewährte Prompts und wiederverwendbare Skills werden zentral verwaltet,
+        versioniert und team-übergreifend genutzt — so verlieren wir keine Erfahrungen
+        und liefern konsistente Qualität.
+      </p>
+    </div>
+  </div>
+
+  <h3 style="margin-top: 6mm;">Demnächst auf der Plattform</h3>
+
+  <div class="roadmap-item">
+    <span class="num">01</span>
+    <span class="name">Ausschreibungs-Agent</span>
+    <span class="desc">KI-Unterstützung im Ausschreibungsprozess</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">02</span>
+    <span class="name">Projekt-Management-Agent</span>
+    <span class="desc">Strukturierte Begleitung im Projektalltag</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">03</span>
+    <span class="name">Marketing-Support-Agent</span>
+    <span class="desc">Effiziente Content- und Kampagnen-Erstellung</span>
+  </div>
+
+  <div class="callout">
+    <span class="title">Idee für Ihren Use Case?</span>
+    Wenn Sie einen spezifischen Anwendungsfall sehen, bei dem KI für Ihre Organisation
+    Mehrwert schaffen würde — wir entwickeln gemeinsam mit Ihnen den passenden Agent.
+    Sprechen Sie uns an.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 7 — COST TRANSPARENCY
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Transparente Kostenzuordnung</span>
+  </div>
+
+  <h2><span class="sec-num">06</span>Transparente Kostenzuordnung</h2>
+
+  <p class="lead">
+    Jede einzelne KI-Anfrage wird im Moment der Verarbeitung mit den passenden Tags
+    versehen — <strong>Projekt, Team, Benutzer, Rolle</strong>. Daraus entsteht eine
+    Kostenzuordnung, die so präzise ist wie eine klassische Stundenabrechnung.
+  </p>
+
+  <div class="benefits" style="grid-template-columns: 1fr 1fr;">
+    <div class="benefit">
+      <div class="icon">🎯</div>
+      <h3>Pro Projekt zugeordnet</h3>
+      <p>
+        Jede KI-Anfrage trägt das Tag des Kunden- und Projekt-Kontexts, in dem sie
+        ausgelöst wurde — automatisch, ohne dass jemand manuell zuordnen muss.
+      </p>
+    </div>
+    <div class="benefit">
+      <div class="icon">📈</div>
+      <h3>Audit-fähiges Reporting</h3>
+      <p>
+        Wir können Ihnen auf Wunsch eine detaillierte Aufstellung der für Ihr Projekt
+        angefallenen KI-Kosten zur Verfügung stellen — pro Tag, pro Use Case, pro Modell.
+      </p>
+    </div>
+  </div>
+
+  <figure class="dark">
+    <img src="ai-open-guide-assets/litellm-usage.png" alt="Reporting-Dashboard">
+    <figcaption>Internes Reporting-Dashboard — Token-Verbrauch, Erfolgsquote und Tagesverteilung pro Projekt.</figcaption>
+  </figure>
+
+  <div class="pull">
+    Sie zahlen für KI nur das, was tatsächlich in Ihrem Projekt verbraucht wurde —
+    keine Pauschalen, keine Quersubventionierung.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 8 — GOVERNANCE
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Gruppen-weite Governance</span>
+  </div>
+
+  <h2><span class="sec-num">07</span>Gruppen-weite Governance</h2>
+
+  <p class="lead">
+    AI.OPEN ist nicht das Werkzeug eines einzelnen Teams — es ist die <strong>zentrale
+    KI-Infrastruktur der OPEN-Gruppe</strong>, betreut durch ein eigenes KI-Team und in
+    allen Units der Gruppe einheitlich verfügbar.
+  </p>
+
+  <h3>Einheitlich über alle Units</h3>
+
+  <p>Alle OPEN-Units arbeiten mit derselben Plattform, denselben Compliance-Regeln und denselben Reporting-Standards:</p>
+
+  <table>
+    <thead><tr><th>Unit</th><th>Fokus</th></tr></thead>
+    <tbody>
+      <tr><td><strong>CX</strong> · Customer Experience</td><td>Digital Customer Journeys, CRM, Service-Plattformen</td></tr>
+      <tr><td><strong>ADX</strong> · Advanced Digital</td><td>Plattformen, Architektur, Software-Engineering</td></tr>
+      <tr><td><strong>SC</strong> · Strategy &amp; Consulting</td><td>Strategie, Transformation, Beratung</td></tr>
+      <tr><td><strong>ST</strong> · Sales &amp; Technology</td><td>Vertrieb, Lösungs-Engineering</td></tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top: 4mm;">
+    Jede Unit bringt ihr eigenes Fachwissen ein — die Plattform sichert Qualität,
+    Datenschutz und Konsistenz.
+  </p>
+
+  <h3>Das KI-Team</h3>
+
+  <p>
+    Ein dediziertes <strong>KI-Team</strong> verantwortet die Plattform: es pflegt die
+    Modellauswahl, baut neue Agents, sichert die Datenschutz-Standards und stellt
+    sicher, dass alle Units gleichermaßen profitieren — und neue Entwicklungen am Markt
+    schnell verfügbar werden.
+  </p>
+
+  <div class="callout trust">
+    <span class="title">Was Sie davon haben</span>
+    Egal mit welcher OPEN-Unit Sie zusammenarbeiten: Sie bekommen die gleiche
+    KI-Qualität, die gleiche Datenschutz-Garantie und die gleiche Kostentransparenz.
+    Eine Plattform, eine Governance — keine Insellösungen.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 9 — ROADMAP
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Roadmap &amp; Vision</span>
+  </div>
+
+  <h2><span class="sec-num">08</span>Roadmap &amp; Vision</h2>
+
+  <p class="lead">
+    Wir bleiben nicht stehen. AI.OPEN entwickelt sich kontinuierlich weiter — getrieben
+    durch die rasante Entwicklung der KI-Modelle, durch konkrete Anforderungen aus
+    Kundenprojekten und durch unsere eigene Forschung.
+  </p>
+
+  <h3>Was als Nächstes kommt</h3>
+
+  <div class="roadmap-item">
+    <span class="num">01</span>
+    <span class="name">Erweiterte Agent-Bibliothek</span>
+    <span class="desc">Ausschreibungs-, Projekt-Management- und Marketing-Agents</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">02</span>
+    <span class="name">Weitere KI-Modelle</span>
+    <span class="desc">Codestral, Mistral Medium und weitere — kontinuierliche Evaluation</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">03</span>
+    <span class="name">Self-Service für Kunden-Use-Cases</span>
+    <span class="desc">Eigene Wissensquellen und Agents gemeinsam mit Ihnen aufbauen</span>
+  </div>
+  <div class="roadmap-item">
+    <span class="num">04</span>
+    <span class="name">Audit-Reports auf Kundenwunsch</span>
+    <span class="desc">Detaillierte KI-Nutzungs-Reports pro Projekt</span>
+  </div>
+
+  <h3 style="margin-top: 8mm;">Unsere Vision</h3>
+
+  <ul>
+    <li><strong>Eine KI-Plattform für die gesamte OPEN-Gruppe</strong> — ohne Insel&shy;lösungen, ohne Schatten-IT, ohne Compliance-Risiken.</li>
+    <li><strong>Saubere Kostenzuordnung pro Kunde, Projekt und Use Case</strong> — als Standard, nicht als Ausnahme.</li>
+    <li><strong>Schnelle Adaption neuer Modelle</strong> — sobald ein besseres Modell verfügbar wird, wechseln wir.</li>
+    <li><strong>Kunden-spezifische Agents</strong> als reguläres Angebot — die KI lernt Ihre Domäne, nicht umgekehrt.</li>
+  </ul>
+
+  <div class="pull">
+    Wir glauben: KI wird nur dann ein echtes Werkzeug, wenn sie sicher, transparent
+    und auf konkrete Use Cases zugeschnitten ist. Genau dafür haben wir AI.OPEN gebaut.
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+<!-- =====================================================
+     PAGE 10 — CONTACT
+     ===================================================== -->
+<section class="page">
+  <div class="page-header">
+    <span class="left">AI.OPEN für unsere Kunden</span>
+    <span class="right">Kontakt</span>
+  </div>
+
+  <h2><span class="sec-num">09</span>Lassen Sie uns sprechen</h2>
+
+  <p class="lead">
+    Sie haben Fragen zu unserem KI-Einsatz, möchten einen konkreten Use Case besprechen
+    oder Detail-Auskünfte zur Datenschutz-Architektur erhalten?
+  </p>
+
+  <div style="margin: 6mm 0; padding: 6mm 7mm; background: var(--dark); color: #fff; border-radius: 3mm; border-left: 6mm solid var(--accent);">
+    <div style="color: var(--accent); font-size: 9pt; letter-spacing: 0.15em; text-transform: uppercase; font-weight: 700; margin-bottom: 3mm;">
+      Ihr direkter Weg zu uns
+    </div>
+    <div style="font-size: 14pt; font-weight: 700; margin-bottom: 3mm;">
+      Ihr persönlicher OPEN-Ansprechpartner berät Sie gerne.
+    </div>
+    <div style="font-size: 10pt; color: #c0c0c8; line-height: 1.6;">
+      Für allgemeine Anfragen zum KI-Einsatz bei OPEN, zur Plattform oder zu
+      Datenschutz-Themen wenden Sie sich an unser KI-Team — wir antworten typischerweise
+      innerhalb eines Werktags.
+    </div>
+  </div>
+
+  <h3>Was Sie bei uns erwarten können</h3>
+
+  <ul class="trust-list">
+    <li><strong>Verbindliche Datenschutz-Auskunft</strong> — wir liefern Ihnen auf Wunsch eine schriftliche Erklärung zur Datenverarbeitung in Ihrem Projekt.</li>
+    <li><strong>Use-Case-Workshop</strong> — gemeinsame Erarbeitung, wo KI in Ihrer Organisation Mehrwert schafft.</li>
+    <li><strong>Transparente Kostenkalkulation</strong> — vor Projektstart eine belastbare Schätzung, während des Projekts laufendes Reporting.</li>
+    <li><strong>Roadmap-Einsicht</strong> — wir informieren proaktiv, wenn neue Modelle oder Agents für Ihren Use Case relevant werden.</li>
+  </ul>
+
+  <div style="margin-top: 14mm; padding: 6mm; background: #fafafb; border-radius: 2mm; text-align: center; border: 1px solid var(--line);">
+    <div style="color: var(--muted); font-size: 8pt; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-bottom: 2mm;">
+      AI.OPEN
+    </div>
+    <div style="font-size: 13pt; font-weight: 700;">Datenschutz&shy;konforme KI bei OPEN.</div>
+    <div style="font-size: 9pt; color: var(--muted); margin-top: 1mm;">
+      Stand Juni 2026 · OPEN-Gruppe · KI-Team
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>AI.OPEN für unsere Kunden</span>
+    <span class="pg">Seite </span>
+  </div>
+</section>
+
+</body>
+</html>

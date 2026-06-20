@@ -1,7 +1,6 @@
 import { S3Client, PutObjectCommand, S3ServiceException } from "@aws-sdk/client-s3";
 import { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config";
 import { postgresClient } from "@SRC/postgres/client";
@@ -136,7 +135,6 @@ export const convertExuluToolsToAiSdkTools = async (
   configs: ExuluAgentToolConfig[] | undefined,
   providerapikey?: string,
   contexts?: ExuluContext[],
-  rerankers?: ExuluReranker[],
   user?: User,
   exuluConfig?: ExuluConfig,
   sessionID?: string,
@@ -230,7 +228,6 @@ export const convertExuluToolsToAiSdkTools = async (
   if (contexts?.length && model) {
     const agenticSearchTool = createAgenticRetrievalToolV3({
       contexts: contexts.filter((context) => context.id !== agent?.memory), // dont include the agents memory in the agentic search tool!
-      rerankers: rerankers || [],
       user: user,
       role: user?.role?.id,
       model: model,

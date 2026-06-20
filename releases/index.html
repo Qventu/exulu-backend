@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IMP — Release notes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* Extracted from frontend/app/globals.css, 2026-06-10 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted: 0 0% 96.0784%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --sidebar: 210 42.8571% 97.2549%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 880px);
+      gap: 56px;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    /* ---------- sidebar ---------- */
+    .sidenav {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow-y: auto;
+      padding: 48px 0 48px;
+      border-right: 1px solid hsl(var(--border));
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 17px; margin-bottom: 6px;
+    }
+    .brand .logo {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: hsl(var(--primary));
+      color: #fff; display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800;
+    }
+    .brand-sub {
+      font-size: 12.5px; color: hsl(var(--muted-foreground));
+      margin: 0 0 28px; letter-spacing: 0;
+    }
+    .nav-group { margin-bottom: 26px; padding-right: 20px; }
+    .nav-release {
+      display: block;
+      font-size: 12px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.07em; color: hsl(var(--muted-foreground));
+      text-decoration: none;
+      margin-bottom: 8px;
+    }
+    .nav-release:hover { color: hsl(var(--primary)); }
+    .nav-group a.item {
+      display: block;
+      font-size: 14px; color: hsl(var(--foreground));
+      text-decoration: none;
+      padding: 5px 10px;
+      border-left: 2px solid hsl(var(--border));
+      transition: all 0.15s;
+    }
+    .nav-group a.item:hover { color: hsl(var(--primary)); }
+    .nav-group a.item.active {
+      color: hsl(var(--primary));
+      border-left-color: hsl(var(--primary));
+      background: hsl(var(--accent) / 0.45);
+      font-weight: 500;
+    }
+    /* ---------- main ---------- */
+    main { padding: 48px 0 140px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 52px; font-weight: 700; line-height: 1.05;
+      margin: 20px 0 16px; letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 19px; color: hsl(var(--muted-foreground)); max-width: 660px;
+    }
+    .release {
+      margin-top: 88px;
+      padding-top: 40px;
+      border-top: 2px solid hsl(var(--border));
+      scroll-margin-top: 24px;
+    }
+    .release-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+    .release-head h2 {
+      font-size: 30px; font-weight: 700; letter-spacing: -0.025em; margin: 0;
+    }
+    .release-date {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      color: hsl(var(--muted-foreground)); letter-spacing: 0.04em;
+    }
+    .release-summary {
+      color: hsl(var(--muted-foreground)); font-size: 17px;
+      margin: 10px 0 0; max-width: 720px;
+    }
+    .feature {
+      margin-top: 56px;
+      scroll-margin-top: 24px;
+    }
+    .feature h3 {
+      font-size: 24px; font-weight: 700; margin: 0 0 6px; letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground)); font-size: 16.5px; margin: 0 0 22px;
+    }
+    .feature video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 20px;
+    }
+    .feature p { margin: 0 0 14px; font-size: 15.5px; }
+    .feature p code, .feature .one-liner code {
+      font-family: 'JetBrains Mono', monospace; font-size: 0.88em;
+      background: hsl(var(--muted)); border: 1px solid hsl(var(--border));
+      border-radius: 5px; padding: 1px 5px;
+    }
+    .benefit {
+      border-left: 3px solid hsl(var(--primary));
+      background: hsl(var(--accent) / 0.4);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 12px 16px;
+      font-size: 15px;
+      margin: 18px 0 0;
+    }
+    .benefit strong { color: hsl(var(--primary)); }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      background: hsl(258 25% 9%);
+      color: hsl(0 0% 96%);
+      padding: 18px 22px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 20px 0 0;
+      line-height: 1.55;
+    }
+    .snippet-label {
+      font-size: 11.5px; font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin: 24px 0 6px;
+    }
+    footer {
+      margin-top: 110px; padding-top: 28px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px; color: hsl(var(--muted-foreground));
+      display: flex; justify-content: space-between;
+    }
+    footer a { color: hsl(var(--primary)); text-decoration: none; font-weight: 600; }
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: 1fr; gap: 0; }
+      .sidenav { position: static; height: auto; border-right: none; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <nav class="sidenav">
+      <div class="brand"><span class="logo">O</span>IMP</div>
+      <p class="brand-sub">Intelligence Management Platform<br />Release notes</p>
+
+      <div class="nav-group">
+        <a class="nav-release" href="#r-2026-06-10">June 2026</a>
+        <a class="item" href="#oauth-tools">OAuth 2.0 for tools</a>
+        <a class="item" href="#image-widget">In-chat image generation</a>
+        <a class="item" href="#personal-prompt">Personal system prompt</a>
+        <a class="item" href="#teams">Teams</a>
+      </div>
+      <div class="nav-group">
+        <a class="nav-release" href="#r-2026-05-29t">May 2026 · Transcription</a>
+        <a class="item" href="#diarized-transcripts">Speaker-aware transcripts</a>
+        <a class="item" href="#self-hosted-whisper">Self-hosted Whisper</a>
+        <a class="item" href="#transcripts-to-knowledge">Transcripts into knowledge</a>
+      </div>
+      <div class="nav-group">
+        <a class="nav-release" href="#r-2026-05-29p">May 2026 · Platform</a>
+        <a class="item" href="#session-files">Session files panel</a>
+        <a class="item" href="#followups">Follow-up suggestions</a>
+        <a class="item" href="#litellm">LiteLLM model gateway</a>
+        <a class="item" href="#skill-upload">Skill bundle upload</a>
+        <a class="item" href="#gdpr">GDPR export &amp; delete</a>
+      </div>
+      <div class="nav-group">
+        <a class="nav-release" href="#r-2026-05-24">May 2026 · Voice</a>
+        <a class="item" href="#speech-to-text">Speech-to-text in chat</a>
+      </div>
+    </nav>
+
+    <main>
+      <header>
+        <span class="pill">IMP · Release notes · Spring–Summer 2026</span>
+        <h1 class="hero">Everything new in <em>IMP</em>.</h1>
+        <p class="lede">One page, four releases. From connected enterprise tools and team-level governance to self-hosted transcription and GDPR tooling — what shipped, and what it means for your organization.</p>
+      </header>
+
+      <!-- ============================================================ June 2026 -->
+      <section class="release" id="r-2026-06-10">
+        <div class="release-head">
+          <h2>Connected tools, teams &amp; personalization</h2>
+          <span class="release-date">2026-06-10</span>
+        </div>
+        <p class="release-summary">Agents that act in your business systems on each employee's own authority, image production with a human in the loop, per-user personalization, and an organizational layer for sharing and cost attribution.</p>
+
+        <div class="feature" id="oauth-tools">
+          <h3>OAuth 2.0 for tools</h3>
+          <p class="one-liner">Connect agents to your CRM, support desk, or document store — each employee acts under their own account.</p>
+          <video src="./2026-06-10-summer-release/shorts/oauth-tools.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Tools built on the IMP SDK can now declare an <code>oauth</code> block — endpoints, client credentials, scopes — and the platform handles the entire authorization flow. When an employee uses a tool without a connected account, the agent replies with a connect link; after a one-time consent, the tool runs with that user's token.</p>
+          <p>For your organization this means agents act in HubSpot, Google Workspace, or Slack <em>as the actual employee</em> — with their permissions, visible in the vendor's audit logs under their identity, never through a shared service account. Tokens are stored encrypted per user and tool, refreshed automatically, and PKCE is enabled by default.</p>
+          <div class="benefit"><strong>Why it matters:</strong> integrations that used to need custom auth code and a security review now ship as configuration — faster delivery of connected agents, and per-user accountability your compliance team will actually approve.</div>
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>new ImpTool({
+  id: "hubspot_crm",
+  name: "HubSpot CRM",
+  type: "function",
+  oauth: {
+    authorizationUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    clientId: process.env.HUBSPOT_CLIENT_ID,
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+    scopes: ["crm.objects.contacts.read"],
+  },
+  execute: async (inputs) => {
+    const token = inputs.oauth.accessToken; // always valid here
+  },
+});</code></pre>
+        </div>
+
+        <div class="feature" id="image-widget">
+          <h3>In-chat image generation</h3>
+          <p class="one-liner">Marketing-grade visuals produced inside the conversation — with a person making the final call.</p>
+          <video src="./2026-06-10-summer-release/shorts/image-widget.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>When an agent needs an image, it opens a widget in the chat instead of guessing at a final render. Your team drives from there: adjust the prompt, pick the model, set size, quality and count, attach reference images, and apply saved brand styles that keep output consistent across the company.</p>
+          <p>Selection is explicit — generate variations freely, then send only the chosen images back to the conversation. The agent never sees the rejects, which keeps context clean and downstream usage predictable.</p>
+          <div class="benefit"><strong>Why it matters:</strong> content teams produce on-brand visuals in the flow of work instead of switching tools, while explicit human selection keeps quality control — and spend — in your hands.</div>
+        </div>
+
+        <div class="feature" id="personal-prompt">
+          <h3>Personal system prompt</h3>
+          <p class="one-liner">Every employee tells the platform about their role once — every agent honors it.</p>
+          <video src="./2026-06-10-summer-release/shorts/personal-prompt.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>A new Settings page lets each user store a free-form personal prompt: role, working language, preferred answer length, domain context. It's injected into every chat they start, layered on top of whatever agent they're talking to.</p>
+          <p>Shared agents stay standardized for everyone; the personalization lives with the person, not the agent. No more re-explaining "I'm in the finance team, keep it short, answer in German" at the start of every session.</p>
+          <div class="benefit"><strong>Why it matters:</strong> better first-answer quality across the whole workforce without forking agents per department — less re-prompting, faster adoption, lower token spend.</div>
+        </div>
+
+        <div class="feature" id="teams">
+          <h3>Teams</h3>
+          <p class="one-liner">Mirror your org chart: group users into teams and share agents, projects and data team-wide.</p>
+          <video src="./2026-06-10-summer-release/shorts/teams.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Teams are a new organizational layer next to roles. Assign each user to a team — Engineering, Marketing, HR — straight from the users table, and manage teams from a dedicated admin page. Roles keep governing <em>what people can do</em>; teams capture <em>who works together</em>.</p>
+          <p>Every resource gains a <em>Shared with Teams</em> visibility mode: share an agent, a knowledge base, or a project with whole departments in one step, with read or write granularity — the same mechanics your admins already know from role-based sharing.</p>
+          <div class="benefit"><strong>Why it matters:</strong> onboarding a department becomes one share action instead of per-user grants, and the team field on every user is the foundation for per-department cost attribution.</div>
+        </div>
+      </section>
+
+      <!-- ============================================================ May 2026 · Transcription -->
+      <section class="release" id="r-2026-05-29t">
+        <div class="release-head">
+          <h2>Transcripts that know who's talking</h2>
+          <span class="release-date">2026-05-29</span>
+        </div>
+        <p class="release-summary">Meetings, interviews and calls become searchable company knowledge — diarized with speaker names, embedded into your knowledge bases, and processed entirely on infrastructure you control.</p>
+
+        <div class="feature" id="diarized-transcripts">
+          <h3>Speaker-aware transcripts, reviewed in seconds</h3>
+          <p class="one-liner">Upload audio, get a diarized transcript, rename SPEAKER_00 → Daniel before you save.</p>
+          <video src="./2026-05-29-transcription/shorts/slice-1-review-and-rename.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>The transcriptions workspace pairs an audio player with a colored who-spoke-when timeline. Hover any segment for the text and timestamp, click to jump, and rename speakers with one click — colors stay stable so review is fast even on long recordings.</p>
+          <p>Saved transcripts can be reopened and corrected later; the underlying knowledge item updates and re-embeds in place, so citations in past conversations never break.</p>
+          <div class="benefit"><strong>Why it matters:</strong> the hours your teams spend in meetings become accurate, attributable records — who committed to what, in their own words — at a fraction of the cost of manual minutes.</div>
+        </div>
+
+        <div class="feature" id="self-hosted-whisper">
+          <h3>Self-hosted Whisper — audio never leaves your environment</h3>
+          <p class="one-liner">The transcription pipeline ships in the platform but runs on your own GPU host.</p>
+          <video src="./2026-05-29-transcription/shorts/slice-2-standalone-whisper.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Whisper + pyannote run as a separate process on a machine you control — start it with one command, point the main app at it with one environment variable. No IMP-managed endpoint, no third-party transcription API, no traffic leaving your VPC.</p>
+          <div class="benefit"><strong>Why it matters:</strong> recorded conversations are among the most sensitive data a company holds. Full data sovereignty makes voice workflows viable for legal, HR and healthcare contexts where SaaS transcription is a non-starter.</div>
+          <div class="snippet-label">From the CLI</div>
+          <pre><code># On the GPU host
+npx @imp/backend imp-start-whisper
+
+# On the main app
+TRANSCRIPTION_SERVER=http://gpu-host:9876</code></pre>
+        </div>
+
+        <div class="feature" id="transcripts-to-knowledge">
+          <h3>Transcripts land in your knowledge base</h3>
+          <p class="one-liner">Saved transcripts are embedded, project-scoped, and reachable from every chat.</p>
+          <video src="./2026-05-29-transcription/shorts/slice-3-knowledge-and-chat.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>A finished transcript isn't a dead file — it becomes a knowledge item like any other: embedded for retrieval, scoped to the right project, and citable by agents in chat from the moment it's saved.</p>
+          <div class="benefit"><strong>Why it matters:</strong> "what did we decide in the March vendor call?" becomes a question any employee can ask an agent — institutional memory stops depending on whoever took notes.</div>
+        </div>
+      </section>
+
+      <!-- ============================================================ May 2026 · Platform -->
+      <section class="release" id="r-2026-05-29p">
+        <div class="release-head">
+          <h2>Spring platform release</h2>
+          <span class="release-date">2026-05-29</span>
+        </div>
+        <p class="release-summary">Five shipped: a workspace inside every chat, smart follow-ups, a configurable model gateway, single-zip skill distribution, and GDPR endpoints for super-admins.</p>
+
+        <div class="feature" id="session-files">
+          <h3>Session files panel</h3>
+          <p class="one-liner">Every chat is a workspace — every file the agent touches, visible and previewable.</p>
+          <video src="./2026-05-29-spring-platform-release/shorts/01-session-files-panel.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>A sidebar in every chat lists everything the session has produced or received — agent-written files, your uploads, bash artifacts — with inline preview for text, code, images, PDFs and Office documents. Uploads sync into the agent's live sandbox, so its next turn can use them immediately.</p>
+          <p>Scope is explicit: a persistent notice confirms session files never leak into other sessions, projects, or knowledge bases.</p>
+          <div class="benefit"><strong>Why it matters:</strong> what your agents read and produced is no longer a black box — every artifact is inspectable, which is exactly what risk and audit teams ask for first.</div>
+        </div>
+
+        <div class="feature" id="followups">
+          <h3>Follow-up suggestions</h3>
+          <p class="one-liner">Three suggested next prompts after every answer — opt-in per agent.</p>
+          <video src="./2026-05-29-spring-platform-release/shorts/02-followup-suggestions.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Enable <code>suggestions_enabled</code> on an agent and the chat renders up to three short follow-up prompts after each reply. Clicking one fills the input — the user always presses send themselves. Suggestions count against the same rate limits and statistics as normal usage, and fail silently if anything goes wrong.</p>
+          <div class="benefit"><strong>Why it matters:</strong> the biggest adoption blocker is employees not knowing what to ask next. Suggested follow-ups turn hesitant first-time users into productive ones without any training effort.</div>
+        </div>
+
+        <div class="feature" id="litellm">
+          <h3>LiteLLM model gateway</h3>
+          <p class="one-liner">One config file for every model provider — budgets, rate limits and routing included.</p>
+          <video src="./2026-05-29-spring-platform-release/shorts/03-litellm-proxy.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Set <code>IMP_USE_LITELLM=true</code> and the platform boots LiteLLM as a supervised sidecar. Your whole model catalog — Anthropic, OpenAI, Vertex, on-prem — lives in one <code>config.yaml</code>, and every agent and chat picker sources from it. Rate limits, token budgets and cost tracking move into the gateway.</p>
+          <div class="benefit"><strong>Why it matters:</strong> central model governance — swap providers, enforce spend budgets and avoid vendor lock-in from a single file your platform team owns, with no per-agent reconfiguration.</div>
+          <div class="snippet-label">Enable</div>
+          <pre><code>IMP_USE_LITELLM=true
+LITELLM_MASTER_KEY=sk-…
+LITELLM_CONFIG_PATH=ee/python/.litellm/config.yaml  # default</code></pre>
+        </div>
+
+        <div class="feature" id="skill-upload">
+          <h3>Skill bundle upload</h3>
+          <p class="one-liner">Drop a <code>.zip</code>, get a skill — internal know-how distributed in one upload.</p>
+          <video src="./2026-05-29-spring-platform-release/shorts/04-skill-bundle-upload.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>The New Skill dialog accepts a zip bundle or a single <code>SKILL.md</code>. Archives are validated before anything is written — path traversal, oversized bundles and malformed structures are rejected with clear errors — and you land straight in the skill editor with every file wired up.</p>
+          <div class="benefit"><strong>Why it matters:</strong> the playbooks your best people write — report formats, analysis procedures, tone guides — become packaged capabilities any team can install, version and reuse.</div>
+        </div>
+
+        <div class="feature" id="gdpr">
+          <h3>GDPR export &amp; delete</h3>
+          <p class="one-liner">Article 15 and Article 17, answered in two HTTP calls.</p>
+          <video src="./2026-05-29-spring-platform-release/shorts/05-gdpr-export-delete.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>Super-admins get two routes: a data export that streams a ZIP of a user's complete footprint (account, sessions with messages, feedback, tracking — with auth material stripped), and a hard delete that erases the same footprint in a single transaction, then sweeps the user's S3 prefix. Self-deletion by a super-admin is blocked; deletion is final.</p>
+          <div class="benefit"><strong>Why it matters:</strong> data-subject requests drop from a multi-team engineering exercise to a single admin action — with an export that names DSGVO Art. 15 explicitly for your records.</div>
+          <div class="snippet-label">REST</div>
+          <pre><code># Export — DSGVO Art. 15
+curl -H "Authorization: Bearer $TOKEN" \
+     https://api.imp.com/users/42/data-export -o user-42-export.zip
+
+# Delete — DSGVO Art. 17
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+     https://api.imp.com/users/42</code></pre>
+        </div>
+      </section>
+
+      <!-- ============================================================ May 2026 · Voice -->
+      <section class="release" id="r-2026-05-24">
+        <div class="release-head">
+          <h2>Voice input</h2>
+          <span class="release-date">2026-05-24</span>
+        </div>
+        <p class="release-summary">Speak instead of type — speech-to-text next to the send button in every chat.</p>
+
+        <div class="feature" id="speech-to-text">
+          <h3>Speech-to-text in chat</h3>
+          <p class="one-liner">Record, review, send — dictation built into every conversation.</p>
+          <video src="./2026-05-24-speech-to-text/shorts/speech-to-text.mp4" autoplay loop muted playsinline preload="metadata"></video>
+          <p>A mic button next to the send button records up to ~25 minutes of audio, transcribes it through your own model gateway, and appends the text to the input. Nothing autosends — the user reviews the wording and presses send.</p>
+          <p>Whisper auto-detects the language, which matters for multilingual workforces; the button simply hides itself on deployments where transcription isn't enabled.</p>
+          <div class="benefit"><strong>Why it matters:</strong> faster input for field staff and people on the move, a real accessibility win — and because it runs through your own gateway, voice data follows the same governance as everything else.</div>
+          <div class="snippet-label">From the API</div>
+          <pre><code># POST a recording, get text back
+curl -X POST "$IMP_BACKEND/transcribe" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@recording.webm" -F "language=en"
+# → { "text": "What's the status of the Q4 launch?" }</code></pre>
+        </div>
+      </section>
+
+      <footer>
+        <span>Intelligence Management Platform · Releases 2026-05-24 → 2026-06-10</span>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    // Scroll-spy: highlight the nav item for the section in view.
+    const links = Array.from(document.querySelectorAll(".nav-group a.item"));
+    const byId = Object.fromEntries(links.map((l) => [l.getAttribute("href").slice(1), l]));
+    const spy = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            links.forEach((l) => l.classList.remove("active"));
+            byId[e.target.id]?.classList.add("active");
+          }
+        }
+      },
+      { rootMargin: "-20% 0px -60% 0px" }
+    );
+    document.querySelectorAll(".feature").forEach((s) => spy.observe(s));
+
+    // Only play videos while they're on screen (13 autoplaying videos otherwise).
+    const vids = document.querySelectorAll("video");
+    const player = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) e.target.play().catch(() => {});
+          else e.target.pause();
+        }
+      },
+      { rootMargin: "100px 0px" }
+    );
+    vids.forEach((v) => player.observe(v));
+  </script>
+</body>
+</html>
