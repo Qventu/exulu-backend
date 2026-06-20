@@ -77,66 +77,6 @@ export const requestValidators = {
       error: false,
     };
   },
-  embedders: (
-    req,
-    configuration?: Record<
-      string,
-      {
-        type: "string" | "number" | "query";
-        example: string;
-      }
-    >,
-  ): { error: boolean; message?: string; code?: number } => {
-    const contentType = req.headers["content-type"] || "";
-
-    if (!contentType.includes("application/json")) {
-      return {
-        error: true,
-        code: 400,
-        message: "Unsupported content type.",
-      };
-    }
-
-    if (!req.body) {
-      return {
-        error: true,
-        code: 400,
-        message: "Missing body.",
-      };
-    }
-
-    if (!req.body.inputs) {
-      return {
-        error: true,
-        code: 400,
-        message: "Missing inputs.",
-      };
-    }
-
-    if (!req.body.label) {
-      return {
-        error: true,
-        code: 400,
-        message: "Missing label for job in body.",
-      };
-    }
-
-    if (configuration) {
-      for (const key in configuration) {
-        if (!req.body.configuration[key]) {
-          return {
-            error: true,
-            code: 400,
-            message: `Missing ${key} in body.configuration.`,
-          };
-        }
-      }
-    }
-
-    return {
-      error: false,
-    };
-  },
   agents: (req): { error: boolean; message?: string; code?: number } => {
     const contentType = req.headers["content-type"] || "";
     if (!contentType.includes("application/json")) {

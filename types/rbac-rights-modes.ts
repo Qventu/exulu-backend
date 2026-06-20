@@ -1,1 +1,1 @@
-export type ExuluRightsMode = "private" | "users" | "roles" | "public"; /*  | "projects" */
+export type ExuluRightsMode = "private" | "users" | "roles" | "teams" | "public"; /*  | "projects" */

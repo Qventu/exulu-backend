@@ -14,17 +14,41 @@ import { checkLicense } from '@EE/entitlements';
 import { executePythonScript } from '@SRC/utils/python-executor';
 import { setupPythonEnvironment, validatePythonEnvironment } from '@SRC/utils/python-setup';
 import { LiteParse } from '@llamaindex/liteparse';
-import { Mistral } from '@mistralai/mistralai';
-import { ExuluVariables } from '@SRC/index';
+import { resolveOcr } from '@SRC/exulu/resolve-ocr';
+import type { ResolveOcrInput } from '@SRC/exulu/resolve-ocr';
+import { resolveModel } from '@SRC/exulu/resolve-model';
 
 type DocumentProcessorConfig = {
   vlm?: {
-    model: LanguageModel;
+    /**
+     * LiteLLM model_name for the VLM page-validation pass (declared in
+     * config.litellm.yaml, e.g. "vertex-gemini-2.5-flash"). Resolved via
+     * resolveModel() so the VLM pass shares the same tag-based cost controls
+     * and provider-switching as chat / embeddings / OCR, and the underlying
+     * provider can be swapped without code changes.
+     */
+    model: string;
     concurrency: number;
   },
   processor: {
     name: "docling" | "liteparse" | "mistral" | "officeparser"
+    /**
+     * LiteLLM model_name for the "mistral" OCR processor (declared in
+     * config.litellm.yaml). Defaults to "mistral-ocr". OCR is routed through
+     * the LiteLLM proxy so it shares the same tag-based cost controls as chat
+     * and embeddings, and the underlying provider (mistral / azure_ai /
+     * vertex_ai) can be switched without code changes.
+     */
+    model?: string
   }
+  /**
+   * Optional cost-attribution context, forwarded to LiteLLM as spend tags
+   * (user / role / project / context) for both the OCR pass (resolveOcr) and
+   * the VLM page-validation pass (resolveModel). Not yet populated by callers;
+   * the wiring is in place so per-user/per-context budgets work the moment
+   * attribution is threaded through.
+   */
+  attribution?: Omit<ResolveOcrInput, "model">
   debugging?: {
     deleteTempFiles?: boolean;
   }
@@ -95,6 +119,38 @@ async function processWord(file: Buffer): Promise<ProcessorOutput> {
 }
 
 /**
+ * Resolve the dev-supplied VLM `model` string (a LiteLLM model_name from
+ * config.litellm.yaml, e.g. "vertex-gemini-2.5-flash") into an `ai` SDK
+ * LanguageModel via resolveModel. This routes the VLM page-validation pass
+ * through the LiteLLM proxy — same tag-based cost controls and provider
+ * switching as chat / embeddings / OCR — and keeps the internal VLM helpers
+ * (validateWithVLM / validatePageWithVLM) working with a LanguageModel.
+ *
+ * Returns undefined when no VLM model is configured. Attribution (user /
+ * project / agent / routine) is forwarded for spend tagging when callers
+ * populate config.attribution; rbacBypass is set because this is a background
+ * package call where model-level access control is delegated to LiteLLM.
+ */
+async function resolveVlmModel(
+  config?: DocumentProcessorConfig,
+): Promise<LanguageModel | undefined> {
+  const modelId = config?.vlm?.model;
+  if (!modelId) return undefined;
+
+  const { languageModel } = await resolveModel({
+    modelId,
+    providers: [], // unused in LiteLLM mode; resolveModel ignores it there
+    user: config?.attribution?.user,
+    project: config?.attribution?.project,
+    agent: config?.attribution?.agent,
+    routine: config?.attribution?.routine,
+    rbacBypass: true,
+  });
+
+  return languageModel;
+}
+
+/**
  * Processes a standalone image file by optionally extracting content using VLM
  */
 async function processImage(
@@ -122,14 +178,15 @@ async function processImage(
     }];
 
     // If VLM is enabled, use it to extract content from the image
-    if (config?.vlm?.model) {
+    const vlmModel = await resolveVlmModel(config);
+    if (vlmModel) {
       console.log('[EXULU] Extracting content from image using VLM...');
 
       json = await validateWithVLM(
         json,
-        config.vlm.model,
+        vlmModel,
         verbose,
-        config.vlm.concurrency
+        config!.vlm!.concurrency
       );
 
       // Save the processed result
@@ -679,15 +736,6 @@ async function processDocument(
   };
 }
 
-const getMistralApiKey = async () => {
-  if (process.env.MISTRAL_API_KEY) {
-    return process.env.MISTRAL_API_KEY;
-  } else {
-    const variable = await ExuluVariables.get("MISTRAL_API_KEY");
-    return variable;
-  }
-}
-
 async function processPdf(
   buffer: Buffer,
   paths: ProcessingPaths,
@@ -759,28 +807,25 @@ async function processPdf(
 
     } else if (config?.processor.name === "mistral") {
 
-      const MISTRAL_API_KEY = await getMistralApiKey();
-      if (!MISTRAL_API_KEY) {
-        throw new Error('[EXULU] MISTRAL_API_KEY is not set, please set it in the environment variable via process.env or via an Exulu variable named "MISTRAL_API_KEY".');
-      }
+      // OCR is routed through the LiteLLM proxy's Mistral-compatible /v1/ocr
+      // endpoint (see resolveOcr) rather than the Mistral SDK directly. This
+      // gives us tag-based cost control and lets us switch the OCR provider
+      // (mistral / azure_ai / vertex_ai) from config.litellm.yaml.
+      const resolved = await resolveOcr({
+        model: config.processor.model ?? "mistral-ocr",
+        ...config.attribution,
+      });
 
       // Wait a randomn time between 1 and 5 seconds to prevent rate limiting
       await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 4000) + 1000));
 
       const base64Pdf = buffer.toString('base64');
-      const client = new Mistral({ apiKey: MISTRAL_API_KEY });
 
       const ocrResponse = await withRetry(async () => {
-        type MistralOCRResponse = Awaited<ReturnType<typeof client.ocr.process>>;
-        const ocrResponse: MistralOCRResponse = await client.ocr.process({
-          document: {
-            type: "document_url",
-            documentUrl: "data:application/pdf;base64," + base64Pdf
-          },
-          model: "mistral-ocr-latest",
-          includeImageBase64: false
-        });
-        return ocrResponse;
+        return await resolved.ocr({
+          type: "document_url",
+          document_url: "data:application/pdf;base64," + base64Pdf,
+        }, { includeImageBase64: false });
       }, 10);
 
       const parser = new LiteParse();
@@ -838,13 +883,14 @@ async function processPdf(
     }
 
     // Apply VLM validation if enabled
-    if (config?.vlm?.model && json.length > 0) {
+    const vlmModel = config?.vlm?.model ? await resolveVlmModel(config) : undefined;
+    if (vlmModel && json.length > 0) {
 
       json = await validateWithVLM(
         json,
-        config.vlm.model,
+        vlmModel,
         verbose,
-        config.vlm.concurrency
+        config!.vlm!.concurrency
       );
 
       console.log('[EXULU] \n📊 Processing Summary:');
@@ -1046,7 +1092,6 @@ export async function documentProcessor({
   } catch (error) {
     console.error('Error during chunking:', error);
     throw error;
-
   } finally {
     if (config?.debugging?.deleteTempFiles !== false) {
       // Delete the temp directory using the local array to avoid race conditions

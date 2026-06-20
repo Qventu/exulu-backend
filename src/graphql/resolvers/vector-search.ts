@@ -11,6 +11,7 @@ import { convertContextToTableDefinition } from "../utilities/convert-context-to
 import type { User } from "@EXULU_TYPES/models/user";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "@SRC/exulu/statistics";
+import { resolveEmbedder } from "@SRC/exulu/resolve-embedder";
 import {
   applyEntityFilter,
   buildEntityInsights,
@@ -230,21 +231,30 @@ export const vectorSearch = async ({
       query = stemmedQuery;
     }
 
-    const result = await embedder.generateFromQuery(
-      context.id,
-      query,
-      {
-        label: table.name.singular,
-        trigger,
-      },
-      user?.id,
+    await updateStatistic({
+      name: "count",
+      label: table.name.singular,
+      type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
+      trigger,
+      count: 1,
+      user: user?.id,
       role,
-    );
+    });
 
-    if (!result?.chunks?.[0]?.vector) {
+    const resolved = await resolveEmbedder({
+      model: embedder.model,
+      contextId: context.id,
+      contextName: context.name,
+      user,
+      roleId: role,
+    });
+
+    const [queryVector] = await resolved.embed([query], { inputType: "query" });
+
+    if (!queryVector?.length) {
       throw new Error("No vector generated for query.");
     }
-    vector = result.chunks[0].vector;
+    vector = queryVector;
     vectorStr = `ARRAY[${vector.join(",")}]`;
     vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
   }
@@ -573,7 +583,7 @@ export const vectorSearch = async ({
   if (entitiesOn && rawQuery) {
     try {
       const types = await hydrateEntityTypes(context);
-      const queryMentions = await extractEntitiesForItem({
+      const { mentions: queryMentions } = await extractEntitiesForItem({
         context,
         chunks: [{ index: 0, content: rawQuery }],
         types,
@@ -636,8 +646,6 @@ export const vectorSearch = async ({
           (_, i) => chunk.chunk_index - expand.before! + i,
         ).filter((index) => index >= 0); // Only fetch non-negative indices
 
-        console.log("[EXULU] Indices to fetch:", indicesToFetch);
-
         await Promise.all(
           indicesToFetch.map(async (index) => {
             if (expandedMap.has(`${chunk.item_id}-${index}`)) {
@@ -686,8 +694,6 @@ export const vectorSearch = async ({
           { length: expand.after },
           (_, i) => chunk.chunk_index + i + 1,
         );
-
-        console.log("[EXULU] Indices to fetch:", indicesToFetch);
 
         await Promise.all(
           indicesToFetch.map(async (index) => {
@@ -779,7 +785,7 @@ export const vectorSearch = async ({
     context: {
       name: table.name.singular,
       id: table.id || "",
-      embedder: embedder.name,
+      embedder: embedder.model,
     },
     chunks: results,
     entityInsights,

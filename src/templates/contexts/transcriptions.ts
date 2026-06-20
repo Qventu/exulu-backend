@@ -19,7 +19,10 @@ export const transcriptionsContext = new ExuluContext({
     { name: "duration_seconds", type: "number" },
     { name: "speakers", type: "json" },
     { name: "raw_segments", type: "json", editable: false },
-
+    // Post-processing results carried from the transcription job at finalize:
+    // [{ prompt_id, agent_id, prompt_name, output, ran_at }]. Recall meeting
+    // transcripts only for now.
+    { name: "post_processing", type: "json", editable: false },
   ],
   sources: [],
   active: true,

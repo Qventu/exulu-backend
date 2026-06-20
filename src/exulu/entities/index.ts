@@ -1,7 +1,11 @@
 import { postgresClient } from "@SRC/postgres/client";
 import { getChunksTableName } from "../context";
 import type { ExuluContext } from "../context";
-import { entitiesEnabled, hydrateEntityTypes } from "./config";
+import {
+  entitiesEnabled,
+  hydrateEntityTypes,
+  upsertEntitySuggestions,
+} from "./config";
 import { extractEntitiesForItem } from "./extractor";
 import { computeTypesSignature } from "./normalize";
 import {
@@ -61,10 +65,10 @@ export const extractAndIngestEntities = async ({
   context: ExuluContext;
   itemId: string;
   previousEntityIds?: string[];
-}): Promise<void> => {
+}): Promise<number> => {
   try {
     const types = await hydrateEntityTypes(context);
-    if (!types.length || !context.embedder) return;
+    if (!types.length || !context.embedder) return 0;
 
     await ensureEntityTables(context);
 
@@ -78,18 +82,30 @@ export const extractAndIngestEntities = async ({
       .map((c: any) => ({ index: Number(c.chunk_index), content: c.content as string }))
       .filter((c) => c.content);
 
-    const mentions = await extractEntitiesForItem({ context, chunks, types });
+    const { mentions, suggestions } = await extractEntitiesForItem({
+      context,
+      chunks,
+      types,
+    });
     const signature = computeTypesSignature(types);
 
     await ingestEntitiesForItem({ context, itemId, mentions, signature, previousEntityIds });
 
+    // Persist any newly-proposed types as "suggested" (best-effort; never
+    // blocks ingestion).
+    if (suggestions.length) {
+      await upsertEntitySuggestions(context, suggestions);
+    }
+
     console.log(
       `[EXULU] Entity ingestion complete for item ${itemId} in context ${context.id}: ${mentions.length} mentions.`,
     );
+    return mentions.length;
   } catch (err) {
     console.error(
       `[EXULU] Entity ingestion failed for item ${itemId} in context ${context.id} (non-fatal):`,
       (err as Error).message,
     );
+    return 0;
   }
 };

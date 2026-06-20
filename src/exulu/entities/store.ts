@@ -109,6 +109,41 @@ export const getEntityIdsForItem = async (
 };
 
 /**
+ * The resolved entities linked to a single item (for the item detail page),
+ * with the per-item mention count, ordered by type then name. Empty when the
+ * entity layer isn't set up yet.
+ */
+export const getEntitiesForItem = async (
+  context: ExuluContext,
+  itemId: string,
+): Promise<{ id: string; type: string; name: string; mentions: number }[]> => {
+  if (!(await chunkEntitiesTableExists(context))) return [];
+  const { db } = await postgresClient();
+  const junctionTable = getChunkEntitiesTableName(context.id);
+  const entitiesTable = getEntitiesTableName(context.id);
+  const rows = await db(`${junctionTable} as j`)
+    .join(`${entitiesTable} as e`, "e.id", "j.entity_id")
+    .where("j.item_id", itemId)
+    .groupBy("e.id", "e.type", "e.display_name")
+    .select(
+      "e.id as id",
+      "e.type as type",
+      "e.display_name as name",
+      db.raw("COUNT(*)::int as mentions"),
+    )
+    .orderBy([
+      { column: "e.type", order: "asc" },
+      { column: "e.display_name", order: "asc" },
+    ]);
+  return rows.map((r: any) => ({
+    id: r.id,
+    type: r.type,
+    name: r.name,
+    mentions: Number(r.mentions) || 0,
+  }));
+};
+
+/**
  * Persist extracted mentions for one item: upsert canonical entities, rebuild
  * the item's junction rows, recompute affected counters, and stamp the item's
  * staleness signature — all in a single transaction.
@@ -230,6 +265,58 @@ export const ingestEntitiesForItem = async ({
         entity_types_signature: signature,
       });
   });
+};
+
+/**
+ * Detach ALL entities from a single item: drop the item's junction rows,
+ * recompute the affected entities' counters, and delete any that are now
+ * orphaned (no remaining mentions anywhere). Clears the item's entity
+ * signature so a later extraction re-runs cleanly. Returns the number of
+ * distinct entities that were detached from the item.
+ */
+export const detachEntitiesForItem = async (
+  context: ExuluContext,
+  itemId: string,
+): Promise<number> => {
+  if (!(await chunkEntitiesTableExists(context))) return 0;
+  const { db } = await postgresClient();
+  const entitiesTable = getEntitiesTableName(context.id);
+  const junctionTable = getChunkEntitiesTableName(context.id);
+  const itemsTable = getTableName(context.id);
+
+  let detached = 0;
+  await db.transaction(async (trx) => {
+    const affected = (
+      await trx(junctionTable).where({ item_id: itemId }).distinct("entity_id")
+    ).map((r: any) => r.entity_id);
+    detached = affected.length;
+    if (!affected.length) return;
+
+    await trx(junctionTable).where({ item_id: itemId }).delete();
+
+    // Recompute counters for the affected entities from their remaining links.
+    await trx(entitiesTable).whereIn("id", affected).update({ mention_count: 0, doc_count: 0 });
+    const placeholders = affected.map(() => "?").join(",");
+    await trx.raw(
+      `UPDATE ${entitiesTable} e
+       SET mention_count = sub.mc, doc_count = sub.dc
+       FROM (
+         SELECT entity_id, COUNT(*)::int AS mc, COUNT(DISTINCT item_id)::int AS dc
+         FROM ${junctionTable}
+         WHERE entity_id IN (${placeholders})
+         GROUP BY entity_id
+       ) sub
+       WHERE e.id = sub.entity_id`,
+      affected,
+    );
+    // Entities with no remaining mentions anywhere are orphans — remove them.
+    await trx(entitiesTable).whereIn("id", affected).where({ mention_count: 0 }).delete();
+
+    await trx(itemsTable)
+      .where({ id: itemId })
+      .update({ entities_updated_at: new Date().toISOString(), entity_types_signature: null });
+  });
+  return detached;
 };
 
 // ───────────────────────── retrieval helpers ─────────────────────────

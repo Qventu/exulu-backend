@@ -26,7 +26,6 @@ import { postgresClient } from "@SRC/postgres/client";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
-import type { ExuluReranker } from "./reranker.ts";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
@@ -150,7 +149,6 @@ export class ExuluProvider {
     instance: string,
     providers: ExuluProvider[],
     contexts: ExuluContext[],
-    rerankers: ExuluReranker[],
   ): Promise<ExuluTool | null> => {
 
     const agent = await exuluApp.get().agent(instance);
@@ -191,7 +189,6 @@ export class ExuluProvider {
           agent,
           allExuluTools,
           contexts,
-          rerankers,
           [],
           providers,
           user,
@@ -234,7 +231,6 @@ export class ExuluProvider {
         const response = await this.generateSync({
           agent: agent,
           contexts: contexts,
-          rerankers: rerankers,
           instructions: agent.instructions,
           prompt:
             "The user has asked the following question: " +
@@ -284,7 +280,6 @@ export class ExuluProvider {
     providerapikey,
     languageModel,
     contexts,
-    rerankers,
     exuluConfig,
     agent,
     instructions,
@@ -307,7 +302,6 @@ export class ExuluProvider {
     providerapikey?: string | undefined;
     languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
-    rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
     instructions?: string;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
@@ -545,7 +539,6 @@ export class ExuluProvider {
           toolConfigs,
           providerapikey,
           contexts,
-          rerankers,
           user,
           exuluConfig,
           session,
@@ -633,7 +626,6 @@ export class ExuluProvider {
           toolConfigs,
           providerapikey,
           contexts,
-          rerankers,
           user,
           exuluConfig,
           session,
@@ -804,7 +796,6 @@ export class ExuluProvider {
     providerapikey,
     languageModel,
     contexts,
-    rerankers,
     exuluConfig,
     instructions,
     req,
@@ -824,7 +815,6 @@ export class ExuluProvider {
     providerapikey?: string | undefined;
     languageModel: LanguageModel;
     contexts?: ExuluContext[] | undefined;
-    rerankers?: ExuluReranker[] | undefined;
     exuluConfig?: ExuluConfig;
     instructions?: string;
     req?: Request;
@@ -1100,7 +1090,6 @@ ${skillsList}
       toolConfigs,
       providerapikey,
       contexts,
-      rerankers,
       user,
       exuluConfig,
       session,

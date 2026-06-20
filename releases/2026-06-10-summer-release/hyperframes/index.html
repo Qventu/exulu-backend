@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+      }
+      body {
+        font-family: "Inter", sans-serif;
+      }
+      code,
+      pre,
+      .monospace {
+        font-family: "JetBrains Mono", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="35" data-width="1920" data-height="1080">
+      <div
+        id="clip-oauth"
+        class="clip"
+        data-composition-id="oauth-tools"
+        data-composition-src="compositions/oauth-tools.html"
+        data-start="0"
+        data-duration="9"
+        data-track-index="1"
+      ></div>
+      <div
+        id="clip-image-widget"
+        class="clip"
+        data-composition-id="image-widget"
+        data-composition-src="compositions/image-widget.html"
+        data-start="9"
+        data-duration="9"
+        data-track-index="1"
+      ></div>
+      <div
+        id="clip-personal-prompt"
+        class="clip"
+        data-composition-id="personal-prompt"
+        data-composition-src="compositions/personal-prompt.html"
+        data-start="18"
+        data-duration="8"
+        data-track-index="1"
+      ></div>
+      <div
+        id="clip-teams"
+        class="clip"
+        data-composition-id="teams"
+        data-composition-src="compositions/teams.html"
+        data-start="26"
+        data-duration="9"
+        data-track-index="1"
+      ></div>
+
+      <script>
+        window.__timelines = window.__timelines || {};
+        window.__timelines["main"] = gsap.timeline({ paused: true });
+      </script>
+    </div>
+  </body>
+</html>

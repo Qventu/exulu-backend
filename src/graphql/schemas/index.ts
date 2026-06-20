@@ -3,7 +3,8 @@ import { mapExuluFieldTypesToGraphqlTypes } from "@SRC/graphql/utilities/map-typ
 import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from "graphql-type-json";
 import cron from "cron-validator";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
+import { parseRerankerModels } from "@SRC/exulu/litellm/parse-reranker-models";
+import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-models";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
@@ -39,6 +40,8 @@ import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
+import { recallService } from "@SRC/exulu/recall/service";
+import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -234,7 +237,6 @@ export function createSDL(
   tools: ExuluTool[],
   config: ExuluConfig,
   evals: ExuluEval[],
-  rerankers: ExuluReranker[],
 ) {
   const contextSchemas: ExuluTableDefinition[] = contexts.map((context) =>
     convertContextToTableDefinition(context),
@@ -269,7 +271,7 @@ export function createSDL(
       type: String!
       users: [RBACUser!]
       roles: [RBACRole!]
-
+      teams: [RBACTeam!]
     }
 
     type RBACUser {
@@ -282,9 +284,15 @@ export function createSDL(
       rights: String!
     }
 
+    type RBACTeam {
+      id: ID!
+      rights: String!
+    }
+
     input RBACInput {
       users: [RBACUserInput!]
       roles: [RBACRoleInput!]
+      teams: [RBACTeamInput!]
     }
 
     input RBACUserInput {
@@ -293,6 +301,11 @@ export function createSDL(
     }
 
     input RBACRoleInput {
+      id: ID!
+      rights: String!
+    }
+
+    input RBACTeamInput {
       id: ID!
       rights: String!
     }
@@ -340,6 +353,8 @@ export function createSDL(
       ${tableNamePlural}VectorSearch(limit: Int, query: String!, method: VectorMethodEnum!, itemFilters: [Filter${tableNameSingularUpperCaseFirst}], cutoffs: SearchCutoffs, expand: SearchExpand, entityFilter: ${tableNameSingular}EntityFilterInput): ${tableNameSingular}VectorSearchResult
       ${tableNameSingular}ChunkById(id: ID!): ${tableNameSingular}VectorSearchChunk
       ${tableNameSingular}StaleEntityCount: Int
+      ${tableNameSingular}EntityModel: ${tableNameSingular}EntityModelInfo
+      ${tableNameSingular}EntitiesForItem(item: ID!): [${tableNameSingular}ItemEntity!]
     `;
     }
     // todo add the fields of each table as filter options
@@ -360,6 +375,9 @@ export function createSDL(
     ${tableNameSingular}DeleteChunks(where: [Filter${tableNameSingularUpperCaseFirst}], limit: Int): ${tableNameSingular}DeleteChunksReturnPayload
     ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
     ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
+    ${tableNameSingular}SetEntityModel(model: String): ${tableNameSingular}EntityModelInfo
+    ${tableNameSingular}ExtractEntities(item: ID!): ${tableNameSingular}EntityExtractPayload
+    ${tableNameSingular}DetachEntities(item: ID!): ${tableNameSingular}EntityDetachPayload
     `;
 
       if (table.processor) {
@@ -492,6 +510,28 @@ export function createSDL(
         removed: Int!
     }
 
+    type ${tableNameSingular}EntityModelInfo {
+        effectiveModel: String
+        source: String
+        databaseModel: String
+        codeModel: String
+    }
+
+    type ${tableNameSingular}EntityExtractPayload {
+        extracted: Int!
+    }
+
+    type ${tableNameSingular}EntityDetachPayload {
+        detached: Int!
+    }
+
+    type ${tableNameSingular}ItemEntity {
+        id: ID!
+        type: String!
+        name: String!
+        mentions: Int!
+    }
+
 `;
     }
 
@@ -515,10 +555,10 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-    Object.assign(resolvers.Query, createQueries(table, providers, tools, contexts, rerankers));
+    Object.assign(resolvers.Query, createQueries(table, providers, tools, contexts));
     Object.assign(
       resolvers.Mutation,
-      createMutations(table, providers, contexts, rerankers, tools, config),
+      createMutations(table, providers, contexts, tools, config),
     );
 
     // Add RBAC resolver if enabled
@@ -574,6 +614,10 @@ type PageInfo {
     getUniquePromptTags: [String!]!
     `;
 
+  typeDefs += `
+    getUniqueSkillTags: [String!]!
+    `;
+
   mutationDefs += `
     runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
     `;
@@ -610,6 +654,8 @@ type PageInfo {
     transcriptionJobStart(input: TranscriptionJobStartInput!): transcription_job
     transcriptionJobFinalize(id: ID!, input: TranscriptionJobFinalizeInput!): TranscriptionJobFinalizeResult
     transcriptionJobCancel(id: ID!): transcription_job
+    meetingBotStart(input: MeetingBotStartInput!): transcription_job
+    runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
     `;
 
   modelDefs += `
@@ -639,6 +685,33 @@ type PageInfo {
       job: transcription_job!
       item_id: ID!
     }
+
+    input MeetingBotStartInput {
+      meeting_url: String!
+      join_at: String
+      language: String
+      title: String
+      bot_name: String
+      notify_chat: Boolean
+      project_id: ID
+      target_rights_mode: String
+      target_rbac_users: [RBACUserInput!]
+      target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
+    }
+
+    input PostProcessingPromptInput {
+      prompt_id: ID!
+      agent_id: ID!
+    }
+
+    type MeetingRecordingUsage {
+      enabled: Boolean!
+      used_seconds: Float!
+      limit_seconds: Float
+      percent: Float
+      exceeded: Boolean!
+    }
   `;
 
   typeDefs += `
@@ -648,6 +721,10 @@ type PageInfo {
 
   typeDefs += `
    jobs(queue: QueueEnum!, statusses: [JobStateEnum!], page: Int, limit: Int): JobPaginationResult
+    `;
+
+  typeDefs += `
+   meetingRecordingUsage: MeetingRecordingUsage
     `;
 
   modelDefs += `
@@ -1103,7 +1180,6 @@ type LiteLLMModel {
                 provider,
                 inputMessages,
                 contexts,
-                rerankers,
                 user,
                 tools,
                 config,
@@ -1452,6 +1528,40 @@ type LiteLLMModel {
     return transcriptionService.cancelJob(args.id);
   };
 
+  resolvers.Mutation["meetingBotStart"] = async (_, args, context) => {
+    const { user } = context;
+    if (!user) throw new Error("Authentication required");
+    if (!recallEnabled()) {
+      throw new Error(`RECALL_DISABLED: ${RECALL_NOT_CONFIGURED_MESSAGE}`);
+    }
+    return recallService.createMeetingBot({
+      userId: user.id,
+      meeting_url: args.input.meeting_url,
+      join_at: args.input.join_at ?? null,
+      language: args.input.language ?? null,
+      title: args.input.title ?? null,
+      bot_name: args.input.bot_name ?? null,
+      notify_chat: args.input.notify_chat ?? false,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? undefined,
+      target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      post_processing_prompts: args.input.post_processing_prompts ?? undefined,
+    });
+  };
+
+  resolvers.Mutation["runTranscriptPostProcessing"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    await recallService.runOnePostProcessing(args.id, args.prompt_id, args.agent_id);
+    const { db } = context;
+    return db.from("transcription_jobs").where({ id: args.id }).first();
+  };
+
+  resolvers.Query["meetingRecordingUsage"] = async (_, __, context) => {
+    if (!context.user) throw new Error("Authentication required");
+    return recallService.getUsage();
+  };
+
   resolvers.Query["evals"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     return {
@@ -1513,11 +1623,17 @@ type LiteLLMModel {
 
   resolvers.Query["rerankers"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
+    const models = parseRerankerModels(resolveLiteLLMConfigPath());
     return {
-      items: rerankers.map((reranker: ExuluReranker) => {
-        const object = {};
+      items: models.map((m) => {
+        const full: Record<string, any> = {
+          id: m.model_name,
+          name: m.model_name,
+          description: m.description ?? "",
+        };
+        const object: Record<string, any> = {};
         requestedFields.forEach((field) => {
-          object[field] = reranker[field];
+          object[field] = full[field];
         });
         return object;
       }),
@@ -1632,9 +1748,7 @@ type LiteLLMModel {
           description: context.description,
           embedder: context.embedder
             ? {
-              name: context.embedder.name,
-              id: context.embedder.id,
-              config: context.embedder?.config || undefined,
+              model: context.embedder.model,
             }
             : undefined,
           slug: "/contexts/" + context.id,
@@ -1745,9 +1859,7 @@ type LiteLLMModel {
       description: data.description,
       embedder: data.embedder
         ? {
-          name: data.embedder.name,
-          id: data.embedder.id,
-          config: data.embedder?.config || undefined,
+          model: data.embedder.model,
           queue: embedderQueue?.queue.name || undefined,
         }
         : undefined,
@@ -1798,7 +1910,7 @@ type LiteLLMModel {
         if (!provider) {
           return null;
         }
-        return await provider.tool(agent.id, providers, contexts, rerankers);
+        return await provider.tool(agent.id, providers, contexts);
       }),
     );
 
@@ -1810,7 +1922,6 @@ type LiteLLMModel {
     if (contexts?.length) {
       agenticRetrievalTool = createAgenticRetrievalToolV3({
         contexts: contexts,
-        rerankers: rerankers,
         user: context.user,
         role: context.user?.role?.id,
         model: undefined, // irrelevant at this point as we only retrieve the tool information here, not execute it
@@ -1878,6 +1989,52 @@ type LiteLLMModel {
     // Build query with access control
     let query = db.from("prompt_library").select("tags");
     query = applyAccessControl(promptTable, query, user);
+
+    const results = await query;
+
+    // Extract and flatten all tags
+    const allTags: string[] = [];
+    for (const row of results) {
+      if (row.tags) {
+        let tags: string[] = [];
+        // Handle both JSON string and array formats
+        if (typeof row.tags === "string") {
+          try {
+            tags = JSON.parse(row.tags);
+          } catch {
+            // If it's not valid JSON, treat it as a single tag
+            tags = [row.tags];
+          }
+        } else if (Array.isArray(row.tags)) {
+          tags = row.tags;
+        }
+
+        // Add valid tags to the collection
+        tags.forEach((tag) => {
+          if (tag && typeof tag === "string" && tag.trim()) {
+            allTags.push(tag.trim().toLowerCase());
+          }
+        });
+      }
+    }
+
+    // Return unique tags, sorted alphabetically
+    return [...new Set(allTags)].sort();
+  };
+
+  resolvers.Query["getUniqueSkillTags"] = async (_, args, context, info) => {
+    const { db } = context;
+    const user = context.user;
+
+    // Find the skills table definition to apply access control
+    const skillTable = tables.find((t) => t.name.plural === "skills");
+    if (!skillTable) {
+      throw new Error("Skills table not found");
+    }
+
+    // Build query with access control
+    let query = db.from("skills").select("tags");
+    query = applyAccessControl(skillTable, query, user);
 
     const results = await query;
 
@@ -2088,15 +2245,8 @@ type Reranker {
     description: String
 }
 type Embedder {
-    name: String!
-    id: ID!
-    config: [EmbedderConfig!]
+    model: String!
     queue: String
-}
-type EmbedderConfig {
-    name: String!
-    description: String
-    default: String
 }
 type ContextProcessor {
     name: String!

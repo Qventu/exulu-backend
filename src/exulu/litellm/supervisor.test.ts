@@ -22,6 +22,7 @@ const mockFetch = jest.fn();
 import {
   isLiteLLMEnabled,
   startLiteLLMSupervisor,
+  enableLiteLLMClientMode,
   waitForLiteLLMReady,
   getSupervisorState,
   __resetSupervisorForTesting,
@@ -211,5 +212,79 @@ describe("waitForLiteLLMReady", () => {
     process.env.EXULU_USE_LITELLM = "true";
     process.env.LITELLM_MASTER_KEY = "sk-test";
     await expect(waitForLiteLLMReady()).rejects.toThrow(/package root not set/);
+  });
+});
+
+describe("enableLiteLLMClientMode", () => {
+  test("client mode connects to an external proxy via health probe — never spawns", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    // Note: no LITELLM_MASTER_KEY / package root needed in client mode.
+    mockFetch.mockResolvedValue({ ok: true });
+
+    enableLiteLLMClientMode();
+    await waitForLiteLLMReady();
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:4000/health/liveliness",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(getSupervisorState()).toBe("ready");
+  });
+
+  test("client mode probes LITELLM_HOST / LITELLM_PORT overrides", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_HOST = "litellm.internal";
+    process.env.LITELLM_PORT = "5555";
+    mockFetch.mockResolvedValue({ ok: true });
+
+    enableLiteLLMClientMode();
+    await waitForLiteLLMReady();
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://litellm.internal:5555/health/liveliness",
+      expect.objectContaining({ method: "GET" }),
+    );
+    delete process.env.LITELLM_HOST;
+    delete process.env.LITELLM_PORT;
+  });
+
+  test("client mode is self-healing: re-probes until the proxy answers, then caches ready", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    // First wait: proxy not up yet (fetch rejects → probe fails fast).
+    mockFetch.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+    enableLiteLLMClientMode();
+    await expect(waitForLiteLLMReady()).rejects.toThrow(/not reachable/);
+    expect(getSupervisorState()).not.toBe("ready");
+
+    // Proxy comes up; a later call re-probes, resolves, and caches readiness.
+    mockFetch.mockResolvedValue({ ok: true });
+    await waitForLiteLLMReady();
+    expect(getSupervisorState()).toBe("ready");
+
+    // Cached: no further probes once ready.
+    mockFetch.mockClear();
+    await waitForLiteLLMReady();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test("no-op when this process already supervises its own proxy", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+    mockExistsSync.mockReturnValue(true);
+    const child = new FakeChild();
+    mockSpawn.mockReturnValue(child);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await startLiteLLMSupervisor({ packageRoot: "/fake/exulu" });
+    // A combined server+worker process: enabling client mode must not override
+    // the supervisor it already owns.
+    enableLiteLLMClientMode();
+    mockFetch.mockClear();
+    await waitForLiteLLMReady();
+    // Still ready via the supervisor; no fresh client probe.
+    expect(getSupervisorState()).toBe("ready");
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@ import { generateText, stepCountIs, tool } from "ai";
 import type { LanguageModel, Tool as AITool, ModelMessage } from "ai";
 import { z } from "zod";
 import { withRetry } from "@SRC/utils/with-retry";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
+import type { ResolvedReranker } from "@SRC/exulu/resolve-reranker";
 import type { AgenticRetrievalOutput, ChunkResult, ClassificationResult } from "./types";
 import type { StrategyConfig } from "./strategies";
 import { createDynamicTools } from "./dynamic-tools";
@@ -69,7 +69,7 @@ export async function* runAgentLoop(params: {
   strategy: StrategyConfig;
   tools: Record<string, AITool>;
   model: LanguageModel;
-  reranker?: ExuluReranker;
+  reranker?: ResolvedReranker;
   contextGuidance?: string;
   customInstructions?: string;
   classification: ClassificationResult;
@@ -171,8 +171,8 @@ export async function* runAgentLoop(params: {
 
     // Rerank if reranker is available
     if (reranker && stepChunks.length > 0) {
-      console.log(`[EXULU] v3 reranking ${stepChunks.length} chunks with ${reranker.name}`);
-      stepChunks = await reranker.run(query, stepChunks as any);
+      console.log(`[EXULU] v3 reranking ${stepChunks.length} chunks with ${reranker.model}`);
+      stepChunks = await reranker.rerank(query, stepChunks);
     }
 
     // Create dynamic tools (browse adjacent pages, load specific pages)
