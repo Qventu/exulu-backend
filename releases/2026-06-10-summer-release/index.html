@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release June 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* Extracted from frontend/app/globals.css, 2026-06-10 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(258 25% 9%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · June 2026</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Tools that connect to your accounts, images you art-direct inside the chat, an assistant that knows your preferences, and teams for sharing at scale.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="oauth-tools">
+        <h2>OAuth 2.0 for tools</h2>
+        <p class="one-liner">Connect your tools to Google, Slack, HubSpot — any OAuth provider — with one config property.</p>
+
+        <div class="slice">
+          <video src="./shorts/oauth-tools.mp4" autoplay loop muted playsinline></video>
+          <p>Any <code>ExuluTool</code> can now declare an <code>oauth</code> block: authorization and token endpoints, client credentials, scopes. That's the whole integration. When a user runs the tool without a connected account, the agent replies with a connect link; once they've authorized, the tool runs with a valid access token injected as <code>inputs.oauth.accessToken</code>.</p>
+          <p>Tokens are scoped per tool and per user, stored encrypted, and refreshed automatically when they expire. A single platform-provided <code>/oauth/callback</code> route completes the flow for every tool — PKCE is on by default, and there are no routes or token tables for you to build.</p>
+
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>new ExuluTool({
+  id: "hubspot_crm",
+  name: "HubSpot CRM",
+  type: "function",
+  oauth: {
+    authorizationUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    clientId: process.env.HUBSPOT_CLIENT_ID,
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+    scopes: ["crm.objects.contacts.read"],
+  },
+  execute: async (inputs) => {
+    const token = inputs.oauth.accessToken; // always valid here
+  },
+});</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="image-widget">
+        <h2>In-chat image generation</h2>
+        <p class="one-liner">Generate, refine and pick images — without leaving the chat.</p>
+
+        <div class="slice">
+          <video src="./shorts/image-widget.mp4" autoplay loop muted playsinline></video>
+          <p>When the assistant calls the <code>image_generation</code> tool, it now opens a widget right in the conversation instead of guessing at a final image. You drive from there: edit the prompt, switch models, set size, quality and count, attach reference images, and apply saved styles.</p>
+          <p>Attach reference images and the same widget becomes an editor. Selection is explicit — generate as many variations as you like, then pick the ones that work and send them back with <em>Use these</em>. The agent only ever sees your selection, never the rejects.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="personal-prompt">
+        <h2>Personal system prompt</h2>
+        <p class="one-liner">Tell Exulu about yourself once — every conversation remembers.</p>
+
+        <div class="slice">
+          <video src="./shorts/personal-prompt.mp4" autoplay loop muted playsinline></video>
+          <p>The new <a href="#">Settings</a> page has a free-form personal prompt: your role, the languages you work in, how long you like answers, anything. When set, it's injected into the system message of every chat you start — on top of whatever agent you're talking to.</p>
+          <p>It sits between the agent's instructions and the generic context, so shared agents stay shared while your conversations stay yours. Plain text, no length limit, editable any time.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="teams">
+        <h2>Teams</h2>
+        <p class="one-liner">Group users into teams — then share agents, projects and data team-wide.</p>
+
+        <div class="slice">
+          <video src="./shorts/teams.mp4" autoplay loop muted playsinline></video>
+          <p>Teams are a new organizational layer next to roles: every user can be assigned to one team (Engineering, Marketing, HR — whatever fits), straight from the users table. Super admins manage them from the new <em>Manage teams</em> page.</p>
+          <p>Sharing gets a matching upgrade: any resource can now use the <em>Shared with Teams</em> visibility mode, granting read or write to whole teams the same way roles work today. Teams carry no permissions of their own — roles keep governing abilities, teams handle who works together and where usage gets attributed.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released June 2026</span>
+      <a href="https://exulu.com">exulu.com →</a>
+    </footer>
+  </div>
+</body>
+</html>

@@ -20,8 +20,6 @@ export type ExuluEntitiesConfig = {
   types?: EntityTypeDefinition[];
   /** models.id used for extraction. Resolved via resolveModel(). Falls back to a platform default. */
   model?: string;
-  /** Where to extract from. "chunks" (default) locates each mention to a chunk. */
-  extractFrom?: "chunks" | "document";
   /** Weight of the shared-entity boost term in retrieval ranking. Default 0.3. */
   boostWeight?: number;
   /** Drop mentions below this extractor confidence (0..1). Default 0.5. */
@@ -42,6 +40,18 @@ export type EntityMention = {
   canonical: string;
   /** Extractor confidence 0..1. */
   confidence: number;
+};
+
+/**
+ * An entity TYPE the extractor noticed in the text that is NOT in the context's
+ * configured type set — surfaced to operators on the Entities tab as a
+ * "suggested" type they can promote or dismiss.
+ */
+export type SuggestedType = {
+  name: string;
+  description: string;
+  /** An example mention from the text that motivated the suggestion. */
+  example?: string;
 };
 
 /** A related entity surfaced via derived co-occurrence. */

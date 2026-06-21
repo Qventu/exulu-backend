@@ -82,6 +82,8 @@ type JobRow = {
   created_by: number;
   createdAt: string;
   updatedAt: string;
+  // Recall meeting-bot post-processing results, carried into the saved item.
+  post_processing_outputs?: unknown[] | null;
 };
 
 const log = (msg: string) => console.log(`[EXULU-TRANSCRIPTION] ${msg}`);
@@ -345,6 +347,8 @@ export const transcriptionService = {
       duration_seconds: row.duration_seconds ?? undefined,
       speakers: input.speakers,
       raw_segments: row.raw_segments,
+      // Recall meeting-bot post-processing results (null for Whisper jobs).
+      post_processing: row.post_processing_outputs ?? undefined,
       rights_mode: rightsMode,
       created_by: row.created_by,
     };
@@ -446,6 +450,7 @@ export const transcriptionService = {
       target_rbac_roles: parseJsonField<{ id: string; rights: "read" | "write" }[]>(
         dbRow.target_rbac_roles,
       ),
+      post_processing_outputs: parseJsonField<unknown[]>(dbRow.post_processing_outputs),
     } as JobRow;
   },
 };

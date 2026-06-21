@@ -27,7 +27,6 @@ import type { ExuluProvider } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
-import type { ExuluReranker } from "./reranker.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { Project } from "@EXULU_TYPES/models/project";
 import { REQUEST_SIZE_LIMIT } from "./routes.ts";
@@ -222,7 +221,6 @@ export const registerOpenAIGatewayRoutes = async (
   tools: ExuluTool[],
   contexts: ExuluContext[] | undefined,
   config: ExuluConfig,
-  rerankers?: ExuluReranker[],
 ): Promise<void> => {
   const { agentsSchema, projectsSchema } = coreSchemas.get();
 
@@ -427,7 +425,6 @@ export const registerOpenAIGatewayRoutes = async (
           agent,
           tools,
           contexts ?? [],
-          rerankers ?? [],
           disabledTools,
           providers,
           user,
@@ -441,7 +438,6 @@ export const registerOpenAIGatewayRoutes = async (
           agent.tools,
           providerapikey,
           contexts,
-          rerankers,
           user,
           config,
           undefined,

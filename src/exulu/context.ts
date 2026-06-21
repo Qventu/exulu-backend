@@ -7,9 +7,14 @@ import type { ExuluConfig } from "./app";
 import pgvector from "pgvector/knex"; // DONT REMOVE THIS
 import type { Item } from "@EXULU_TYPES/models/item";
 import type { ExuluContextProcessor } from "@EXULU_TYPES/context-processor";
-import type { ExuluEmbedder } from "./embedder";
+import type { ChunkerOperation } from "./chunker";
+import { defaultChunker } from "./chunker";
+import { resolveEmbedder } from "./resolve-embedder";
+import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
+import { updateStatistic } from "./statistics";
+import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import { postgresClient } from "@SRC/postgres/client";
 import type { SearchFilters } from "@SRC/graphql/types";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -22,6 +27,7 @@ import { bullmqDecorator } from "@EE/queues/decorator";
 import type { ExuluEntitiesConfig, EntityFilter, EntityInsights } from "./entities/types";
 import {
   captureEntitiesBeforeReembed,
+  detachEntitiesForItem,
   extractAndIngestEntities,
   hydrateEntityTypes,
   computeTypesSignature,
@@ -29,6 +35,19 @@ import {
   entitiesTableExists,
   getEntitiesTableName,
 } from "./entities";
+
+/**
+ * A context's embedder is now just a reference to a LiteLLM embedding model
+ * (plus an optional queue), not an ExuluEmbedder instance. Embedding generation
+ * goes through resolveEmbedder; chunking is configured separately via the
+ * context's `chunker` (or the built-in default chunker).
+ */
+export type ExuluContextEmbedder = {
+  /** LiteLLM model_name of the embedding model (declared in config.litellm.yaml). */
+  model: string;
+  /** When set, embedding generation runs as a background job on this queue. */
+  queue?: Promise<ExuluQueueConfig>;
+};
 
 export type ExuluContextFieldDefinition = {
   name: string;
@@ -82,7 +101,13 @@ export class ExuluContext {
   public fields: ExuluContextFieldDefinition[];
   public processor?: ExuluContextProcessor;
   public description: string;
-  public embedder?: ExuluEmbedder;
+  public embedder?: ExuluContextEmbedder;
+  /**
+   * Splits an item into embeddable chunks. Moved here from the removed
+   * ExuluEmbedder. When omitted, the built-in `defaultChunker` (SentenceChunker)
+   * is used so a context works from just an embedder model name.
+   */
+  public chunker?: ChunkerOperation;
   public queryRewriter?: (query: string) => Promise<string>;
   public resultReranker?: (
     results: {
@@ -90,7 +115,7 @@ export class ExuluContext {
       chunk_index: number;
       chunk_id: string;
       chunk_source: string;
-      chunk_metadata: Record<string, string>;
+      chunk_metadata: Record<string, unknown>;
       chunk_created_at: string;
       chunk_updated_at: string;
       item_id: string;
@@ -103,7 +128,7 @@ export class ExuluContext {
       chunk_index: number;
       chunk_id: string;
       chunk_source: string;
-      chunk_metadata: Record<string, string>;
+      chunk_metadata: Record<string, unknown>;
       chunk_created_at: string;
       chunk_updated_at: string;
       item_id: string;
@@ -139,6 +164,7 @@ export class ExuluContext {
     name,
     description,
     embedder,
+    chunker,
     processor,
     active,
     fields,
@@ -152,7 +178,8 @@ export class ExuluContext {
     name: string;
     fields: ExuluContextFieldDefinition[];
     description: string;
-    embedder?: ExuluEmbedder;
+    embedder?: ExuluContextEmbedder;
+    chunker?: ChunkerOperation;
     sources: ExuluContextSource[];
     category?: string;
     active: boolean;
@@ -198,6 +225,7 @@ export class ExuluContext {
     };
     this.description = description;
     this.embedder = embedder;
+    this.chunker = chunker;
     this.active = active;
     this.queryRewriter = queryRewriter;
     this.resultReranker = resultReranker;
@@ -467,20 +495,50 @@ export class ExuluContext {
 
     const { db } = await postgresClient();
 
-    const { id: source, chunks } = await this.embedder.generateFromDocument(
-      this.id,
-      {
-        ...item,
-        id: item.id,
-      },
-      config,
-      {
-        label: statistics?.label || this.name,
-        trigger: statistics?.trigger || "agent",
-      },
-      user,
-      role,
+    if (statistics) {
+      await updateStatistic({
+        name: "count",
+        label: statistics.label,
+        type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
+        trigger: statistics.trigger,
+        count: 1,
+        user,
+        role,
+      });
+    }
+
+    const source = item.id;
+
+    // 1) Chunk the item — custom chunker if configured, else the built-in
+    //    SentenceChunker. resolveEmbedder gives us the chunk-size budget.
+    const resolved = await resolveEmbedder({
+      model: this.embedder.model,
+      contextId: this.id,
+      contextName: this.name,
+      userId: user,
+      roleId: role,
+    });
+
+    const chunkerFn = this.chunker ?? defaultChunker;
+    const { chunks: produced } = await chunkerFn(
+      { ...item, id: item.id } as Item & { id: string },
+      resolved.maxChunkSize,
+      { storage: new ExuluStorage({ config }) },
     );
+
+    // 2) Embed every chunk's content via LiteLLM (batched internally).
+    console.log("[EXULU] Generating embeddings.");
+    const contents = produced.map((c) => c.content);
+    const vectors = contents.length
+      ? await resolved.embed(contents, { inputType: "document" })
+      : [];
+
+    const chunks = produced.map((c, i) => ({
+      content: c.content,
+      index: c.index,
+      metadata: c.metadata ?? {},
+      vector: vectors[i] ?? [],
+    }));
 
     // Capture the entities linked to this item BEFORE deleting its chunks. The
     // junction's ON DELETE CASCADE clears those mention rows when chunks are
@@ -930,8 +988,8 @@ export class ExuluContext {
           console.log("[EXULU] embedder is in queue mode, scheduling job.");
           const job = await bullmqDecorator({
             timeoutInSeconds: queue.timeoutInSeconds || 180,
-            label: `${this.embedder.name}`,
-            embedder: this.embedder.id,
+            label: `${this.embedder.model}`,
+            embedder: this.embedder.model,
             context: this.id,
             backoff: queue.backoff || {
               type: "exponential",
@@ -959,7 +1017,7 @@ export class ExuluContext {
           config,
           user,
           {
-            label: this.embedder.name,
+            label: this.embedder.model,
             trigger: trigger || "agent",
           },
           role,
@@ -1094,6 +1152,27 @@ export class ExuluContext {
       return { processed: batch.length, skipped };
     },
 
+    /**
+     * Extract + ingest entities for a SINGLE item — powers the item detail
+     * page's "Extract entities" test action. Returns the number of mentions
+     * found so the UI can report the result.
+     */
+    extractItem: async (itemId: string): Promise<{ extracted: number }> => {
+      if (!(await entitiesEnabled(this))) {
+        throw new Error(
+          "Entity extraction is not configured for this context (no entity types, or no embedder).",
+        );
+      }
+      const extracted = await extractAndIngestEntities({ context: this, itemId });
+      return { extracted };
+    },
+
+    /** Detach all entities from a single item (drops links, prunes orphans). */
+    detachItem: async (itemId: string): Promise<{ detached: number }> => {
+      const detached = await detachEntitiesForItem(this, itemId);
+      return { detached };
+    },
+
     /** Remove all entities (and their mentions via cascade) of a given type. */
     purgeType: async (typeName: string): Promise<{ removed: number }> => {
       if (!(await entitiesTableExists(this))) return { removed: 0 };
@@ -1165,19 +1244,24 @@ export class ExuluContext {
     const tableName = getChunksTableName(this.id);
     console.log("[EXULU] Creating table: " + tableName);
 
+    if (!this.embedder) {
+      throw new Error(
+        "Embedder must be set for context " + this.name + " to create chunks table.",
+      );
+    }
+    // Vector dimensions come from the embedding model's model_info in
+    // config.litellm.yaml (throws if the model isn't declared / lacks
+    // dimensionality). Resolved before createTable since that callback is sync.
+    const { dimensionality } = getEmbeddingModelInfo(this.embedder.model);
+
     await db.schema.createTable(tableName, (table) => {
-      if (!this.embedder) {
-        throw new Error(
-          "Embedder must be set for context " + this.name + " to create chunks table.",
-        );
-      }
       table.uuid("id").primary().defaultTo(db.fn.uuid());
       table.uuid("source").references("id").inTable(getTableName(this.id));
       table.text("content");
       // Metadata column
       table.jsonb("metadata");
       table.integer("chunk_index");
-      table.specificType("embedding", `vector(${this.embedder.vectorDimensions})`);
+      table.specificType("embedding", `vector(${dimensionality})`);
 
       // Generated tsvector column (PG 12+)
       const languages = this.configuration.languages?.length

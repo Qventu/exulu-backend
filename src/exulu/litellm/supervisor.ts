@@ -266,6 +266,13 @@ const supervise = async (cfg: ReturnType<typeof resolveConfig>) => {
 let _packageRoot: string | undefined;
 
 /**
+ * When true, this process does NOT spawn or supervise a LiteLLM proxy — it
+ * connects to an externally-managed one (see enableLiteLLMClientMode). Set by
+ * worker boot paths, which share the HTTP server process's single proxy.
+ */
+let _clientMode = false;
+
+/**
  * Set the package root once at boot. The caller (ExuluApp) knows where
  * @exulu/backend is installed via its own discovery (python-setup.ts already
  * does this). Keeps this module free of import.meta.url so it's cleanly
@@ -273,6 +280,29 @@ let _packageRoot: string | undefined;
  */
 export const setLiteLLMPackageRoot = (root: string): void => {
   _packageRoot = root;
+};
+
+/**
+ * Switch this process into LiteLLM *client* mode: it connects to an
+ * externally-managed proxy (spawned by the Exulu HTTP server process, or a
+ * standalone proxy) rather than spawning and supervising its own.
+ *
+ * This is the correct mode for worker processes. The supervisor's `internal`
+ * state is per-process; a worker runs as a separate Node process from the
+ * server and never goes through express.init() (where the supervisor is
+ * started), so without this it would try to spawn its own proxy — colliding
+ * with the server's on LITELLM_PORT — or, lacking a package root, fail with
+ * "package root not set" even though a healthy proxy is already running.
+ *
+ * No-op if this process has already started its own supervisor (e.g. a
+ * combined server+worker process): that process owns a proxy and keeps using
+ * it. Idempotent. Readiness is resolved lazily by waitForLiteLLMReady() via a
+ * health probe, so this never blocks boot and tolerates the proxy coming up
+ * after the worker.
+ */
+export const enableLiteLLMClientMode = (): void => {
+  if (internal.readyPromise) return;
+  _clientMode = true;
 };
 
 /**
@@ -368,6 +398,34 @@ export const startLiteLLMSupervisor = async (
 export const waitForLiteLLMReady = async (): Promise<void> => {
   if (!isLiteLLMEnabled()) return;
 
+  // Client mode: connect to an externally-managed proxy instead of supervising
+  // one. Probe its health endpoint once and cache readiness. Self-healing: if
+  // the proxy isn't up yet (e.g. a worker booted before the server), this
+  // request fails fast and the next call re-probes — far better than hanging
+  // for the full boot-time budget, and job-level retries cover the gap.
+  if (_clientMode) {
+    if (internal.state === "ready") return;
+    const host = process.env.LITELLM_HOST ?? "127.0.0.1";
+    const port = process.env.LITELLM_PORT ?? "4000";
+    const url = `http://${host}:${port}/health/liveliness`;
+    let res: Response;
+    try {
+      res = await fetch(url, { method: "GET" });
+    } catch (err) {
+      throw new Error(
+        `LiteLLM proxy not reachable at ${url} (is the Exulu server process ` +
+          `running?): ${(err as Error).message}`,
+      );
+    }
+    if (!res.ok) {
+      throw new Error(
+        `LiteLLM proxy health probe at ${url} returned ${res.status}.`,
+      );
+    }
+    internal.state = "ready";
+    return;
+  }
+
   if (!internal.readyPromise) {
     // Supervisor was never started — start it now. This covers test paths and
     // unusual boot sequences where resolveModel runs before startLiteLLMSupervisor.
@@ -436,4 +494,5 @@ export const __resetSupervisorForTesting = () => {
   internal.shutdownRequested = false;
   shutdownHandlersRegistered = false;
   _packageRoot = undefined;
+  _clientMode = false;
 };

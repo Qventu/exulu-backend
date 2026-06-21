@@ -1,5 +1,4 @@
 import { getChunksTableName, type ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { User } from "@EXULU_TYPES/models/user";
 import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
@@ -88,7 +87,6 @@ const addProviderFields = async (
   tools: ExuluTool[],
   user: User,
   contexts: ExuluContext[],
-  rerankers: ExuluReranker[],
 ) => {
   // Resolve the underlying ExuluProvider via the agent's Model row.
   // agent.model -> models row -> models.provider -> ExuluProvider.
@@ -150,7 +148,6 @@ const addProviderFields = async (
             if (tool.id === "agentic_context_search") {
               const instance = createAgenticRetrievalToolV3({
                 contexts: [],
-                rerankers: [],
                 user: user,
                 role: user.role?.id,
                 model: undefined,
@@ -225,7 +222,6 @@ const addProviderFields = async (
                   instance.id,
                   providers,
                   contexts,
-                  rerankers,
                 );
               }
             } else {
@@ -345,7 +341,6 @@ export const finalizeRequestedFields = async ({
   requestedFields,
   providers,
   contexts,
-  rerankers,
   tools,
   result,
   user,
@@ -355,7 +350,6 @@ export const finalizeRequestedFields = async ({
   requestedFields: string[];
   providers: ExuluProvider[];
   contexts: ExuluContext[];
-  rerankers: ExuluReranker[];
   tools: ExuluTool[];
   result: any;
   user: User;
@@ -375,7 +369,6 @@ export const finalizeRequestedFields = async ({
         requestedFields,
         providers,
         contexts,
-        rerankers,
         tools,
         result: item,
         user: user,
@@ -419,7 +412,6 @@ export const finalizeRequestedFields = async ({
         tools,
         user,
         contexts,
-        rerankers,
       );
       if (!requestedFields.includes("provider")) {
         delete result.provider;

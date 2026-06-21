@@ -2,7 +2,6 @@ import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
-import type { ExuluReranker } from "@SRC/exulu/reranker";
 import type { User } from "@EXULU_TYPES/models/user.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider";
@@ -12,7 +11,6 @@ export const getEnabledTools = async (
   agent: ExuluAgent,
   allExuluTools: ExuluTool[],
   allContexts: ExuluContext[],
-  allRerankers: ExuluReranker[] | undefined,
   disabledTools: string[] = [],
   providers: ExuluProvider[],
   user?: User,
@@ -28,7 +26,6 @@ export const getEnabledTools = async (
             // we can access the activated contexts and model that is calling it but we also
             // return it here so we know it was generally enabled as a tool.
             contexts: allContexts,
-            rerankers: allRerankers || [],
             user: user,
             role: user?.role?.id,
             model: undefined,
@@ -63,7 +60,7 @@ export const getEnabledTools = async (
             return null;
           }
 
-          hydrated = await provider.tool(agentAsTool.id, providers, allContexts, allRerankers || []);
+          hydrated = await provider.tool(agentAsTool.id, providers, allContexts);
         } else {
           hydrated = allExuluTools.find((t) => t.id === id);
         }

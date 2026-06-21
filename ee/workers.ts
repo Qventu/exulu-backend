@@ -7,7 +7,6 @@ import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config.ts";
 import { getTableName, type ExuluContext } from "@SRC/exulu/context.ts";
-import type { ExuluReranker } from "@SRC/exulu/reranker.ts";
 import type { ExuluEval } from "@SRC/exulu/evals.ts";
 import type { ExuluTool } from "@SRC/exulu/tool.ts";
 import { resolveModel } from "@SRC/exulu/resolve-model.ts";
@@ -115,7 +114,6 @@ export const createWorkers = async (
   queues: ExuluQueueConfig[],
   config: ExuluConfig,
   contexts: ExuluContext[],
-  rerankers: ExuluReranker[],
   evals: ExuluEval[],
   tools: ExuluTool[],
   tracer?: Tracer,
@@ -284,14 +282,8 @@ export const createWorkers = async (
                 throw new Error(`Context ${data.context} not found in the registry.`);
               }
 
-              if (!data.embedder) {
-                throw new Error(`No embedder set for embedder job.`);
-              }
-
-              const embedder = contexts.find((context) => context.embedder?.id === data.embedder);
-
-              if (!embedder) {
-                throw new Error(`Embedder ${data.embedder} not found in the registry.`);
+              if (!context.embedder) {
+                throw new Error(`No embedder configured for context ${data.context}.`);
               }
 
               const result = await context.createAndUpsertEmbeddings(
@@ -299,7 +291,7 @@ export const createWorkers = async (
                 config,
                 data.user,
                 {
-                  label: embedder.name,
+                  label: context.embedder.model,
                   trigger: data.trigger,
                 },
                 data.role,
@@ -520,7 +512,6 @@ export const createWorkers = async (
                       provider,
                       inputMessages,
                       contexts,
-                      rerankers,
                       user,
                       tools,
                       config,
@@ -623,7 +614,6 @@ export const createWorkers = async (
                       provider,
                       inputMessages,
                       contexts,
-                      rerankers,
                       user,
                       tools,
                       config,
@@ -1324,7 +1314,6 @@ export const processUiMessagesFlow = async ({
   provider,
   inputMessages,
   contexts,
-  rerankers,
   user,
   tools,
   config,
@@ -1336,7 +1325,6 @@ export const processUiMessagesFlow = async ({
   provider: ExuluProvider;
   inputMessages: UIMessage[];
   contexts: ExuluContext[];
-  rerankers: ExuluReranker[];
   user: User;
   tools: ExuluTool[];
   config: ExuluConfig;
@@ -1376,7 +1364,6 @@ export const processUiMessagesFlow = async ({
     agent,
     tools,
     contexts,
-    rerankers,
     disabledTools,
     providers,
     user,
@@ -1495,7 +1482,6 @@ export const processUiMessagesFlow = async ({
       try {
         const result = await provider.generateStream({
           contexts,
-          rerankers,
           agent: agent,
           user,
           approvedTools: tools.map((tool) => "tool-" + sanitizeToolName(tool.name)),

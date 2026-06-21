@@ -10,13 +10,14 @@ import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "@EE/queues/queues.ts";
 export { trajectoryRegistry as ExuluTrajectoryRegistry } from "@EE/agentic-retrieval/v3/trajectory.ts";
 import { RecursiveChunker } from "./chunking/recursive";
-export { ExuluEmbedder } from "./exulu/embedder.ts"
+export { defaultChunker } from "./exulu/chunker.ts"
+export type { ChunkerOperation, ChunkerResponse } from "./exulu/chunker.ts"
+export type { ExuluContextEmbedder } from "./exulu/context.ts"
 export { ExuluProvider } from "./exulu/provider.ts"
 export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluTool } from "./exulu/tool"
 export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/oauth/types"
-export { ExuluReranker } from "./exulu/reranker"
 export { ExuluEval } from "./exulu/evals"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
@@ -63,6 +64,7 @@ import {
   getPythonSetupInstructions,
 } from './utils/python-setup';
 import { documentProcessor } from "@EE/python/documents/processing/doc_processor.ts";
+import { rerank } from "./exulu/reranker";
 import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index.ts";
 
 export const ExuluJobs = {
@@ -130,6 +132,10 @@ export const ExuluAuthentication = {
 
 export const ExuluDocumentProcessor = {
   process: documentProcessor,
+}
+
+export const ExuluReranker = {
+  rerank,
 }
 
 export const ExuluOtel = {
