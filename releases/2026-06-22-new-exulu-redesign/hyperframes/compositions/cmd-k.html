@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#7033FF; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --popover:#FCFCFC; --accent:#E9EEFF; --accent-fg:#3A4DA8;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar (reused from The Spine) ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(112,51,255,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#7033FF,#9061FF);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar (reused) ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card (reused) ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 52px 60px; overflow: hidden; z-index: 4; }
+      .page-head { position: relative; height: 96px; }
+      .hdr { position: absolute; top: 0; left: 0; }
+      .hdr h1 { font-size: 44px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .hdr p { font-size: 20px; color: var(--muted-fg); margin-top: 10px; }
+      .toolbar { display: flex; align-items: center; gap: 14px; margin: 14px 0 34px; }
+      .toolbar .field { flex: 1; max-width: 520px; height: 48px; border: 1px solid var(--input); border-radius: 11px;
+                        display: flex; align-items: center; gap: 11px; padding: 0 15px; color: var(--muted-fg); font-size: 17px; }
+      .toolbar .primary { height: 48px; padding: 0 22px; border-radius: 11px; background: var(--primary); color: #fff;
+                          font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 9px;
+                          box-shadow: 0 2px 8px rgba(112,51,255,.30); }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+      .card { border: 1px solid var(--border); border-radius: 16px; padding: 24px; background: #fff;
+              box-shadow: 0 2px 3px rgba(0,0,0,.05); }
+      .card .ic { width: 46px; height: 46px; border-radius: 12px; background: #F3F0FF; color: var(--primary);
+                  display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
+      .card .ic svg { width: 24px; height: 24px; }
+      .card h3 { font-size: 21px; font-weight: 600; color: var(--fg); }
+      .card .meta { font-size: 15px; color: var(--muted-fg); margin-top: 5px; }
+      .card .skel { height: 10px; border-radius: 6px; background: var(--muted); margin-top: 16px; }
+      .card .skel.s2 { width: 72%; margin-top: 11px; }
+
+      /* ---- ⌘K keycaps glyph (center press) ---- */
+      #keycaps { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+                 display: flex; align-items: center; gap: 14px; z-index: 22; }
+      .keycap { min-width: 78px; height: 78px; padding: 0 18px; border-radius: 16px; background: #FFFFFF;
+                border: 1px solid #E2E2EA; box-shadow: 0 8px 22px rgba(15,16,23,.18), inset 0 -3px 0 rgba(15,16,23,.07);
+                display: flex; align-items: center; justify-content: center;
+                font-family: "JetBrains Mono", monospace; font-size: 40px; font-weight: 600; color: #2A2A30; }
+
+      /* ---- scrim (FLAT black/80, no blur) ---- */
+      #scrim { position: absolute; inset: 0; background: rgba(0,0,0,0.80); z-index: 28; }
+
+      /* ---- ⌘K command palette modal ---- */
+      #palette { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); width: 576px;
+                 background: var(--popover); border: 1px solid var(--border); border-radius: 8px;
+                 box-shadow: 0 24px 70px rgba(0,0,0,.45), 0 8px 22px rgba(0,0,0,.30);
+                 overflow: hidden; z-index: 30; }
+
+      /* input row */
+      .pal-input { display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 66px;
+                   border-bottom: 1px solid var(--border); }
+      .pal-input .si { width: 24px; height: 24px; flex: 0 0 24px; color: var(--muted-fg); opacity: .5;
+                       display: flex; align-items: center; justify-content: center; }
+      .pal-input .si svg { width: 24px; height: 24px; }
+      .pal-text { display: flex; align-items: center; font-size: 22px; line-height: 1; }
+      .pal-text .typed { color: var(--fg); white-space: pre; }
+      .pal-text .ph { color: var(--muted-fg); }
+      .pal-caret { width: 2px; height: 26px; background: var(--primary); margin-left: 1px; border-radius: 1px; opacity: 0; }
+
+      /* list */
+      .pal-list { padding: 8px; }
+      .pal-group { padding: 4px; }
+      .pal-heading { font-size: 14px; font-weight: 600; color: var(--muted-fg); padding: 6px 8px 6px;
+                     letter-spacing: 0.02em; }
+      .pal-row { position: relative; display: flex; align-items: center; gap: 11px; height: 46px;
+                 padding: 0 9px; border-radius: 6px; color: var(--fg); }
+      .pal-row .ri { width: 20px; height: 20px; flex: 0 0 20px; color: var(--muted-fg);
+                     display: flex; align-items: center; justify-content: center; }
+      .pal-row .ri svg { width: 20px; height: 20px; }
+      .pal-row .label { font-size: 19px; font-weight: 500; }
+      .pal-row .suffix { font-size: 15px; color: var(--muted-fg); margin-left: 2px; }
+      /* highlight fill sits as a positioned layer so we move it (transform-only) */
+      #pal-hl { position: absolute; top: 0; left: 4px; right: 4px; height: 46px; border-radius: 6px;
+                background: var(--accent); z-index: 0; }
+      .pal-row .ri, .pal-row .label, .pal-row .suffix { position: relative; z-index: 1; }
+      /* active-row bluish text (NOT purple) is applied at runtime via GSAP color tweens */
+
+      /* ---- caption lower-third (dark pill, reused) ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 940px; z-index: 40; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #C9B6FF; font-weight: 600; }
+      .caption .kc { font-family: "JetBrains Mono", monospace; font-weight: 600; color: #C9B6FF; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="cmd-k" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">e</div><div class="word">exulu</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item active" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD -->
+        <div class="content">
+          <div class="page-head">
+            <div class="hdr" id="hdr-chat">
+              <h1>Chat</h1><p>Your assistants and recent conversations</p>
+            </div>
+            <div class="hdr" id="hdr-knowledge" style="opacity:0">
+              <h1>Knowledge</h1><p>Browse, search and curate your knowledge bases</p>
+            </div>
+          </div>
+          <div class="toolbar">
+            <div class="field">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Filter…</span>
+            </div>
+            <div class="primary">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New
+            </div>
+          </div>
+          <div class="cards">
+            <div class="card">
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
+              <h3>Customer Docs</h3><div class="meta">1,284 items · ready</div>
+              <div class="skel"></div><div class="skel s2"></div>
+            </div>
+            <div class="card">
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg></div>
+              <h3>Product Wiki</h3><div class="meta">512 items · ready</div>
+              <div class="skel"></div><div class="skel s2"></div>
+            </div>
+            <div class="card">
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
+              <h3>Meeting Notes</h3><div class="meta">96 items · ready</div>
+              <div class="skel"></div><div class="skel s2"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⌘K KEYCAPS (center press) -->
+        <div id="keycaps" style="opacity:0">
+          <div class="keycap" id="kc-cmd">⌘</div>
+          <div class="keycap" id="kc-k">K</div>
+        </div>
+
+        <!-- SCRIM -->
+        <div id="scrim" style="opacity:0"></div>
+
+        <!-- ⌘K COMMAND PALETTE -->
+        <div id="palette" style="opacity:0">
+          <!-- input row -->
+          <div class="pal-input" id="pal-input">
+            <div class="si" id="pal-search-ic">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </div>
+            <div class="pal-text">
+              <span class="typed" id="pal-typed"><span class="ch" style="opacity:0">k</span><span class="ch" style="opacity:0">n</span><span class="ch" style="opacity:0">o</span><span class="ch" style="opacity:0">w</span><span class="ch" style="opacity:0">l</span><span class="ch" style="opacity:0">e</span><span class="ch" style="opacity:0">d</span></span><span class="ph" id="pal-ph">Type a command or search…</span><span class="pal-caret" id="pal-caret"></span>
+            </div>
+          </div>
+
+          <!-- list -->
+          <div class="pal-list">
+
+            <!-- NAVIGATE group (default state) -->
+            <div class="pal-group" id="grp-navigate">
+              <div class="pal-heading">NAVIGATE</div>
+              <div class="pal-row" id="nrow-chat">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <span class="label">Chat</span><span class="suffix">— Workspace</span>
+              </div>
+              <div class="pal-row" id="nrow-projects">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg></div>
+                <span class="label">Projects</span><span class="suffix">— Workspace</span>
+              </div>
+              <div class="pal-row" id="nrow-knowledge">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
+                <span class="label">Knowledge</span><span class="suffix">— Workspace</span>
+              </div>
+              <div class="pal-row" id="nrow-agents">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>
+                <span class="label">Agents</span><span class="suffix">— Build</span>
+              </div>
+              <div class="pal-row" id="nrow-budgets">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg></div>
+                <span class="label">Budgets</span><span class="suffix">— Administration</span>
+              </div>
+            </div>
+
+            <!-- SEARCH group (filtered state) — hidden until typing -->
+            <div class="pal-group" id="grp-search" style="opacity:0">
+              <div class="pal-heading">SEARCH</div>
+              <!-- highlight fill (moves via transform) -->
+              <div id="pal-hl" style="opacity:0"></div>
+              <div class="pal-row" id="srow-docs">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
+                <span class="label">Customer Docs</span><span class="suffix">— Knowledge</span>
+              </div>
+              <div class="pal-row" id="srow-wiki">
+                <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></div>
+                <span class="label">Product Wiki</span><span class="suffix">— Knowledge</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Jump anywhere with <span class="kc">⌘K</span></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Search, navigate, or run an action — <b>without leaving the keyboard</b></div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---- measure (plain CSS applied synchronously → rects reliable) ---- */
+      const sb = document.querySelector('.sidebar').getBoundingClientRect();
+      const spine = document.getElementById('spine');
+      const chatR = document.getElementById('nav-chat').getBoundingClientRect();
+      const knowR = document.getElementById('nav-knowledge').getBoundingClientRect();
+      const SPINE_H = 22;
+      spine.style.top = (chatR.top - sb.top + (chatR.height - SPINE_H) / 2) + 'px';
+      const spineSlide = knowR.top - chatR.top;
+
+      /* highlight: distance from row "Customer Docs" to row "Product Wiki"
+         (we start the pale-blue fill on Product Wiki, then move UP to Customer Docs) */
+      const docsR = document.getElementById('srow-docs').getBoundingClientRect();
+      const wikiR = document.getElementById('srow-wiki').getBoundingClientRect();
+      const hlGroup = document.getElementById('grp-search').getBoundingClientRect();
+      const hlDocsY = docsR.top - hlGroup.top;   // y of Customer Docs row within group
+      const hlWikiY = wikiR.top - hlGroup.top;   // y of Product Wiki row within group
+      gsap.set('#pal-hl', { y: hlWikiY });        // start lower (on Product Wiki)
+
+      /* ===========================================================
+         BEAT 1 (0–1.2s): shell visible, ⌘K keycaps press, scrim fades
+         =========================================================== */
+      // fast shell settle (first entrance ~0.15s)
+      tl.from('.topbar',  { y: -18, opacity: 0, duration: 0.4, ease: 'power3.out' }, 0.0);
+      tl.from('.sidebar', { x: -40, opacity: 0, duration: 0.45, ease: 'power3.out' }, 0.0);
+      tl.from('.content', { opacity: 0, duration: 0.5, ease: 'power2.out' }, 0.05);
+
+      // keycaps appear, then "press" (two-stage stagger dip)
+      tl.fromTo('#keycaps', { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'back.out(2)' }, 0.45);
+      tl.to(['#kc-cmd', '#kc-k'], { y: 5, scale: 0.94, duration: 0.11, ease: 'power2.in', stagger: 0.08 }, 0.78);
+      tl.to(['#kc-cmd', '#kc-k'], { y: 0, scale: 1, duration: 0.16, ease: 'back.out(2.4)', stagger: 0.08 }, 0.92);
+
+      // flat scrim fades over the whole shell
+      tl.to('#scrim', { opacity: 1, duration: 0.4, ease: 'power2.out' }, 0.78);
+      // keycaps fade out as palette is about to take over
+      tl.to('#keycaps', { opacity: 0, scale: 0.96, duration: 0.25, ease: 'power2.in' }, 1.15);
+
+      /* ===========================================================
+         BEAT 2 (~1.3s): palette scales 0.98→1 + fades in
+         =========================================================== */
+      tl.fromTo('#palette', { opacity: 0, scale: 0.98 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'power2.out', transformOrigin: 'center top' }, 1.30);
+
+      /* ---- caption 1 (~1.4s) — holds ≥1.2s ---- */
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' }, 1.45);
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 2.85);
+
+      /* ===========================================================
+         BEAT 3 (~3.0s): focus lands → purple icon+border;
+         deterministic typing "knowled"; list filters to SEARCH
+         =========================================================== */
+      // focus: search icon + input bottom border turn purple
+      tl.to('#pal-search-ic', { color: '#7033FF', opacity: 1, duration: 0.2, ease: 'power1.out' }, 2.95);
+      tl.to('#pal-input', { borderBottomColor: '#7033FF', duration: 0.2, ease: 'power1.out' }, 2.95);
+      // caret on
+      tl.set('#pal-caret', { opacity: 1 }, 2.95);
+
+      // deterministic stepped typing of "knowled": reveal pre-rendered char
+      // spans one at a time via opacity (plugin-free, fully seek-safe).
+      tl.set('#pal-ph', { opacity: 0 }, 3.02);
+      const chars = document.querySelectorAll('#pal-typed .ch'); // "k n o w l e d"
+      const typeStart = 3.05, perChar = 0.075;
+      chars.forEach((ch, i) => {
+        tl.set(ch, { opacity: 1 }, typeStart + i * perChar);
+      });
+      const typeEnd = typeStart + chars.length * perChar; // ≈3.58
+      // caret blink off at rest (single deterministic step — no repeat)
+      tl.set('#pal-caret', { opacity: 0 }, typeEnd + 0.05);
+
+      // list filters: NAVIGATE group out, SEARCH group in
+      tl.to('#grp-navigate', { opacity: 0, y: -8, duration: 0.22, ease: 'power2.in' }, typeEnd + 0.05);
+      tl.fromTo('#grp-search', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.32, ease: 'power3.out' }, typeEnd + 0.18);
+
+      /* ===========================================================
+         BEAT 4 (~5.0s): arrow-key — pale-blue highlight moves UP
+         from Product Wiki to land on Customer Docs.
+         Row "active" look = bluish (NOT purple) text + icon, driven by
+         explicit color tweens so it is fully seek-deterministic.
+         =========================================================== */
+      const BLUE = '#3A4DA8', BLUE_SUF = '#6E7BC2', INK = '#0A0A0A', MUT = '#6B6B73';
+      // highlight starts resting on Product Wiki: reveal fill + bluish Wiki text
+      tl.to('#pal-hl', { opacity: 1, duration: 0.18, ease: 'power1.out' }, 4.70);
+      tl.to('#srow-wiki .label', { color: BLUE, duration: 0.16 }, 4.70);
+      tl.to('#srow-wiki .ri',    { color: BLUE, duration: 0.16 }, 4.70);
+      tl.to('#srow-wiki .suffix',{ color: BLUE_SUF, duration: 0.16 }, 4.70);
+      // arrow up → highlight slides to Customer Docs; swap bluish text Wiki→Docs
+      tl.to('#pal-hl', { y: hlDocsY, duration: 0.26, ease: 'power3.inOut' }, 5.05);
+      tl.to('#srow-wiki .label', { color: INK,     duration: 0.2 }, 5.07);
+      tl.to('#srow-wiki .ri',    { color: MUT,     duration: 0.2 }, 5.07);
+      tl.to('#srow-wiki .suffix',{ color: MUT,     duration: 0.2 }, 5.07);
+      tl.to('#srow-docs .label', { color: BLUE,    duration: 0.2 }, 5.13);
+      tl.to('#srow-docs .ri',    { color: BLUE,    duration: 0.2 }, 5.13);
+      tl.to('#srow-docs .suffix',{ color: BLUE_SUF,duration: 0.2 }, 5.13);
+
+      /* ===========================================================
+         BEAT 5 (~6.4s): Enter → palette zoom-out 0.98 + fade,
+         scrim clears, shell navigates to Knowledge (Spine + header)
+         =========================================================== */
+      tl.to('#palette', { opacity: 0, scale: 0.98, duration: 0.15, ease: 'power2.in', transformOrigin: 'center top' }, 6.40);
+      tl.to('#scrim', { opacity: 0, duration: 0.3, ease: 'power2.inOut' }, 6.46);
+
+      // shell updates: Spine slides + active row swap + page header cross-fade
+      tl.to('#spine', { y: spineSlide, duration: 0.34, ease: 'power3.inOut' }, 6.52);
+      tl.to('#nav-chat',      { backgroundColor: 'rgba(0,0,0,0)', color: '#4A4A52', duration: 0.28 }, 6.52);
+      tl.to('#nav-knowledge', { backgroundColor: '#ECECEF', color: '#0A0A0A', duration: 0.28 }, 6.52);
+      tl.to('#hdr-chat',      { opacity: 0, y: -12, duration: 0.26, ease: 'power2.in' }, 6.54);
+      tl.fromTo('#hdr-knowledge', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.34, ease: 'power2.out' }, 6.70);
+
+      /* ---- caption 2 (~6.8s) — holds to end (≥1.8s) ---- */
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 6.85);
+
+      window.__timelines['cmd-k'] = tl;
+    </script>
+  </body>
+</html>

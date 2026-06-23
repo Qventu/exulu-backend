@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    [data-composition-id="followup-suggestions"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      background: #FDFDFD;
+      font-family: 'Manrope', system-ui, sans-serif;
+      color: #000000;
+      overflow: hidden;
+      letter-spacing: -0.025em;
+    }
+
+    /* HOOK ----------------------------------------------------- */
+    .hook {
+      position: absolute;
+      top: 90px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 56px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: #000000;
+    }
+    .hook .em { color: #1A1A1A; }
+
+    /* CHAT SURFACE --------------------------------------------- */
+    .chat-surface {
+      position: absolute;
+      top: 230px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 850px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .assistant-bubble {
+      background: #F5F5F5;
+      border-radius: 6.4px;
+      padding: 20px 24px;
+      color: #000000;
+      font-size: 22px;
+      line-height: 1.55;
+      font-weight: 400;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.06);
+    }
+    .assistant-bubble p {
+      margin: 0 0 12px 0;
+    }
+    .assistant-bubble p:last-child {
+      margin-bottom: 0;
+    }
+    .assistant-bubble .caret {
+      display: inline-block;
+      width: 2px;
+      height: 1.05em;
+      background: #525252;
+      vertical-align: text-bottom;
+      margin-left: 2px;
+    }
+
+    /* SUGGESTION PILLS ----------------------------------------- */
+    .pills-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .pill {
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 999px;
+      color: #000000;
+      font-size: 22px;
+      font-weight: 500;
+      padding: 10px 20px;
+      font-family: 'Manrope', system-ui, sans-serif;
+      letter-spacing: -0.015em;
+      box-shadow: 0px 1px 2px 0px rgba(0,0,0,0.04);
+      white-space: nowrap;
+    }
+
+    /* TEXTAREA ------------------------------------------------- */
+    .textarea-card {
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      padding: 18px 22px;
+      min-height: 92px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.05);
+    }
+    .textarea-text {
+      font-size: 22px;
+      font-weight: 400;
+      color: #525252;
+      line-height: 1.4;
+    }
+    .textarea-text.filled {
+      color: #000000;
+    }
+    .textarea-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
+    .send-btn {
+      background: #1A1A1A;
+      color: #FFFFFF;
+      border-radius: 6.4px;
+      padding: 8px 16px;
+      font-size: 18px;
+      font-weight: 500;
+    }
+
+    /* CURSOR --------------------------------------------------- */
+    .cursor {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      pointer-events: none;
+      z-index: 50;
+      top: 0;
+      left: 0;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25));
+    }
+
+    /* CLICK PULSE ---------------------------------------------- */
+    .click-pulse {
+      position: absolute;
+      width: 60px;
+      height: 60px;
+      border-radius: 999px;
+      border: 2px solid #1A1A1A;
+      pointer-events: none;
+      z-index: 40;
+      top: 0;
+      left: 0;
+      transform: translate(-50%, -50%);
+    }
+
+    /* PAYOFF --------------------------------------------------- */
+    .payoff {
+      position: absolute;
+      bottom: 90px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 62px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: #000000;
+    }
+    .payoff .em { color: #1A1A1A; }
+  
+      /* OPEN CI accents */
+      .brand .mono,.brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+</head>
+<body>
+  <div data-composition-id="followup-suggestions" data-width="1920" data-height="1080" data-start="0" data-duration="8.5">
+
+    <!-- HOOK (0.0 - 2.0) -->
+    <div class="clip hook" id="hook" data-start="0" data-duration="2.0" data-track-index="0">
+      <span class="em">Suggested</span> follow-ups.
+    </div>
+
+    <!-- CHAT SURFACE — visible the entire piece (from 1.6 onward) -->
+    <div class="clip chat-surface" id="chat" data-start="1.6" data-duration="6.9" data-track-index="1">
+
+      <!-- Assistant bubble -->
+      <div class="assistant-bubble" id="bubble">
+        <p>For most jurisdictions, you become a tax resident once you spend more than half the calendar year on local soil.</p>
+        <p id="last-line"><span id="typed-text"></span><span class="caret" id="caret"></span></p>
+      </div>
+
+      <!-- Suggestion pills above textarea -->
+      <div class="pills-row" id="pills">
+        <div class="pill" id="pill-1">What about double-taxation treaties?</div>
+        <div class="pill" id="pill-2">Does this rule apply to digital nomads?</div>
+        <div class="pill" id="pill-3">Show me the source statute</div>
+      </div>
+
+      <!-- Textarea -->
+      <div class="textarea-card">
+        <div class="textarea-text" id="textarea-text">Reply&hellip;</div>
+        <div class="textarea-row">
+          <div class="send-btn">Send</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Cursor (appears 5.3 - 6.4) -->
+    <svg class="clip cursor" id="cursor" data-start="5.3" data-duration="1.1" data-track-index="2" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 2 L3 22 L9 17 L13 25 L17 23 L13 15 L21 15 Z"
+        fill="#000000" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round" />
+    </svg>
+
+    <!-- Click pulse (6.1 - 6.5) -->
+    <div class="clip click-pulse" id="click-pulse" data-start="6.1" data-duration="0.4" data-track-index="3"></div>
+
+    <!-- Payoff (6.9 - 8.5) -->
+    <div class="clip payoff" id="payoff" data-start="6.9" data-duration="1.6" data-track-index="4">
+      <span class="em">Three nudges.</span> Zero blank pages.
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // ---- HOOK 0.0 - 2.0 ----------------------------------------------------
+    // fade in, hold, then quietly disappear (transition-style — no exit
+    // animation, the next scene covers it; final scene rule allows exits, but
+    // we keep it clean by using the chat surface entrance as the cover).
+    tl.from("#hook", {
+      opacity: 0,
+      y: 12,
+      duration: 0.4,
+      ease: "power2.out"
+    }, 0.1);
+
+    // ---- CHAT SURFACE entrance (around 1.7) --------------------------------
+    // The chat surface starts visible at 1.6 (its data-start). Animate the
+    // assistant bubble + the textarea + the pill row into place. Pills are
+    // hidden until 3.3, even though their parent (.chat-surface) is visible.
+    tl.set("#pill-1", { opacity: 0, y: 14 }, 1.6);
+    tl.set("#pill-2", { opacity: 0, y: 14 }, 1.6);
+    tl.set("#pill-3", { opacity: 0, y: 14 }, 1.6);
+    tl.set("#typed-text", { innerText: "" }, 1.6);
+
+    tl.from("#bubble", {
+      opacity: 0,
+      y: 18,
+      duration: 0.5,
+      ease: "power2.out"
+    }, 1.7);
+
+    tl.from(".textarea-card", {
+      opacity: 0,
+      y: 18,
+      duration: 0.5,
+      ease: "power2.out"
+    }, 1.85);
+
+    // ---- TYPE LAST LINE 2.0 - 2.6 -----------------------------------------
+    // Character-by-character typing. Deterministic — driven by progress.
+    const lastLine = "…and that’s the standard 183-day rule.";
+    const typeObj = { i: 0 };
+    tl.to(typeObj, {
+      i: lastLine.length,
+      duration: 0.6,
+      ease: "none",
+      onUpdate: () => {
+        const n = Math.floor(typeObj.i);
+        const el = document.getElementById("typed-text");
+        if (el) el.textContent = lastLine.slice(0, n);
+      }
+    }, 2.0);
+
+    // Caret blink-out after typing completes (caret stays visible during type,
+    // fades after).
+    tl.to("#caret", { opacity: 0, duration: 0.3, ease: "power2.out" }, 2.7);
+
+    // ---- BREATH 2.6 - 3.3 (nothing animates) -------------------------------
+
+    // ---- PILLS FADE IN 3.3 - 4.5 -------------------------------------------
+    // Staggered ~150ms.
+    tl.to("#pill-1", { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 3.3);
+    tl.to("#pill-2", { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 3.45);
+    tl.to("#pill-3", { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 3.6);
+
+    // ---- CURSOR MOVE 5.3 - 6.1 ---------------------------------------------
+    // Cursor enters from the lower-right of the chat surface, glides to the
+    // second pill. The pill-2 is the middle pill in the wrap row.
+    // We position the cursor at scene coords. Approximate target position:
+    // chat-surface left ~535px, pill row top ~ derived from layout.
+    // The chat-surface is centered at x=960, width=850 → left edge ~535.
+    // Pills row sits between the bubble and the textarea inside the surface.
+    // Approximate y of pill-2 center: the bubble area ~230 to ~460,
+    // pills row at chat-surface y_offset ~ (after bubble + gap) ~ around y=560.
+    // We tween cursor to land at the second pill center.
+
+    // Cursor starting position (off the chat, lower-right).
+    tl.set("#cursor", { x: 1240, y: 760, opacity: 0 }, 5.3);
+    tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power2.out" }, 5.3);
+
+    // Hover transition on pill-2 begins as cursor arrives (~5.9)
+    tl.to("#cursor", {
+      x: 855,        // roughly the right-middle of pill-2
+      y: 615,        // roughly center y of pill row
+      duration: 0.7,
+      ease: "power2.inOut"
+    }, 5.4);
+
+    // Pill-2 hover state
+    tl.to("#pill-2", {
+      backgroundColor: "#E2EBFF",
+      borderColor: "#1A1A1A",
+      color: "#1E6ADC",
+      duration: 0.25,
+      ease: "power2.out"
+    }, 5.95);
+
+    // ---- CLICK PULSE 6.1 - 6.5 ---------------------------------------------
+    tl.set("#click-pulse", {
+      x: 855,
+      y: 615,
+      scale: 0.3,
+      opacity: 0.9
+    }, 6.1);
+    tl.to("#click-pulse", {
+      scale: 1.4,
+      opacity: 0,
+      duration: 0.4,
+      ease: "power2.out"
+    }, 6.1);
+
+    // Slight pill-2 press feedback
+    tl.to("#pill-2", {
+      scale: 0.96,
+      duration: 0.08,
+      ease: "power2.out"
+    }, 6.1);
+    tl.to("#pill-2", {
+      scale: 1,
+      duration: 0.18,
+      ease: "power2.inOut"
+    }, 6.18);
+
+    // ---- TEXTAREA POPULATES 6.2 --------------------------------------------
+    tl.set("#textarea-text", {
+      innerText: "Does this rule apply to digital nomads?",
+      className: "textarea-text filled"
+    }, 6.2);
+
+    // ---- BREATH 6.3 - 6.9 --------------------------------------------------
+
+    // ---- PAYOFF 6.9 - 8.5 --------------------------------------------------
+    tl.from("#payoff", {
+      opacity: 0,
+      y: 18,
+      duration: 0.45,
+      ease: "power2.out"
+    }, 6.95);
+    // Holds still through 8.5 (last ~600ms is fully static — no tweens after 7.4)
+
+    window.__timelines["followup-suggestions"] = tl;
+  </script>
+</body>
+</html>

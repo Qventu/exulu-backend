@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Knowledge &amp; Cost · Release 2026-06-22</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2%;
+      --foreground: 0 0% 4%;
+      --primary: 257.94 100% 60%;
+      --accent: 258 100% 96.3%;
+      --accent-foreground: 257.94 100% 56%;
+      --muted-foreground: 0 0% 32.2%;
+      --border: 240 17% 91.9%;
+      --radius: 0.5rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 12px; border-radius: 999px;
+      background: hsl(var(--accent)); color: hsl(var(--accent-foreground));
+      font-size: 12.5px; font-weight: 600; letter-spacing: 0;
+    }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--primary)); }
+    h1.hero {
+      font-size: 60px; font-weight: 700; line-height: 1.04;
+      margin: 26px 0 18px; letter-spacing: -0.045em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede { font-size: 21px; color: hsl(var(--muted-foreground)); max-width: 680px; }
+    .lede strong { color: hsl(var(--foreground)); font-weight: 600; }
+
+    .feature { margin-top: 92px; padding-top: 48px; border-top: 1px solid hsl(var(--border)); }
+    .feature .idx {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500;
+      color: hsl(var(--primary)); letter-spacing: 0;
+    }
+    .feature h2 { font-size: 33px; font-weight: 700; margin: 10px 0 8px; letter-spacing: -0.025em; }
+    .feature .one-liner { color: hsl(var(--muted-foreground)); font-size: 18px; margin: 0 0 30px; max-width: 680px; }
+
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius);
+      border: 1px solid hsl(var(--border)); display: block; margin: 0 0 24px;
+      box-shadow: 0 12px 40px -16px hsl(0 0% 0% / 0.18);
+    }
+    .slice p { margin: 0 0 16px; font-size: 16.5px; max-width: 700px; }
+    .slice p strong { font-weight: 600; }
+
+    .snippet-label {
+      font-size: 12px; font-weight: 600; color: hsl(var(--muted-foreground));
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 30px 0 8px;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace; font-size: 13.5px;
+      background: hsl(228 7% 9%); color: hsl(0 0% 92%);
+      padding: 20px 24px; border-radius: var(--radius); overflow-x: auto;
+      margin: 0; line-height: 1.6;
+    }
+    pre .c { color: hsl(258 60% 78%); }
+    pre .k { color: hsl(221 70% 72%); }
+    pre .s { color: hsl(142 45% 65%); }
+
+    footer {
+      margin-top: 110px; padding-top: 30px; border-top: 1px solid hsl(var(--border));
+      font-size: 14px; color: hsl(var(--muted-foreground)); display: flex; justify-content: space-between; align-items: center;
+    }
+    footer a { color: hsl(var(--primary)); text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill"><span class="dot"></span>Platform Release · 22 June 2026</span>
+      <h1 class="hero">Knowledge, <em>connected</em>.<br />Cost, <em>controlled</em>.</h1>
+      <p class="lede">Five shipped upgrades that make Exulu's retrieval sharper and its spend predictable. Meetings become searchable transcripts, an entity graph deepens retrieval, and the knowledge pipeline shows its work end to end — while you get <strong>live, per-tag control</strong> over what it all costs.</p>
+    </header>
+
+    <main>
+
+      <!-- 1 · Recall.ai meeting recording -->
+      <section class="feature" id="recall">
+        <div class="idx">01 — Meetings</div>
+        <h2>Send a bot to any meeting</h2>
+        <p class="one-liner">Drop in a meeting link — Exulu joins, records, and transcribes, then runs your prompts on the result automatically.</p>
+        <div class="slice">
+          <video src="./shorts/recall.mp4" autoplay loop muted playsinline poster="./shorts/recall.jpg"></video>
+          <p>Paste a Zoom, Meet, or Teams link and Exulu sends a bot to join, record, and transcribe the call. When it's done, the recording comes back as a <strong>speaker-labeled transcript</strong> you can review and rename — and any prompts or agents you attached (a summary, an action-item extractor, a notetaker) have already run against it.</p>
+          <p>Meetings become searchable knowledge without anyone taking notes, flowing straight into the same pipeline as the rest of your documents.</p>
+          <div class="snippet-label">GraphQL</div>
+          <pre><code><span class="c">mutation</span> MeetingBotStart($input: MeetingBotStartInput!) {
+  meetingBotStart(input: $input) { ...TranscriptionJobFields }
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- 2 · Knowledge Base V2 -->
+      <section class="feature" id="knowledge-v2">
+        <div class="idx">02 — Knowledge</div>
+        <h2>A pipeline that shows its work</h2>
+        <p class="one-liner">Watch every document move Ingested → Processed → Embedded → Ready to search — live, with the next action right there.</p>
+        <div class="slice">
+          <video src="./shorts/kb-v2.mp4" autoplay loop muted playsinline poster="./shorts/kb-v2.jpg"></video>
+          <p>Every knowledge item now carries a live <strong>pipeline stepper</strong>, so you can see exactly where a document is and kick off the next stage with one click instead of guessing. No more black-box ingestion.</p>
+          <p>A pipeline-health view rolls the whole base up into a single "is this searchable?" number and surfaces anything stuck — before it quietly breaks retrieval. Durable per-item job tracking means the status survives a refresh.</p>
+        </div>
+      </section>
+
+      <!-- 3 · Tag-based budgets -->
+      <section class="feature" id="budgets">
+        <div class="idx">03 — Cost</div>
+        <h2>Cap spend on anything</h2>
+        <p class="one-liner">Set a budget per user, team, project, or agent — and watch the burn rate, with a projection that flags overspend before it happens.</p>
+        <div class="slice">
+          <video src="./shorts/budgets.mp4" autoplay loop muted playsinline poster="./shorts/budgets.jpg"></video>
+          <p>Spend is now governed by tags. Put a cap on any <strong>user, team, project, or agent</strong> and Exulu meters every model call against it through the LiteLLM proxy. Animated burn-down bars and a dashed projection marker flag who's on track to blow their budget before the bill arrives.</p>
+          <p>A chip in the top bar keeps each person's own spend in view, and the analytics page breaks it all down by tag and by day.</p>
+          <div class="snippet-label">REST</div>
+          <pre><code><span class="k">PUT</span>  /admin/budgets/:entityType/:entityId   <span class="c"># upsert one budget</span>
+<span class="k">PUT</span>  /admin/budgets/:entityType/bulk        <span class="c"># apply to many entityIds[]</span>
+<span class="k">GET</span>  /me/budget                             <span class="c"># caller's own spend (in-chat)</span>
+
+<span class="c"># entityType ∈ user | role | team | project | agent</span></code></pre>
+        </div>
+      </section>
+
+      <!-- 4 · Graph retrieval / entities -->
+      <section class="feature" id="entities">
+        <div class="idx">04 — Retrieval</div>
+        <h2>A connected entity graph</h2>
+        <p class="one-liner">Turn documents into People, Companies, and Products — sharper retrieval, and a graph your agents can follow.</p>
+        <div class="slice">
+          <video src="./shorts/entities.mp4" autoplay loop muted playsinline poster="./shorts/entities.jpg"></video>
+          <p>Switch on entity extraction for a knowledge base and Exulu reads the entity types you define out of every document. Those shared entities <strong>sharpen retrieval</strong> — a soft re-rank that disambiguates and boosts on top of hybrid search — and give agents a graph to follow between related records.</p>
+          <p>A one-click backfill brings your entire existing corpus into the graph, and suggested types surface entities worth promoting.</p>
+          <div class="snippet-label">From the SDK</div>
+          <pre><code><span class="c">new</span> ExuluContext({
+  id: <span class="s">"contracts"</span>,
+  entities: {                       <span class="c">// declaring this turns the layer on</span>
+    types: [
+      { name: <span class="s">"Person"</span>,  description: <span class="s">"Individuals named in the contract"</span> },
+      { name: <span class="s">"Company"</span>, description: <span class="s">"Legal entities / organizations"</span> },
+    ],
+    model: <span class="s">"&lt;models.id uuid&gt;"</span>, boostWeight: 0.3, canonicalLanguage: <span class="s">"english"</span>,
+  },
+});</code></pre>
+        </div>
+      </section>
+
+      <!-- 5 · LiteLLM rerankers/embeddings/OCR -->
+      <section class="feature" id="litellm-routing">
+        <div class="idx">05 — Models</div>
+        <h2>One path for every model</h2>
+        <p class="one-liner">Reranking, embeddings, and OCR now route through the LiteLLM proxy — swap any provider in YAML, and every call is cost-attributed.</p>
+        <div class="slice">
+          <video src="./shorts/litellm-routing.mp4" autoplay loop muted playsinline poster="./shorts/litellm-routing.jpg"></video>
+          <p>Reranking, embeddings, and OCR now run through the same proxy as your chat models. You can <strong>swap providers by editing one YAML file</strong> — pick any reranker, embedder, or OCR model in the catalog — and every call is automatically tagged and cost-attributed alongside everything else. One control plane for every model Exulu touches.</p>
+          <div class="snippet-label">config.litellm.yaml</div>
+          <pre><code>- model_name: rerank-v4.0-pro
+  litellm_params:
+    model: cohere/rerank-v4.0-pro
+    api_key: os.environ/COHERE_API_KEY
+  model_info:
+    <span class="k">type: reranker</span>        <span class="c"># ← makes it a selectable reranker</span>
+    top_n: 20</code></pre>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      <span>Exulu Platform · Released 22 June 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

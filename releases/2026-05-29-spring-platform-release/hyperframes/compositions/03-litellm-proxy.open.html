@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    [data-composition-id="litellm-proxy"] {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      background: #FDFDFD;
+      font-family: 'Manrope', system-ui, sans-serif;
+      color: #000000;
+      overflow: hidden;
+    }
+
+    /* ---------- Hook ---------- */
+    [data-composition-id="litellm-proxy"] .hook {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 132px;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.05;
+      white-space: nowrap;
+      color: #000000;
+    }
+
+    /* ---------- Split view container ---------- */
+    [data-composition-id="litellm-proxy"] .split {
+      position: absolute;
+      inset: 60px 60px 180px 60px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+    }
+
+    /* ---------- Editor (left) ---------- */
+    [data-composition-id="litellm-proxy"] .editor {
+      background: #0A0A0A;
+      border-radius: 6.4px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 2px 4px -1px rgba(0,0,0,0.16);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    [data-composition-id="litellm-proxy"] .editor-chrome {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 20px;
+      background: #141414;
+      border-bottom: 1px solid #1f1f1f;
+    }
+    [data-composition-id="litellm-proxy"] .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+    }
+    [data-composition-id="litellm-proxy"] .dot.red { background: #FF5F57; }
+    [data-composition-id="litellm-proxy"] .dot.yellow { background: #FEBC2E; }
+    [data-composition-id="litellm-proxy"] .dot.green { background: #28C840; }
+    [data-composition-id="litellm-proxy"] .filename {
+      margin-left: 14px;
+      padding: 6px 14px;
+      background: #1f1f1f;
+      color: #F5F5F5;
+      border-radius: 999px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      font-weight: 500;
+    }
+    [data-composition-id="litellm-proxy"] .editor-body {
+      padding: 24px 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px;
+      line-height: 1.55;
+      color: #F5F5F5;
+      flex: 1;
+    }
+    [data-composition-id="litellm-proxy"] .code-line {
+      white-space: pre;
+    }
+    [data-composition-id="litellm-proxy"] .tok-comment { color: #888888; }
+    [data-composition-id="litellm-proxy"] .tok-key { color: #A98AFF; }
+    [data-composition-id="litellm-proxy"] .tok-string { color: #E2EBFF; }
+    [data-composition-id="litellm-proxy"] .tok-fg { color: #F5F5F5; }
+    [data-composition-id="litellm-proxy"] .tok-dash { color: #A98AFF; }
+
+    /* ---------- Models page (right) ---------- */
+    [data-composition-id="litellm-proxy"] .models {
+      background: #FDFDFD;
+      border: 1px solid #E7E7EE;
+      border-radius: 6.4px;
+      box-shadow: 0px 2px 3px 0px rgba(0,0,0,0.16), 0px 1px 2px -1px rgba(0,0,0,0.16);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    [data-composition-id="litellm-proxy"] .models-header {
+      padding: 28px 32px 20px 32px;
+      border-bottom: 1px solid #E7E7EE;
+    }
+    [data-composition-id="litellm-proxy"] .models-title {
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: #000000;
+    }
+    [data-composition-id="litellm-proxy"] .banner {
+      margin: 18px 0 0 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      background: #E2EBFF;
+      color: #1E6ADC;
+      border-radius: 6.4px;
+      font-size: 18px;
+      font-weight: 500;
+    }
+    [data-composition-id="litellm-proxy"] .banner .ic {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: #1E6ADC;
+      color: #E2EBFF;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Manrope', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+      font-style: italic;
+      flex-shrink: 0;
+    }
+    [data-composition-id="litellm-proxy"] .table {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    [data-composition-id="litellm-proxy"] .thead {
+      display: grid;
+      grid-template-columns: 1.1fr 1.6fr 0.5fr;
+      gap: 18px;
+      padding: 16px 32px;
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #525252;
+      border-bottom: 1px solid #E7E7EE;
+      background: #FCFCFC;
+    }
+    [data-composition-id="litellm-proxy"] .row {
+      display: grid;
+      grid-template-columns: 1.1fr 1.6fr 0.5fr;
+      gap: 18px;
+      padding: 22px 32px;
+      font-size: 19px;
+      color: #000000;
+      border-bottom: 1px solid #E7E7EE;
+      align-items: center;
+    }
+    [data-composition-id="litellm-proxy"] .row .name {
+      font-weight: 600;
+    }
+    [data-composition-id="litellm-proxy"] .row .upstream {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 17px;
+      color: #525252;
+    }
+    [data-composition-id="litellm-proxy"] .row .tags {
+      color: #525252;
+    }
+
+    /* ---------- Payoff ---------- */
+    [data-composition-id="litellm-proxy"] .payoff {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 60px;
+      text-align: center;
+      font-size: 44px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      color: #000000;
+      padding: 0 60px;
+    }
+  
+      /* OPEN CI accents */
+      .brand .mono,.brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+</head>
+<body>
+  <div data-composition-id="litellm-proxy"
+       data-width="1920"
+       data-height="1080"
+       data-start="0"
+       data-duration="9">
+
+    <!-- HOOK (0.0 - 2.2) -->
+    <div id="hook" class="clip hook" data-start="0" data-duration="2.2" data-track-index="0">
+      <span style="color:#1A1A1A">One config.</span> Every model.
+    </div>
+
+    <!-- SPLIT VIEW (1.8 - 9.0) -->
+    <div id="split" class="clip split" data-start="1.8" data-duration="7.2" data-track-index="1">
+
+      <!-- LEFT: EDITOR -->
+      <div class="editor">
+        <div class="editor-chrome">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+          <span class="filename">config.yaml</span>
+        </div>
+        <div class="editor-body">
+          <div class="code-line"><span class="tok-comment"># ee/python/.litellm/config.yaml</span></div>
+          <div class="code-line"><span class="tok-key">general_settings</span><span class="tok-fg">:</span></div>
+          <div class="code-line"><span class="tok-fg">  </span><span class="tok-key">master_key</span><span class="tok-fg">: </span><span class="tok-string">os.environ/LITELLM_MASTER_KEY</span></div>
+          <div class="code-line">&nbsp;</div>
+          <div class="code-line"><span class="tok-key">model_list</span><span class="tok-fg">:</span></div>
+          <div class="code-line"><span class="tok-fg">  </span><span class="tok-dash">-</span><span class="tok-fg"> </span><span class="tok-key">model_name</span><span class="tok-fg">: </span><span class="tok-string">vertex-flash</span></div>
+          <div class="code-line"><span class="tok-fg">    </span><span class="tok-key">litellm_params</span><span class="tok-fg">:</span></div>
+          <div class="code-line"><span class="tok-fg">      </span><span class="tok-key">model</span><span class="tok-fg">: </span><span class="tok-string">vertex_ai/gemini-2.5-flash</span></div>
+          <div class="code-line"><span class="tok-fg">      </span><span class="tok-key">vertex_project</span><span class="tok-fg">: </span><span class="tok-string">os.environ/GOOGLE_VERTEX_PROJECT</span></div>
+          <div class="code-line yaml-new" id="y1"><span class="tok-fg">  </span><span class="tok-dash">-</span><span class="tok-fg"> </span><span class="tok-key">model_name</span><span class="tok-fg">: </span><span class="tok-string">claude-haiku</span></div>
+          <div class="code-line yaml-new" id="y2"><span class="tok-fg">    </span><span class="tok-key">litellm_params</span><span class="tok-fg">:</span></div>
+          <div class="code-line yaml-new" id="y3"><span class="tok-fg">      </span><span class="tok-key">model</span><span class="tok-fg">: </span><span class="tok-string">anthropic/claude-haiku-4-5</span></div>
+          <div class="code-line yaml-new" id="y4"><span class="tok-fg">      </span><span class="tok-key">api_key</span><span class="tok-fg">: </span><span class="tok-string">os.environ/ANTHROPIC_API_KEY</span></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: MODELS PAGE -->
+      <div class="models">
+        <div class="models-header">
+          <div class="models-title">Models</div>
+          <div class="banner">
+            <span class="ic">i</span>
+            <span>LiteLLM is enabled &mdash; models are configured in config.yaml.</span>
+          </div>
+        </div>
+        <div class="table">
+          <div class="thead">
+            <span>model_name</span>
+            <span>upstream_model</span>
+            <span>tags</span>
+          </div>
+          <div class="row">
+            <span class="name">vertex-flash</span>
+            <span class="upstream">vertex_ai/gemini-2.5-flash</span>
+            <span class="tags">&mdash;</span>
+          </div>
+          <div class="row">
+            <span class="name">vertex-pro</span>
+            <span class="upstream">vertex_ai/gemini-2.5-pro</span>
+            <span class="tags">&mdash;</span>
+          </div>
+          <div class="row" id="new-row">
+            <span class="name">claude-haiku</span>
+            <span class="upstream">anthropic/claude-haiku-4-5</span>
+            <span class="tags">&mdash;</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PAYOFF (6.2 - 9.0) -->
+    <div id="payoff" class="clip payoff" data-start="6.2" data-duration="2.8" data-track-index="2">
+      <span style="color:#1A1A1A">Rate limits, budgets, 100+ providers</span> &mdash; handled.
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // --- HOOK entrance (0.0 - 0.4) ---
+    tl.from("#hook", {
+      y: 24,
+      opacity: 0,
+      duration: 0.4,
+      ease: "power2.out"
+    }, 0.0);
+
+    // Hook holds 0.4 - 1.8, fades out 1.8 - 2.2 (transition to split view)
+    tl.to("#hook", {
+      opacity: 0,
+      y: -16,
+      duration: 0.4,
+      ease: "power2.inOut"
+    }, 1.8);
+
+    // --- SPLIT VIEW materializes (1.8 - 2.2) ---
+    // Pre-hide yaml-new lines and the new row, then fade them in later.
+    tl.set("#split", { opacity: 0 }, 1.8);
+    tl.set(".yaml-new", { opacity: 0, y: 8 }, 1.8);
+    tl.set("#new-row", { opacity: 0, y: 8 }, 1.8);
+
+    tl.to("#split", {
+      opacity: 1,
+      duration: 0.4,
+      ease: "power2.inOut"
+    }, 1.8);
+
+    // --- YAML new block fades in line-by-line (2.2 - 3.5) ---
+    // 4 lines over ~1.3s with 250ms stagger and 350ms per-line duration.
+    tl.to("#y1", { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 2.3);
+    tl.to("#y2", { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 2.55);
+    tl.to("#y3", { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 2.8);
+    tl.to("#y4", { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 3.05);
+
+    // --- BREATH 3.5 - 4.1 ---
+
+    // --- New row materializes on the right (4.1 - 5.5) ---
+    tl.to("#new-row", {
+      opacity: 1,
+      y: 0,
+      duration: 0.5,
+      ease: "power3.out"
+    }, 4.2);
+
+    // --- BREATH 5.5 - 6.2 ---
+
+    // --- PAYOFF entrance (6.2 - 6.6) ---
+    tl.from("#payoff", {
+      y: 20,
+      opacity: 0,
+      duration: 0.4,
+      ease: "power2.out"
+    }, 6.2);
+
+    // Payoff holds 6.6 - 9.0; final 600ms still (no exits past 8.4).
+
+    window.__timelines["litellm-proxy"] = tl;
+  </script>
+</body>
+</html>

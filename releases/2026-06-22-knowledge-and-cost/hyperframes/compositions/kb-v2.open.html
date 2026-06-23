@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --success:#16A34A; --info:#2563EB; --warning:#DB8500;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card (item detail page) ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 48px 60px; overflow: hidden; z-index: 4; }
+
+      /* breadcrumb */
+      .crumb { display: flex; align-items: center; gap: 10px; font-size: 18px; color: var(--muted-fg); }
+      .crumb .sep { color: #C8C8D0; }
+      .crumb .cur { color: var(--fg); font-weight: 500; }
+
+      /* item header row */
+      .item-head { position: relative; display: flex; align-items: flex-start; justify-content: space-between; margin-top: 18px; }
+      .item-title { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); display: flex; align-items: center; gap: 16px; }
+      .item-title .ficon { width: 42px; height: 42px; border-radius: 11px; background: #EEF9C8; color: var(--primary);
+                           display: flex; align-items: center; justify-content: center; }
+      .item-title .ficon svg { width: 24px; height: 24px; }
+      .item-id { margin-top: 12px; display: flex; align-items: center; gap: 10px; font-family: "JetBrains Mono", monospace;
+                 font-size: 16px; color: var(--muted-fg); }
+      .item-id .copy { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--border); background: #fff;
+                       display: flex; align-items: center; justify-content: center; color: var(--muted-fg); }
+      .item-id .copy svg { width: 15px; height: 15px; }
+      .edit-btn { height: 46px; padding: 0 22px; border-radius: 11px; border: 1px solid var(--input); background: #fff; color: var(--fg);
+                  font-size: 17px; font-weight: 500; display: flex; align-items: center; gap: 9px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      .edit-btn svg { width: 18px; height: 18px; }
+
+      /* pipeline stepper panel */
+      .pipe-panel { margin-top: 40px; border: 1px solid var(--border); border-radius: 16px; background: #fff;
+                    box-shadow: 0 2px 3px rgba(0,0,0,.05); padding: 30px 32px; }
+      .pipe-row { display: flex; align-items: center; justify-content: space-between; gap: 28px; }
+
+      ol.stepper { list-style: none; display: flex; align-items: center; gap: 14px; }
+      .step { display: inline-flex; align-items: center; gap: 11px; font-size: 23px; color: var(--fg); }
+      .step .sicon { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+      .step .sicon svg { width: 28px; height: 28px; }
+      .ic-check { color: var(--success); }
+      .ic-circle { color: rgba(107,107,115,.40); }
+      .ic-loader { color: var(--info); transform-origin: 50% 50%; }
+      .step.pending .slabel { color: var(--muted-fg); }
+      .step.terminal-done .slabel { color: var(--success); font-weight: 600; }
+
+      /* connectors: h-px w-8 (≈ 56px at video scale) */
+      .conn { height: 2px; width: 56px; border-radius: 2px; background: var(--border); position: relative; overflow: hidden; }
+      .conn.done { background: rgba(22,163,74,.50); }
+      .conn .fill { position: absolute; inset: 0; background: rgba(22,163,74,.50); transform-origin: left center; }
+
+      /* primary embeddings button */
+      .gen-btn { height: 52px; padding: 0 26px; border-radius: 12px; background: var(--primary); color: #fff;
+                 font-size: 19px; font-weight: 600; display: inline-flex; align-items: center; gap: 11px;
+                 box-shadow: 0 2px 8px rgba(26,26,26,.30); flex-shrink: 0; white-space: nowrap; }
+      .gen-btn svg { width: 22px; height: 22px; }
+
+      /* running footer */
+      .pipe-footer { display: flex; align-items: center; gap: 12px; margin-top: 26px; font-size: 18px; color: var(--muted-fg); }
+      .pipe-footer .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--info); flex: 0 0 12px; }
+      .pipe-footer .queue { color: var(--info); font-weight: 500; }
+
+      /* pipeline health card (top-right of content) */
+      .health { position: absolute; top: 44px; right: 60px; width: 360px; border: 1px solid var(--border); border-radius: 14px;
+                background: #fff; box-shadow: 0 2px 3px rgba(0,0,0,.06); padding: 22px 24px; z-index: 8; }
+      .health .top { display: flex; align-items: baseline; gap: 10px; }
+      .health .pct { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; color: var(--fg);
+                     font-variant-numeric: tabular-nums; }
+      .health .lbl { font-size: 17px; color: var(--muted-fg); }
+      .health .track { margin-top: 16px; height: 10px; width: 100%; border-radius: 6px; background: var(--muted); overflow: hidden; }
+      .health .bar { height: 100%; border-radius: 6px; background: #16A34A; transform-origin: left center; }
+      .health .sub { margin-top: 12px; font-size: 15px; color: var(--muted-fg); }
+
+      /* ---- cursor + ripple ---- */
+      #cursor { position: absolute; top: 0; left: 0; z-index: 20; filter: drop-shadow(0 3px 5px rgba(0,0,0,.28)); }
+      #ripple { position: absolute; top: 0; left: 0; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+                border-radius: 50%; border: 3px solid var(--primary); z-index: 19; }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 980px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 31px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="kb-v2" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR (active nav = Knowledge) -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item active" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-prompts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            <span>Prompts</span>
+          </div>
+          <div class="nav-item" id="nav-skills">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Skills</span>
+          </div>
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-analytics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M19 9l-5 5-4-4-3 3"/></svg>
+            <span>Analytics</span>
+          </div>
+          <div class="nav-item" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD: item detail page -->
+        <div class="content">
+
+          <!-- breadcrumb -->
+          <div class="crumb" id="crumb">
+            <span>Knowledge</span><span class="sep">/</span><span class="cur">Customer Docs</span>
+          </div>
+
+          <!-- item header -->
+          <div class="item-head">
+            <div id="item-meta">
+              <div class="item-title">
+                <span class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg></span>
+                <span>Q3 Contract.pdf</span>
+              </div>
+              <div class="item-id">
+                <span>itm_9f3a72c4e1</span>
+                <span class="copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+              </div>
+            </div>
+            <div class="edit-btn" id="edit-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+              Edit
+            </div>
+          </div>
+
+          <!-- PIPELINE STEPPER -->
+          <div class="pipe-panel" id="pipe-panel">
+            <div class="pipe-row">
+              <ol class="stepper">
+                <!-- 1. Ingested (done) -->
+                <li class="step" id="step-ingested">
+                  <span class="sicon ic-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                  <span class="slabel">Ingested</span>
+                </li>
+                <span class="conn done" id="conn-1"></span>
+                <!-- 2. Processed (done) -->
+                <li class="step" id="step-processed">
+                  <span class="sicon ic-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                  <span class="slabel">Processed</span>
+                </li>
+                <!-- connector to Embedded: gray now, fills green later -->
+                <span class="conn" id="conn-2"><span class="fill" id="conn-2-fill" style="opacity:0"></span></span>
+                <!-- 3. Embedded (pending -> running -> done) -->
+                <li class="step pending" id="step-embedded">
+                  <span class="sicon" id="emb-icon">
+                    <!-- pending Circle (visible first) -->
+                    <span class="ic-circle" id="emb-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg></span>
+                    <!-- spinning Loader2 (hidden until running) -->
+                    <span class="ic-loader" id="emb-loader" style="opacity:0; position:absolute"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span>
+                    <!-- green Check (hidden until done) -->
+                    <span class="ic-check" id="emb-check" style="opacity:0; position:absolute"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                  </span>
+                  <span class="slabel">Embedded</span>
+                </li>
+                <span class="conn" id="conn-3"></span>
+                <!-- 4. Ready to search (pending -> done terminal) -->
+                <li class="step pending" id="step-ready">
+                  <span class="sicon" id="rdy-icon">
+                    <span class="ic-circle" id="rdy-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg></span>
+                    <span class="ic-check" id="rdy-check" style="opacity:0; position:absolute"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                  </span>
+                  <span class="slabel">Ready to search</span>
+                </li>
+              </ol>
+
+              <!-- primary action -->
+              <div class="gen-btn" id="gen-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>
+                Generate embeddings
+              </div>
+            </div>
+
+            <!-- running footer -->
+            <div class="pipe-footer" id="pipe-footer" style="opacity:0">
+              <span class="dot" id="footer-dot"></span>
+              <span>Working…</span>
+              <span class="queue">Open queue</span>
+            </div>
+          </div>
+
+          <!-- PIPELINE HEALTH card (top-right) -->
+          <div class="health" id="health" style="opacity:0">
+            <div class="top">
+              <span class="pct">98%</span>
+              <span class="lbl">retrievable</span>
+            </div>
+            <div class="track"><div class="bar" id="health-bar" style="transform:scaleX(0)"></div></div>
+            <div class="sub">Pipeline health · 1,284 of 1,310 embedded</div>
+          </div>
+
+        </div>
+
+        <!-- CURSOR + RIPPLE -->
+        <div id="ripple" style="opacity:0"></div>
+        <svg id="cursor" width="32" height="32" viewBox="0 0 24 24" style="opacity:0"><path d="M5.4 3.1l13.9 7.4-6 1.8-2.8 5.8z" fill="#121317" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Watch ingestion become <b>searchable</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Every document shows its work — Ingested, Processed, Embedded, <b>Ready</b></div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure rects synchronously (plain CSS applied) ---
+      const genR = document.getElementById('gen-btn').getBoundingClientRect();
+      const genCX = genR.left + genR.width / 2;
+      const genCY = genR.top + genR.height / 2;
+
+      // initial cursor + ripple placement
+      gsap.set('#cursor', { x: 1180, y: 760 });
+      gsap.set('#ripple', { x: genCX, y: genCY, scale: 0.3 });
+
+      // === BEAT 1 (0–1.2s): shell + item detail assemble ===
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.05);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.65, ease: 'power3.out' }, 0.15);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.4, stagger: 0.05, ease: 'power2.out' }, 0.38);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.38, stagger: 0.03, ease: 'power2.out' }, 0.42);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.38, stagger: 0.03, ease: 'power1.out' }, 0.5);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.4, ease: 'back.out(2)' }, 0.7);
+      tl.from('#crumb', { y: 16, opacity: 0, duration: 0.42, ease: 'power3.out' }, 0.42);
+      tl.from('#item-meta', { y: 22, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.5);
+      tl.from('#edit-btn', { y: 22, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.58);
+      tl.from('#pipe-panel', { y: 30, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.66);
+      // BEAT 2: stepper nodes stagger in within the panel
+      tl.from('.stepper .step, .stepper .conn', { y: 12, opacity: 0, duration: 0.4, stagger: 0.06, ease: 'power2.out' }, 0.86);
+
+      // === BEAT 3: Caption 1 in (~1.2s), holds ≥1.2s ===
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 1.2);
+
+      // === BEAT 4 (~2.6s): cursor moves to Generate embeddings and clicks ===
+      tl.to('#cursor', { opacity: 1, duration: 0.22, ease: 'power1.out' }, 1.95);
+      tl.to('#cursor', { x: genCX - 6, y: genCY - 4, duration: 0.6, ease: 'power2.inOut' }, 2.0);
+      tl.to('#gen-btn', { scale: 0.96, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 2.6);   // press
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 2.6);     // click dip
+      tl.fromTo('#ripple', { scale: 0.3, opacity: 0.55 }, { scale: 1.8, opacity: 0, duration: 0.5, ease: 'power2.out' }, 2.62);
+      tl.to('#cursor', { opacity: 0, duration: 0.3, ease: 'power1.in' }, 2.95);
+
+      // === BEAT 5 (~2.9s): Embedded -> spinning blue Loader2; footer fades in ===
+      tl.to('#emb-circle', { opacity: 0, duration: 0.18, ease: 'power1.in' }, 2.88);
+      tl.to('#emb-loader', { opacity: 1, duration: 0.2, ease: 'power1.out' }, 2.9);
+      // spinner: FINITE repeats. ~1 turn / 0.8s from 2.9s until it flips to a Check at ~4.0s,
+      // but keep enough turns to cover any hold; flip handled by opacity below.
+      tl.to('#emb-loader', { rotation: 360, duration: 0.8, ease: 'none', repeat: 7 }, 2.9);
+      // footer: pulsing info dot + Working… + Open queue
+      tl.fromTo('#pipe-footer', { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 2.95);
+      // pulse the footer dot (finite): ~0.7s/cycle from 2.95s to end (~9s) ≈ 8 cycles
+      tl.to('#footer-dot', { opacity: 0.35, scale: 0.82, duration: 0.55, yoyo: true, repeat: 10, ease: 'sine.inOut', transformOrigin: '50% 50%' }, 2.95);
+
+      // === BEAT 6 (~4.0s): connector to Embedded fills green; Embedded -> Check; Ready lights up ===
+      tl.set('#conn-2-fill', { opacity: 1 }, 4.0);
+      tl.fromTo('#conn-2-fill', { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: 'power2.inOut' }, 4.0);
+      // Embedded flips: stop loader visually, show green Check
+      tl.to('#emb-loader', { opacity: 0, duration: 0.18, ease: 'power1.in' }, 4.52);
+      tl.fromTo('#emb-check', { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.32, ease: 'back.out(2.2)' }, 4.54);
+      // running footer resolves (work done)
+      tl.to('#pipe-footer', { opacity: 0, y: -6, duration: 0.3, ease: 'power2.in' }, 4.66);
+      // connector 3 turns green
+      tl.to('#conn-3', { backgroundColor: 'rgba(22,163,74,.50)', duration: 0.32, ease: 'power2.out' }, 4.72);
+      // terminal Ready to search lights up: Circle -> green Check, label medium green
+      tl.to('#rdy-circle', { opacity: 0, duration: 0.18, ease: 'power1.in' }, 4.78);
+      tl.fromTo('#rdy-check', { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.34, ease: 'back.out(2.2)' }, 4.8);
+
+      // resolve label colors directly (seek-safe; avoids className plugin quirks).
+      // Embedded label: muted-grey -> full foreground now that it's done.
+      tl.to('#step-embedded .slabel', { color: '#0A0A0A', duration: 0.3, ease: 'power1.out' }, 4.54);
+      // Terminal "Ready to search": muted-grey -> medium-weight success green.
+      tl.to('#step-ready .slabel', { color: '#16A34A', fontWeight: 600, duration: 0.34, ease: 'power1.out' }, 4.8);
+
+      // === BEAT 7: Caption 1 out; Caption 2 in (~5.2s), holds ≥1.8s ===
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 5.0);
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 5.2);
+
+      // === BEAT 8 (~6.6s): Pipeline health card fades in; bar fills to 98% ===
+      tl.fromTo('#health', { opacity: 0, y: -14, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: 'back.out(1.6)' }, 6.6);
+      tl.to('#health-bar', { scaleX: 0.98, duration: 0.8, ease: 'power2.out' }, 6.9);
+      // hold to end (~9s)
+
+      window.__timelines['kb-v2'] = tl;
+    </script>
+  </body>
+</html>

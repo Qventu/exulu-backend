@@ -1,0 +1,857 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+        font-family: "Manrope", system-ui, sans-serif;
+        letter-spacing: -0.025em;
+        color: #000000;
+      }
+
+      /* ---------- HOOK ---------- */
+      #hook {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 96px;
+        font-weight: 700;
+        line-height: 1.05;
+        letter-spacing: -0.025em;
+        color: #000000;
+        text-align: center;
+        white-space: nowrap;
+      }
+      #hook .accent {
+        color: #1A1A1A;
+      }
+
+      /* ---------- REVIEW CARD ---------- */
+      #card-wrap {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 1320px;
+      }
+      #card {
+        width: 100%;
+        background: #fdfdfd;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        box-shadow: 0px 2px 3px hsl(0 0% 0% / 0.08), 0px 1px 2px -1px hsl(0 0% 0% / 0.08);
+        transform-origin: center center;
+      }
+
+      /* audio player row */
+      #audio-row {
+        height: 56px;
+        background: #f5f5f5;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 14px;
+      }
+      #audio-row .play-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      #audio-row .play-btn svg {
+        width: 10px;
+        height: 10px;
+        fill: #525252;
+      }
+      #audio-row .audio-time {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        color: #525252;
+        letter-spacing: 0;
+      }
+      #audio-row .audio-track {
+        flex: 1;
+        height: 4px;
+        background: #e8e8ee;
+        border-radius: 2px;
+        position: relative;
+        overflow: hidden;
+      }
+      #audio-row .audio-progress {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 38%;
+        background: #525252;
+        border-radius: 2px;
+      }
+      #audio-row .audio-volume {
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        background: transparent;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #525252;
+        font-size: 12px;
+      }
+
+      /* speaker timeline ribbon */
+      #ribbon-wrap {
+        position: relative;
+        height: 48px;
+      }
+      #ribbon {
+        position: relative;
+        width: 100%;
+        height: 40px;
+        background: rgba(245, 245, 245, 0.4);
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        overflow: hidden;
+        display: flex;
+      }
+      .seg {
+        height: 100%;
+        opacity: 0.9;
+      }
+      .seg.s0 {
+        background: hsl(210, 80%, 55%);
+      }
+      .seg.s1 {
+        background: hsl(150, 60%, 45%);
+      }
+      .seg.s2 {
+        background: hsl(40, 90%, 55%);
+      }
+      #playhead {
+        position: absolute;
+        top: -2px;
+        bottom: -2px;
+        left: 38%;
+        width: 1px;
+        background: #000000;
+        pointer-events: none;
+      }
+
+      /* hover popup */
+      #popup {
+        position: absolute;
+        top: -106px;
+        left: 47.5%;
+        transform: translateX(-50%);
+        width: 320px;
+        background: #fcfcfc;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 12px 14px;
+        box-shadow: 0px 2px 3px hsl(0 0% 0% / 0.16), 0px 2px 4px -1px hsl(0 0% 0% / 0.16);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #popup .popup-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 13px;
+        color: #525252;
+        font-weight: 500;
+      }
+      #popup .popup-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: hsl(150, 60%, 45%);
+      }
+      #popup .popup-name {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: #000000;
+        font-weight: 600;
+      }
+      #popup .popup-time {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        color: #525252;
+      }
+      #popup .popup-text {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 13px;
+        color: #000000;
+        line-height: 1.45;
+      }
+      #popup::after {
+        content: "";
+        position: absolute;
+        bottom: -7px;
+        left: 50%;
+        transform: translateX(-50%) rotate(45deg);
+        width: 12px;
+        height: 12px;
+        background: #fcfcfc;
+        border-right: 1px solid #e8e8ee;
+        border-bottom: 1px solid #e8e8ee;
+      }
+
+      /* speakers section */
+      #speakers {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #speakers .speakers-label {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-weight: 500;
+        font-size: 14px;
+        color: #525252;
+        letter-spacing: -0.01em;
+      }
+      .speaker-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .speaker-row .speaker-code {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 13px;
+        color: #525252;
+        width: 132px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .speaker-row .speaker-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+      }
+      .speaker-row .speaker-dot.d0 {
+        background: hsl(210, 80%, 55%);
+      }
+      .speaker-row .speaker-dot.d1 {
+        background: hsl(150, 60%, 45%);
+      }
+      .speaker-row .speaker-dot.d2 {
+        background: hsl(40, 90%, 55%);
+      }
+      .speaker-row .speaker-input {
+        flex: 1;
+        height: 40px;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 14px;
+        color: #000000;
+        position: relative;
+        transition: none;
+      }
+      .speaker-row .speaker-input.focused {
+        border-color: #1A1A1A;
+        box-shadow: 0 0 0 3px rgba(102, 51, 255, 0.12);
+      }
+      .input-caret {
+        display: inline-block;
+        width: 1px;
+        height: 18px;
+        background: #000000;
+        margin-left: 1px;
+        vertical-align: -3px;
+        opacity: 0;
+      }
+
+      /* buttons row */
+      #buttons {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      .btn {
+        height: 40px;
+        padding: 0 18px;
+        border-radius: 0.4rem;
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid transparent;
+        letter-spacing: -0.01em;
+      }
+      .btn.ghost {
+        background: transparent;
+        color: #525252;
+      }
+      .btn.primary {
+        background: #1A1A1A;
+        color: #ffffff;
+      }
+      .btn.primary.inverted {
+        background: #ffffff;
+        color: #1A1A1A;
+        border-color: #1A1A1A;
+      }
+
+      /* cursor */
+      #cursor {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 22px;
+        height: 22px;
+        pointer-events: none;
+        z-index: 10;
+        opacity: 0;
+      }
+      #cursor svg {
+        width: 100%;
+        height: 100%;
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+      }
+
+      /* toast */
+      #toast {
+        position: absolute;
+        top: 32px;
+        right: 32px;
+        min-width: 260px;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 14px 16px;
+        box-shadow: 0px 2px 3px hsl(0 0% 0% / 0.16), 0px 2px 4px -1px hsl(0 0% 0% / 0.16);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        opacity: 0;
+      }
+      #toast .toast-title {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        color: #000000;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #toast .toast-check {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #1A1A1A;
+        color: #ffffff;
+        font-size: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #toast .toast-link {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 12px;
+        color: #1A1A1A;
+        text-decoration: underline;
+        margin-left: 24px;
+      }
+    
+      /* OPEN CI accents */
+      .brand .mono,.brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="slice-1"
+      data-start="0"
+      data-duration="8.5"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- HOOK -->
+      <div
+        id="hook"
+        class="clip"
+        data-start="0"
+        data-duration="2.6"
+        data-track-index="1"
+      >
+        Transcripts that know <span class="accent">who&rsquo;s talking.</span>
+      </div>
+
+      <!-- REVIEW CARD -->
+      <div
+        id="card-wrap"
+        class="clip"
+        data-start="2.2"
+        data-duration="6.3"
+        data-track-index="2"
+      >
+        <div id="card">
+          <!-- audio player row -->
+          <div id="audio-row">
+            <div class="play-btn">
+              <svg viewBox="0 0 10 10"><polygon points="2,1 9,5 2,9" /></svg>
+            </div>
+            <div class="audio-time">0:18</div>
+            <div class="audio-track">
+              <div class="audio-progress"></div>
+            </div>
+            <div class="audio-time">1:02</div>
+            <div class="audio-volume">&#9834;</div>
+          </div>
+
+          <!-- speaker timeline ribbon -->
+          <div id="ribbon-wrap">
+            <div id="ribbon">
+              <div class="seg s0" data-seg="1" style="width: 8%"></div>
+              <div class="seg s1" data-seg="2" style="width: 6%"></div>
+              <div class="seg s0" data-seg="3" style="width: 10%"></div>
+              <div class="seg s2" data-seg="4" style="width: 7%"></div>
+              <div class="seg s1" data-seg="5" style="width: 12%"></div>
+              <div class="seg s0" data-seg="6" style="width: 6%"></div>
+              <div class="seg s2" data-seg="7" style="width: 9%"></div>
+              <div class="seg s1" data-seg="8" style="width: 8%"></div>
+              <div class="seg s0" data-seg="9" style="width: 7%"></div>
+              <div class="seg s2" data-seg="10" style="width: 10%"></div>
+              <div class="seg s1" data-seg="11" style="width: 9%"></div>
+              <div class="seg s0" data-seg="12" style="width: 8%"></div>
+            </div>
+            <div id="playhead"></div>
+            <!-- hover popup -->
+            <div id="popup">
+              <div class="popup-head">
+                <span class="popup-dot"></span>
+                <span class="popup-name">SPEAKER_01</span>
+                <span class="popup-time">&middot; 0:18 &ndash; 0:23</span>
+              </div>
+              <div class="popup-text">
+                API is signed off &mdash; frontend lands today, docs go out tomorrow.
+              </div>
+            </div>
+          </div>
+
+          <!-- speakers section -->
+          <div id="speakers">
+            <div class="speakers-label">
+              Speakers (rename to save with real names)
+            </div>
+            <div class="speaker-row">
+              <div class="speaker-code">
+                <span class="speaker-dot d0"></span>SPEAKER_00
+              </div>
+              <div class="speaker-input" id="input-0">
+                <span id="input-0-text"></span><span class="input-caret" id="caret-0"></span>
+              </div>
+            </div>
+            <div class="speaker-row">
+              <div class="speaker-code">
+                <span class="speaker-dot d1"></span>SPEAKER_01
+              </div>
+              <div class="speaker-input" id="input-1">
+                <span id="input-1-text"></span><span class="input-caret" id="caret-1"></span>
+              </div>
+            </div>
+            <div class="speaker-row">
+              <div class="speaker-code">
+                <span class="speaker-dot d2"></span>SPEAKER_02
+              </div>
+              <div class="speaker-input" id="input-2">
+                <span id="input-2-text"></span><span class="input-caret" id="caret-2"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- buttons row -->
+          <div id="buttons">
+            <div class="btn ghost">Discard</div>
+            <div class="btn primary" id="save-btn">Save</div>
+          </div>
+        </div>
+
+        <!-- cursor (positioned absolute within card-wrap) -->
+        <div id="cursor">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M3 2 L3 18 L8 14 L11 21 L14 19.5 L11 12.5 L18 12.5 Z"
+              fill="#000000"
+              stroke="#ffffff"
+              stroke-width="1.2"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+
+      <!-- TOAST -->
+      <div
+        id="toast"
+        class="clip"
+        data-start="7.9"
+        data-duration="0.6"
+        data-track-index="3"
+      >
+        <div class="toast-title">
+          <span class="toast-check">&#10003;</span>
+          Transcript saved
+        </div>
+        <a class="toast-link">View in /data</a>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---------- initial hidden state for things that appear later ----------
+      // ribbon segments hidden initially (paint in L→R)
+      tl.set(
+        [
+          ".seg[data-seg='1']",
+          ".seg[data-seg='2']",
+          ".seg[data-seg='3']",
+          ".seg[data-seg='4']",
+          ".seg[data-seg='5']",
+          ".seg[data-seg='6']",
+          ".seg[data-seg='7']",
+          ".seg[data-seg='8']",
+          ".seg[data-seg='9']",
+          ".seg[data-seg='10']",
+          ".seg[data-seg='11']",
+          ".seg[data-seg='12']",
+        ],
+        { opacity: 0 },
+        0
+      );
+      tl.set("#playhead", { opacity: 0 }, 0);
+      tl.set("#popup", { opacity: 0, y: 6 }, 0);
+      tl.set("#cursor", { opacity: 0 }, 0);
+      tl.set("#audio-row", { opacity: 0 }, 0);
+      tl.set("#ribbon", { opacity: 0 }, 0);
+      tl.set("#speakers", { opacity: 0 }, 0);
+      tl.set("#buttons", { opacity: 0 }, 0);
+
+      // ---------- 0.0 – 0.4: HOOK fades in ----------
+      tl.from(
+        "#hook",
+        { opacity: 0, y: 24, duration: 0.4, ease: "power2.out" },
+        0
+      );
+
+      // 0.4 – 2.2: HOLD (1.8s — full sentence floor)
+
+      // ---------- 2.2 – 2.6: hook out, card in (fade + scale 0.95→1.0) ----------
+      tl.to(
+        "#hook",
+        { opacity: 0, y: -20, duration: 0.4, ease: "power2.in" },
+        2.2
+      );
+      tl.fromTo(
+        "#card",
+        { opacity: 0, scale: 0.95 },
+        { opacity: 1, scale: 1.0, duration: 0.4, ease: "power2.out" },
+        2.2
+      );
+
+      // ---------- 2.6 – 2.8: audio player row fades in ----------
+      tl.to(
+        "#audio-row",
+        { opacity: 1, duration: 0.2, ease: "power1.out" },
+        2.6
+      );
+
+      // ---------- 2.6 – 3.2: ribbon container appears + segments paint in L→R ----------
+      tl.to(
+        "#ribbon",
+        { opacity: 1, duration: 0.15, ease: "power1.out" },
+        2.6
+      );
+      // 12 segments, ~46ms apart, start at 2.65
+      const segStarts = [2.65, 2.70, 2.75, 2.80, 2.85, 2.90, 2.95, 3.00, 3.05, 3.10, 3.13, 3.16];
+      segStarts.forEach((t, i) => {
+        tl.to(
+          `.seg[data-seg='${i + 1}']`,
+          { opacity: 0.9, duration: 0.12, ease: "power1.out" },
+          t
+        );
+      });
+      // playhead appears with ribbon
+      tl.to("#playhead", { opacity: 1, duration: 0.15, ease: "power1.out" }, 3.1);
+
+      // speakers + buttons sections fade in alongside ribbon
+      tl.to(
+        "#speakers",
+        { opacity: 1, duration: 0.25, ease: "power2.out" },
+        2.7
+      );
+      tl.to(
+        "#buttons",
+        { opacity: 1, duration: 0.25, ease: "power2.out" },
+        2.8
+      );
+
+      // ---------- 3.2 – 3.9: cursor glides to middle green block (seg #5) ----------
+      // card is centered at 1920/2 = 960. card-wrap width=1320, so left edge ≈ 300.
+      // card padding 32, so ribbon starts at x ≈ 332, ends at ≈ 1588 (width 1256).
+      // ribbon-wrap y inside card-wrap: header (audio 56 + gap 24) + a bit, ≈ y 90 from top
+      // We'll position cursor in card-wrap-local coords (card-wrap is centered at 50%/50%).
+      // For simplicity place cursor with absolute coords RELATIVE to card-wrap top-left.
+      // card-wrap is centered on screen — but cursor is absolute child of card-wrap (top-left = card-wrap origin).
+      // ribbon left-inside-card = 32 (card padding) + 0 = 32
+      // ribbon top-inside-card = 32 (card padding-top) + 56 (audio row) + 24 (gap) + 4 = 116
+      // playhead x within ribbon (middle of seg #5):
+      //   cumulative widths up to seg5 start = 8+6+10+7 = 31% → 31% of 1256 = ~389.4
+      //   seg5 width 12% × 1256 = ~150.7, midpoint = +75.4
+      //   playhead-x = 32 + 389.4 + 75.4 ≈ 497 (inside card-wrap)
+      // playhead-y on ribbon center = 116 + 20 = 136
+      // Cursor entrance: start near card center, slide to ribbon target
+      tl.fromTo(
+        "#cursor",
+        { x: 760, y: 380, opacity: 0 },
+        { x: 760, y: 380, opacity: 1, duration: 0.2, ease: "power1.out" },
+        3.2
+      );
+      tl.to(
+        "#cursor",
+        { x: 497, y: 136, duration: 0.5, ease: "power2.inOut" },
+        3.3
+      );
+
+      // ---------- 3.9 – 4.2: popup appears ----------
+      tl.to(
+        "#popup",
+        { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" },
+        3.9
+      );
+
+      // 4.2 – 5.0: HOLD popup (800ms readable)
+
+      // ---------- 5.0 – 5.2: popup fades, cursor moves down to input-0 ----------
+      tl.to(
+        "#popup",
+        { opacity: 0, y: 6, duration: 0.2, ease: "power2.in" },
+        5.0
+      );
+
+      // input-0 row position inside card-wrap:
+      //   y = 32 (pad) + 56 (audio) + 24 (gap) + 48 (ribbon-wrap) + 24 (gap)
+      //     + 22 (speakers-label) + 12 (gap inside speakers) + 20 (row center)
+      //   ≈ 32 + 56 + 24 + 48 + 24 + 22 + 12 + 20 = 238
+      // input-0 left center: speaker-code w=132 + gap 14 → input starts x = 32+132+14 = 178, width≈1078, center ≈ 717
+      // But cursor wants to land on left side of input (where you'd click to focus): around x=200
+      tl.to(
+        "#cursor",
+        { x: 220, y: 238, duration: 0.2, ease: "power2.inOut" },
+        5.0
+      );
+
+      // focus input-0
+      tl.to(
+        "#input-0",
+        { duration: 0.01 },
+        5.18
+      );
+      tl.call(
+        () => {
+          const el = document.getElementById("input-0");
+          if (el) el.classList.add("focused");
+        },
+        [],
+        5.18
+      );
+      tl.to("#caret-0", { opacity: 1, duration: 0.05 }, 5.18);
+
+      // ---------- 5.2 – 6.0: type "Daniel" (6 chars × ~133ms) ----------
+      const name0 = "Daniel";
+      name0.split("").forEach((ch, i) => {
+        const t = 5.22 + i * 0.12;
+        tl.call(
+          (c) => {
+            const el = document.getElementById("input-0-text");
+            if (el) el.textContent = el.textContent + c;
+          },
+          [ch],
+          t
+        );
+      });
+      // last char lands at ≈ 5.82 → hold to 6.0 (180ms breath)
+      tl.call(
+        () => {
+          const el = document.getElementById("input-0");
+          if (el) el.classList.remove("focused");
+          const c = document.getElementById("caret-0");
+          if (c) c.style.opacity = 0;
+        },
+        [],
+        5.98
+      );
+
+      // ---------- 6.0 – 6.6: cursor → input-1, type "Alex" ----------
+      // input-1 y ≈ 238 + 40 (input height) + 12 (gap) = 290
+      tl.to(
+        "#cursor",
+        { x: 220, y: 290, duration: 0.12, ease: "power2.inOut" },
+        6.0
+      );
+      tl.call(
+        () => {
+          const el = document.getElementById("input-1");
+          if (el) el.classList.add("focused");
+        },
+        [],
+        6.13
+      );
+      tl.to("#caret-1", { opacity: 1, duration: 0.05 }, 6.13);
+      const name1 = "Alex";
+      name1.split("").forEach((ch, i) => {
+        const t = 6.15 + i * 0.1;
+        tl.call(
+          (c) => {
+            const el = document.getElementById("input-1-text");
+            if (el) el.textContent = el.textContent + c;
+          },
+          [ch],
+          t
+        );
+      });
+      // last char ≈ 6.45 → small hold to 6.6
+      tl.call(
+        () => {
+          const el = document.getElementById("input-1");
+          if (el) el.classList.remove("focused");
+          const c = document.getElementById("caret-1");
+          if (c) c.style.opacity = 0;
+        },
+        [],
+        6.58
+      );
+
+      // ---------- 6.6 – 7.2: cursor → input-2, type "Pat" ----------
+      // input-2 y ≈ 290 + 40 + 12 = 342
+      tl.to(
+        "#cursor",
+        { x: 220, y: 342, duration: 0.12, ease: "power2.inOut" },
+        6.6
+      );
+      tl.call(
+        () => {
+          const el = document.getElementById("input-2");
+          if (el) el.classList.add("focused");
+        },
+        [],
+        6.73
+      );
+      tl.to("#caret-2", { opacity: 1, duration: 0.05 }, 6.73);
+      const name2 = "Pat";
+      name2.split("").forEach((ch, i) => {
+        const t = 6.75 + i * 0.11;
+        tl.call(
+          (c) => {
+            const el = document.getElementById("input-2-text");
+            if (el) el.textContent = el.textContent + c;
+          },
+          [ch],
+          t
+        );
+      });
+      // last char ≈ 6.97 → hold to 7.2
+      tl.call(
+        () => {
+          const el = document.getElementById("input-2");
+          if (el) el.classList.remove("focused");
+          const c = document.getElementById("caret-2");
+          if (c) c.style.opacity = 0;
+        },
+        [],
+        7.18
+      );
+
+      // 7.2 – 7.5: HOLD renamed state (300ms)
+
+      // ---------- 7.5 – 7.7: cursor → Save button ----------
+      // Save button is right-aligned; buttons row y ≈ 342 + 40 + 12 + 4 + 20 = 418
+      // Save center x ≈ card-wrap-right(1320) - 32 (pad) - 30 (btn half-width) ≈ 1258
+      tl.to(
+        "#cursor",
+        { x: 1240, y: 418, duration: 0.2, ease: "power2.inOut" },
+        7.5
+      );
+
+      // ---------- 7.7 – 7.9: click — button briefly inverts ----------
+      tl.call(
+        () => {
+          const el = document.getElementById("save-btn");
+          if (el) el.classList.add("inverted");
+        },
+        [],
+        7.7
+      );
+      tl.to(
+        "#cursor",
+        { scale: 0.85, duration: 0.08, ease: "power2.in" },
+        7.7
+      );
+      tl.to(
+        "#cursor",
+        { scale: 1.0, duration: 0.08, ease: "power2.out" },
+        7.78
+      );
+      tl.call(
+        () => {
+          const el = document.getElementById("save-btn");
+          if (el) el.classList.remove("inverted");
+        },
+        [],
+        7.88
+      );
+
+      // ---------- 7.9 – 8.5: toast slides in from right, holds 600ms ----------
+      tl.fromTo(
+        "#toast",
+        { opacity: 0, x: 40 },
+        { opacity: 1, x: 0, duration: 0.25, ease: "power2.out" },
+        7.9
+      );
+
+      // 8.15 – 8.5: RESTING FRAME (350ms minimum + final 600ms loop region)
+
+      window.__timelines["slice-1"] = tl;
+    </script>
+  </body>
+</html>

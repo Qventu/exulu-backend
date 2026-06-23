@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+
+      :root {
+        --primary:#1A1A1A; --primary-dark:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --muted-fg:#6B6B73; --border:#E8E8EF;
+        --success:#16A34A; --warning:#DB8500; --info:#2563EB; --destructive:#E5484D;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: #EEF1F5; overflow: hidden; }
+
+      /* ===== stage holds the two stacked cards, centered ===== */
+      .stage { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+               width: 1040px; height: 620px; }
+
+      /* shared card chrome */
+      .card { position: absolute; inset: 0; border-radius: 24px; background: var(--bg);
+              border: 1px solid var(--border); box-shadow: 0 22px 60px rgba(20,20,40,.10);
+              padding: 64px 72px; overflow: hidden; }
+
+      /* small state tag, top-right */
+      .tag { position: absolute; top: 30px; right: 34px; font-size: 16px; font-weight: 600;
+             letter-spacing: 0.10em; text-transform: uppercase; color: var(--muted-fg);
+             border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px;
+             background: rgba(255,255,255,.7); }
+
+      /* ===== BEFORE card — busy / heavy ===== */
+      #before { z-index: 2; background:
+          radial-gradient(120% 120% at 88% -10%, rgba(26,26,26,.07), transparent 55%),
+          radial-gradient(120% 120% at -10% 120%, rgba(219,133,0,.06), transparent 55%),
+          #FFFFFF; }
+      .b-hero { font-weight: 900; font-size: 84px; line-height: .92; letter-spacing: -0.05em;
+                color: #15131B; margin-top: 28px; }
+      .b-hero .grad { background: linear-gradient(96deg, #1A1A1A 0%, #1A1A1A 55%, #DB8500 130%);
+                      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .b-sub { font-size: 26px; font-weight: 700; color: #2A2730; margin-top: 18px; letter-spacing: -0.02em; }
+      /* WRONG: an "info" badge rendered in PURPLE */
+      .b-badge { position: absolute; top: 96px; right: 96px; height: 46px; padding: 0 22px;
+                 border-radius: 999px; display: flex; align-items: center; gap: 10px;
+                 background: var(--primary); color: #fff; font-size: 19px; font-weight: 800;
+                 letter-spacing: .01em; box-shadow: 0 10px 26px rgba(26,26,26,.42); }
+      .b-badge .dot { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+      /* clashing, unsystematic chips */
+      .b-chips { display: flex; gap: 16px; margin-top: 64px; flex-wrap: wrap; }
+      .b-chip { height: 50px; padding: 0 26px; border-radius: 14px; display: flex; align-items: center;
+                font-size: 21px; font-weight: 800; letter-spacing: -0.01em; color: #fff; }
+      .b-chip.c1 { background: #2FBF5B; box-shadow: 0 8px 20px rgba(47,191,91,.45); transform: rotate(-2deg); }
+      .b-chip.c2 { background: #FFB020; color: #2A2200; box-shadow: 0 8px 20px rgba(255,176,32,.5); transform: rotate(1.5deg) translateY(6px); }
+      .b-chip.c3 { background: #FF4D4D; box-shadow: 0 8px 22px rgba(255,77,77,.5); transform: rotate(-1deg) translateY(-4px); }
+      .b-chip.c4 { background: #1A1A1A; box-shadow: 0 8px 22px rgba(26,26,26,.5); transform: rotate(2.5deg); }
+
+      /* ===== AFTER card — calm / systematic ===== */
+      #after { z-index: 1; background: var(--bg); }
+      .a-head { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+      .a-row1 { display: flex; align-items: center; gap: 18px; }
+      .a-title { font-size: 44px; font-weight: 600; letter-spacing: -0.03em; }
+      .a-badge { height: 34px; padding: 0 14px; border-radius: 999px; display: inline-flex; align-items: center;
+                 gap: 8px; font-size: 16px; font-weight: 600; letter-spacing: -0.005em;
+                 background: rgba(37,99,235,.10); color: var(--info); border: 1px solid rgba(37,99,235,.22); }
+      .a-badge .d { width: 8px; height: 8px; border-radius: 50%; background: var(--info); }
+      .a-sub { font-size: 18px; font-weight: 400; color: var(--muted-fg); letter-spacing: -0.01em; }
+
+      /* status row — unified semantic tokens (StatusDot + label) */
+      .a-status { display: flex; align-items: center; gap: 34px; margin-top: 48px; }
+      .stat { display: flex; align-items: center; gap: 11px; font-size: 19px; font-weight: 500;
+              color: #232228; letter-spacing: -0.01em; }
+      .stat .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
+      .stat.s-success .dot { background: var(--success); }
+      .stat.s-warning .dot { background: var(--warning); }
+      .stat.s-info    .dot { background: var(--info); }
+
+      /* proof block — mono token values + type scale */
+      .a-proof { margin-top: 54px; display: flex; flex-direction: column; gap: 14px;
+                 padding-top: 30px; border-top: 1px solid var(--border); }
+      .proof-line { font-family: "JetBrains Mono", monospace; font-size: 18px; letter-spacing: -0.01em;
+                    display: flex; align-items: center; gap: 14px; }
+      .proof-line .k { color: var(--muted-fg); }
+      .proof-line .v { color: var(--info); font-weight: 600; }
+      .proof-line .scale { color: #2A2730; }
+      .proof-line .scale .arw { color: var(--muted-fg); margin: 0 6px; }
+
+      /* ===== wipe overlay panel (covers AFTER until reveal) ===== */
+      #wipe { position: absolute; inset: 0; z-index: 3; border-radius: 24px;
+              background: linear-gradient(110deg, #1A1A1A 0%, #1A1A1A 100%);
+              box-shadow: 0 22px 60px rgba(80,30,200,.30); overflow: hidden; }
+      #wipe .seam { position: absolute; top: 0; right: -2px; width: 5px; height: 100%;
+                    background: rgba(255,255,255,.85); box-shadow: 0 0 22px rgba(255,255,255,.6); }
+      #wipe .wlabel { position: absolute; bottom: 40px; left: 56px; color: rgba(255,255,255,.92);
+                      font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+
+      /* ===== caption lower-third (matches gold-standard) ===== */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 980px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="design-system" data-start="0" data-duration="8" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="8" data-track-index="0">
+
+        <div class="stage">
+
+          <!-- ===== AFTER (sits underneath, revealed by the wipe) ===== -->
+          <div id="after" class="card">
+            <div class="tag" id="after-tag">After</div>
+
+            <div class="a-head" style="opacity:0">
+              <div class="a-row1">
+                <span class="a-title">Analytics</span>
+                <span class="a-badge"><span class="d"></span>Info</span>
+              </div>
+              <div class="a-sub">Usage, spend and model performance across your workspace</div>
+            </div>
+
+            <div class="a-status" style="opacity:0">
+              <div class="stat s-success"><span class="dot"></span>Success</div>
+              <div class="stat s-warning"><span class="dot"></span>Warning</div>
+              <div class="stat s-info"><span class="dot"></span>Info</div>
+            </div>
+
+            <div class="a-proof" style="opacity:0">
+              <div class="proof-line"><span class="k">--info:</span><span class="v">221 83% 53%</span></div>
+              <div class="proof-line"><span class="scale">text-2xl<span class="arw">→</span>text-lg<span class="arw">→</span>text-base</span></div>
+            </div>
+          </div>
+
+          <!-- ===== BEFORE (on top, slides away on wipe) ===== -->
+          <div id="before" class="card">
+            <div class="tag">Before</div>
+
+            <div class="b-badge"><span class="dot"></span>INFO</div>
+
+            <div class="b-hero">Analy<span class="grad">tics</span></div>
+            <div class="b-sub">Dashboard&nbsp;·&nbsp;Reports&nbsp;·&nbsp;Spend</div>
+
+            <div class="b-chips">
+              <div class="b-chip c1">Live</div>
+              <div class="b-chip c2">Pending</div>
+              <div class="b-chip c3">Failed</div>
+              <div class="b-chip c4">Synced</div>
+            </div>
+          </div>
+
+          <!-- ===== WIPE OVERLAY ===== -->
+          <div id="wipe">
+            <div class="seam"></div>
+            <div class="wlabel">One design system</div>
+          </div>
+
+        </div>
+
+        <!-- ===== CAPTIONS ===== -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">One calm system replaced the chaos</div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Real semantic tokens — <b>success</b>, <b>warning</b>, <b>info</b> — paired for both themes</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ----- initial states (paused, synchronous) -----
+      // Wipe panel parks fully off-screen to the LEFT so BEFORE is visible first.
+      gsap.set('#wipe', { xPercent: -150 });
+      // proof + status rows start tucked (hidden via inline opacity:0), revealed when AFTER lands.
+      gsap.set('.a-head, .a-status, .a-proof', { y: 18 });
+
+      // ============================================================
+      // BEAT 1 (0–1.2s) — BEFORE busy hero settles in
+      // ============================================================
+      tl.from('#before', { scale: 0.94, opacity: 0, duration: 0.55, ease: 'expo.out' }, 0.15);
+      tl.from('#before .tag', { y: -14, opacity: 0, duration: 0.45, ease: 'power2.out' }, 0.30);
+      tl.from('.b-hero', { y: 26, opacity: 0, duration: 0.55, ease: 'back.out(1.6)' }, 0.34);
+      tl.from('.b-badge', { scale: 0.5, opacity: 0, duration: 0.5, ease: 'back.out(2.2)' }, 0.46);
+      tl.from('.b-sub', { y: 14, opacity: 0, duration: 0.4, ease: 'power2.out' }, 0.52);
+      tl.from('.b-chip', { y: 24, opacity: 0, rotation: 0, duration: 0.45, stagger: 0.07, ease: 'back.out(2)' }, 0.60);
+
+      // ============================================================
+      // CAPTION 1 in ~1.0s — "One calm system replaced the chaos" (hold >=1.2s)
+      // ============================================================
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 1.00);
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.30, ease: 'power2.in' }, 3.20);
+
+      // ============================================================
+      // BEAT 3 (~2.4s) — deterministic WIPE: panel sweeps right, BEFORE slides off, AFTER revealed
+      // ============================================================
+      tl.to('#wipe', { xPercent: 0, duration: 0.46, ease: 'power3.inOut' }, 2.30);    // sweep in from left, cover BEFORE
+      tl.set('#before', { opacity: 0 }, 2.78);                                         // swap the card underneath the panel
+      tl.to('#wipe', { xPercent: 150, duration: 0.58, ease: 'power3.inOut' }, 2.86);   // sweep off right, reveal AFTER
+      tl.to('#wipe', { opacity: 0, duration: 0.20, ease: 'power1.out' }, 3.34);        // retire the panel cleanly
+
+      // AFTER content lands as the panel clears
+      tl.to('.a-head',   { opacity: 1, y: 0, duration: 0.50, ease: 'power3.out' }, 3.20);
+      tl.to('.a-status', { opacity: 1, y: 0, duration: 0.50, ease: 'power3.out' }, 3.36);
+      tl.to('.a-proof',  { opacity: 1, y: 0, duration: 0.50, ease: 'power3.out' }, 3.50);
+      tl.from('.stat .dot', { scale: 0, duration: 0.40, stagger: 0.08, ease: 'back.out(2.4)' }, 3.46);
+
+      // ============================================================
+      // CAPTION 2 in ~4.0s — semantic tokens line (hold >=1.8s)
+      // ============================================================
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 4.00);
+
+      // ============================================================
+      // BEAT 6 (~5.6s) — LIGHT -> DARK theme swap on AFTER, then ease back toward light
+      // semantic dots keep their hues; purple shifts to dark variant.
+      // ============================================================
+      // to dark
+      tl.to('#after',        { backgroundColor: '#16181D', borderColor: '#2A2D36', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.a-title',      { color: '#F2F2F2', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.a-sub',        { color: '#A6A6AE', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.stat',         { color: '#E4E4EA', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.proof-line .scale', { color: '#E4E4EA', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.proof-line .k',{ color: '#8E8E98', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('#after-tag',    { color: '#A6A6AE', borderColor: '#2A2D36', backgroundColor: 'rgba(255,255,255,0.04)', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.a-badge',      { color: '#1A1A1A', borderColor: 'rgba(26,26,26,0.40)', backgroundColor: 'rgba(26,26,26,0.14)', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.a-badge .d',   { backgroundColor: '#1A1A1A', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+      tl.to('.a-proof',      { borderTopColor: '#2A2D36', duration: 0.55, ease: 'power2.inOut' }, 5.60);
+
+      // hold dark a beat, then ease back toward light to close (~8s)
+      tl.to('#after',        { backgroundColor: '#FDFDFD', borderColor: '#E8E8EF', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.a-title',      { color: '#0A0A0A', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.a-sub',        { color: '#6B6B73', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.stat',         { color: '#232228', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.proof-line .scale', { color: '#2A2730', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.proof-line .k',{ color: '#6B6B73', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('#after-tag',    { color: '#6B6B73', borderColor: '#E8E8EF', backgroundColor: 'rgba(255,255,255,0.70)', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.a-badge',      { color: '#2563EB', borderColor: 'rgba(37,99,235,0.22)', backgroundColor: 'rgba(37,99,235,0.10)', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.a-badge .d',   { backgroundColor: '#2563EB', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+      tl.to('.a-proof',      { borderTopColor: '#E8E8EF', duration: 0.65, ease: 'sine.inOut' }, 6.95);
+
+      window.__timelines['design-system'] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F5F5F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --secondary-bg:#E8ECF1; --gold:#F5B81E;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 46px 60px; overflow: hidden; z-index: 4; }
+      .hdr h1 { font-size: 42px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .hdr p { font-size: 19px; color: var(--muted-fg); margin-top: 8px; }
+
+      /* ---- Favourites section ---- */
+      .favs { margin-top: 30px; }
+      .favs-head { display: flex; align-items: center; gap: 9px; font-size: 19px; font-weight: 500; color: var(--muted-fg); }
+      .favs-head svg { width: 21px; height: 21px; }
+      .favs-grid { margin-top: 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+      /* PinCard: rounded-md border p-3 */
+      .pin-card { display: flex; align-items: flex-start; gap: 14px; border: 1px solid var(--border); border-radius: 10px;
+                  background: #fff; padding: 16px 18px; box-shadow: 0 2px 3px rgba(0,0,0,.045); }
+      .pin-card .chip { width: 42px; height: 42px; border-radius: 10px; background: var(--muted); color: var(--muted-fg);
+                        display: flex; align-items: center; justify-content: center; flex: 0 0 42px; margin-top: 2px; }
+      .pin-card .chip svg { width: 22px; height: 22px; }
+      .pin-card .pin-body { min-width: 0; flex: 1; }
+      .pin-card .pin-name { display: block; font-size: 18px; font-weight: 500; color: var(--fg); letter-spacing: -0.01em; }
+      .badge-sec { display: inline-flex; align-items: center; margin-top: 9px; border-radius: 999px; background: var(--secondary-bg);
+                   color: #45505F; font-size: 13.5px; font-weight: 600; padding: 4px 11px; }
+      .pin-card .pin-star { flex: 0 0 auto; margin: -2px -4px 0 0; width: 34px; height: 34px;
+                            display: flex; align-items: center; justify-content: center; }
+      .pin-card .pin-star svg { width: 22px; height: 22px; }
+
+      /* ---- KB list (bordered, hairline-divided rows) ---- */
+      .kb-list { margin-top: 26px; border: 1px solid var(--border); border-radius: 14px; background: #fff;
+                 box-shadow: 0 2px 3px rgba(0,0,0,.045); overflow: hidden; }
+      .kb-row { position: relative; display: flex; align-items: center; gap: 20px; padding: 22px 26px; }
+      .kb-row + .kb-row { border-top: 1px solid var(--border); }
+      .kb-tile { position: relative; width: 64px; height: 64px; border-radius: 12px; background: var(--muted); flex: 0 0 64px;
+                 display: flex; align-items: center; justify-content: center; font-size: 38px; line-height: 1; }
+      .kb-tile .glyph { display: block; }
+      .kb-tile .glyph.swap { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+      .kb-meta { min-width: 0; flex: 1; }
+      .kb-name { font-size: 22px; font-weight: 500; color: var(--fg); letter-spacing: -0.015em; }
+      .kb-desc { font-size: 16px; color: var(--muted-fg); margin-top: 5px; }
+      .kb-star { position: relative; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 10px;
+                 display: flex; align-items: center; justify-content: center; }
+      .kb-star svg { width: 26px; height: 26px; }
+      .kb-star svg.fill-star { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+      /* ---- icon picker popover (Popover w-72 p-3) ---- */
+      .picker { position: absolute; width: 288px; background: #fff; border: 1px solid var(--border); border-radius: 12px;
+                box-shadow: 0 16px 44px rgba(16,18,28,.20); padding: 14px; z-index: 18; transform-origin: 30px -10px; }
+      .picker .pk-title { font-size: 16px; font-weight: 500; color: var(--fg); }
+      .picker .pk-search { position: relative; margin-top: 12px; }
+      .picker .pk-search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+                               width: 17px; height: 17px; color: var(--muted-fg); }
+      .picker .pk-input { height: 36px; border: 1px solid var(--input); border-radius: 8px; background: #fff;
+                          display: flex; align-items: center; padding: 0 12px 0 34px; color: #9A9AA3; font-size: 15px; }
+      .picker .pk-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+      .pk-cell { position: relative; aspect-ratio: 1 / 1; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+                 font-size: 24px; line-height: 1; }
+      .pk-cell.selected { background: #F2EEFF; box-shadow: inset 0 0 0 2px var(--primary); }
+      .pk-check { position: absolute; right: -4px; top: -4px; width: 18px; height: 18px; border-radius: 50%;
+                  background: var(--primary); display: flex; align-items: center; justify-content: center;
+                  box-shadow: 0 1px 3px rgba(26,26,26,.45); }
+      .pk-check svg { width: 11px; height: 11px; color: #fff; }
+      .picker .pk-reset { margin-top: 12px; height: 34px; border-radius: 8px; display: flex; align-items: center; gap: 9px;
+                          padding: 0 10px; color: var(--muted-fg); font-size: 15px; }
+      .picker .pk-reset svg { width: 16px; height: 16px; }
+
+      /* ---- cursor + ripple ---- */
+      #cursor { position: absolute; top: 0; left: 0; z-index: 30; filter: drop-shadow(0 3px 5px rgba(0,0,0,.28)); }
+      #ripple { position: absolute; top: 0; left: 0; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+                border-radius: 50%; border: 3px solid var(--primary); z-index: 29; }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 880px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+      .caption .txt .gold { color: var(--gold); font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="kb-personalization" data-start="0" data-duration="10" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="10" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR (Knowledge active) -->
+        <div class="sidebar">
+          <div id="spine"></div>
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item active" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-prompts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            <span>Prompts</span>
+          </div>
+          <div class="nav-item" id="nav-skills">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Skills</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD -->
+        <div class="content">
+          <div class="hdr">
+            <h1>Knowledge</h1>
+            <p>Browse, search and curate your knowledge bases</p>
+          </div>
+
+          <!-- Favourites section (starts empty; populates in Beat B) -->
+          <div class="favs">
+            <div class="favs-head" id="favs-head" style="opacity:0">
+              <svg id="favs-star" viewBox="0 0 24 24" fill="#F5B81E" stroke="#F5B81E" stroke-width="1.75" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              <span>Favourites</span>
+            </div>
+            <div class="favs-grid">
+              <div class="pin-card" id="pin-card" style="opacity:0">
+                <span class="chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+                </span>
+                <span class="pin-body">
+                  <span class="pin-name">Q3 Contract.pdf</span>
+                  <span class="badge-sec">Customer Docs</span>
+                </span>
+                <span class="pin-star">
+                  <svg viewBox="0 0 24 24" fill="#F5B81E" stroke="#F5B81E" stroke-width="1.75" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- KB list -->
+          <div class="kb-list">
+            <div class="kb-row" id="row-docs">
+              <div class="kb-tile" id="tile-docs"><span class="glyph" id="glyph-book">📚</span><span class="glyph swap" id="glyph-brain" style="opacity:0">🧠</span></div>
+              <div class="kb-meta">
+                <div class="kb-name">Customer Docs</div>
+                <div class="kb-desc">Support articles, FAQs and onboarding guides · 1,284 items</div>
+              </div>
+              <div class="kb-star" id="star-docs">
+                <svg id="star-docs-out" viewBox="0 0 24 24" fill="none" stroke="#9A9AA3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                <svg id="star-docs-fill" class="fill-star" viewBox="0 0 24 24" fill="#F5B81E" stroke="#F5B81E" stroke-width="1.75" stroke-linejoin="round" style="opacity:0"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </div>
+            </div>
+            <div class="kb-row" id="row-wiki">
+              <div class="kb-tile"><span class="glyph">📚</span></div>
+              <div class="kb-meta">
+                <div class="kb-name">Product Wiki</div>
+                <div class="kb-desc">Internal specs, release notes and architecture · 512 items</div>
+              </div>
+              <div class="kb-star">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#9A9AA3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </div>
+            </div>
+            <div class="kb-row" id="row-contracts">
+              <div class="kb-tile"><span class="glyph">📚</span></div>
+              <div class="kb-meta">
+                <div class="kb-name">Contracts</div>
+                <div class="kb-desc">Signed agreements, MSAs and statements of work · 96 items</div>
+              </div>
+              <div class="kb-star">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#9A9AA3" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ICON PICKER POPOVER (hidden until Beat A) -->
+        <div class="picker" id="picker" style="opacity:0">
+          <div class="pk-title">Choose an icon</div>
+          <div class="pk-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <div class="pk-input">Search icons…</div>
+          </div>
+          <div class="pk-grid">
+            <div class="pk-cell">📖</div>
+            <div class="pk-cell">📝</div>
+            <div class="pk-cell">📁</div>
+            <div class="pk-cell" id="pk-brain">🧠<span class="pk-check" id="pk-check" style="opacity:0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></div>
+            <div class="pk-cell">💡</div>
+            <div class="pk-cell">✨</div>
+            <div class="pk-cell">🔬</div>
+            <div class="pk-cell">🧪</div>
+            <div class="pk-cell">📊</div>
+            <div class="pk-cell">📰</div>
+            <div class="pk-cell">🗂️</div>
+            <div class="pk-cell">🎓</div>
+            <div class="pk-cell">🔭</div>
+            <div class="pk-cell">⚗️</div>
+            <div class="pk-cell">📚</div>
+            <div class="pk-cell">🧭</div>
+            <div class="pk-cell">📦</div>
+            <div class="pk-cell">🗃️</div>
+          </div>
+          <div class="pk-reset">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            <span>Reset to default</span>
+          </div>
+        </div>
+
+        <!-- CURSOR + RIPPLE -->
+        <div id="ripple" style="opacity:0"></div>
+        <svg id="cursor" width="32" height="32" viewBox="0 0 24 24" style="opacity:0"><path d="M5.4 3.1l13.9 7.4-6 1.8-2.8 5.8z" fill="#121317" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Give every knowledge base its own <b>icon</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Star an item — it's on your <span class="gold">dashboard</span> instantly</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure (plain CSS applied synchronously → rects reliable) ---
+      const tileDocs = document.getElementById('tile-docs').getBoundingClientRect();
+      const starDocs = document.getElementById('star-docs').getBoundingClientRect();
+      const picker   = document.getElementById('picker');
+
+      // anchor popover under the Customer Docs tile (align start, ~8px below)
+      picker.style.left = tileDocs.left + 'px';
+      picker.style.top  = (tileDocs.bottom + 8) + 'px';
+
+      const tileCX = tileDocs.left + tileDocs.width / 2;
+      const tileCY = tileDocs.top  + tileDocs.height / 2;
+      const starCX = starDocs.left + starDocs.width / 2;
+      const starCY = starDocs.top  + starDocs.height / 2;
+
+      // brain glyph centre — measured AFTER the picker is positioned above
+      const brainNow = document.getElementById('pk-brain').getBoundingClientRect();
+      const brainCXr = brainNow.left + brainNow.width / 2;
+      const brainCYr = brainNow.top  + brainNow.height / 2;
+
+      gsap.set('#cursor', { x: 1180, y: 720 });
+
+      // ======================================================================
+      // SHELL ASSEMBLE (0–1.2s)
+      // ======================================================================
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.5,  ease: 'power3.out' }, 0.0);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 50, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.12);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.4, stagger: 0.05, ease: 'power2.out' }, 0.3);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.36, stagger: 0.03, ease: 'power2.out' }, 0.4);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.36, stagger: 0.03, ease: 'power1.out' }, 0.45);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.36, ease: 'back.out(2)' }, 0.6);
+      tl.from('.hdr', { y: 20, opacity: 0, duration: 0.45, ease: 'power3.out' }, 0.35);
+      tl.from('.kb-list', { y: 26, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.5);
+      tl.from('.kb-row', { y: 16, opacity: 0, duration: 0.4, stagger: 0.07, ease: 'power2.out' }, 0.6);
+
+      // ======================================================================
+      // CAPTION 1 (~1.2s) — hold ≥1.2s
+      // ======================================================================
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 1.2);
+
+      // ======================================================================
+      // BEAT A — ICON
+      // cursor → Customer Docs tile, click (ripple), popover opens (~2.4s)
+      // ======================================================================
+      tl.to('#cursor', { opacity: 1, duration: 0.22, ease: 'power1.out' }, 1.9);
+      tl.to('#cursor', { x: tileCX - 4, y: tileCY - 2, duration: 0.55, ease: 'power3.inOut' }, 1.95);
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 2.55); // click dip
+      tl.set('#ripple', { x: tileCX, y: tileCY }, 2.57);
+      tl.fromTo('#ripple', { scale: 0.3, opacity: 0.55 }, { scale: 1.7, opacity: 0, duration: 0.5, ease: 'power2.out' }, 2.58);
+
+      // popover pops open under the tile (~2.7s)
+      tl.fromTo('#picker', { opacity: 0, y: -8, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 0.34, ease: 'back.out(1.7)' }, 2.7);
+      tl.from('.pk-cell', { opacity: 0, scale: 0.6, duration: 0.3, stagger: 0.012, ease: 'power2.out' }, 2.82);
+
+      // cursor moves to brain glyph and clicks (~3.4s)
+      tl.to('#cursor', { x: brainCXr - 4, y: brainCYr - 2, duration: 0.5, ease: 'power2.inOut' }, 3.3);
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 3.85); // click dip
+      // brain gets purple ring + check badge
+      tl.to('#pk-brain', { backgroundColor: '#F2EEFF', boxShadow: 'inset 0 0 0 2px #1A1A1A', duration: 0.2, ease: 'power2.out' }, 3.9);
+      tl.fromTo('#pk-check', { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: 0.3, ease: 'back.out(3)' }, 3.96);
+
+      // popover closes; tile swaps 📚 → 🧠 with a scale pop (~4.25s)
+      tl.to('#picker', { opacity: 0, y: -8, scale: 0.95, duration: 0.28, ease: 'power2.in' }, 4.2);
+      tl.to('#glyph-book',  { opacity: 0, duration: 0.18, ease: 'power1.in' }, 4.3);
+      tl.to('#glyph-brain', { opacity: 1, duration: 0.18, ease: 'power1.out' }, 4.34);
+      tl.fromTo('#tile-docs', { scale: 0.6 }, { scale: 1, duration: 0.42, ease: 'back.out(2.2)' }, 4.34);
+
+      // ======================================================================
+      // caption 1 out; caption 2 in (Beat B). Hold ≥1.8s
+      // ======================================================================
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 4.85);
+
+      // cursor moves to the Customer Docs star (~4.9s)
+      tl.to('#cursor', { x: starCX - 4, y: starCY - 2, duration: 0.55, ease: 'power3.inOut' }, 4.95);
+
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 5.4);
+
+      // ======================================================================
+      // BEAT B — FAVOURITE
+      // click the star → fills gold + zoom-in pop (~5.8s)
+      // ======================================================================
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 5.75); // click dip
+      tl.set('#ripple', { x: starCX, y: starCY }, 5.77);
+      tl.fromTo('#ripple', { scale: 0.3, opacity: 0.5 }, { scale: 1.6, opacity: 0, duration: 0.5, ease: 'power2.out' }, 5.78);
+      // star FILLS gold + zoom-in pop (favorite-toggle: remount + zoom-in-50)
+      tl.to('#star-docs-out', { opacity: 0, duration: 0.12, ease: 'power1.in' }, 5.84);
+      tl.set('#star-docs-fill', { opacity: 1 }, 5.85);
+      tl.fromTo('#star-docs-fill', { scale: 0.5 }, { scale: 1, duration: 0.45, ease: 'back.out(3)' }, 5.85);
+
+      // fade cursor away before the favourites card lands
+      tl.to('#cursor', { opacity: 0, duration: 0.3, ease: 'power1.in' }, 6.3);
+
+      // Favourites section populates (~6.6s) — heading star is already gold-filled
+      tl.fromTo('#favs-head', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' }, 6.55);
+      tl.fromTo('#pin-card', { opacity: 0, y: 16, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: 'back.out(1.6)' }, 6.85);
+
+      // gentle settle hold to end (~10s)
+      window.__timelines['kb-personalization'] = tl;
+    </script>
+  </body>
+</html>
