@@ -50,6 +50,14 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     }
   }
 
+  // Add visibility as a fixed field (not dynamic from context.fields)
+  fields["visibility"] = z
+    .enum(["private", "public"])
+    .optional()
+    .describe(
+      "Whether this memory is private to the user or shared (public). Ask the user if unknown.",
+    );
+
   const toolName =  "create_" + sanitizeName(context.name) + "_memory_item"
 
   return new ExuluTool({
@@ -60,15 +68,25 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
     type: "function",
     inputSchema: z.object(fields),
     config: [],
-    execute: async ({ name, description, surroundingContext, mode, information, exuluConfig, user }) => {
+    execute: async ({ name, description, surroundingContext, mode, information, visibility, type, exuluConfig, user }) => {
       let result: { result: string } = { result: "" };
 
+      if (!visibility) {
+        return {
+          result:
+            "Before saving this memory, ask the user whether it should be PRIVATE (visible only to them) " +
+            "or PUBLIC (shared with the team), then call create_memory again with `visibility` set.",
+        };
+      }
+
       try {
+        const hasTypeField = context.fields?.some((f: any) => f.name === "type");
         const newItem = {
           name: name,
           description: "Description: " + description + "\n\nSurrounding Context: " + surroundingContext,
           information: "Information: " + information,
-          rights_mode: "public",
+          rights_mode: visibility === "private" ? "private" : "public",
+          ...(hasTypeField && type ? { type } : {}),
         };
         const { item: createdItem, job: createdJob } = await context.createItem(
           newItem,
