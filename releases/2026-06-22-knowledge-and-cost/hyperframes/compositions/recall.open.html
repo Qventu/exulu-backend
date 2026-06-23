@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --success:#16A34A; --warning:#DB8500; --info:#2563EB; --destructive:#E5484D;
+        --spk-1:#3FC380; /* chart-1 teal — Alex */
+        --spk-2:#FB7A2A; /* chart-3 orange — Priya */
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 44px 56px; overflow: hidden; z-index: 4; }
+      .hdr h1 { font-size: 42px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .hdr p { font-size: 19px; color: var(--muted-fg); margin-top: 8px; }
+
+      /* ---- MeetingComposer Card ---- */
+      .composer { margin-top: 28px; border: 1px solid var(--border); border-radius: 14px; background: #fff;
+                  box-shadow: 0 2px 3px rgba(0,0,0,.05); padding: 22px 24px; }
+      .field-label { font-size: 16px; font-weight: 500; color: var(--fg); }
+      .input { margin-top: 9px; height: 50px; border: 1px solid var(--input); border-radius: 9px; background: #fff;
+               display: flex; align-items: center; padding: 0 15px; font-size: 18px; }
+      .input .ph { color: #A6A6AE; }
+      .input .typed { color: var(--fg); font-family: "JetBrains Mono", monospace; font-size: 17px; letter-spacing: -0.01em; white-space: pre; }
+      .input .caret { display: inline-block; width: 2px; height: 24px; background: var(--primary); margin-left: 1px; vertical-align: middle; }
+      .composer .row2 { margin-top: 16px; }
+      .options-row { margin-top: 18px; display: flex; align-items: center; gap: 9px; height: 34px; color: var(--fg); }
+      .options-row .chev { color: var(--muted-fg); }
+      .options-row .lbl { font-size: 16px; font-weight: 500; }
+      .options-row .summ { margin-left: auto; font-size: 14px; color: var(--muted-fg); font-weight: 400;
+                           max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .composer .actions { margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px; }
+      .btn-ghost { height: 46px; padding: 0 18px; border-radius: 9px; font-size: 16px; font-weight: 500;
+                   color: var(--muted-fg); display: flex; align-items: center; }
+      .btn-start { height: 46px; padding: 0 22px; border-radius: 9px; font-size: 16px; font-weight: 600;
+                   display: flex; align-items: center; gap: 8px; color: #fff;
+                   background: #C9C5D6; box-shadow: none; } /* disabled-look until URL fills */
+
+      /* ---- Queue list / JobRow ---- */
+      .queue-label { margin-top: 30px; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-fg); }
+      .queue { margin-top: 12px; list-style: none; }
+      .job-row { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #fff;
+                 box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      .job-row .inner { display: flex; align-items: center; gap: 14px; padding: 16px 18px; }
+      .job-row .vic { color: var(--muted-fg); flex: 0 0 auto; }
+      .job-row .vic svg { width: 22px; height: 22px; }
+      .job-row .body { min-width: 0; flex: 1; }
+      .job-row .titleline { display: flex; align-items: center; gap: 10px; }
+      .job-row .titleline .name { font-size: 19px; font-weight: 500; color: var(--fg); }
+      .statusdot { width: 11px; height: 11px; border-radius: 50%; background: rgba(107,107,115,.42); flex: 0 0 auto; }
+      .job-row .status { position: relative; margin-top: 4px; font-size: 15px; color: var(--muted-fg); min-height: 21px; }
+      .job-row .status .seg { display: inline-block; }
+      .job-row .status .seg.stacked { position: absolute; left: 0; top: 0; }
+      .btn-review { height: 40px; padding: 0 18px; border-radius: 9px; font-size: 15px; font-weight: 500;
+                    border: 1px solid var(--input); color: var(--fg); background: #fff; display: flex; align-items: center; }
+      /* recording hairline bar */
+      #rec-bar-wrap { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; overflow: hidden; }
+      #rec-bar { position: absolute; inset: 0;
+                 background: linear-gradient(90deg, rgba(26,26,26,.10), rgba(26,26,26,.65), rgba(26,26,26,.10)); }
+
+      /* ---- ReviewSheet (right) ---- */
+      .sheet { position: absolute; top: 0; right: 0; width: 660px; height: 1080px; background: #fff;
+               border-left: 1px solid var(--border); box-shadow: -18px 0 48px rgba(16,18,32,.16);
+               z-index: 18; display: flex; flex-direction: column; }
+      .sheet-head { display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--border); padding: 22px 26px; }
+      .sheet-head .ttl { flex: 1; min-width: 0; }
+      .sheet-head .ttl .h { font-size: 23px; font-weight: 600; color: var(--fg); }
+      .sheet-head .ttl .sub { font-size: 14px; color: var(--muted-fg); margin-top: 4px; }
+      .sheet-head .x { width: 40px; height: 40px; border-radius: 9px; color: var(--muted-fg);
+                       display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+      .sheet-body { flex: 1; padding: 24px 26px; overflow: hidden; }
+      .section-label { font-size: 16px; font-weight: 600; color: var(--fg); }
+      .section-label .hint { margin-left: 10px; font-size: 13px; font-weight: 400; color: var(--muted-fg); }
+      /* speakers strip */
+      .spk-strip { display: flex; gap: 14px; margin-top: 12px; }
+      .spk { display: flex; align-items: center; gap: 9px; }
+      .spk .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
+      .spk .raw { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--muted-fg); }
+      .spk .rename { height: 38px; width: 130px; border: 1px solid var(--input); border-radius: 8px; background: #fff;
+                     display: flex; align-items: center; padding: 0 11px; font-size: 15px; color: var(--fg); font-weight: 500; }
+      /* transcript blocks */
+      .transcript { margin-top: 22px; }
+      .tline { padding: 9px 10px; border-radius: 9px; margin-top: 2px; }
+      .tline.active { background: var(--muted); }
+      .tline .meta { display: flex; align-items: center; gap: 9px; }
+      .tline .meta .d { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+      .tline .meta .who { font-size: 14px; font-weight: 600; color: var(--fg); }
+      .tline .meta .clk { font-family: "JetBrains Mono", monospace; font-size: 13px; color: var(--muted-fg); }
+      .tline .say { margin-top: 4px; font-size: 16px; line-height: 1.5; color: #2A2A30; }
+      /* summary card */
+      .summary-label { margin-top: 26px; font-size: 16px; font-weight: 600; color: var(--fg); }
+      .summary-card { margin-top: 12px; border: 1px solid var(--border); border-radius: 11px; padding: 18px; background: #fff; }
+      .summary-card .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .summary-card .pname { font-size: 16px; font-weight: 600; color: var(--fg); }
+      .summary-card .rerun { font-size: 14px; color: var(--muted-fg); font-weight: 500; }
+      .summary-card .text { margin-top: 10px; font-size: 16px; line-height: 1.55; color: var(--muted-fg); }
+      .agent-tag { display: inline-flex; align-items: center; gap: 7px; margin-top: 14px; height: 30px; padding: 0 12px;
+                   border-radius: 999px; background: #EEF9C8; color: var(--primary); font-size: 13px; font-weight: 600; }
+      .agent-tag svg { width: 15px; height: 15px; }
+
+      /* ---- cursor + ripple ---- */
+      #cursor { position: absolute; top: 0; left: 0; z-index: 30; filter: drop-shadow(0 3px 5px rgba(0,0,0,.28)); }
+      #ripple { position: absolute; top: 0; left: 0; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+                border-radius: 50%; border: 3px solid var(--primary); z-index: 29; }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 860px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="recall" data-start="0" data-duration="10" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="10" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item active" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-prompts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            <span>Prompts</span>
+          </div>
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-analytics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M19 9l-5 5-4-4-3 3"/></svg>
+            <span>Analytics</span>
+          </div>
+          <div class="nav-item" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD: Transcripts page -->
+        <div class="content">
+          <div class="hdr">
+            <h1>Transcripts</h1>
+            <p>Record a meeting or upload audio — review, label speakers, and save</p>
+          </div>
+
+          <!-- MeetingComposer -->
+          <div class="composer" id="composer">
+            <div class="field">
+              <div class="field-label">Meeting URL</div>
+              <div class="input" id="url-input">
+                <span class="ph" id="url-ph">Paste a Zoom, Meet or Teams link…</span>
+                <span class="typed" id="url-typed"></span><span class="caret" id="url-caret" style="opacity:0"></span>
+              </div>
+            </div>
+            <div class="field row2">
+              <div class="field-label">Title</div>
+              <div class="input"><span class="ph">Weekly Sync</span></div>
+            </div>
+            <div class="options-row">
+              <span class="chev"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+              <span class="lbl">Options</span>
+              <span class="summ">Join now · Auto-detect · No project · Private · Post-processing</span>
+            </div>
+            <div class="actions">
+              <div class="btn-ghost">Cancel</div>
+              <div class="btn-start" id="btn-start">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                Start meeting
+              </div>
+            </div>
+          </div>
+
+          <!-- Queue -->
+          <div class="queue-label" id="queue-label" style="opacity:0">In progress</div>
+          <ul class="queue">
+            <li class="job-row" id="job-row" style="opacity:0">
+              <div class="inner">
+                <div class="vic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>
+                <div class="body">
+                  <div class="titleline">
+                    <span class="name">Weekly Sync</span>
+                    <span class="statusdot" id="job-dot"></span>
+                  </div>
+                  <div class="status">
+                    <span class="seg" id="st-joining">Joining the call…</span>
+                    <span class="seg stacked" id="st-recording" style="opacity:0">In the call — recording</span>
+                    <span class="seg stacked" id="st-review" style="opacity:0">Needs review · 32m 14s</span>
+                  </div>
+                </div>
+                <div style="flex:0 0 auto;">
+                  <div class="btn-review" id="btn-review" style="opacity:0">Review</div>
+                </div>
+              </div>
+              <div id="rec-bar-wrap" style="opacity:0"><div id="rec-bar"></div></div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- REVIEW SHEET (slides in from right) -->
+        <div class="sheet" id="sheet" style="opacity:0">
+          <div class="sheet-head">
+            <div class="ttl">
+              <div class="h">Weekly Sync</div>
+              <div class="sub">Needs review · 32m 14s · 2 speakers</div>
+            </div>
+            <div class="x"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+          </div>
+          <div class="sheet-body">
+            <!-- speakers strip -->
+            <div class="section-label">Speakers<span class="hint">Name them so the transcript reads cleanly</span></div>
+            <div class="spk-strip">
+              <div class="spk">
+                <span class="dot" style="background:var(--spk-1)"></span>
+                <span class="raw">SPEAKER_00</span>
+                <span class="rename">Alex</span>
+              </div>
+              <div class="spk">
+                <span class="dot" style="background:var(--spk-2)"></span>
+                <span class="raw">SPEAKER_01</span>
+                <span class="rename">Priya</span>
+              </div>
+            </div>
+
+            <!-- transcript -->
+            <div class="transcript">
+              <div class="section-label">Transcript</div>
+              <div class="tline active">
+                <div class="meta"><span class="d" style="background:var(--spk-1)"></span><span class="who">Alex</span><span class="clk">0:04</span></div>
+                <div class="say">Let's kick off the weekly sync — quick status on the launch.</div>
+              </div>
+              <div class="tline">
+                <div class="meta"><span class="d" style="background:var(--spk-2)"></span><span class="who">Priya</span><span class="clk">0:11</span></div>
+                <div class="say">Design's signed off. Knowledge ingestion is live in staging.</div>
+              </div>
+              <div class="tline">
+                <div class="meta"><span class="d" style="background:var(--spk-1)"></span><span class="who">Alex</span><span class="clk">0:23</span></div>
+                <div class="say">Great — let's lock the cost dashboard before we ship Friday.</div>
+              </div>
+            </div>
+
+            <!-- summary / post-processing result -->
+            <div class="summary-label">Post-processing</div>
+            <div class="summary-card">
+              <div class="top">
+                <span class="pname">Meeting summary</span>
+                <span class="rerun">Re-run</span>
+              </div>
+              <div class="text">Team confirmed design sign-off and live staging ingestion. Action: finalize the cost dashboard and ship Friday. Owner: Alex.</div>
+              <span class="agent-tag">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+                Notetaker agent
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- CURSOR + RIPPLE -->
+        <div id="ripple" style="opacity:0"></div>
+        <svg id="cursor" width="32" height="32" viewBox="0 0 24 24" style="opacity:0"><path d="M5.4 3.1l13.9 7.4-6 1.8-2.8 5.8z" fill="#121317" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Drop in a <b>meeting link</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">OPEN IMP joins, records and transcribes — then <b>runs your prompts</b> on it</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure (plain CSS applied synchronously → rects reliable) ---
+      const startBtn = document.getElementById('btn-start');
+      const sbr = startBtn.getBoundingClientRect();
+      const curEndX = sbr.left + sbr.width / 2;
+      const curEndY = sbr.top + sbr.height / 2;
+
+      gsap.set('#cursor', { x: 1180, y: 640 });
+      gsap.set('#ripple', { x: curEndX, y: curEndY, scale: 0.3 });
+
+      // --- entrances: build the shell ---
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.05);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.15);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.45, stagger: 0.05, ease: 'power2.out' }, 0.38);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power2.out' }, 0.48);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power1.out' }, 0.52);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.4, ease: 'power2.out' }, 0.7);
+      tl.from('.hdr', { y: 20, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.5);
+      tl.from('#composer', { y: 26, opacity: 0, duration: 0.55, ease: 'expo.out' }, 0.62);
+
+      // --- caption 1: "Drop in a meeting link" (in ~1.4s, holds through ~5.1) ---
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 1.4);
+
+      // --- URL types into the input (deterministic stepped reveal) ---
+      // caret on, placeholder out
+      tl.to('#url-ph', { opacity: 0, duration: 0.15 }, 1.28);
+      tl.set('#url-caret', { opacity: 1 }, 1.3);
+      (function(){
+        const full = 'https://zoom.us/j/88421095';
+        const T0 = 1.34, STEP = 0.042; // ~25 chars over ~1.05s
+        for (let i = 1; i <= full.length; i++) {
+          tl.set('#url-typed', { textContent: full.slice(0, i) }, T0 + i * STEP);
+        }
+      })();
+      // caret blink (finite) after typing settles
+      tl.to('#url-caret', { opacity: 0.15, duration: 0.4, yoyo: true, repeat: 3, ease: 'power1.inOut' }, 2.5);
+
+      // --- Start button brightens to active purple as URL completes (~2.42s) ---
+      tl.to('#btn-start', { backgroundColor: '#1A1A1A', duration: 0.35, ease: 'power2.out',
+                            boxShadow: '0 2px 10px rgba(26,26,26,0.34)' }, 2.42);
+
+      // --- cursor moves to Start and clicks (~2.9s) ---
+      tl.to('#cursor', { opacity: 1, duration: 0.22 }, 2.5);
+      tl.to('#cursor', { x: curEndX - 3, y: curEndY - 2, duration: 0.55, ease: 'power2.inOut' }, 2.55);
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 3.08);  // click dip
+      tl.fromTo('#ripple', { scale: 0.3, opacity: 0.55 }, { scale: 1.8, opacity: 0, duration: 0.5, ease: 'power2.out' }, 3.1);
+      tl.to('#btn-start', { scale: 0.97, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 3.1);
+      tl.to('#cursor', { opacity: 0, duration: 0.3, ease: 'power1.in' }, 3.7);
+
+      // --- JobRow appears in the queue (~3.3s) ---
+      tl.fromTo('#queue-label', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 3.25);
+      tl.fromTo('#job-row', { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease: 'back.out(1.4)' }, 3.32);
+
+      // --- status advances: Joining → In call · recording → Needs review ---
+      // (hold Joining ~0.75s)
+      tl.to('#st-joining',   { opacity: 0, duration: 0.25, ease: 'power1.in' }, 4.15);
+      tl.to('#st-recording', { opacity: 1, duration: 0.3, ease: 'power2.out' }, 4.3);
+      // recording bar pulses left→right while recording
+      tl.set('#rec-bar', { x: '-100%' }, 4.28);
+      tl.to('#rec-bar-wrap', { opacity: 1, duration: 0.25 }, 4.3);
+      tl.to('#rec-bar', { x: '100%', duration: 0.95, ease: 'power1.inOut', repeat: 1 }, 4.34);
+      // recording → needs review (~5.25s): bar resolves, Review fades in
+      tl.to('#st-recording', { opacity: 0, duration: 0.25, ease: 'power1.in' }, 5.25);
+      tl.to('#rec-bar-wrap', { opacity: 0, duration: 0.3, ease: 'power2.in' }, 5.25);
+      tl.to('#job-dot', { backgroundColor: 'rgba(26,26,26,0.85)', duration: 0.3, ease: 'power2.out' }, 5.3); // active dot
+      tl.to('#st-review', { opacity: 1, duration: 0.3, ease: 'power2.out' }, 5.4);
+      tl.fromTo('#btn-review', { opacity: 0, x: 8 }, { opacity: 1, x: 0, duration: 0.35, ease: 'power2.out' }, 5.45);
+
+      // --- caption 1 out, caption 2 in (~5.4s) ---
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 5.15);
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 5.42);
+
+      // --- ReviewSheet slides in from the right (~6.6s), holds to end ---
+      tl.fromTo('#sheet', { opacity: 1, x: 700 }, { x: 0, duration: 0.62, ease: 'power3.out' }, 6.55);
+      tl.set('#sheet', { opacity: 1 }, 6.55);
+      tl.from('.spk', { opacity: 0, y: 10, duration: 0.4, stagger: 0.08, ease: 'power2.out' }, 7.05);
+      tl.from('.tline', { opacity: 0, y: 12, duration: 0.42, stagger: 0.1, ease: 'power2.out' }, 7.25);
+      tl.from('.summary-card', { opacity: 0, y: 16, duration: 0.5, ease: 'expo.out' }, 7.7);
+      tl.from('.agent-tag', { opacity: 0, scale: 0.85, duration: 0.4, ease: 'back.out(1.6)' }, 8.05);
+
+      window.__timelines['recall'] = tl;
+    </script>
+  </body>
+</html>

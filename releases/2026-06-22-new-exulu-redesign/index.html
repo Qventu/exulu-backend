@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Made calm · Release 2026-06-22</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2%;
+      --foreground: 0 0% 4%;
+      --primary: 257.94 100% 60%;
+      --accent: 258 100% 96.3%;
+      --accent-foreground: 257.94 100% 56%;
+      --muted-foreground: 0 0% 32.2%;
+      --border: 240 17% 91.9%;
+      --card: 210 42.9% 98%;
+      --radius: 0.5rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 12px; border-radius: 999px;
+      background: hsl(var(--accent)); color: hsl(var(--accent-foreground));
+      font-size: 12.5px; font-weight: 600; letter-spacing: 0;
+    }
+    .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: hsl(var(--primary)); }
+    h1.hero {
+      font-size: 60px; font-weight: 700; line-height: 1.04;
+      margin: 26px 0 18px; letter-spacing: -0.045em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede { font-size: 21px; color: hsl(var(--muted-foreground)); max-width: 660px; }
+    .lede strong { color: hsl(var(--foreground)); font-weight: 600; }
+
+    .feature { margin-top: 92px; padding-top: 48px; border-top: 1px solid hsl(var(--border)); }
+    .feature .idx {
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500;
+      color: hsl(var(--primary)); letter-spacing: 0;
+    }
+    .feature h2 { font-size: 33px; font-weight: 700; margin: 10px 0 8px; letter-spacing: -0.025em; }
+    .feature .one-liner { color: hsl(var(--muted-foreground)); font-size: 18px; margin: 0 0 30px; max-width: 660px; }
+
+    .slice { margin-top: 24px; }
+    .slice video, .slice .placeholder {
+      width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius);
+      border: 1px solid hsl(var(--border)); display: block; margin: 0 0 24px;
+      box-shadow: 0 12px 40px -16px hsl(0 0% 0% / 0.18);
+    }
+    .slice p { margin: 0 0 16px; font-size: 16.5px; max-width: 680px; }
+    .slice p strong { font-weight: 600; }
+
+    .placeholder {
+      background:
+        radial-gradient(120% 120% at 50% 0%, hsl(258 100% 97%) 0%, hsl(210 42.9% 98%) 60%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; color: hsl(var(--muted-foreground)); text-align: center;
+    }
+    .placeholder .ph-icon {
+      width: 52px; height: 52px; border-radius: 14px; background: #fff;
+      border: 1px solid hsl(var(--border)); display: flex; align-items: center; justify-content: center;
+      color: hsl(var(--primary)); box-shadow: 0 6px 18px -8px hsl(257.94 100% 60% / 0.5);
+    }
+    .placeholder .ph-title { font-size: 19px; font-weight: 600; color: hsl(var(--foreground)); }
+    .placeholder .ph-note {
+      font-size: 13px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0;
+      background: #fff; border: 1px solid hsl(var(--border)); border-radius: 999px; padding: 4px 12px;
+    }
+
+    .tag {
+      display: inline-block; font-size: 12px; font-weight: 600; color: hsl(var(--accent-foreground));
+      background: hsl(var(--accent)); border-radius: 6px; padding: 3px 9px; margin-bottom: 18px; letter-spacing: 0;
+    }
+
+    footer {
+      margin-top: 110px; padding-top: 30px; border-top: 1px solid hsl(var(--border));
+      font-size: 14px; color: hsl(var(--muted-foreground)); display: flex; justify-content: space-between; align-items: center;
+    }
+    footer a { color: hsl(var(--primary)); text-decoration: none; font-weight: 600; }
+
+    .proof-banner {
+      margin-top: 40px; background: hsl(258 100% 97.5%); border: 1px solid hsl(258 60% 90%);
+      border-radius: var(--radius); padding: 14px 18px; font-size: 14px; color: hsl(257.94 60% 40%);
+    }
+    .proof-banner strong { font-weight: 600; color: hsl(257.94 100% 44%); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill"><span class="dot"></span>Platform Release · 22 June 2026</span>
+      <h1 class="hero">Exulu, made <em>calm</em>.</h1>
+      <p class="lede">One workspace that shows you only what your role needs — and gets you there in a single click. The whole product was rebuilt to feel like <strong>one thing</strong>: a calm command center that adapts to who just logged in, works the same on a phone as on a 1440-px display, and is honest about what the AI is doing underneath. Nothing was removed — everything just found its place.</p>
+
+    </header>
+
+    <main>
+
+      <!-- 1 · The Spine (LIVE) -->
+      <section class="feature" id="navigation">
+        <div class="idx">01 — Navigation</div>
+        <h2>The Spine</h2>
+        <p class="one-liner">Calm, role-aware navigation — a focused app for end-users, a grouped command center for admins, and a purple indicator that always shows where you are.</p>
+
+        <div class="slice">
+          <video src="./shorts/the-spine.mp4" autoplay loop muted playsinline poster="./shorts/the-spine.jpg"></video>
+          <p>Navigation was rebuilt around a single idea: <strong>show people only what their role needs.</strong> The new sidebar — the Spine — groups every surface by job (Workspace, Build, Develop, Administration) and trims itself to each person's permissions. A pure end-user opens a focused four-item app; an admin gets a calm, grouped command center. Same shell, composed per role.</p>
+          <p>The purple indicator is the through-line. It <strong>slides with you</strong> as you move between surfaces, so "where am I" is never a question. Hover and active states stay quiet — one accent does the work, no purple confetti.</p>
+          <p>Nothing was hidden or removed. Every capability simply found its place on a clear hierarchy, one deliberate click away — with a ⌘K command palette for the rest.</p>
+        </div>
+      </section>
+
+      <!-- 2 · Mobile (placeholder) -->
+      <section class="feature" id="mobile">
+        <div class="idx">02 — Responsive</div>
+        <h2>Mobile, for real</h2>
+        <p class="one-liner">13 screens used to render nothing on a phone. Now every surface passes at 390px — chat goes full-screen, tables become cards, and the nav is one tap away.</p>
+        <div class="slice">
+          <video src="./shorts/mobile.mp4" autoplay loop muted playsinline poster="./shorts/mobile.jpg"></video>
+          <p>A 390-px phone frame: the Today dashboard reordered triage-first, a tap on the hamburger slides the nav drawer in, and a tap on Chat drops into a full-screen conversation with a thumb-reachable composer. Both themes, first-class.</p>
+        </div>
+      </section>
+
+      <!-- 3 · Design system (placeholder) -->
+      <section class="feature" id="design-system">
+        <div class="idx">03 — Design system</div>
+        <h2>One design system</h2>
+        <p class="one-liner">Three font weights replaced one chaotic scale, "informational" stopped rendering purple, and 53 files of hand-picked greens and reds became real semantic tokens — in both themes.</p>
+        <div class="slice">
+          <video src="./shorts/design-system.mp4" autoplay loop muted playsinline poster="./shorts/design-system.jpg"></video>
+          <p>A before/after flip: the old <code>font-black</code> editorial hero and a mistakenly-purple "info" badge give way to one calm type scale, a genuinely blue <code>--info</code>, and unified success/warning/info tokens — proven with a quick light↔dark swap.</p>
+        </div>
+      </section>
+
+      <!-- 4 · Role-composed Home (placeholder) -->
+      <section class="feature" id="home">
+        <div class="idx">04 — Home</div>
+        <h2>Role-composed Home</h2>
+        <p class="one-liner">Your homepage is built from your role — triage first: what needs attention, what to resume, the numbers that matter.</p>
+        <div class="slice">
+          <video src="./shorts/home.mp4" autoplay loop muted playsinline poster="./shorts/home.jpg"></video>
+          <p>The Today page assembles region by region for the persona signing in — Needs attention, then Resume, then a 2×2 grid of the vitals that matter — so the first screen is always the next action, not a wall of widgets.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <footer>
+      <span>Exulu Platform · Released 22 June 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

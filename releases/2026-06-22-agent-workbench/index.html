@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OPEN IMP — The Agent Workbench</title>
+<meta name="description" content="OPEN IMP's redesigned agent editor — model, tools, knowledge, safety and ship-ready API snippets in one focused page." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#141414;
+    --bg-2:#1a1a1a;
+    --card:#1f1f1f;
+    --card-2:#262626;
+    --foreground:#f6f6f4;
+    --muted-foreground:#a1a1a6;
+    --accent:#effe7c;            /* OPEN signature lime */
+    --accent-bright:#e3fd17;
+    --accent-foreground:#1a1a1a;  /* dark text on lime */
+    --accent-soft:rgba(239,254,124,.12);
+    --accent-soft-2:rgba(239,254,124,.06);
+    --lilac:#c0acf9;             /* OPEN secondary */
+    --lilac-soft:rgba(192,172,249,.14);
+    --muted:#262626;
+    --border:#333333;
+    --border-soft:rgba(255,255,255,.08);
+    --success:var(--accent);
+    --code-surface:#0e0e0e;
+    --code-foreground:#eaeae6;
+    --radius:.5rem;
+    --shadow-sm:0 1px 2px 0 rgba(0,0,0,.5);
+    --shadow-md:0 8px 24px -8px rgba(0,0,0,.6);
+    --shadow-lg:0 28px 70px -24px rgba(0,0,0,.75),0 10px 30px -16px rgba(0,0,0,.6);
+    --sans:'Manrope','Helvetica Neue',system-ui,-apple-system,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --tracking:-0.018em;
+  }
+  *{box-sizing:border-box}
+  html{font-family:var(--sans)}
+  body{
+    margin:0;background:var(--bg);color:var(--foreground);
+    font-family:var(--sans);letter-spacing:var(--tracking);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;line-height:1.5;
+  }
+  a{color:inherit}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+  /* ---------- hero ---------- */
+  .hero{position:relative;overflow:hidden;padding:78px 0 36px;text-align:center}
+  .hero::before{
+    content:"";position:absolute;inset:-30% -10% auto;height:560px;
+    background:
+      radial-gradient(46% 60% at 35% 0%,rgba(239,254,124,.16),transparent 70%),
+      radial-gradient(46% 60% at 70% 5%,rgba(192,172,249,.16),transparent 70%);
+    pointer-events:none;z-index:0;
+  }
+  .hero>*{position:relative;z-index:1}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:9px;
+    font-size:13px;font-weight:600;color:var(--accent);
+    background:var(--accent-soft);border:1px solid rgba(239,254,124,.25);
+    padding:6px 13px;border-radius:999px;margin-bottom:22px;letter-spacing:.01em;
+  }
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  h1{
+    font-size:clamp(34px,5.4vw,58px);line-height:1.04;font-weight:800;
+    letter-spacing:-0.04em;margin:0 auto 18px;max-width:16ch;
+  }
+  h1 .grad{
+    background:linear-gradient(100deg,#effe7c,#c0acf9 90%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--muted-foreground);max-width:60ch;margin:0 auto 28px}
+  .cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;font-family:var(--sans);
+    font-size:14px;font-weight:700;letter-spacing:var(--tracking);
+    padding:11px 19px;border-radius:var(--radius);cursor:pointer;
+    text-decoration:none;border:1px solid transparent;transition:transform .12s ease,box-shadow .15s ease,background .15s ease;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn-primary{background:var(--accent);color:var(--accent-foreground);box-shadow:0 8px 22px -8px rgba(239,254,124,.5)}
+  .btn-primary:hover{background:var(--accent-bright)}
+  .btn-outline{background:transparent;color:var(--foreground);border-color:var(--border);}
+  .btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ---------- product mock ---------- */
+  .stage-wrap{padding:18px 0 30px}
+  .window{
+    position:relative;background:var(--bg-2);border:1px solid var(--border);
+    border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden;
+  }
+  .titlebar{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--border-soft);background:#171717}
+  .dots{display:flex;gap:7px}
+  .dots i{width:11px;height:11px;border-radius:50%;display:block}
+  .dots i:nth-child(1){background:#ff5f57}
+  .dots i:nth-child(2){background:#febc2e}
+  .dots i:nth-child(3){background:#28c840}
+  .urlbar{
+    flex:1;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted-foreground);
+    background:#0f0f0f;border:1px solid var(--border-soft);border-radius:7px;padding:6px 12px;font-family:var(--mono);max-width:520px;margin:0 auto;
+  }
+  .urlbar svg{width:13px;height:13px;color:var(--accent);flex:none}
+
+  .app-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap}
+  .ah-left{display:flex;align-items:center;gap:13px;min-width:0}
+  .avatar{
+    width:42px;height:42px;border-radius:50%;flex:none;
+    background:linear-gradient(135deg,#effe7c,#c0acf9);
+    display:flex;align-items:center;justify-content:center;color:#1a1a1a;font-weight:800;font-size:17px;
+  }
+  .crumb{font-size:12px;color:var(--muted-foreground)}
+  .crumb b{color:var(--foreground);font-weight:600}
+  .ah-title{font-size:18px;font-weight:700;letter-spacing:-0.02em;line-height:1.2;margin-top:1px}
+  .ah-right{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--radius);padding:6px 11px;font-size:13px;color:var(--foreground)}
+  .statusdot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .hbtn{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding:7px 13px;border-radius:var(--radius);border:1px solid var(--border);background:transparent;color:var(--foreground)}
+  .hbtn.primary{background:var(--accent);color:var(--accent-foreground);border-color:transparent}
+  .hbtn.ghost{border-color:transparent;padding:7px 9px;color:var(--muted-foreground)}
+  .hbtn svg{width:15px;height:15px}
+
+  /* switch */
+  .switch{width:34px;height:20px;border-radius:999px;background:var(--accent);position:relative;flex:none;transition:background .2s}
+  .switch.off{background:#3a3a3a}
+  .switch i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#1a1a1a;box-shadow:var(--shadow-sm);transition:left .2s}
+  .switch.off i{left:2px;background:#8a8a8a}
+  .switch:not(.off) i{left:16px}
+  .switch.sm{width:30px;height:18px}
+  .switch.sm i{width:14px;height:14px}
+  .switch.sm:not(.off) i{left:14px}
+
+  .app-body{display:grid;grid-template-columns:188px 1fr;gap:0;min-height:430px}
+  .nav{border-right:1px solid var(--border-soft);padding:20px 14px;background:#171717}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted-foreground);
+    padding:8px 10px;border-radius:var(--radius);cursor:default;transition:all .2s;position:relative;font-weight:500;
+  }
+  .nav-item svg{width:15px;height:15px;opacity:.75}
+  .nav-item.active{color:var(--accent);background:var(--accent-soft);font-weight:700}
+  .nav-item.active svg{opacity:1}
+  .nav-item.active::before{content:"";position:absolute;left:-14px;top:6px;bottom:6px;width:3px;border-radius:3px;background:var(--accent)}
+
+  .stage{position:relative;padding:26px 30px}
+  .panel{position:absolute;inset:26px 30px;opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .5s ease;pointer-events:none}
+  .panel.active{opacity:1;transform:none;pointer-events:auto}
+  .sec-h{font-size:16px;font-weight:700;letter-spacing:-0.02em;margin:0}
+  .sec-d{font-size:13px;color:var(--muted-foreground);margin:3px 0 18px}
+  .fld{margin-bottom:14px}
+  .lbl{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px}
+  .inp{
+    width:100%;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);
+    padding:9px 12px;font-size:13px;font-family:var(--sans);color:var(--foreground);
+  }
+  .inp.area{min-height:58px;line-height:1.55}
+  .inp.sel{display:flex;align-items:center;justify-content:space-between;color:var(--foreground)}
+  .inp.sel svg{width:15px;height:15px;color:var(--muted-foreground)}
+  .badge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:999px;padding:4px 11px;font-size:12px;color:var(--muted-foreground);background:var(--card)}
+  .badge .b-dot{width:14px;height:14px;border-radius:4px;background:linear-gradient(135deg,#effe7c,#c0acf9)}
+  .badge.ok{color:var(--accent);border-color:rgba(239,254,124,.3);background:var(--accent-soft)}
+  .tiles{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .tile{display:inline-flex;align-items:center;gap:7px;border-radius:var(--radius);padding:7px 11px;font-size:12px;background:var(--muted);color:var(--muted-foreground)}
+  .tile.on{background:var(--accent-soft);color:var(--accent)}
+  .tile svg{width:14px;height:14px}
+
+  .toolbar{display:flex;gap:8px;margin-bottom:14px}
+  .search{flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 11px;font-size:13px;color:var(--muted-foreground)}
+  .search svg{width:14px;height:14px}
+  .toolcard{display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:var(--radius);padding:11px 13px;margin-bottom:9px;background:var(--card)}
+  .toolcard .ic{width:32px;height:32px;border-radius:8px;background:var(--lilac-soft);color:var(--lilac);display:flex;align-items:center;justify-content:center;flex:none}
+  .toolcard .ic svg{width:16px;height:16px}
+  .toolcard .tx{flex:1;min-width:0}
+  .toolcard .tx b{font-size:13px;font-weight:700;display:block}
+  .toolcard .tx span{font-size:12px;color:var(--muted-foreground)}
+  .cat-label{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted-foreground);margin:14px 0 8px}
+
+  .setrow{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--border-soft)}
+  .setrow:last-child{border-bottom:0}
+  .setrow .tx b{font-size:13px;font-weight:700;display:block}
+  .setrow .tx span{font-size:12px;color:var(--muted-foreground)}
+  .kcard{border:1px solid var(--border);border-radius:var(--radius);padding:15px;margin-bottom:12px;background:var(--card)}
+  .kcard .top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}
+  .kcard .top b{font-size:13.5px;font-weight:700}
+
+  .copyf{border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--card)}
+  .copyf .cf-l{font-size:11px;color:var(--muted-foreground);margin-bottom:3px}
+  .copyf .cf-v{font-size:12.5px;font-family:var(--mono);color:var(--foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .copyf svg{width:15px;height:15px;color:var(--muted-foreground);flex:none}
+  .codeblk{background:var(--code-surface);color:var(--code-foreground);border:1px solid var(--border-soft);border-radius:var(--radius);padding:13px 15px;font-family:var(--mono);font-size:11.5px;line-height:1.6;overflow:hidden;white-space:pre;position:relative}
+  .codeblk .cm{color:#6b7280}
+  .codeblk .ky{color:#c0acf9}
+  .codeblk .st{color:#bdf06a}
+
+  .savebar{
+    position:absolute;left:50%;bottom:18px;transform:translate(-50%,140%);
+    display:flex;align-items:center;gap:16px;background:#000;border:1px solid var(--border);color:#fff;
+    border-radius:999px;padding:9px 10px 9px 20px;box-shadow:var(--shadow-lg);
+    font-size:13px;transition:transform .45s cubic-bezier(.2,.8,.25,1);white-space:nowrap;
+  }
+  .savebar.show{transform:translate(-50%,0)}
+  .savebar .sb-act{display:flex;gap:8px}
+  .savebar .sb-discard{background:transparent;border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:999px;padding:6px 14px;font-size:13px}
+  .savebar .sb-save{background:var(--accent);border:0;color:var(--accent-foreground);border-radius:999px;padding:6px 16px;font-size:13px;font-weight:700}
+
+  .cursor{position:absolute;width:20px;height:20px;z-index:30;left:0;top:0;transition:transform 1.1s cubic-bezier(.4,.1,.2,1),opacity .3s;pointer-events:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+  .cursor svg{width:100%;height:100%}
+
+  /* ---------- features ---------- */
+  .section{padding:56px 0}
+  .kicker{font-size:13px;font-weight:700;color:var(--accent);letter-spacing:.04em;text-align:center;margin-bottom:10px;text-transform:uppercase}
+  h2{font-size:clamp(26px,3.4vw,36px);font-weight:800;letter-spacing:-0.035em;text-align:center;margin:0 auto 12px;max-width:20ch}
+  .sub{font-size:16px;color:var(--muted-foreground);text-align:center;max-width:58ch;margin:0 auto 40px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .fcard{
+    background:var(--card);border:1px solid var(--border-soft);border-radius:12px;padding:22px;
+    transition:transform .15s ease,box-shadow .2s ease,border-color .2s ease;
+  }
+  .fcard:hover{transform:translateY(-3px);box-shadow:var(--shadow-md);border-color:rgba(239,254,124,.3)}
+  .fic{width:38px;height:38px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+  .fic svg{width:19px;height:19px}
+  .fcard h3{font-size:15px;font-weight:700;margin:0 0 6px;letter-spacing:-0.01em}
+  .fcard p{font-size:13.5px;color:var(--muted-foreground);margin:0;line-height:1.55}
+
+  /* ---------- dev block ---------- */
+  .devsection{padding:30px 0 56px}
+  .devgrid{display:grid;grid-template-columns:1fr 1.1fr;gap:36px;align-items:center}
+  .devgrid h2{text-align:left;margin:0 0 14px}
+  .devgrid .sub{text-align:left;margin:0 0 20px}
+  .devgrid ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:11px}
+  .devgrid li{display:flex;gap:10px;font-size:14px;color:var(--foreground)}
+  .devgrid li svg{width:18px;height:18px;color:var(--accent);flex:none;margin-top:1px}
+  .codepane{background:var(--code-surface);border:1px solid var(--border-soft);border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden}
+  .codepane .cp-top{display:flex;align-items:center;gap:8px;padding:11px 15px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .codepane .cp-top .lang{font-family:var(--mono);font-size:11px;color:#6b7280;margin-left:6px}
+  .codepane .cp-tabs{margin-left:auto;display:flex;gap:6px}
+  .codepane .cp-tab{font-family:var(--mono);font-size:11px;color:#6b7280;padding:3px 9px;border-radius:6px}
+  .codepane .cp-tab.on{background:rgba(255,255,255,.08);color:var(--code-foreground)}
+  .codepane pre{margin:0;padding:18px 20px;font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--code-foreground);overflow:auto}
+  .codepane .cm{color:#6b7280}.codepane .ky{color:#c0acf9}.codepane .st{color:#bdf06a}.codepane .fn{color:#effe7c}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--border-soft);padding:48px 0;text-align:center}
+  .fcta{
+    background:linear-gradient(120deg,rgba(239,254,124,.06),rgba(192,172,249,.06));
+    border:1px solid var(--border-soft);border-radius:18px;padding:46px 28px;margin-bottom:40px;
+  }
+  .fcta h2{margin-bottom:10px}
+  .fcta .sub{margin-bottom:24px}
+  .foot-meta{font-size:13px;color:var(--muted-foreground)}
+  .foot-logo{font-weight:800;letter-spacing:.02em;font-size:18px;color:var(--foreground);margin-bottom:6px}
+  .foot-logo span{color:var(--accent)}
+
+  @media(max-width:860px){
+    .grid{grid-template-columns:1fr 1fr}
+    .devgrid{grid-template-columns:1fr;gap:24px}
+    .app-body{grid-template-columns:1fr}
+    .nav{display:none}
+    .cursor{display:none}
+  }
+  @media(max-width:560px){
+    .grid{grid-template-columns:1fr}
+    .ah-right .pill,.ah-right .hbtn:not(.primary){display:none}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .panel{transition:none}.savebar{transition:none}.cursor{display:none}.btn:hover{transform:none}.fcard:hover{transform:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="dot"></span>OPEN IMP · Product update · June 2026</span>
+    <h1>Build an agent<br/>on <span class="grad">one focused page</span></h1>
+    <p class="lede">OPEN IMP's redesigned agent editor brings the model, tools, knowledge, safety, and ship-ready API snippets into a single page — no tabs, no wizard, no leaving the page.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#">Open OPEN IMP
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <a class="btn btn-outline" href="#features">See what's inside</a>
+    </div>
+  </div>
+</header>
+
+<!-- ============ ANIMATED PRODUCT MOCK ============ -->
+<div class="stage-wrap">
+  <div class="wrap">
+    <div class="window" id="mock">
+      <div class="titlebar">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <div class="urlbar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          app.open.de/agents/edit/growth-copilot
+        </div>
+      </div>
+
+      <div class="app-header">
+        <div class="ah-left">
+          <div class="avatar">G</div>
+          <div>
+            <div class="crumb">Agents&nbsp; /&nbsp; <b>Growth Copilot</b></div>
+            <div class="ah-title">Growth Copilot</div>
+          </div>
+        </div>
+        <div class="ah-right">
+          <span class="pill"><span class="statusdot"></span>Active<span class="switch sm" aria-hidden="true"><i></i></span></span>
+          <span class="hbtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Test in chat
+          </span>
+          <span class="hbtn primary" id="hdrSave">Save</span>
+          <span class="hbtn ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></span>
+        </div>
+      </div>
+
+      <div class="app-body">
+        <nav class="nav" id="nav">
+          <div class="nav-item" data-k="basics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Basics</div>
+          <div class="nav-item" data-k="instructions">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Instructions</div>
+          <div class="nav-item" data-k="tools">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2z"/></svg>Tools &amp; skills</div>
+          <div class="nav-item" data-k="knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 3v18"/></svg>Knowledge &amp; memory</div>
+          <div class="nav-item" data-k="chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat experience</div>
+          <div class="nav-item" data-k="access">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Access</div>
+          <div class="nav-item" data-k="safety">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/></svg>Safety</div>
+          <div class="nav-item" data-k="appearance">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.4"/><circle cx="15" cy="10" r="1.4"/><path d="M8.5 15c1 1.2 5 1.2 7 0"/></svg>Appearance</div>
+          <div class="nav-item" data-k="developer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg>Developer</div>
+        </nav>
+
+        <div class="stage">
+          <!-- BASICS -->
+          <div class="panel" data-k="basics">
+            <h3 class="sec-h">Basics</h3>
+            <p class="sec-d">Who this agent is and what it talks to.</p>
+            <div class="fld"><span class="lbl">Name</span><div class="inp">Growth Copilot</div></div>
+            <div class="fld"><span class="lbl">Category</span><div class="inp sel">Marketing
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div></div>
+            <div class="fld"><span class="lbl">Model</span>
+              <span class="badge"><span class="b-dot"></span>Claude Opus 4.8 · Anthropic</span>
+              <div class="tiles">
+                <span class="tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7v12M15 7v12"/></svg>Text</span>
+                <span class="tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m4 18 5-4 4 3 3-2 4 3"/></svg>Images</span>
+                <span class="tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>Files</span>
+                <span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>Audio</span>
+                <span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>Video</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- TOOLS -->
+          <div class="panel" data-k="tools">
+            <h3 class="sec-h">Tools &amp; skills</h3>
+            <p class="sec-d">12 tools enabled for this agent.</p>
+            <div class="toolbar">
+              <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>Search tools by name or description…</div>
+              <div class="inp sel" style="width:150px">All categories
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+            <div class="cat-label">Web</div>
+            <div class="toolcard"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg></div>
+              <div class="tx"><b>Web Search</b><span>Search the live web and return ranked results.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="toolcard"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg></div>
+              <div class="tx"><b>Fetch URL</b><span>Read and extract content from any page.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="cat-label">Data</div>
+            <div class="toolcard"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg></div>
+              <div class="tx"><b>SQL Query</b><span>Run read-only queries against connected DBs.</span></div><span class="switch sm"><i></i></span></div>
+          </div>
+
+          <!-- KNOWLEDGE -->
+          <div class="panel" data-k="knowledge">
+            <h3 class="sec-h">Knowledge &amp; memory</h3>
+            <p class="sec-d">What the agent can read, remember and retrieve.</p>
+            <div class="kcard">
+              <div class="top"><b>Agentic retrieval</b><span class="badge ok">enabled</span></div>
+              <p class="sec-d" style="margin:0 0 12px">A tool loop that searches knowledge contexts intelligently when needed.</p>
+              <div style="display:flex;align-items:center;gap:10px;font-size:13px"><span class="switch sm"><i></i></span> Search up to 6 contexts per turn</div>
+            </div>
+            <div class="kcard">
+              <div class="top"><b>Long-term memory</b><span class="badge ok">enabled</span></div>
+              <p class="sec-d" style="margin:0 0 12px">Choose a context for the agent to store and recall items per user.</p>
+              <div class="inp sel">Customer Profiles
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></div>
+            </div>
+          </div>
+
+          <!-- SAFETY -->
+          <div class="panel" data-k="safety">
+            <h3 class="sec-h">Safety</h3>
+            <p class="sec-d">Firewall and content scanners protecting this agent's traffic.</p>
+            <div class="setrow"><div class="tx"><b>Enable firewall</b><span>Turn on the safety firewall for messages exchanged with this agent.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="setrow"><div class="tx"><b>Prompt Guard</b><span>Blocks prompt-injection and jailbreak attempts.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="setrow"><div class="tx"><b>Code Shield</b><span>Detects unsafe code patterns in inputs and outputs.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="setrow"><div class="tx"><b>PII detection</b><span>Flags personal data in messages and tool outputs.</span></div><span class="switch sm"><i></i></span></div>
+            <div class="setrow"><div class="tx"><b>Hidden ASCII detection</b><span>Catches invisible characters used to hide instructions.</span></div><span class="switch sm off"><i></i></span></div>
+          </div>
+
+          <!-- DEVELOPER -->
+          <div class="panel" data-k="developer">
+            <h3 class="sec-h">Developer</h3>
+            <p class="sec-d">Identifiers and copy-pasteable snippets for calling this agent.</p>
+            <div class="copyf"><div><div class="cf-l">Endpoint</div><div class="cf-v">https://api.open.de/agents/growth-copilot/run/agt_8fk2</div></div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></div>
+            <div class="codeblk"><span class="cm">// curl</span>
+curl '<span class="st">…/agents/growth-copilot/run/agt_8fk2</span>' \
+  -H '<span class="ky">authorization</span>: Bearer YOUR_API_TOKEN' \
+  -H '<span class="ky">content-type</span>: application/json' \
+  -H '<span class="ky">stream</span>: true' \
+  --data-raw '{"message":{"parts":[{"type":"text",
+    "text":"Hello"}],"role":"user"}}'</div>
+          </div>
+        </div>
+
+        <div class="savebar" id="savebar">
+          You have unsaved changes
+          <span class="sb-act"><span class="sb-discard">Discard</span><span class="sb-save">Save changes</span></span>
+        </div>
+      </div>
+
+      <div class="cursor" id="cursor">
+        <svg viewBox="0 0 24 24" fill="#f6f6f4" stroke="#1a1a1a" stroke-width="1.5"><path d="M5 3l15 8.5-6.4 1.4L17 19l-2.6 1.3-3.4-6.1L6 18z"/></svg>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ FEATURES ============ -->
+<section class="section" id="features">
+  <div class="wrap">
+    <div class="kicker">Everything in one editor</div>
+    <h2>Nine sections, one scroll</h2>
+    <p class="sub">A sticky rail keeps every part of the agent a click away. Each section does one job well — and the save bar keeps your changes safe until you commit them.</p>
+    <div class="grid">
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+        <h3>Basics</h3><p>Name the agent, pick a category and model, and declare exactly what it can read — text, images, files, audio, video.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+        <h3>Instructions</h3><p>One markdown prompt sent with every session — up to 40,000 characters — plus assignable prompt templates.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2-2z"/></svg></div>
+        <h3>Tools &amp; skills</h3><p>Toggle any tool on, configure it inline, and search or filter the whole catalog by name and category.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 3v18"/></svg></div>
+        <h3>Knowledge &amp; memory</h3><p>Enable agentic retrieval across your contexts and give the agent per-user long-term memory.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>Chat experience</h3><p>Set a welcome message, follow-up suggestions, feedback collection, and make it the default agent.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+        <h3>Access</h3><p>Keep it private, open it to the whole workspace, or share with specific users, roles and teams.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6z"/></svg></div>
+        <h3>Safety</h3><p>A firewall with five scanners — prompt guard, code shield, agent alignment, hidden ASCII and PII detection.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.4"/><circle cx="15" cy="10" r="1.4"/><path d="M8.5 15c1 1.2 5 1.2 7 0"/></svg></div>
+        <h3>Appearance</h3><p>Upload an avatar or generate one with AI, and set idle and responding animations shown in chat.</p></div>
+      <div class="fcard"><div class="fic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12"/></svg></div>
+        <h3>Developer</h3><p>Copy the agent ID, slug, endpoint, and ready-to-run curl &amp; TypeScript snippets that match the live API.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DEVELOPER BLOCK ============ -->
+<section class="devsection">
+  <div class="wrap">
+    <div class="devgrid">
+      <div>
+        <div class="kicker" style="text-align:left">Ship it</div>
+        <h2>From editor to endpoint</h2>
+        <p class="sub">Save the agent and the Developer section hands you everything you need to call it — no docs round-trip.</p>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>One-click copy for the agent ID, slug and full streaming endpoint</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>curl &amp; TypeScript snippets that mirror the real wire payload</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Streamed UI-message responses, ready to pipe into your app</li>
+        </ul>
+      </div>
+      <div class="codepane">
+        <div class="cp-top"><div class="dots"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+          <span class="lang">run-agent.ts</span>
+          <span class="cp-tabs"><span class="cp-tab on">TypeScript</span><span class="cp-tab">curl</span></span></div>
+<pre><span class="ky">const</span> res = <span class="ky">await</span> <span class="fn">fetch</span>(<span class="st">"https://api.open.de/agents/growth-copilot/run/agt_8fk2"</span>, {
+  method: <span class="st">"POST"</span>,
+  headers: {
+    <span class="st">"content-type"</span>: <span class="st">"application/json"</span>,
+    authorization: <span class="st">`Bearer ${process.env.OPEN_IMP_TOKEN}`</span>,
+    session: <span class="st">"YOUR_SESSION_ID"</span>,
+    stream: <span class="st">"true"</span>,
+  },
+  body: <span class="ky">JSON</span>.<span class="fn">stringify</span>({
+    message: {
+      parts: [{ type: <span class="st">"text"</span>, text: <span class="st">"Hello"</span> }],
+      role: <span class="st">"user"</span>,
+    },
+  }),
+});
+
+<span class="cm">// The response is a streamed UI-message stream.</span>
+<span class="ky">for await</span> (<span class="ky">const</span> chunk <span class="ky">of</span> res.body!.<span class="fn">pipeThrough</span>(<span class="ky">new</span> <span class="fn">TextDecoderStream</span>())) {
+  <span class="ky">console</span>.<span class="fn">log</span>(chunk);
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <div class="fcta">
+      <div class="kicker">Available now</div>
+      <h2>Your next agent is one page away</h2>
+      <p class="sub">Open OPEN IMP, give it a model and a few tools, and test it in chat in minutes.</p>
+      <a class="btn btn-primary" href="#">Open OPEN IMP
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+    </div>
+    <div class="foot-logo">OPEN<span>.</span></div>
+    <div class="foot-meta">OPEN IMP · Agent Workbench · Product update · June 2026</div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var order = ["basics","tools","knowledge","safety","developer"];
+  var navItems = {}, panels = {};
+  document.querySelectorAll("#nav .nav-item").forEach(function(n){ navItems[n.dataset.k]=n; });
+  document.querySelectorAll(".panel").forEach(function(p){ panels[p.dataset.k]=p; });
+  var cursor = document.getElementById("cursor");
+  var savebar = document.getElementById("savebar");
+  var mock = document.getElementById("mock");
+  var i = -1;
+
+  function moveCursorTo(el){
+    if(!el || !cursor) return;
+    var r = el.getBoundingClientRect();
+    var m = mock.getBoundingClientRect();
+    var x = r.left - m.left + r.width*0.55;
+    var y = r.top - m.top + r.height*0.5;
+    cursor.style.transform = "translate("+x+"px,"+y+"px)";
+  }
+
+  function step(){
+    i = (i+1) % order.length;
+    var k = order[i];
+    Object.keys(navItems).forEach(function(key){ navItems[key].classList.toggle("active", key===k); });
+    Object.keys(panels).forEach(function(key){ panels[key].classList.toggle("active", key===k); });
+    moveCursorTo(navItems[k]);
+    if(k==="safety" || k==="tools"){
+      savebar.classList.add("show");
+      setTimeout(function(){ savebar.classList.remove("show"); }, 2400);
+    }
+  }
+
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  step();
+  if(!reduce){
+    setInterval(step, 3200);
+    window.addEventListener("resize", function(){ moveCursorTo(navItems[order[i]]); });
+  }
+})();
+</script>
+</body>
+</html>

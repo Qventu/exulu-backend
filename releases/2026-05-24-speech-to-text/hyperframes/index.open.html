@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+        font-family: "Manrope", system-ui, sans-serif;
+        color: #000;
+        letter-spacing: -0.025em;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+
+      .hook {
+        position: absolute;
+        top: 320px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 128px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1.0;
+        color: #000;
+      }
+      .hook .accent {
+        color: #5c33ff;
+      }
+
+      .card {
+        position: absolute;
+        left: 50%;
+        top: 480px;
+        transform: translateX(-50%);
+        width: 1100px;
+        height: 128px;
+        background: #fdfdfd;
+        border: 1px solid #e6e6ec;
+        border-radius: 8px;
+        box-shadow:
+          0 2px 3px rgba(0, 0, 0, 0.08),
+          0 1px 2px rgba(0, 0, 0, 0.06);
+        padding: 24px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .textarea-region {
+        position: relative;
+        flex: 1;
+        height: 80px;
+        background: rgba(245, 245, 245, 0.35);
+        border-radius: 6px;
+        padding: 24px;
+        font-size: 26px;
+        font-weight: 400;
+        line-height: 1.0;
+      }
+      .placeholder {
+        position: absolute;
+        left: 24px;
+        top: 28px;
+        color: #525252;
+      }
+      .typed-wrap {
+        position: absolute;
+        left: 24px;
+        top: 28px;
+        color: #000;
+        white-space: nowrap;
+      }
+      .caret {
+        display: inline-block;
+        width: 2px;
+        height: 26px;
+        background: #000;
+        margin-left: 1px;
+        vertical-align: text-bottom;
+      }
+
+      .btn {
+        width: 56px;
+        height: 56px;
+        border-radius: 6px;
+        background: #f5f5f5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .mic-stack {
+        position: relative;
+        width: 28px;
+        height: 28px;
+      }
+      .mic-stack > svg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 28px;
+        height: 28px;
+      }
+      .submit-icon {
+        width: 28px;
+        height: 28px;
+      }
+
+      .caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 660px;
+        text-align: center;
+        font-size: 30px;
+        font-weight: 500;
+        color: #525252;
+        letter-spacing: -0.015em;
+      }
+
+      .cursor-pointer {
+        position: absolute;
+        width: 36px;
+        height: 36px;
+        z-index: 10;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+      }
+    
+      /* OPEN CI accents */
+      .brand .mono,.brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="7"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- Beat 1: hook line -->
+      <div
+        id="hook"
+        class="clip hook"
+        data-start="0"
+        data-duration="1.5"
+        data-track-index="0"
+      >
+        <span class="accent">Talk</span> to your agent.
+      </div>
+
+      <!-- Card with input row, mic, submit -->
+      <div
+        id="card"
+        class="clip card"
+        data-start="1"
+        data-duration="6"
+        data-track-index="1"
+      >
+        <div class="textarea-region">
+          <span id="placeholder" class="placeholder">Ask me anything...</span>
+          <span class="typed-wrap"
+            ><span id="typed"></span><span id="caret" class="caret" style="opacity: 0"></span
+          ></span>
+        </div>
+
+        <div class="btn">
+          <div class="mic-stack">
+            <!-- Mic (idle) -->
+            <svg
+              id="mic-idle"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#525252"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="9" y="2" width="6" height="12" rx="3" />
+              <path d="M5 10v2a7 7 0 0 0 14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+              <line x1="8" y1="22" x2="16" y2="22" />
+            </svg>
+            <!-- Square (recording) -->
+            <svg
+              id="mic-recording"
+              viewBox="0 0 24 24"
+              fill="#ef4444"
+              style="opacity: 0"
+            >
+              <rect x="5" y="5" width="14" height="14" rx="2" />
+            </svg>
+            <!-- Spinner (transcribing) -->
+            <svg
+              id="mic-loading"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#525252"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              style="opacity: 0"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          </div>
+        </div>
+
+        <div id="submit-btn" class="btn" style="color: #525252">
+          <svg
+            class="submit-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 19V5" />
+            <path d="m5 12 7-7 7 7" />
+          </svg>
+        </div>
+      </div>
+
+      <!-- Caption: "Listening…" -->
+      <div
+        id="cap-listening"
+        class="clip caption"
+        data-start="3"
+        data-duration="1.6"
+        data-track-index="2"
+      >
+        Listening…
+      </div>
+
+      <!-- Caption: "Auto-detects 50+ languages." -->
+      <div
+        id="cap-langs"
+        class="clip caption"
+        data-start="6.2"
+        data-duration="0.8"
+        data-track-index="2"
+      >
+        Auto-detects 50+ languages.
+      </div>
+
+      <!-- Cursor pointer -->
+      <svg
+        id="cursor"
+        class="clip cursor-pointer"
+        data-start="1.8"
+        data-duration="5.2"
+        data-track-index="3"
+        viewBox="0 0 24 24"
+        style="left: 900px; top: 540px"
+      >
+        <path
+          d="M3 2 L3 18 L8 14 L11 21 L14 20 L11 13 L18 13 Z"
+          fill="#000"
+          stroke="#fff"
+          stroke-width="0.5"
+        />
+      </svg>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // Mic-button center, used as cursor target. Card center x=960, card
+      // right edge x=1510. Mic button is the second-to-last child: between
+      // submit (rightmost) and the gap. Center ≈ x=1386, y=544.
+      const MIC_X = 1370;
+      const MIC_Y = 528;
+
+      // BEAT 1 (0.15–1.0): hook fades in, holds
+      tl.from("#hook", { opacity: 0, y: 16, duration: 0.55, ease: "power2.out" }, 0.15);
+
+      // BEAT 2 (1.0–1.7): hook exits up, card crossfades in
+      tl.to("#hook", { opacity: 0, y: -12, duration: 0.4, ease: "power2.in" }, 1.0);
+      tl.from(
+        "#card",
+        { opacity: 0, scale: 0.96, duration: 0.7, ease: "power3.out", transformOrigin: "50% 50%" },
+        1.0,
+      );
+
+      // BEAT 3 (1.8–2.4): cursor glides to mic button
+      tl.fromTo(
+        "#cursor",
+        { left: 900, top: 540, opacity: 0 },
+        { left: MIC_X, top: MIC_Y, opacity: 1, duration: 0.6, ease: "power2.inOut" },
+        1.8,
+      );
+
+      // BEAT 4 (2.4–2.7): click → recording state
+      tl.to("#cursor", { scale: 0.9, duration: 0.08, ease: "power2.in", transformOrigin: "20% 20%" }, 2.4);
+      tl.to("#cursor", { scale: 1.0, duration: 0.1, ease: "power2.out", transformOrigin: "20% 20%" }, 2.48);
+
+      // Icon swap: idle → recording at t=2.5
+      tl.set("#mic-idle", { opacity: 0 }, 2.5);
+      tl.set("#mic-recording", { opacity: 1 }, 2.5);
+
+      // Square pulses 1 → 0.55 → 1, period 1.2s, two full yoyo cycles.
+      // duration=0.6, yoyo=true, repeat=3 → 4 plays × 0.6s = 2.4s, ends at t=4.9, opacity back at 1.
+      tl.to(
+        "#mic-recording",
+        { opacity: 0.55, duration: 0.6, ease: "power1.inOut", yoyo: true, repeat: 3 },
+        2.5,
+      );
+
+      // BEAT 5 (2.7–4.6): hold + "Listening…" caption
+      tl.from("#cap-listening", { opacity: 0, y: 10, duration: 0.4, ease: "power2.out" }, 3.0);
+      tl.to("#cap-listening", { opacity: 0, y: -6, duration: 0.3, ease: "power2.in" }, 4.3);
+
+      // BEAT 6 (4.85–6.2): click → transcribing → type-in
+      tl.to("#cursor", { scale: 0.9, duration: 0.08, ease: "power2.in", transformOrigin: "20% 20%" }, 4.85);
+      tl.to("#cursor", { scale: 1.0, duration: 0.1, ease: "power2.out", transformOrigin: "20% 20%" }, 4.93);
+
+      // Icon swap: recording → spinner at t=4.95
+      tl.set("#mic-recording", { opacity: 0 }, 4.95);
+      tl.set("#mic-loading", { opacity: 1 }, 4.95);
+      tl.to(
+        "#mic-loading",
+        { rotation: 360, duration: 0.4, ease: "none", transformOrigin: "50% 50%" },
+        4.95,
+      );
+
+      // Spinner → idle at t=5.35
+      tl.set("#mic-loading", { opacity: 0 }, 5.35);
+      tl.set("#mic-idle", { opacity: 1 }, 5.35);
+
+      // Type-in: characters stream into the textarea
+      const fullText = "What's the status of the Q4 launch?";
+      const typingDuration = fullText.length / 30; // 35/30 ≈ 1.17s
+      tl.set("#placeholder", { opacity: 0 }, 5.35);
+      tl.set("#caret", { opacity: 1 }, 5.35);
+      const typeProgress = { i: 0 };
+      tl.to(
+        typeProgress,
+        {
+          i: fullText.length,
+          duration: typingDuration,
+          ease: "none",
+          onUpdate: () => {
+            const typed = document.getElementById("typed");
+            if (typed) typed.textContent = fullText.slice(0, Math.floor(typeProgress.i));
+          },
+        },
+        5.35,
+      );
+
+      // Caret blink: 0.25s per direction, yoyo, repeat 6 → 7 plays × 0.25s = 1.75s, covers 5.35→7.1
+      tl.to("#caret", { opacity: 0, duration: 0.25, ease: "none", yoyo: true, repeat: 6 }, 5.35);
+
+      // Submit arrow recolors muted → primary as text finishes (around t=6.1)
+      tl.to("#submit-btn", { color: "#5c33ff", duration: 0.35, ease: "power2.out" }, 6.05);
+
+      // BEAT 7 (6.2–7.0): "Auto-detects 50+ languages." appears; cursor fades
+      tl.from("#cap-langs", { opacity: 0, scale: 0.96, duration: 0.45, ease: "power3.out", transformOrigin: "50% 50%" }, 6.2);
+      tl.to("#cursor", { opacity: 0, duration: 0.3, ease: "power2.in" }, 6.2);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

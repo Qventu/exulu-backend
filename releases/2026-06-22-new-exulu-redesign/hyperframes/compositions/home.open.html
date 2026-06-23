@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --success:#16A34A; --warning:#DB8500; --info:#2563EB;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar (reused from The Spine) ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar (reused from The Spine) ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card (Today dashboard) ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 46px 60px; overflow: hidden; z-index: 4; }
+
+      /* greeting head + persona chip */
+      .page-head { position: relative; height: 96px; }
+      .hdr h1 { font-size: 44px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .hdr h1 .accent { color: var(--primary); }
+      .hdr p { font-size: 20px; color: var(--muted-fg); margin-top: 9px; }
+      .persona-wrap { position: absolute; top: 6px; right: 0; width: 168px; height: 40px; }
+      .persona-chip { position: absolute; top: 0; right: 0; height: 40px; padding: 0 15px; border-radius: 999px;
+                      border: 1px solid var(--border); background: #fff; display: flex; align-items: center; gap: 9px;
+                      font-size: 16px; font-weight: 600; color: var(--fg); box-shadow: 0 2px 3px rgba(0,0,0,.05); white-space: nowrap; }
+      .persona-chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--primary); flex: 0 0 9px; }
+      .persona-chip.user .dot { background: var(--info); }
+
+      /* region scaffolding */
+      .region { margin-top: 26px; }
+      .region:first-of-type { margin-top: 6px; }
+      .section-label { font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+                       color: var(--muted-fg); margin-bottom: 13px; }
+
+      /* Needs attention — alert cards */
+      .alerts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+      .alert { position: relative; border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; background: #fff;
+               box-shadow: 0 2px 3px rgba(0,0,0,.05); display: flex; align-items: center; gap: 15px; }
+      .alert .statusdot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 12px; }
+      .alert .statusdot.warn { background: var(--warning); box-shadow: 0 0 0 4px rgba(219,133,0,.14); }
+      .alert .statusdot.info { background: var(--info); box-shadow: 0 0 0 4px rgba(37,99,235,.14); }
+      .alert .body { flex: 1; }
+      .alert .title { font-size: 19px; font-weight: 600; color: var(--fg); }
+      .alert .title .num { font-variant-numeric: tabular-nums; }
+      .alert .cta { font-size: 16px; font-weight: 600; color: var(--primary); display: flex; align-items: center; gap: 5px; }
+      .alert .cta svg { width: 17px; height: 17px; }
+      /* the calmer single card the admin alerts resolve into */
+      #alert-calm { position: absolute; top: 0; left: 0; right: 0; opacity: 0; }
+      #alert-calm .statusdot.ok { background: var(--success); box-shadow: 0 0 0 4px rgba(22,163,74,.14); }
+
+      /* Resume — horizontal strip of recent items */
+      .resume { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+      .recent { border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; background: #fff;
+                box-shadow: 0 2px 3px rgba(0,0,0,.05); display: flex; align-items: center; gap: 14px; }
+      .recent .ic { width: 44px; height: 44px; border-radius: 11px; background: #EEF9C8; color: var(--primary);
+                    display: flex; align-items: center; justify-content: center; flex: 0 0 44px; }
+      .recent .ic svg { width: 23px; height: 23px; }
+      .recent .title { font-size: 19px; font-weight: 600; color: var(--fg); }
+      .recent .ts { font-size: 15px; color: var(--muted-fg); margin-top: 3px; }
+
+      /* Vitals — 2x2 / 4-up StatCards */
+      .vitals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+      .stat { border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; background: #fff;
+              box-shadow: 0 2px 3px rgba(0,0,0,.05); }
+      .stat .label { font-size: 16px; font-weight: 500; color: var(--muted-fg); }
+      .stat .num { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); margin-top: 8px;
+                   font-variant-numeric: tabular-nums; }
+      .stat .num .unit { font-size: 24px; font-weight: 500; color: var(--muted-fg); margin-left: 2px; }
+
+      /* ---- caption lower-third (reused dark pill) ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 940px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="home" data-start="0" data-duration="8" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="8" data-track-index="0">
+
+        <!-- TOP BAR (reused chrome) -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR (reused chrome — Home added at top of Workspace, active) -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item active" id="nav-home">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
+            <span>Home</span>
+          </div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-skills">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Skills</span>
+          </div>
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-analytics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M19 9l-5 5-4-4-3 3"/></svg>
+            <span>Analytics</span>
+          </div>
+          <div class="nav-item" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD — Today dashboard -->
+        <div class="content">
+          <div class="page-head">
+            <div class="hdr">
+              <h1>Good <span class="accent">morning</span>, Daniel</h1>
+              <p>Here's what needs you today</p>
+            </div>
+            <div class="persona-wrap">
+              <div class="persona-chip admin" id="chip-admin">
+                <span class="dot"></span><span>Admin view</span>
+              </div>
+              <div class="persona-chip user" id="chip-user" style="opacity:0">
+                <span class="dot"></span><span>End-user view</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Needs attention -->
+          <div class="region" id="region-attention">
+            <div class="section-label">Needs attention</div>
+            <div style="position: relative;">
+              <div class="alerts" id="alerts-admin">
+                <div class="alert" id="alert-1">
+                  <span class="statusdot warn"></span>
+                  <div class="body"><div class="title"><span class="num">3</span> items failed to embed</div></div>
+                  <div class="cta">Inspect
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </div>
+                <div class="alert" id="alert-2">
+                  <span class="statusdot info"></span>
+                  <div class="body"><div class="title"><span class="num">1</span> budget at <span class="num">92%</span></div></div>
+                  <div class="cta">Review
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                  </div>
+                </div>
+              </div>
+              <!-- calmer single card the end-user resolves to -->
+              <div class="alert" id="alert-calm">
+                <span class="statusdot ok"></span>
+                <div class="body"><div class="title">You're all caught up</div></div>
+                <div class="cta">View activity
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Resume -->
+          <div class="region" id="region-resume">
+            <div class="section-label">Resume</div>
+            <div class="resume">
+              <div class="recent" id="recent-1">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>
+                <div><div class="title">Support Triage</div><div class="ts">edited 2h ago</div></div>
+              </div>
+              <div class="recent" id="recent-2">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <div><div class="title">Q3 planning chat</div><div class="ts">yesterday</div></div>
+              </div>
+              <div class="recent" id="recent-3">
+                <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
+                <div><div class="title">Customer Docs</div><div class="ts">indexed 3h ago</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Vitals -->
+          <div class="region" id="region-vitals">
+            <div class="section-label">Vitals</div>
+            <div class="vitals">
+              <div class="stat" id="stat-1">
+                <div class="label">Spend today</div>
+                <div class="num"><span class="unit">$</span>14.20</div>
+              </div>
+              <div class="stat" id="stat-2">
+                <div class="label">Active agents</div>
+                <div class="num">12</div>
+              </div>
+              <div class="stat" id="stat-3">
+                <div class="label">Items indexed</div>
+                <div class="num">1,284</div>
+              </div>
+              <div class="stat" id="stat-4">
+                <div class="label">Avg latency</div>
+                <div class="num">840<span class="unit">ms</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CAPTIONS (reused dark pill) -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Your homepage is built from your <b>role</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Triage first — <b>attention</b>, resume, the numbers that matter</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure (plain CSS applied synchronously → rects are reliable) ---
+      const sb = document.querySelector('.sidebar').getBoundingClientRect();
+      const spine = document.getElementById('spine');
+      const homeR = document.getElementById('nav-home').getBoundingClientRect();
+      const SPINE_H = 22;
+      // pin the Spine to the active Home row
+      spine.style.top = (homeR.top - sb.top + (homeR.height - SPINE_H) / 2) + 'px';
+
+      // --- shell assembles (reuse Spine chrome) ---
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.05);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.7, ease: 'expo.out' }, 0.18);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.45, stagger: 0.05, ease: 'power2.out' }, 0.4);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.4, stagger: 0.035, ease: 'power2.out' }, 0.5);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.4, stagger: 0.04, ease: 'power1.out' }, 0.55);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.4, ease: 'back.out(2)' }, 0.78);
+
+      // --- greeting (beat 1) ---
+      tl.fromTo('.hdr h1', { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: 'power3.out' }, 0.42);
+      tl.fromTo('.hdr p',  { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'power2.out' }, 0.58);
+      tl.fromTo('#chip-admin', { y: -8, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: 'power2.out' }, 0.7);
+
+      // --- beat 2: dashboard regions assemble top-down, staggered ---
+      // Needs attention
+      tl.fromTo('#region-attention .section-label', { x: -14, opacity: 0 }, { x: 0, opacity: 1, duration: 0.38, ease: 'power2.out' }, 1.2);
+      tl.fromTo('#alert-1', { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: 'power3.out' }, 1.34);
+      tl.fromTo('#alert-2', { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: 'power3.out' }, 1.42);
+      // Resume
+      tl.fromTo('#region-resume .section-label', { x: -14, opacity: 0 }, { x: 0, opacity: 1, duration: 0.38, ease: 'power2.out' }, 1.66);
+      tl.fromTo('#recent-1', { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: 'back.out(1.4)' }, 1.78);
+      tl.fromTo('#recent-2', { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: 'back.out(1.4)' }, 1.86);
+      tl.fromTo('#recent-3', { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: 'back.out(1.4)' }, 1.94);
+      // Vitals
+      tl.fromTo('#region-vitals .section-label', { x: -14, opacity: 0 }, { x: 0, opacity: 1, duration: 0.38, ease: 'power2.out' }, 2.18);
+      tl.fromTo('.stat', { y: 26, opacity: 0, scale: 0.97 }, { y: 0, opacity: 1, scale: 1, duration: 0.5, stagger: 0.07, ease: 'power3.out' }, 2.3);
+
+      // --- caption 1 in (~1.5s), holds ≥1.4s ---
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: 'power2.out' }, 1.5);
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 3.95);
+      tl.set('#cap1', { opacity: 0 }, 4.26); // deterministic kill
+
+      // --- caption 2 in (~4.2s), holds ≥1.8s ---
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'expo.out' }, 4.2);
+
+      // --- beat 5: persona proof (~5.8s) — subtle ---
+      // chip crossfades Admin → End-user
+      tl.to('#chip-admin', { opacity: 0, y: -6, duration: 0.4, ease: 'power2.inOut' }, 5.8);
+      tl.fromTo('#chip-user', { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 5.94);
+      // admin alert pair gently fades down; calmer single card fades up in its place
+      tl.to('#alerts-admin', { opacity: 0, y: 10, duration: 0.5, ease: 'power2.inOut' }, 5.85);
+      tl.fromTo('#alert-calm', { opacity: 0, y: -8 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 6.05);
+
+      window.__timelines['home'] = tl;
+    </script>
+  </body>
+</html>
