@@ -3,6 +3,8 @@ import type { allFileTypes } from "@EXULU_TYPES/file-types";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
+import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
+export { getTableName, getChunksTableName };
 import type { ExuluConfig } from "./app";
 import pgvector from "pgvector/knex"; // DONT REMOVE THIS
 import type { Item } from "@EXULU_TYPES/models/item";
@@ -62,13 +64,6 @@ export type ExuluContextFieldDefinition = {
   allowedFileTypes?: allFileTypes[];
 };
 
-export const getTableName = (id: string) => {
-  return sanitizeName(id) + "_items";
-};
-
-export const getChunksTableName = (id: string) => {
-  return sanitizeName(id) + "_chunks";
-};
 
 export type ExuluContextSource = {
   id: string;
