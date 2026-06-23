@@ -7,6 +7,7 @@ jest.mock("@SRC/graphql/utilities/access-control", () => ({
 }));
 
 const builder: any = {
+  from: () => builder,
   select: () => builder,
   where: () => builder,
   then: (r: (x: any[]) => void) => r([{ id: "i1" }]),
@@ -86,6 +87,7 @@ describe("ExuluContext.getItems RBAC", () => {
   it("applies access control when a user is passed", async () => {
     const user = { id: 1, email: "u@x", role: { id: "r1" } } as any;
     await ctx.getItems({ filters: [{ type: { in: ["DECISION"] } }], fields: ["id"], user, role: "r1" });
+    expect(dbMock.from).toHaveBeenCalled();
     expect(acSpy).toHaveBeenCalledTimes(1);
     expect(acSpy.mock.calls[0][2]).toMatchObject({ id: 1, role: { id: "r1" } });
   });

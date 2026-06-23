@@ -121,5 +121,7 @@ describe("ExuluReadApi.authorizedRead", () => {
     expect(builderCalls.whereIn).toContainEqual(["items.external_id", ["EXT-1"]]);
     expect(builderCalls.where).toContainEqual(["chunks.chunk_index", ">=", 2]);
     expect(builderCalls.where).toContainEqual(["chunks.chunk_index", "<=", 5]);
+    expect(acSpy).toHaveBeenCalledTimes(1);
+    expect(acSpy.mock.calls[0][3]).toBe("items");
   });
 });
