@@ -3,6 +3,7 @@ import { getEntitiesTableName, getChunkEntitiesTableName } from "@SRC/exulu/enti
 import { postgresClient } from "@SRC/postgres/client";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import { resolveEmbedder } from "@SRC/exulu/resolve-embedder";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 
@@ -84,6 +85,22 @@ export const entitiesAvailable = async (context: {
   return res.rows?.[0]?.exists === true;
 };
 
+export const embedQuery = async (
+  context: { id: string; name?: string; embedder: { model: string } },
+  text: string,
+  opts: { user?: User; role?: string; inputType?: "document" | "query" } = {},
+): Promise<number[]> => {
+  const resolved = await resolveEmbedder({
+    model: context.embedder.model,
+    contextId: context.id,
+    contextName: context.name,
+    user: opts.user,
+    roleId: opts.role,
+  });
+  const [vector] = await resolved.embed([text], { inputType: opts.inputType ?? "query" });
+  return vector ?? [];
+};
+
 /**
  * Supported, RBAC-safe read API for retrieval clients (e.g. the agentic harness).
  * Relevance + visibility still go through ExuluContext.search(); this namespace
@@ -96,4 +113,5 @@ export const ExuluReadApi = {
   getChunkEntitiesTableName,
   entitiesAvailable,
   authorizedRead,
+  embedQuery,
 };

@@ -1,6 +1,18 @@
 // --- mock must be hoisted before module import ---
 const tableExistsResult = { exists: false };
 
+const embedSpy = jest.fn(async (_inputs: string[], _opts?: any) => [[0.1, 0.2, 0.3]]);
+const resolveEmbedderSpy = jest.fn(async () => ({
+  model: "gemini-embedding-001",
+  dimensions: 3,
+  maxChunkSize: 1000,
+  maxBatchSize: 96,
+  embed: embedSpy,
+}));
+jest.mock("@SRC/exulu/resolve-embedder", () => ({
+  resolveEmbedder: (...a: any[]) => resolveEmbedderSpy(...a),
+}));
+
 // Spy for applyAccessControl
 const acSpy = jest.fn((_table: any, query: any) => query); // pass-through, records call
 jest.mock("@SRC/graphql/utilities/access-control", () => ({
@@ -88,6 +100,22 @@ describe("ExuluReadApi.entitiesAvailable", () => {
     expect(
       await ExuluReadApi.entitiesAvailable({ id: "tech_doc", entities: { types: ["Product"] } }),
     ).toBe(true);
+  });
+});
+
+describe("ExuluReadApi.embedQuery", () => {
+  const ctx = { id: "tech_doc", embedder: { model: "gemini-embedding-001" } } as any;
+  beforeEach(() => { embedSpy.mockClear(); resolveEmbedderSpy.mockClear(); });
+
+  it("resolves the context embedder and returns a single vector with inputType=query", async () => {
+    const vec = await ExuluReadApi.embedQuery(ctx, "wie kommt der Fehler 0xFF0C", {
+      role: "r1",
+    });
+    expect(resolveEmbedderSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemini-embedding-001", contextId: "tech_doc", roleId: "r1" }),
+    );
+    expect(embedSpy).toHaveBeenCalledWith(["wie kommt der Fehler 0xFF0C"], { inputType: "query" });
+    expect(vec).toEqual([0.1, 0.2, 0.3]);
   });
 });
 
