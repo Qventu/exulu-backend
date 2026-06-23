@@ -4,6 +4,7 @@ import { postgresClient } from "@SRC/postgres/client";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import type { User } from "@EXULU_TYPES/models/user";
+import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 
 export interface AuthorizedReadOpts {
   itemIds?: string[];
@@ -42,9 +43,13 @@ export const authorizedRead = async (
     "chunks.content as chunk_content",
     "chunks.chunk_index",
     "chunks.metadata as chunk_metadata",
+    db.raw('chunks."createdAt" as chunk_created_at'),
+    db.raw('chunks."updatedAt" as chunk_updated_at'),
     "items.id as item_id",
     "items.name as item_name",
     "items.external_id as item_external_id",
+    db.raw('items."createdAt" as item_created_at'),
+    db.raw('items."updatedAt" as item_updated_at'),
   ]);
   q = q.leftJoin(itemsTable + " as items", "chunks.source", "items.id");
   if (opts.itemIds?.length) q = q.whereIn("items.id", opts.itemIds);
@@ -57,7 +62,7 @@ export const authorizedRead = async (
   // CRITICAL: RBAC on the items alias — never removed.
   q = applyAccessControl(table, q, acUser, "items");
   q = q.orderBy("chunks.source").orderBy("chunks.chunk_index");
-  return (await q) as unknown[];
+  return (await q) as VectorSearchChunkResult[];
 };
 
 /**
