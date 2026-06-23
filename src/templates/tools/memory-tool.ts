@@ -75,7 +75,7 @@ export const createNewMemoryItemTool = (agent: ExuluAgent, context: ExuluContext
         return {
           result:
             "Before saving this memory, ask the user whether it should be PRIVATE (visible only to them) " +
-            "or PUBLIC (shared with the team), then call create_memory again with `visibility` set.",
+            `or PUBLIC (shared with the team), then call \`${toolName}\` again with \`visibility\` set.`,
         };
       }
 
