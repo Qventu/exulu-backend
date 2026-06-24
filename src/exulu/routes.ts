@@ -96,6 +96,19 @@ import { OAUTH_CALLBACK_PATH } from "./oauth/flow.ts";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
 import { recallService } from "./recall/service.ts";
+import { authentication } from "@SRC/auth/auth.ts";
+import { handleRBACUpdate } from "@EE/rbac-update.ts";
+import {
+  getSharedArtifactByName,
+  normalizeS3Key,
+  slugifyShareName,
+  validateCreateInput,
+  hashSharePassword,
+  verifySharePassword,
+  isExpired,
+  deriveFilename,
+  contentHeadersFor,
+} from "./shared-artifacts.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -4343,6 +4356,159 @@ Mood: friendly and intelligent.
   });
 
   // ─── End GDPR ─────────────────────────────────────────────────────────────────
+
+  // ── Shareable artifacts ──────────────────────────────────────────────
+  // Create a share link. Authed as the real user; RBAC scoping for regular mode.
+  app.post("/shared-artifacts", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const now = new Date();
+    const valid = validateCreateInput(req.body, now);
+    if (!valid.ok) {
+      res.status(400).json({ detail: valid.message });
+      return;
+    }
+    const bucket = config.fileUploads?.s3Bucket ?? "";
+    const s3key = normalizeS3Key(req.body.s3key, bucket);
+    const name = slugifyShareName(req.body.name);
+    if (!name) {
+      res.status(400).json({ detail: "name must contain url-safe characters." });
+      return;
+    }
+    const existing = await getSharedArtifactByName(db, name);
+    if (existing) {
+      res.status(409).json({ detail: "That share name is already taken." });
+      return;
+    }
+    const auth_mode = req.body.auth_mode as "public" | "password" | "regular";
+    const password_hash =
+      auth_mode === "password" ? await hashSharePassword(req.body.password) : null;
+    const rights_mode =
+      auth_mode === "regular" ? (req.body.rights_mode ?? "private") : "public";
+
+    const [row] = await db("shared_artifacts")
+      .insert({
+        name,
+        s3key,
+        auth_mode,
+        password_hash,
+        expires_at: req.body.expires_at ?? null,
+        content_type: req.body.content_type ?? null,
+        rights_mode,
+        created_by: auth.user.id,
+      })
+      .returning("*");
+
+    if (auth_mode === "regular" && req.body.rbac) {
+      await handleRBACUpdate(db, "shared_artifact", row.id, req.body.rbac, []);
+    }
+    res.status(201).json({ name: row.name });
+  });
+
+  // Resolve the gate. internal-key only; never returns the hash or bytes.
+  app.get("/shared-artifacts/:name/meta", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const internalkey = (req.headers["internal-key"] as string) || undefined;
+    const a = await authentication({ internalkey, db });
+    if (a.error || a.user?.role?.id !== "internal") {
+      res.status(401).json({ detail: "Internal key required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (isExpired(row.expires_at, new Date())) {
+      res.status(410).json({ detail: "This link has expired." });
+      return;
+    }
+    res.json({
+      auth_mode: row.auth_mode,
+      expires_at: row.expires_at,
+      filename: deriveFilename(row.s3key),
+      content_type: row.content_type,
+      is_html: /\.html?$/i.test(row.s3key),
+    });
+  });
+
+  // Serve bytes. Auth depends on the row's auth_mode.
+  app.get("/shared-artifacts/:name/content", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (isExpired(row.expires_at, new Date())) {
+      res.status(410).json({ detail: "This link has expired." });
+      return;
+    }
+
+    const internalkey = (req.headers["internal-key"] as string) || undefined;
+    if (row.auth_mode === "public") {
+      const a = await authentication({ internalkey, db });
+      if (a.error) {
+        res.status(401).json({ detail: "Internal key required." });
+        return;
+      }
+    } else if (row.auth_mode === "password") {
+      const a = await authentication({ internalkey, db });
+      if (a.error) {
+        res.status(401).json({ detail: "Internal key required." });
+        return;
+      }
+      const pw = (req.headers["x-share-password"] as string) || "";
+      if (!row.password_hash || !(await verifySharePassword(pw, row.password_hash))) {
+        res.status(401).json({ detail: "Incorrect password." });
+        return;
+      }
+    } else {
+      // regular: viewer's bearer token; backend enforces RBAC.
+      const viewer = await requestValidators.authenticate(req);
+      if (!viewer.user?.id) {
+        res.status(401).json({ detail: "Authentication required." });
+        return;
+      }
+      const ok = await checkRecordAccess(row, "read", viewer.user);
+      if (!ok) {
+        res.status(403).json({ detail: "You don't have access to this artifact." });
+        return;
+      }
+    }
+
+    let bytes: Buffer;
+    try {
+      bytes = await getS3ObjectBytes(row.s3key, config);
+    } catch (e: any) {
+      if (
+        e?.name === "NoSuchKey" ||
+        e?.name === "NotFound" ||
+        e?.$metadata?.httpStatusCode === 404
+      ) {
+        res.status(404).json({ detail: "Artifact file not found." });
+        return;
+      }
+      console.error("[EXULU] shared-artifact content read failed", e);
+      res.status(500).json({ detail: "Failed to read artifact." });
+      return;
+    }
+
+    const headers = contentHeadersFor(
+      row.s3key,
+      row.content_type,
+      deriveFilename(row.s3key),
+    );
+    res.setHeader("Content-Type", headers.contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-store");
+    if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
+    res.send(bytes);
+  });
 
   app.use(express.static("public"));
 
