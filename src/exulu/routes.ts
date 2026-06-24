@@ -4452,13 +4452,13 @@ Mood: friendly and intelligent.
     const internalkey = (req.headers["internal-key"] as string) || undefined;
     if (row.auth_mode === "public") {
       const a = await authentication({ internalkey, db });
-      if (a.error) {
+      if (a.error || a.user?.role?.id !== "internal") {
         res.status(401).json({ detail: "Internal key required." });
         return;
       }
     } else if (row.auth_mode === "password") {
       const a = await authentication({ internalkey, db });
-      if (a.error) {
+      if (a.error || a.user?.role?.id !== "internal") {
         res.status(401).json({ detail: "Internal key required." });
         return;
       }
