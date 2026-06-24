@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import type { Knex } from "knex";
 
 export type ShareAuthMode = "public" | "password" | "regular";
 
@@ -84,3 +85,6 @@ export const contentHeadersFor = (
     disposition: `attachment; filename="${filename.replace(/"/g, "")}"`,
   };
 };
+
+export const getSharedArtifactByName = (db: Knex, name: string) =>
+  db("shared_artifacts").where({ name }).first();

@@ -8,6 +8,7 @@ import {
   hashSharePassword,
   verifySharePassword,
   contentHeadersFor,
+  getSharedArtifactByName,
 } from "./shared-artifacts";
 
 describe("normalizeS3Key", () => {
@@ -130,5 +131,19 @@ describe("contentHeadersFor", () => {
       contentType: "application/octet-stream",
       disposition: 'attachment; filename="b.bin"',
     });
+  });
+});
+
+describe("getSharedArtifactByName", () => {
+  test("queries shared_artifacts by name and returns the first row", async () => {
+    const first = jest.fn().mockResolvedValue({ id: "x", name: "report" });
+    const where = jest.fn().mockReturnValue({ first });
+    const db: any = jest.fn().mockReturnValue({ where });
+
+    const row = await getSharedArtifactByName(db, "report");
+
+    expect(db).toHaveBeenCalledWith("shared_artifacts");
+    expect(where).toHaveBeenCalledWith({ name: "report" });
+    expect(row).toEqual({ id: "x", name: "report" });
   });
 });
