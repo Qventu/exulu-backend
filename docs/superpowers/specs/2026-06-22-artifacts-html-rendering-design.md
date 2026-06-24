@@ -13,10 +13,6 @@ creates a row in a new `shared_artifacts` table. Visiting
 mode, and serves the file: **HTML renders inline in the browser**; everything
 else (Word, Excel, PDF, …) **downloads**.
 
-This supersedes the earlier design in which the backend served an HTML artifact
-directly at `GET <BACKEND>/artifacts/<s3key>`. That backend route is dropped; the
-user-facing route now lives in the frontend.
-
 ## Background
 
 - S3 access helpers live in `src/uppy/index.ts`. `getS3ObjectBytes(key, config)`
@@ -194,12 +190,37 @@ On submit it calls `POST /shared-artifacts`; on success it copies
 `<FRONTEND>/artifacts/<name>` to the clipboard and toasts. A `409` surfaces a
 "name taken" message.
 
-Wired into **both** artifact entry points:
+Wired into **three** artifact entry points:
 
 - `FileItem` action row in `primitives/file-picker.tsx` (used by
   `components/message-renderer.tsx`).
 - `file-row.tsx` action row in
   `app/(application)/chat/components/session-files`.
+- **Inline S3 links in message text** — see below.
+
+### Inline S3-URL detection in chat messages
+
+Agents sometimes return a bare S3 URL in the message body (an artifact they
+created and uploaded). When the renderer encounters such a URL it shows a subtle
+share affordance (a small icon / CTA next to the link) that opens the same
+`ShareArtifactDialog`, prefilled with the artifact's key.
+
+- **Recognizing an S3 URL.** A URL is an S3 artifact link when its base matches
+  the configured S3 endpoint, `COMPANION_S3_ENDPOINT`. Because
+  `message-renderer.tsx` is a client component, this base must reach the client:
+  expose it (e.g. as `s3_endpoint`) through the existing `app/api/config`
+  payload, sourced server-side from `COMPANION_S3_ENDPOINT`. The renderer matches
+  both markdown-link hrefs and autolinked bare URLs whose href starts with that
+  base.
+- **Extracting the key.** Take the URL path after the endpoint base, strip a
+  leading bucket segment if present (same normalization as
+  [Key normalization](#key-normalization)), and URL-decode it. That bare key
+  seeds the dialog's prefilled name and the `s3key` sent to
+  `POST /shared-artifacts`. (The backend re-normalizes defensively.)
+- **Affordance.** Render the icon/CTA adjacent to the detected link, styled
+  subtly (ghost icon button, visible on hover/focus). It does not alter the link
+  itself — clicking the link still navigates as before; only the share icon opens
+  the dialog.
 
 ## Out of scope
 
@@ -238,3 +259,10 @@ Wired into **both** artifact entry points:
   serves an authorized logged-in viewer.
 - HTML artifact renders inline (sandboxed); pdf/docx/xlsx download.
 - Expired / unknown name → expired / not-found pages.
+
+**Frontend — inline S3-URL detection (message renderer):**
+- A message link whose base matches `s3_endpoint` (from `/api/config`) shows the
+  share CTA; a non-S3 link does not.
+- The key is extracted correctly from both markdown-link and bare-URL forms,
+  with the bucket prefix stripped, and seeds the dialog.
+- Clicking the link still navigates; the CTA opens `ShareArtifactDialog`.
