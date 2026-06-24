@@ -4387,6 +4387,9 @@ Mood: friendly and intelligent.
     const auth_mode = req.body.auth_mode as "public" | "password" | "regular";
     const password_hash =
       auth_mode === "password" ? await hashSharePassword(req.body.password) : null;
+    // "public" is safe as a sentinel for non-regular rows because public/password
+    // content requests are gated upstream by internal-key and never reach
+    // checkRecordAccess; only regular rows go through RBAC evaluation.
     const rights_mode =
       auth_mode === "regular" ? (req.body.rights_mode ?? "private") : "public";
 
@@ -4474,7 +4477,13 @@ Mood: friendly and intelligent.
         res.status(401).json({ detail: "Authentication required." });
         return;
       }
-      const ok = await checkRecordAccess(row, "read", viewer.user);
+      const rbac = await RBACResolver(
+        db,
+        "shared_artifact",
+        row.id,
+        row.rights_mode || "private",
+      );
+      const ok = await checkRecordAccess({ ...row, RBAC: rbac }, "read", viewer.user);
       if (!ok) {
         res.status(403).json({ detail: "You don't have access to this artifact." });
         return;
