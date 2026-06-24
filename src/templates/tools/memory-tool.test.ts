@@ -39,4 +39,18 @@ describe("createNewMemoryItemTool — visibility dialogue + type", () => {
     await tool().tool.execute({ name: "n", description: "d", surroundingContext: "s", information: "i", visibility: "public" }, {} as any);
     expect(createItem.mock.calls[0][0].type).toBeUndefined();
   });
+
+  it("normalizes lowercase enum value to canonical uppercase (e.g. 'decision' → 'DECISION')", async () => {
+    await tool().tool.execute({ ...base, type: "decision", visibility: "public" }, {} as any);
+    expect(createItem).toHaveBeenCalledTimes(1);
+    expect(createItem.mock.calls[0][0].type).toBe("DECISION");
+  });
+
+  it("does NOT persist a genuinely-invalid enum value like 'Instruction' (createItem not called with that type)", async () => {
+    await tool().tool.execute({ ...base, type: "Instruction", visibility: "public" }, {} as any);
+    // createItem may or may not be called (the invalid type is dropped), but must never receive type: "Instruction"
+    for (const call of createItem.mock.calls) {
+      expect(call[0].type).not.toBe("Instruction");
+    }
+  });
 });
