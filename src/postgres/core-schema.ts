@@ -691,7 +691,7 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
   // who may view. public/password modes ignore rights_mode.
   RBAC: true,
   fields: [
-    { name: "name", type: "text", index: true, unique: true },
+    { name: "name", type: "text", index: true, unique: true, required: true },
     { name: "s3key", type: "text", required: true },
     { name: "auth_mode", type: "text", default: "regular" },
     { name: "password_hash", type: "text", required: false }, // bcrypt; password mode only
