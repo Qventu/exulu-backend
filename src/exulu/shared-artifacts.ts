@@ -56,7 +56,10 @@ export const validateCreateInput = (
   if (mode === "password" && !input.password) {
     return { ok: false, message: "A password is required for password mode." };
   }
-  if (input.expires_at && new Date(input.expires_at).getTime() <= now.getTime()) {
+  if (input.expires_at && Number.isNaN(new Date(input.expires_at).getTime())) {
+    return { ok: false, message: "expires_at is not a valid date." };
+  }
+  if (input.expires_at && isExpired(input.expires_at, now)) {
     return { ok: false, message: "expires_at must be in the future." };
   }
   return { ok: true };

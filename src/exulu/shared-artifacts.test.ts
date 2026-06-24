@@ -96,6 +96,13 @@ describe("validateCreateInput", () => {
     );
     expect(r.ok).toBe(false);
   });
+  test("rejects an unparseable expiry", () => {
+    const r = validateCreateInput(
+      { s3key: "a", name: "a", auth_mode: "public", expires_at: "garbage" },
+      now,
+    );
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe("password hashing", () => {
