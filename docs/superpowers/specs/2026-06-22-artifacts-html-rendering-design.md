@@ -20,11 +20,10 @@ else (Word, Excel, PDF, …) **downloads**.
   (`config.fileUploads.s3Bucket`); `key` is the object key relative to the
   bucket (no bucket name in it).
 - Authentication is centralized in
-  `authentication({ apikey, authtoken, internalkey, db })` (`src/auth/auth.ts`).
-  An `internalkey` matching `process.env.INTERNAL_SECRET` returns a synthetic
-  admin-scoped `api` user. The generic request validator
-  (`src/validators/requests.ts`) does **not** pass `internalkey` — the Uppy S3
-  routes read the `internal-key` header themselves. New routes must do the same.
+  `authentication({ apikey, authtoken, db })` (`src/auth/auth.ts`); the generic
+  request validator (`src/validators/requests.ts`) wraps it for bearer/API-key
+  callers. The share endpoints below deliberately do **not** require an
+  Exulu credential for `public`/`password` access (see Architecture decision).
 - RBAC read enforcement lives in the backend:
   `checkRecordAccess(record, "read", user)`
   (`src/utils/check-record-access.ts`) and `applyAccessControl` /
@@ -43,16 +42,21 @@ else (Word, Excel, PDF, …) **downloads**.
 
 ## Architecture decision
 
-**Frontend authenticates; backend trusts via the internal key — with RBAC as a
-backend-enforced hybrid.** RBAC enforcement cannot move to the frontend (it
-depends on the user's roles/teams and the `rbac` table), so:
+**The share itself is the capability; each mode is gated by its own secret —
+no service-to-service secret is involved.** The frontend route is the user-facing
+entry point, but the backend share endpoints enforce the actual gate per mode:
 
-- `public` / `password` modes: the **frontend** is the gate. The viewer has no
-  Exulu identity, so the frontend fetches the bytes from the backend using the
-  shared `INTERNAL_SECRET` (`internal-key` header).
-- `regular` mode: the viewer must have a logged-in session. The frontend forwards
-  the **viewer's** bearer token to the backend, which runs the existing
-  `checkRecordAccess` against the `shared_artifacts` row.
+- `public`: the unguessable share name **is** the capability. The content and
+  meta endpoints require no credential — that is the definition of a public
+  link. (An earlier design fronted this with a shared `INTERNAL_SECRET`; it was
+  removed because it added no access control for a public link and only created
+  a secret to keep in sync across the two repos.)
+- `password`: the backend bcrypt-compares an `x-share-password` header against
+  the stored hash. The password is the gate.
+- `regular`: the viewer must have a logged-in session; the frontend forwards the
+  **viewer's** bearer token and the backend runs the existing `checkRecordAccess`
+  against the `shared_artifacts` row (RBAC enforcement stays backend-side because
+  it depends on the user's roles/teams and the `rbac` table).
 
 ## Data model — `shared_artifacts`
 
@@ -107,21 +111,22 @@ Store the normalized bare key.
 
 ### `GET /shared-artifacts/:name/meta` — resolve gate
 
-- **internal-key** auth (reads the `internal-key` header directly).
+- No credential required (looking up a share name returns only its gate shape).
 - Looks up the row by `name`. Missing → `404`. Expired → `410`.
-- Returns `{ auth_mode, expires_at, filename, content_type }`. **Never** returns
-  `password_hash` or bytes. Lets the frontend choose the gate.
+- Returns `{ auth_mode, expires_at, filename, content_type, is_html }`. **Never**
+  returns `password_hash` or bytes. Lets the frontend choose the gate.
 
 ### `GET /shared-artifacts/:name/content` — serve bytes
 
 Looks up the row by `name`; `404` if missing; re-checks `expires_at` → `410`.
 Auth depends on the row's `auth_mode`:
 
-- `public` → requires a valid `internal-key`.
-- `password` → requires a valid `internal-key` **and** an `x-share-password`
-  header; bcrypt-compares to `password_hash`; mismatch → `401`.
-- `regular` → requires the **viewer's** bearer token (no internal key); runs
-  `checkRecordAccess(row, "read", user)`; denied → `401`/`403`.
+- `public` → no credential; the share name is the capability.
+- `password` → requires an `x-share-password` header; bcrypt-compares to
+  `password_hash`; missing/mismatch → `401`.
+- `regular` → requires the **viewer's** bearer token; hydrates RBAC via
+  `RBACResolver` and runs `checkRecordAccess(row, "read", user)`; no token →
+  `401`, denied → `403`.
 
 On success: `const bytes = await getS3ObjectBytes(row.s3key, config)`, then set
 headers and stream:
@@ -141,19 +146,19 @@ component (`export const dynamic = "force-dynamic"`).
 
 Flow:
 
-1. Fetch `<BACKEND>/shared-artifacts/<name>/meta` server-side with `internal-key`.
+1. Fetch `<BACKEND>/shared-artifacts/<name>/meta` server-side (no credential).
    `404` → not-found page; `410` → "link expired" page.
 2. Branch on `auth_mode`:
    - `public` → proceed.
-   - `password` → render a client password form. On submit it re-requests content
-     with the password (the password is sent to the route handler / server
-     action, never embedded in the page).
+   - `password` → render a client password form. On submit a server action stores
+     the password in an httpOnly cookie (never embedded in the page/URL); the
+     content fetch forwards it as `x-share-password`.
    - `regular` → `serverSideAuthCheck()`; if no session,
      `redirect("/login?destination=/artifacts/<name>")`; otherwise carry the
      viewer's `session.user.jwt`.
 3. Fetch `<BACKEND>/shared-artifacts/<name>/content` with the appropriate
-   credential (internal-key, internal-key + `x-share-password`, or the viewer's
-   bearer token).
+   credential (none for `public`, `x-share-password` for `password`, or the
+   viewer's bearer token for `regular`).
 4. Dispatch by type:
    - **`.html`/`.htm` → render inline.** Serve the HTML so the browser displays
      it (e.g. via a sandboxed iframe fed the bytes), reusing the existing
@@ -161,16 +166,17 @@ Flow:
    - **Everything else → download.** Stream the bytes to the client with the
      derived filename so the browser saves the file.
 
-New server-only env var: `INTERNAL_SECRET` in the frontend (must equal the
-backend's), sent as the `internal-key` header on server-side fetches.
+No service-to-service secret is needed: `public` content is unauthenticated by
+design, `password` is gated by `x-share-password`, and `regular` uses the
+viewer's bearer token.
 
 ### Security notes
 
 - Inline HTML runs JavaScript in the **frontend origin**. Render it in a
   sandboxed iframe so artifact scripts can't reach the next-auth session/cookies.
   `X-Content-Type-Options: nosniff` is set on the backend response.
-- `INTERNAL_SECRET` is server-only on the frontend; it is never exposed to the
-  browser and never sent for `regular` mode (which uses the viewer's token).
+- A `password` link's password travels only via an httpOnly cookie and the
+  `x-share-password` header — never in the URL or page HTML.
 - A `public` link is a bearer capability: anyone with the URL can view until it
   expires. That is the explicit intent of `public` mode.
 
@@ -239,13 +245,13 @@ share affordance (a small icon / CTA next to the link) that opens the same
 - `password` mode without a password, or past `expires_at` → `400`.
 
 **Backend — meta (`GET /shared-artifacts/:name/meta`):**
-- Without `internal-key` → `401`.
-- Returns `auth_mode`/`expires_at`/`filename`; never `password_hash` or bytes.
+- Returns `auth_mode`/`expires_at`/`filename`/`is_html`; never `password_hash` or
+  bytes.
 - Missing → `404`; expired → `410`.
 
 **Backend — content (`GET /shared-artifacts/:name/content`):**
-- `public` + valid `internal-key` → `200`, correct `Content-Type`.
-- `password`: correct `x-share-password` → `200`; wrong → `401`.
+- `public` → `200`, correct `Content-Type` (no credential).
+- `password`: correct `x-share-password` → `200`; wrong/missing → `401`.
 - `regular`: viewer with RBAC access → `200`; viewer without → `401`/`403`;
   no token → `401`.
 - HTML key → `text/html` inline headers; non-HTML → `Content-Disposition:
