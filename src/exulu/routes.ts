@@ -96,7 +96,6 @@ import { OAUTH_CALLBACK_PATH } from "./oauth/flow.ts";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
 import { recallService } from "./recall/service.ts";
-import { authentication } from "@SRC/auth/auth.ts";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
 import {
   getSharedArtifactByName,
@@ -4413,14 +4412,11 @@ Mood: friendly and intelligent.
   });
 
   // Resolve the gate. internal-key only; never returns the hash or bytes.
+  // Resolve the gate. Public (the share name is the capability) — returns only
+  // low-sensitivity metadata (auth_mode/filename/expiry), never the password
+  // hash or bytes. Lets the frontend decide which gate to render.
   app.get("/shared-artifacts/:name/meta", async (req: Request, res: Response) => {
     const { db } = await postgresClient();
-    const internalkey = (req.headers["internal-key"] as string) || undefined;
-    const a = await authentication({ internalkey, db });
-    if (a.error || a.user?.role?.id !== "internal") {
-      res.status(401).json({ detail: "Internal key required." });
-      return;
-    }
     const row = await getSharedArtifactByName(db, req.params.name ?? "");
     if (!row) {
       res.status(404).json({ detail: "Not found." });
@@ -4452,25 +4448,15 @@ Mood: friendly and intelligent.
       return;
     }
 
-    const internalkey = (req.headers["internal-key"] as string) || undefined;
-    if (row.auth_mode === "public") {
-      const a = await authentication({ internalkey, db });
-      if (a.error || a.user?.role?.id !== "internal") {
-        res.status(401).json({ detail: "Internal key required." });
-        return;
-      }
-    } else if (row.auth_mode === "password") {
-      const a = await authentication({ internalkey, db });
-      if (a.error || a.user?.role?.id !== "internal") {
-        res.status(401).json({ detail: "Internal key required." });
-        return;
-      }
+    // Auth depends on the row's auth_mode. public: no check — the share name is
+    // the capability. password/regular gate below.
+    if (row.auth_mode === "password") {
       const pw = (req.headers["x-share-password"] as string) || "";
       if (!row.password_hash || !(await verifySharePassword(pw, row.password_hash))) {
         res.status(401).json({ detail: "Incorrect password." });
         return;
       }
-    } else {
+    } else if (row.auth_mode === "regular") {
       // regular: viewer's bearer token; backend enforces RBAC.
       const viewer = await requestValidators.authenticate(req);
       if (!viewer.user?.id) {
