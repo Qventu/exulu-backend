@@ -273,6 +273,11 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "animation_responding",
       type: "text",
+    },
+    {
+      name: "sandbox_enabled",
+      type: "boolean",
+      default: false,
     }
   ],
 };
