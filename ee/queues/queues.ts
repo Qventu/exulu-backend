@@ -1,5 +1,6 @@
 import { Queue } from "bullmq";
 import { redisServer } from "./server";
+import { guardRedisStartup, logRedisErrors } from "./redis-startup";
 import { BullMQOtel } from "bullmq-otel";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { checkLicense } from "@EE/entitlements";
@@ -115,6 +116,15 @@ class ExuluQueues {
         },
         telemetry: new BullMQOtel("simple-guide"),
       });
+      // Surface connection errors and FAIL FAST instead of hanging silently when Redis is down:
+      // wait for the connection to be ready (bounded by REDIS_STARTUP_TIMEOUT_MS) before using it.
+      logRedisErrors(newQueue, `queue "${name}"`);
+      try {
+        await guardRedisStartup(`queue "${name}"`, () => newQueue.waitUntilReady(), newQueue);
+      } catch (err) {
+        void newQueue.close().catch(() => { /* best-effort cleanup; we are aborting startup anyway */ });
+        throw err;
+      }
       await newQueue.setGlobalConcurrency(queueConcurrency);
       this.queues.push({
         queue: newQueue,
