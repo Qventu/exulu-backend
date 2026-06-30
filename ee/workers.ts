@@ -1,5 +1,6 @@
 import IORedis from "ioredis";
 import { redisServer } from "@EE/queues/server.ts";
+import { guardRedisStartup, logRedisErrors } from "@EE/queues/redis-startup.ts";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
@@ -158,6 +159,11 @@ export const createWorkers = async (
       },
       maxRetriesPerRequest: null,
     });
+    // Surface connection errors and FAIL FAST instead of hanging silently when Redis is down:
+    // confirm the connection is actually reachable (bounded by REDIS_STARTUP_TIMEOUT_MS) before
+    // handing it to the workers, which would otherwise block on their first operation forever.
+    logRedisErrors(redisConnection, "worker");
+    await guardRedisStartup("workers", () => redisConnection.ping().then(() => undefined), redisConnection);
   }
 
   const workers = queues.map((queue) => {
