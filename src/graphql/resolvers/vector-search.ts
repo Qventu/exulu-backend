@@ -68,6 +68,7 @@ export const vectorSearch = async ({
   cutoffs,
   expand,
   entityFilter,
+  queryEmbedding,
 }: {
   limit: number;
   page: number;
@@ -92,6 +93,12 @@ export const vectorSearch = async ({
     hybrid?: number;
   };
   entityFilter?: EntityFilter;
+  /**
+   * Precomputed query embedding. When provided, the query is NOT re-embedded — this vector is used
+   * directly, skipping resolveEmbedder + the embedder API call + the EMBEDDER_GENERATE stat write.
+   * The caller MUST use the same embedding model as this context (same vector space / dimension).
+   */
+  queryEmbedding?: number[];
 }): Promise<{
   itemFilters: SearchFilters;
   chunkFilters: SearchFilters;
@@ -218,12 +225,19 @@ export const vectorSearch = async ({
   let vectorStr: string = "";
   let vectorExpr: string = "";
 
+  // --- timing instrumentation (gated by EXULU_VS_TIMING; one log line per call below) ---
+  const _tBody = Date.now();
+  let _preMs = 0, _statMs = 0, _resolveMs = 0, _embedMs = 0;
+  let _embedSource: "computed" | "reused" | "none" = "none";
+
   if (query) {
     // Preprocess query with language detection and stemming
+    const _tp = Date.now();
     const { processed: stemmedQuery } = preprocessQuery(query, {
       enableStemming: true,
       detectLanguage: true,
     });
+    _preMs = Date.now() - _tp;
 
     console.log("[EXULU] Stemmed query:", stemmedQuery);
 
@@ -231,30 +245,45 @@ export const vectorSearch = async ({
       query = stemmedQuery;
     }
 
-    await updateStatistic({
-      name: "count",
-      label: table.name.singular,
-      type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
-      trigger,
-      count: 1,
-      user: user?.id,
-      role,
-    });
+    if (queryEmbedding && queryEmbedding.length) {
+      // Caller supplied a precomputed query embedding (e.g. the harness broad-sweep embeds the query
+      // once and reuses it across every context). Skip the embedder round-trip entirely — no
+      // resolveEmbedder, no embedder API call, no EMBEDDER_GENERATE stat write.
+      vector = queryEmbedding;
+      _embedSource = "reused";
+    } else {
+      const _ts = Date.now();
+      await updateStatistic({
+        name: "count",
+        label: table.name.singular,
+        type: STATISTICS_TYPE_ENUM.EMBEDDER_GENERATE as STATISTICS_TYPE,
+        trigger,
+        count: 1,
+        user: user?.id,
+        role,
+      });
+      _statMs = Date.now() - _ts;
 
-    const resolved = await resolveEmbedder({
-      model: embedder.model,
-      contextId: context.id,
-      contextName: context.name,
-      user,
-      roleId: role,
-    });
+      const _tr = Date.now();
+      const resolved = await resolveEmbedder({
+        model: embedder.model,
+        contextId: context.id,
+        contextName: context.name,
+        user,
+        roleId: role,
+      });
+      _resolveMs = Date.now() - _tr;
 
-    const [queryVector] = await resolved.embed([query], { inputType: "query" });
+      const _te = Date.now();
+      const [queryVector] = await resolved.embed([query], { inputType: "query" });
+      _embedMs = Date.now() - _te;
 
-    if (!queryVector?.length) {
-      throw new Error("No vector generated for query.");
+      if (!queryVector?.length) {
+        throw new Error("No vector generated for query.");
+      }
+      vector = queryVector;
+      _embedSource = "computed";
     }
-    vector = queryVector;
     vectorStr = `ARRAY[${vector.join(",")}]`;
     vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
   }
@@ -304,6 +333,7 @@ export const vectorSearch = async ({
 
   let resultChunks: any[] = [];
 
+  const _tSql = Date.now();
   switch (method) {
     case "tsvector":
       // For semantic search we increase the scope, so we
@@ -499,6 +529,14 @@ export const vectorSearch = async ({
       // and the "items" table reference is not available in the outer query context with CTEs
 
       resultChunks = await hybridQuery;
+  }
+
+  if (process.env.EXULU_VS_TIMING) {
+    console.log(
+      `[EXULU-VS] ctx=${context.id} method=${method} embed=${_embedSource} ` +
+        `pre=${_preMs}ms stat=${_statMs}ms resolve=${_resolveMs}ms embedApi=${_embedMs}ms ` +
+        `sql=${Date.now() - _tSql}ms total=${Date.now() - _tBody}ms`,
+    );
   }
 
   // Filter out duplicate sources, keeping only the first occurrence
