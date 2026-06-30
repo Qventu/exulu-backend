@@ -391,6 +391,9 @@ export class ExuluContext {
       after?: number;
     };
     entityFilter?: EntityFilter;
+    /** Precomputed query embedding; forwarded to vectorSearch to skip re-embedding (caller must use
+     *  this context's embedding model). Spread into vectorSearch via `...options` below. */
+    queryEmbedding?: number[];
   }): Promise<{
     itemFilters: SearchFilters;
     chunkFilters: SearchFilters;
