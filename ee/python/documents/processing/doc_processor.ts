@@ -40,6 +40,13 @@ type DocumentProcessorConfig = {
      * vertex_ai) can be switched without code changes.
      */
     model?: string
+    /**
+     * Maximum pages per OCR request for the "mistral" processor.
+     * Vertex AI OCR rejects documents over 30 pages; the PDF is split into
+     * chunks of this size and each chunk is OCR'd independently.
+     * Defaults to 25 (safely under the Vertex AI 30-page limit).
+     */
+    maxPagesPerChunk?: number
   }
   /**
    * Optional cost-attribution context, forwarded to LiteLLM as spend tags
@@ -816,17 +823,61 @@ async function processPdf(
         ...config.attribution,
       });
 
-      // Wait a randomn time between 1 and 5 seconds to prevent rate limiting
-      await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 4000) + 1000));
+      // Split the PDF into ≤ N-page chunks before sending to OCR.
+      // Vertex AI (and some other providers) reject documents over 30 pages.
+      // We use PyMuPDF via a Python helper because it handles edge cases that
+      // trip up JS PDF libraries — in particular "phantom password" PDFs that
+      // are technically encrypted with an empty string (the OS opens them
+      // transparently, but libraries throw without the empty-string fallback).
+      const maxPagesPerChunk = config.processor.maxPagesPerChunk ?? 25;
+      const chunksDir = path.join(path.dirname(paths.json), 'ocr_chunks');
 
-      const base64Pdf = buffer.toString('base64');
+      const splitResult = await executePythonScript({
+        scriptPath: 'ee/python/documents/processing/split_pdf.py',
+        args: [paths.source, chunksDir, '--chunk-size', String(maxPagesPerChunk)],
+        timeout: 5 * 60 * 1000,
+      });
 
-      const ocrResponse = await withRetry(async () => {
-        return await resolved.ocr({
-          type: "document_url",
-          document_url: "data:application/pdf;base64," + base64Pdf,
-        }, { includeImageBase64: false });
-      }, 10);
+      const pdfChunks: Array<{ path: string; start_page: number; end_page: number }> =
+        JSON.parse(splitResult.stdout);
+
+      console.log(`[EXULU] PDF split into ${pdfChunks.length} chunk(s) for OCR (max ${maxPagesPerChunk} pages each)`);
+
+      // Process chunks in parallel with a concurrency cap to respect rate limits.
+      // Each chunk gets a small random jitter to spread out requests.
+      const chunkLimit = pLimit(3);
+
+      const chunkResults = await Promise.all(
+        pdfChunks.map((chunk, i) =>
+          chunkLimit(async () => {
+            // Yield to the event loop so BullMQ can renew job locks during long runs
+            await new Promise(resolve => setImmediate(resolve));
+            await new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * 1000) + 200));
+
+            console.log(`[EXULU] OCR chunk ${i + 1}/${pdfChunks.length}: pages ${chunk.start_page}–${chunk.end_page - 1}`);
+
+            const chunkBuffer = await fs.promises.readFile(chunk.path);
+            const chunkBase64 = chunkBuffer.toString('base64');
+
+            const chunkResponse = await withRetry(async () => {
+              return await resolved.ocr({
+                type: "document_url",
+                document_url: "data:application/pdf;base64," + chunkBase64,
+              }, { includeImageBase64: false });
+            }, 10);
+
+            return { pages: chunkResponse.pages, offset: chunk.start_page };
+          })
+        )
+      );
+
+      // Merge all chunk pages in document order, offsetting indices to their
+      // original positions in the full document.
+      const mergedPages = chunkResults
+        .sort((a, b) => a.offset - b.offset)
+        .flatMap(({ pages, offset }) =>
+          pages.map(p => ({ ...p, index: p.index + offset }))
+        );
 
       const parser = new LiteParse();
       const screenshots = await parser.screenshot(paths.source, undefined);
@@ -841,7 +892,7 @@ async function processPdf(
         screenshot.imagePath = path.join(paths.images, `${screenshot.pageNum}.png`);
       }
 
-      json = ocrResponse.pages.map(page => ({
+      json = mergedPages.map(page => ({
         page: page.index + 1,
         content: page.markdown,
         image: screenshots.find(s => s.pageNum === page.index + 1)?.imagePath,

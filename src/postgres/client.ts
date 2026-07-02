@@ -95,10 +95,9 @@ export async function postgresClient(): Promise<{
           // Log pool events to help debug connection issues
           afterCreate: (conn: any, done: any) => {
             console.log("[EXULU] New database connection created");
-            // Set statement_timeout on each new connection
-            conn.query("SET statement_timeout = 1800000", (err: any) => {
+            conn.query("SET statement_timeout = 1800000; SET hnsw.ef_search = 20", (err: any) => {
               if (err) {
-                console.error("[EXULU] Error setting statement_timeout:", err);
+                console.error("[EXULU] Error setting connection parameters:", err);
               }
               done(err, conn);
             });

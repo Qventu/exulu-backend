@@ -1,147 +1,274 @@
-# HTML Artifact Rendering Route
+# Shareable Artifact Links
 
-**Date:** 2026-06-22
+**Date:** 2026-06-22 (revised 2026-06-24)
 **Status:** Design
 
 ## Goal
 
-Let a user view an HTML file that was uploaded to the configured S3 server by
-visiting `GET <BACKEND>/artifacts/<s3key>` in a browser. The page renders the
-HTML inline. The route is authenticated: an unauthenticated visitor is met with
-the browser's **native Basic-auth password prompt**, and can paste a regular
-Exulu API key (as the password) to get in.
+Let a user turn an S3 artifact (created/displayed in the chat) into a
+**shareable link**. From the artifact UI the user picks a unique name, an expiry
+date, and an access mode (`public`, `password`, or `regular` Exulu auth). This
+creates a row in a new `shared_artifacts` table. Visiting
+`<FRONTEND>/artifacts/<name>` then resolves that row, enforces the chosen access
+mode, and serves the file: **HTML renders inline in the browser**; everything
+else (Word, Excel, PDF, …) **downloads**.
 
 ## Background
 
 - S3 access helpers live in `src/uppy/index.ts`. `getS3ObjectBytes(key, config)`
-  reads an object as a `Buffer` from the **configured default bucket**
-  (`config.fileUploads.s3Bucket`); its `key` is the object key **relative to the
-  bucket** (no bucket name in it).
-- Authentication is centralized in `authentication({ apikey, authtoken, internalkey, db })`
-  (`src/auth/auth.ts`). An API key has the format `{secret}/{name}`; the helper
-  matches it against `users` of `type = "api"` via bcrypt.
-- Next-auth bearer tokens are verified by `getToken(authHeader)`
-  (`src/auth/get-token.ts`), which expects a `"Bearer <jwt>"` string.
-- Routes are registered on an Express **5.1** app in
-  `src/exulu/routes.ts` (`createExpressRoutes`).
+  reads an object as a `Buffer` from the configured default bucket
+  (`config.fileUploads.s3Bucket`); `key` is the object key relative to the
+  bucket (no bucket name in it).
+- Authentication is centralized in
+  `authentication({ apikey, authtoken, db })` (`src/auth/auth.ts`); the generic
+  request validator (`src/validators/requests.ts`) wraps it for bearer/API-key
+  callers. The share endpoints below deliberately do **not** require an
+  Exulu credential for `public`/`password` access (see Architecture decision).
+- RBAC read enforcement lives in the backend:
+  `checkRecordAccess(record, "read", user)`
+  (`src/utils/check-record-access.ts`) and `applyAccessControl` /
+  `authorizedRead` (`src/exulu/read-api.ts`,
+  `src/graphql/utilities/access-control.ts`). It evaluates `rights_mode`
+  (`public` / `private` / `users` / `roles` / `teams`), `created_by`, and the
+  `rbac` table.
+- Tables are defined in `src/postgres/core-schema.ts` (Knex). `RBAC: true`
+  auto-adds `rights_mode` (default `"private"`) and `created_by`. Tables are
+  created idempotently from the schema list in `src/postgres/init-exulu-db.ts`.
+- Frontend is Next.js 16 (app router, server components by default), next-auth
+  4 with a custom backend JWT exposed at `session.user.jwt`. The
+  `app/(application)/layout.tsx` root layout **force-redirects** any
+  unauthenticated visitor to `/login`. Server-side backend calls authenticate
+  with `Authorization: Bearer ${session.user.jwt}` and `process.env.BACKEND`.
 
-## Decisions
+## Architecture decision
 
-These were settled during brainstorming:
+**The share itself is the capability; each mode is gated by its own secret —
+no service-to-service secret is involved.** The frontend route is the user-facing
+entry point, but the backend share endpoints enforce the actual gate per mode:
 
-1. **Access scope:** Any valid credential (any working API key, or a logged-in
-   user) may view any artifact. No per-file ownership check.
-2. **Delivery:** Stream the bytes through the server as `text/html`. Never expose
-   a presigned URL.
-3. **File types:** HTML only — keys ending in `.html` or `.htm`. Everything else
-   is rejected.
-4. **Bucket:** Use `getS3ObjectBytes` as-is (default configured bucket). Do not
-   modify it and do not parse a bucket from the URL to override the client.
-5. **Key format:** The `<s3key>` in the URL may arrive **either** as a bare
-   object key **or** bucket-prefixed (as `/s3/list` returns it). The route must
-   handle both.
+- `public`: the unguessable share name **is** the capability. The content and
+  meta endpoints require no credential — that is the definition of a public
+  link. (An earlier design fronted this with a shared `INTERNAL_SECRET`; it was
+  removed because it added no access control for a public link and only created
+  a secret to keep in sync across the two repos.)
+- `password`: the backend bcrypt-compares an `x-share-password` header against
+  the stored hash. The password is the gate.
+- `regular`: the viewer must have a logged-in session; the frontend forwards the
+  **viewer's** bearer token and the backend runs the existing `checkRecordAccess`
+  against the `shared_artifacts` row (RBAC enforcement stays backend-side because
+  it depends on the user's roles/teams and the `rbac` table).
 
-## Design
+## Data model — `shared_artifacts`
 
-### Route registration
+New `ExuluTableDefinition` in `src/postgres/core-schema.ts`, `RBAC: true`,
+registered in the `init-exulu-db.ts` schema list (idempotent create).
 
-Add to `createExpressRoutes` in `src/exulu/routes.ts`:
+| field | type | notes |
+|---|---|---|
+| `name` | `text` (index, unique) | URL slug. Prefilled with the sanitized S3 key; user-editable. URL-safe. |
+| `s3key` | `text` | Bare object key (bucket prefix stripped — see normalization). |
+| `auth_mode` | `text` | `"public"` \| `"password"` \| `"regular"`. Default `"regular"`. |
+| `password_hash` | `text`, nullable | bcrypt hash; set only when `auth_mode = "password"`. |
+| `expires_at` | `date`, nullable | Access rejected with `410` once `now > expires_at`. `null` = no expiry. |
+| `content_type` | `text`, nullable | Captured at creation when known; otherwise derived from the key's extension. |
 
-```ts
-app.get("/artifacts/*splat", async (req, res) => { ... });
-```
+`RBAC: true` additionally provides `rights_mode` and `created_by`, plus the usual
+`createdAt`/`updatedAt`/`id`. For `auth_mode = "regular"`, the standard RBAC
+fields (`rights_mode` + `rbac` table entries for users/roles/teams) scope who may
+view. For `public`/`password`, `rights_mode` is not consulted.
 
-Express 5 requires named wildcards. `req.params.splat` is an **array** of path
-segments; reconstruct the key with `req.params.splat.join("/")`. URL-decode each
-segment.
+The download filename is derived from `basename(s3key)`.
 
 ### Key normalization
 
+The `s3key` may arrive bare or bucket-prefixed (as `/s3/list` returns it).
+Normalize on **create**:
+
 ```
-fullPath = decoded splat segments joined by "/"
-if first segment === config.fileUploads.s3Bucket:
-    key = remaining segments joined by "/"
+if first path segment === config.fileUploads.s3Bucket:
+    s3key = remaining segments joined by "/"
 else:
-    key = fullPath
+    s3key = the given key
 ```
 
-This makes both the bucket-prefixed and bare-object-key forms resolve to the
-correct object key for `getS3ObjectBytes`.
+Store the normalized bare key.
 
-### File-type guard
+## Backend endpoints (`src/exulu/routes.ts`)
 
-If `key` does not end (case-insensitive) in `.html` or `.htm`, respond `400`
-with a JSON `{ detail: "Only .html artifacts can be rendered." }`.
+### `POST /shared-artifacts` — create a link
 
-### Authentication gate
+- Authed as the real user (bearer / API key via the normal validator).
+- Body: `{ s3key, name, auth_mode, password?, expires_at, rights_mode?, rbac? }`.
+- Normalizes `s3key`; sanitizes `name` to a URL-safe slug; sets `created_by` from
+  the caller; bcrypt-hashes `password` when `auth_mode = "password"`; writes
+  `rbac` entries when `auth_mode = "regular"` and `rights_mode` is `users`/
+  `roles`/`teams`.
+- Unique-name collision → `409` with `{ detail }` so the UI can prompt for a new
+  name.
+- Validation: `auth_mode = "password"` requires a non-empty `password`;
+  `expires_at`, if present, must be in the future.
+- Returns `{ name }`.
 
-A helper resolves the credential from the request, reusing the existing
-`authentication()` so there is one source of truth:
+### `GET /shared-artifacts/:name/meta` — resolve gate
 
-1. Read the `Authorization` header.
-2. If it starts with `Basic `: base64-decode the remainder, split on the **first**
-   `:`. The portion **after** the colon (the password) is the API key; the
-   username is ignored. Call `authentication({ apikey, db })`.
-3. Else if it starts with `Bearer `: call `getToken(header)` and then
-   `authentication({ authtoken, db })` — so a logged-in frontend `fetch` with a
-   next-auth token still works.
-4. If there is **no** `Authorization` header, or auth fails
-   (`!result.user?.id`), respond:
-   - status `401`
-   - header `WWW-Authenticate: Basic realm="Exulu Artifacts"`
-   - a short `text/plain` body ("Authentication required.")
+- No credential required (looking up a share name returns only its gate shape).
+- Looks up the row by `name`. Missing → `404`. Expired → `410`.
+- Returns `{ auth_mode, expires_at, filename, content_type, is_html }`. **Never**
+  returns `password_hash` or bytes. Lets the frontend choose the gate.
 
-   Setting `WWW-Authenticate` is what makes the browser show its native prompt
-   and re-prompt after a wrong key.
+### `GET /shared-artifacts/:name/content` — serve bytes
 
-### Delivery
+Looks up the row by `name`; `404` if missing; re-checks `expires_at` → `410`.
+Auth depends on the row's `auth_mode`:
 
-On successful auth:
+- `public` → no credential; the share name is the capability.
+- `password` → requires an `x-share-password` header; bcrypt-compares to
+  `password_hash`; missing/mismatch → `401`.
+- `regular` → requires the **viewer's** bearer token; hydrates RBAC via
+  `RBACResolver` and runs `checkRecordAccess(row, "read", user)`; no token →
+  `401`, denied → `403`.
 
-1. `const bytes = await getS3ObjectBytes(key, config)`.
-2. Set headers:
-   - `Content-Type: text/html; charset=utf-8`
-   - `Cache-Control: private, no-store`
-   - `X-Content-Type-Options: nosniff`
-3. `res.send(bytes)`.
+On success: `const bytes = await getS3ObjectBytes(row.s3key, config)`, then set
+headers and stream:
 
-If the S3 read fails because the object is missing (`NoSuchKey` / `NotFound`),
-respond `404`. Other errors → `500`.
+- HTML (`.html`/`.htm`): `Content-Type: text/html; charset=utf-8`,
+  `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`.
+- Everything else: the resolved `Content-Type`, plus
+  `Content-Disposition: attachment; filename="<basename>"`.
+
+Missing S3 object (`NoSuchKey`/`NotFound`) → `404`; other errors → `500`.
+
+## Frontend route — `app/artifacts/[artifact_name]/`
+
+**Top-level**, NOT under `(application)` (that group's layout force-redirects
+unauthenticated visitors, which would break `public`/`password` links). Server
+component (`export const dynamic = "force-dynamic"`).
+
+Flow:
+
+1. Fetch `<BACKEND>/shared-artifacts/<name>/meta` server-side (no credential).
+   `404` → not-found page; `410` → "link expired" page.
+2. Branch on `auth_mode`:
+   - `public` → proceed.
+   - `password` → render a client password form. On submit a server action stores
+     the password in an httpOnly cookie (never embedded in the page/URL); the
+     content fetch forwards it as `x-share-password`.
+   - `regular` → `serverSideAuthCheck()`; if no session,
+     `redirect("/login?destination=/artifacts/<name>")`; otherwise carry the
+     viewer's `session.user.jwt`.
+3. Fetch `<BACKEND>/shared-artifacts/<name>/content` with the appropriate
+   credential (none for `public`, `x-share-password` for `password`, or the
+   viewer's bearer token for `regular`).
+4. Dispatch by type:
+   - **`.html`/`.htm` → render inline.** Serve the HTML so the browser displays
+     it (e.g. via a sandboxed iframe fed the bytes), reusing the existing
+     extension check.
+   - **Everything else → download.** Stream the bytes to the client with the
+     derived filename so the browser saves the file.
+
+No service-to-service secret is needed: `public` content is unauthenticated by
+design, `password` is gated by `x-share-password`, and `regular` uses the
+viewer's bearer token.
 
 ### Security notes
 
-- The rendered HTML runs JavaScript in the **BACKEND origin**. Because Exulu auth
-  is header-based (API key / bearer token), there is no session cookie on the
-  backend origin for malicious HTML to exfiltrate. `X-Content-Type-Options:
-  nosniff` is set.
-- No restrictive `Content-Security-Policy` is applied: a CSP could break
-  legitimate rendering of self-contained HTML artifacts. This is a deliberate
-  choice given access requires a valid credential.
-- Access is "any valid credential" by design — handing someone an API key lets
-  them open any artifact link. If artifact links are shared, the API key is the
-  capability.
+- Inline HTML runs JavaScript in the **frontend origin**. Render it in a
+  sandboxed iframe so artifact scripts can't reach the next-auth session/cookies.
+  `X-Content-Type-Options: nosniff` is set on the backend response.
+- A `password` link's password travels only via an httpOnly cookie and the
+  `x-share-password` header — never in the URL or page HTML.
+- A `public` link is a bearer capability: anyone with the URL can view until it
+  expires. That is the explicit intent of `public` mode.
+
+## Share UI — `ShareArtifactDialog`
+
+One shared dialog component:
+
+- **Name** — text input, prefilled with the sanitized S3 key, editable.
+- **Expiry** — presets (1 day / 7 days / 30 days / custom date); maps to
+  `expires_at`.
+- **Access mode** — `public` / `password` / `regular`.
+- **Password** — shown only when mode is `password`.
+- **RBAC scoping** — shown only when mode is `regular`, reusing the existing
+  rights/RBAC controls.
+
+On submit it calls `POST /shared-artifacts`; on success it copies
+`<FRONTEND>/artifacts/<name>` to the clipboard and toasts. A `409` surfaces a
+"name taken" message.
+
+Wired into **three** artifact entry points:
+
+- `FileItem` action row in `primitives/file-picker.tsx` (used by
+  `components/message-renderer.tsx`).
+- `file-row.tsx` action row in
+  `app/(application)/chat/components/session-files`.
+- **Inline S3 links in message text** — see below.
+
+### Inline S3-URL detection in chat messages
+
+Agents sometimes return a bare S3 URL in the message body (an artifact they
+created and uploaded). When the renderer encounters such a URL it shows a subtle
+share affordance (a small icon / CTA next to the link) that opens the same
+`ShareArtifactDialog`, prefilled with the artifact's key.
+
+- **Recognizing an S3 URL.** A URL is an S3 artifact link when its base matches
+  the configured S3 endpoint, `COMPANION_S3_ENDPOINT`. Because
+  `message-renderer.tsx` is a client component, this base must reach the client:
+  expose it (e.g. as `s3_endpoint`) through the existing `app/api/config`
+  payload, sourced server-side from `COMPANION_S3_ENDPOINT`. The renderer matches
+  both markdown-link hrefs and autolinked bare URLs whose href starts with that
+  base.
+- **Extracting the key.** Take the URL path after the endpoint base, strip a
+  leading bucket segment if present (same normalization as
+  [Key normalization](#key-normalization)), and URL-decode it. That bare key
+  seeds the dialog's prefilled name and the `s3key` sent to
+  `POST /shared-artifacts`. (The backend re-normalizes defensively.)
+- **Affordance.** Render the icon/CTA adjacent to the detected link, styled
+  subtly (ghost icon button, visible on hover/focus). It does not alter the link
+  itself — clicking the link still navigates as before; only the share icon opens
+  the dialog.
 
 ## Out of scope
 
-- Serving non-HTML files or sibling assets referenced by relative URLs
-  (CSS/JS/images). Only the single HTML document is served. Artifacts are
-  expected to be self-contained (inline styles/scripts/data URIs).
-- Per-file ownership / RBAC checks.
-- Caching or CDN of rendered output.
+- Serving sibling/relative assets referenced by HTML (CSS/JS/images). Artifacts
+  are assumed self-contained (inline styles/scripts/data URIs).
+- A cleanup cron for expired rows. Expiry is enforced on access (`410`); rows are
+  left in place.
+- CDN/caching of served output.
 
 ## Testing
 
-**Credential parsing helper (unit):**
-- `Basic base64("anything:KEY")` → extracts `KEY` as the api key.
-- `Bearer <jwt>` → routes to the token path.
-- Missing header → no credential (triggers 401).
-- Malformed Basic value → no credential (triggers 401).
+**Backend — create (`POST /shared-artifacts`):**
+- Stores normalized bare key from a bucket-prefixed input.
+- `password` mode hashes the password; `password_hash` never returned.
+- Duplicate `name` → `409`.
+- `password` mode without a password, or past `expires_at` → `400`.
 
-**Route (integration-style):**
-- No `Authorization` → `401` with `WWW-Authenticate: Basic` header present.
-- Invalid API key → `401` with `WWW-Authenticate` header.
-- Valid API key, `.html` key → `200`, `Content-Type: text/html`, body equals
-  object bytes.
-- Bucket-prefixed key resolves to the same object as the bare key.
-- Non-`.html` key → `400`.
-- Valid auth but missing object → `404`.
+**Backend — meta (`GET /shared-artifacts/:name/meta`):**
+- Returns `auth_mode`/`expires_at`/`filename`/`is_html`; never `password_hash` or
+  bytes.
+- Missing → `404`; expired → `410`.
+
+**Backend — content (`GET /shared-artifacts/:name/content`):**
+- `public` → `200`, correct `Content-Type` (no credential).
+- `password`: correct `x-share-password` → `200`; wrong/missing → `401`.
+- `regular`: viewer with RBAC access → `200`; viewer without → `401`/`403`;
+  no token → `401`.
+- HTML key → `text/html` inline headers; non-HTML → `Content-Disposition:
+  attachment`.
+- Expired row → `410`; missing S3 object → `404`.
+
+**Frontend route (`/artifacts/[artifact_name]`):**
+- `public` link renders/downloads without a login.
+- `password` link shows the form; correct password serves, wrong re-prompts.
+- `regular` link redirects an anonymous visitor to `/login?destination=…` and
+  serves an authorized logged-in viewer.
+- HTML artifact renders inline (sandboxed); pdf/docx/xlsx download.
+- Expired / unknown name → expired / not-found pages.
+
+**Frontend — inline S3-URL detection (message renderer):**
+- A message link whose base matches `s3_endpoint` (from `/api/config`) shows the
+  share CTA; a non-S3 link does not.
+- The key is extracted correctly from both markdown-link and bare-URL forms,
+  with the bucket prefix stripped, and seeds the dialog.
+- Clicking the link still navigates; the CTA opens `ShareArtifactDialog`.

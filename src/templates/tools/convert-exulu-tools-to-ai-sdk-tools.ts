@@ -155,14 +155,16 @@ export const convertExuluToolsToAiSdkTools = async (
     contexts = [];
   }
 
-  // When skills are configured, eagerly create the shared session sandbox so
-  // both the inner skill agent AND the outer agent can read/write files in
-  // the same per-session tree. The skill tool's execute below still calls
-  // createSessionSandbox, but those become cache hits and reuse this handle.
+  // Eagerly create the shared session sandbox so the OUTER agent can read/write
+  // files (and run skill scripts — it executes skills directly, there is no skill
+  // sub-agent) under a per-session tree with the same S3 persistence pipeline.
+  // GATED on the agent's `sandbox_enabled` flag (pure opt-in, default off): a
+  // knowledge-only agent gets no sandbox and won't be tempted into spurious shell
+  // calls. Undefined/false → no sandbox. Skill execution requires this enabled.
   let sharedSessionSandbox:
     | Awaited<ReturnType<typeof createSessionSandbox>>
     | undefined;
-  if (sessionID && exuluConfig) {
+  if (sessionID && exuluConfig && agent?.sandbox_enabled === true) {
     try {
       sharedSessionSandbox = await createSessionSandbox(
         sessionID,
@@ -277,11 +279,13 @@ export const convertExuluToolsToAiSdkTools = async (
     }, {})
     : {};
 
-  // Expose the shared sandbox's readFile/writeFile to the OUTER agent so it
-  // can save its own outputs (e.g. "store the result as a .md file") without
-  // delegating to a skill. Files written here land under the same session dir
-  // as skill artifacts and benefit from the same S3 persistence + presigned
-  // URL pipeline. Bash is intentionally NOT exposed to the outer agent.
+  // Expose the shared sandbox's readFile/writeFile/bash to the OUTER agent. It
+  // executes skills directly (no skill sub-agent), so it needs bash to run skill
+  // scripts, plus readFile/writeFile to read inputs and save outputs (e.g. "store
+  // the result as a .md file"). Files land under the session dir with the same S3
+  // persistence + presigned URL pipeline. Only present when the agent has
+  // sandbox_enabled — otherwise the block above leaves sharedSessionSandbox
+  // undefined and this becomes {}.
   const sandboxTools: Record<string, any> = sharedSessionSandbox
     ? {
         readFile: { ...sharedSessionSandbox.tools.readFile, needsApproval: false },

@@ -35,6 +35,7 @@ const {
   transcriptionJobsSchema,
   imageGenerationsSchema,
   oauthTokensSchema,
+  sharedArtifactsSchema,
 } = coreSchemas.get();
 
 const addMissingFields = async (
@@ -89,6 +90,7 @@ const up = async function (knex: Knex) {
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
     oauthTokensSchema(),
+    sharedArtifactsSchema(),
     rbacSchema(),
     agentsSchema(),
     feedbackSchema(),

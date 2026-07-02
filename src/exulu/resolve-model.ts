@@ -162,6 +162,11 @@ const getLiteLLMProvider = ({
     // responseSchema/responseMimeType — so enabling this matches the actual
     // proxy contract.
     supportsStructuredOutputs: true,
+    // Request token usage on STREAMED responses. Without this the openai-compatible
+    // provider omits `stream_options: { include_usage: true }`, so LiteLLM returns no
+    // usage for streaming calls — which zeroes out the per-request token metrics and
+    // the message-footer token count (both read the AI SDK `totalUsage`/finish-part usage).
+    includeUsage: true,
   });
 };
 
