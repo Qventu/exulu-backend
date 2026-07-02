@@ -62,9 +62,7 @@ function durationToDays(duration?: string | null): number {
 /**
  * Subtract one budget duration from a date using calendar-correct arithmetic.
  * For "mo" durations, uses UTC month subtraction instead of a fixed 30-day
- * approximation — critical for months with 31 days (e.g. July): subtracting
- * 30 days from August 1 lands on July 2, not July 1, causing the first day of
- * the month to be excluded from the spend window.
+ * approximation.
  */
 function subtractDuration(date: Date, duration: string | null): Date {
   const m = /^\s*(\d+(?:\.\d+)?)\s*(mo|[a-z]+)?\s*$/i.exec(String(duration ?? ""));
@@ -76,6 +74,15 @@ function subtractDuration(date: Date, duration: string | null): Date {
     return result;
   }
   return new Date(date.getTime() - durationToDays(duration) * DAY_MS);
+}
+
+/**
+ * Subtract one calendar month from `date` using UTC month arithmetic.
+ */
+function subtractOneCalendarMonth(date: Date): Date {
+  const result = new Date(date);
+  result.setUTCMonth(result.getUTCMonth() - 1);
+  return result;
 }
 
 /**
@@ -96,6 +103,13 @@ function subtractDuration(date: Date, duration: string | null): Date {
  * In both cases the result is clamped so it never exceeds `now - duration`
  * (a trailing-window floor), which prevents a very stale reset_at from
  * spanning multiple old cycles.
+ *
+ * Calendar-month alignment: LiteLLM sets budget_reset_at by advancing the
+ * creation date by one calendar month (e.g. July 1 → August 1), not by adding
+ * the nominal day count (July 1 + 30d = July 31). When reset_at lands on day 1
+ * of a month we therefore invert it with calendar-month subtraction, not
+ * exact-day subtraction, to recover the actual period start (July 1, not
+ * July 2).
  */
 function windowStartYmd(reset_at: string | null, duration: string | null): string {
   const now = Date.now();
@@ -108,7 +122,12 @@ function windowStartYmd(reset_at: string | null, duration: string | null): strin
   if (resetMs !== null) {
     if (resetMs > now) {
       // Future reset: current period began one duration before the next reset.
-      const periodStart = subtractDuration(reset!, duration);
+      // When reset_at is day 1 of a month, LiteLLM used calendar-month
+      // arithmetic to set it — invert the same way.
+      const periodStart =
+        reset!.getUTCDate() === 1
+          ? subtractOneCalendarMonth(reset!)
+          : subtractDuration(reset!, duration);
       return ymd(periodStart > trailingStart ? periodStart : trailingStart);
     } else {
       // Past reset: the budget just reset; the new period started AT reset_at.
