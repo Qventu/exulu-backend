@@ -60,25 +60,47 @@ function durationToDays(duration?: string | null): number {
 }
 
 /**
- * Start date (YYYY-MM-DD) of the budget's current period. `budget_reset_at` is
- * the *next* reset, so the current period began one duration before it. When
- * reset is missing or already in the past (stale), fall back to a trailing
- * window of one duration ending now, so we never count spend from a prior
- * period.
+ * Start date (YYYY-MM-DD) of the budget's current period.
+ *
+ * Two distinct cases based on whether `budget_reset_at` is in the future or
+ * the past:
+ *
+ *  • Future reset_at (normal): the period began one duration BEFORE the next
+ *    reset, i.e. `reset_at - duration`.
+ *
+ *  • Past reset_at (reset just occurred, or LiteLLM hasn't yet updated the
+ *    field for a tag with no recent traffic): the budget already reset and the
+ *    NEW period started AT reset_at — not one full duration before it. Using
+ *    `now - duration` here is wrong because it reaches back into the previous
+ *    period and inflates spend.
+ *
+ * In both cases the result is clamped so it never exceeds `now - duration`
+ * (a trailing-window floor), which prevents a very stale reset_at from
+ * spanning multiple old cycles.
  */
 function windowStartYmd(reset_at: string | null, duration: string | null): string {
   const days = durationToDays(duration);
+  const windowMs = days * DAY_MS;
+  const now = Date.now();
   const reset = reset_at ? new Date(reset_at) : null;
-  const periodStart =
-    reset && !Number.isNaN(reset.getTime())
-      ? new Date(reset.getTime() - days * DAY_MS)
-      : null;
-  const trailingStart = new Date(Date.now() - days * DAY_MS);
-  // Use the reset-derived start, but never reach back further than one full
-  // duration from now (guards a stale/past reset_at from pulling old spend).
-  const chosen =
-    periodStart && periodStart > trailingStart ? periodStart : trailingStart;
-  return ymd(chosen);
+  const resetMs = reset && !Number.isNaN(reset.getTime()) ? reset.getTime() : null;
+  // Trailing-window floor: never go further back than one full duration from
+  // now, so a very stale reset_at doesn't pull in spend from multiple cycles.
+  const trailingStart = new Date(now - windowMs);
+
+  if (resetMs !== null) {
+    if (resetMs > now) {
+      // Future reset: current period began one duration before the next reset.
+      const periodStart = new Date(resetMs - windowMs);
+      return ymd(periodStart > trailingStart ? periodStart : trailingStart);
+    } else {
+      // Past reset: the budget just reset; the new period started AT reset_at.
+      // Guard against a very stale value by clamping to trailingStart.
+      return ymd(reset! > trailingStart ? reset! : trailingStart);
+    }
+  }
+
+  return ymd(trailingStart);
 }
 
 /**
@@ -100,7 +122,14 @@ async function enrichSpendFromActivity(
     windows[name] = windowStartYmd(ti.budget_reset_at, ti.budget_duration);
   }
   try {
-    const spendByTag = await getTagSpendByWindow(windows, ymd(new Date()));
+    // Use tomorrow (UTC) as the end date so we never miss spend that LiteLLM
+    // has already indexed under the next calendar day because its server clock
+    // is ahead of UTC. Querying a date in the future is safe — LiteLLM simply
+    // returns no rows for it.
+    const spendByTag = await getTagSpendByWindow(
+      windows,
+      ymd(new Date(Date.now() + DAY_MS)),
+    );
     for (const name of names) {
       const spend = spendByTag[name];
       if (typeof spend === "number" && Number.isFinite(spend)) {
@@ -363,6 +392,11 @@ export async function getUserBudgetView(
       readCache.set(tag, { expiry: Date.now() + READ_TTL_MS, view: null });
       return null;
     }
+
+    // Ensure the global default budget tag exists before we read it. A user
+    // who has never made a request won't have been provisioned by the proxy
+    // path yet, so this is the first opportunity to create the tag.
+    await provisionDefaultUserBudget(userId);
 
     const info = await tagInfo([tag]);
     const ti = info[tag];
