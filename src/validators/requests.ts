@@ -7,7 +7,8 @@ export const requestValidators = {
   authenticate: async (
     req,
   ): Promise<{ error: boolean; message?: string; code?: number; user?: User }> => {
-    const apikey: any = req.headers["exulu-api-key"] || null;
+    const rawApiKey: string | undefined = req.headers["exulu-api-key"] || req.headers["x-api-key"];
+    const apikey: any = rawApiKey?.replace(/^Bearer\s+/i, "") || null;
 
     const { db } = await postgresClient();
 
