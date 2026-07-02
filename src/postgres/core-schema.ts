@@ -273,6 +273,11 @@ const agentsSchema: ExuluTableDefinition = {
     {
       name: "animation_responding",
       type: "text",
+    },
+    {
+      name: "sandbox_enabled",
+      type: "boolean",
+      default: false,
     }
   ],
 };
@@ -681,6 +686,25 @@ const oauthTokensSchema: ExuluTableDefinition = {
   ],
 };
 
+const sharedArtifactsSchema: ExuluTableDefinition = {
+  type: "shared_artifacts",
+  name: {
+    plural: "shared_artifacts",
+    singular: "shared_artifact",
+  },
+  // RBAC drives the "regular" auth_mode: rights_mode + the rbac table scope
+  // who may view. public/password modes ignore rights_mode.
+  RBAC: true,
+  fields: [
+    { name: "name", type: "text", index: true, unique: true, required: true },
+    { name: "s3key", type: "text", required: true },
+    { name: "auth_mode", type: "text", default: "regular" },
+    { name: "password_hash", type: "text", required: false }, // bcrypt; password mode only
+    { name: "expires_at", type: "date", required: false }, // null = no expiry
+    { name: "content_type", type: "text", required: false },
+  ],
+};
+
 const contextPresetsSchema: ExuluTableDefinition = {
   type: "context_presets",
   name: {
@@ -778,6 +802,7 @@ export const coreSchemas = {
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       oauthTokensSchema: (): ExuluTableDefinition => addCoreFields(oauthTokensSchema),
+      sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),
     }

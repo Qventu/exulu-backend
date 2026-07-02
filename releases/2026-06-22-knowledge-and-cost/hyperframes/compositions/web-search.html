@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#7033FF; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F5F5F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --success:#16A34A; --info:#2563EB;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(112,51,255,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#7033FF,#9061FF);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 40px 60px 0; overflow: hidden; z-index: 4;
+                 display: flex; flex-direction: column; }
+      .page-head { flex: 0 0 auto; margin-bottom: 22px; }
+      .page-head h1 { font-size: 38px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .page-head p { font-size: 18px; color: var(--muted-fg); margin-top: 7px; }
+
+      /* ---- chat column ---- */
+      .chat { flex: 1 1 auto; display: flex; flex-direction: column; gap: 22px; max-width: 1080px;
+              padding: 6px 4px 40px; overflow: hidden; }
+
+      /* user bubble (right, purple) */
+      .msg-user { align-self: flex-end; max-width: 720px; background: var(--primary); color: #fff;
+                  font-size: 24px; font-weight: 500; line-height: 1.35; padding: 18px 26px;
+                  border-radius: 22px 22px 6px 22px; box-shadow: 0 6px 18px rgba(112,51,255,.22); }
+
+      /* assistant column block (left) */
+      .asst { align-self: flex-start; width: 760px; display: flex; flex-direction: column; gap: 18px; }
+
+      /* tool-call card */
+      .tool-card { border: 1px solid var(--border); border-radius: 14px; background: #fff;
+                   box-shadow: 0 2px 4px rgba(0,0,0,.05); padding: 18px 20px; }
+      .tc-head { display: flex; align-items: center; gap: 14px; }
+      .tc-tile { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 11px; background: var(--muted);
+                 color: var(--fg); display: flex; align-items: center; justify-content: center; }
+      .tc-tile svg { width: 24px; height: 24px; }
+      .tc-titles { display: flex; flex-direction: column; gap: 4px; }
+      .tc-label { font-size: 20px; font-weight: 600; color: var(--fg); letter-spacing: -0.015em; }
+      .tc-query { font-family: "JetBrains Mono", monospace; font-size: 16px; color: var(--muted-fg); }
+      .tc-chip { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px;
+                 border-radius: 18px; background: var(--muted); color: var(--muted-fg); font-size: 15px; font-weight: 500; }
+      .tc-chip svg { width: 15px; height: 15px; }
+
+      /* status row */
+      .tc-status { display: flex; align-items: center; gap: 11px; margin-top: 16px; padding-top: 15px;
+                   border-top: 1px solid var(--border); color: var(--info); font-size: 17px; font-weight: 500; }
+      .status-dot { width: 11px; height: 11px; flex: 0 0 11px; border-radius: 50%; background: var(--info);
+                    box-shadow: 0 0 0 0 rgba(37,99,235,.45); }
+      .spinner { width: 18px; height: 18px; flex: 0 0 18px; margin-left: auto; }
+      .spinner svg { width: 18px; height: 18px; display: block; }
+
+      /* source rows */
+      .sources { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; padding-top: 15px;
+                 border-top: 1px solid var(--border); }
+      .src-row { display: flex; align-items: flex-start; gap: 14px; }
+      .favicon { width: 30px; height: 30px; flex: 0 0 30px; margin-top: 2px; border-radius: 9px;
+                 display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 15px;
+                 letter-spacing: -0.02em; }
+      .src-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .src-title { font-size: 18px; font-weight: 600; color: var(--fg); letter-spacing: -0.01em; }
+      .src-url { font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg); }
+      .src-snip { font-size: 15px; color: var(--muted-fg); line-height: 1.4; margin-top: 2px; }
+
+      /* answer bubble (left, muted) */
+      .answer { align-self: flex-start; max-width: 760px; background: var(--muted); color: var(--fg);
+                font-size: 20px; line-height: 1.55; padding: 20px 26px; border-radius: 22px 22px 22px 6px;
+                border: 1px solid var(--border); }
+      .answer .cite { display: inline-flex; align-items: center; justify-content: center; vertical-align: super;
+                      font-size: 12px; font-weight: 700; font-family: "JetBrains Mono", monospace;
+                      color: var(--primary); background: rgba(112,51,255,.12); border-radius: 6px;
+                      padding: 1px 6px; margin: 0 1px; line-height: 1.3; letter-spacing: -0.01em; }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 880px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #C9B6FF; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="web-search" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">e</div><div class="word">exulu</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+          <div id="spine"></div>
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item active" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-prompts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+            <span>Prompts</span>
+          </div>
+          <div class="nav-item" id="nav-skills">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Skills</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD -->
+        <div class="content">
+          <div class="page-head">
+            <h1>Chat</h1>
+            <p>Research assistant · with live web access</p>
+          </div>
+
+          <div class="chat">
+            <!-- 1. user message -->
+            <div class="msg-user" id="msg-user" style="opacity:0">What changed in the EU AI Act this month?</div>
+
+            <!-- assistant block -->
+            <div class="asst">
+              <!-- 2. tool-call card -->
+              <div class="tool-card" id="tool-card" style="opacity:0">
+                <div class="tc-head">
+                  <div class="tc-tile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/></svg>
+                  </div>
+                  <div class="tc-titles">
+                    <div class="tc-label">Internet search</div>
+                    <div class="tc-query">"EU AI Act changes June 2026"</div>
+                  </div>
+                  <div class="tc-chip">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                    Recency: this month
+                  </div>
+                </div>
+
+                <!-- 2b. searching status (hidden once sources fold in) -->
+                <div class="tc-status" id="tc-status">
+                  <span class="status-dot" id="status-dot"></span>
+                  <span>Searching the web…</span>
+                  <span class="spinner" id="spinner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2.4" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.2-8.55" opacity="0.95"/></svg>
+                  </span>
+                </div>
+
+                <!-- 4. source rows -->
+                <div class="sources" id="sources" style="opacity:0">
+                  <div class="src-row" id="src-1" style="opacity:0">
+                    <div class="favicon" style="background:#1D4ED8">E</div>
+                    <div class="src-body">
+                      <div class="src-title">European Commission — AI Act timeline</div>
+                      <div class="src-url">digital-strategy.ec.europa.eu</div>
+                      <div class="src-snip">New guidance on GPAI obligations took effect, with phased rollout dates confirmed.</div>
+                    </div>
+                  </div>
+                  <div class="src-row" id="src-2" style="opacity:0">
+                    <div class="favicon" style="background:#EA580C">R</div>
+                    <div class="src-body">
+                      <div class="src-title">Reuters — EU AI rules update</div>
+                      <div class="src-url">reuters.com</div>
+                      <div class="src-snip">Regulators published a revised code of practice for general-purpose models.</div>
+                    </div>
+                  </div>
+                  <div class="src-row" id="src-3" style="opacity:0">
+                    <div class="favicon" style="background:#0F766E">L</div>
+                    <div class="src-body">
+                      <div class="src-title">EUR-Lex — Regulation 2024/1689</div>
+                      <div class="src-url">eur-lex.europa.eu</div>
+                      <div class="src-snip">Consolidated text reflects the latest amendments to transparency duties.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 5. answer bubble -->
+              <div class="answer" id="answer" style="opacity:0">
+                This month the EU confirmed phased rollout dates for general-purpose AI obligations<span class="cite">[1]</span> and published a revised code of practice<span class="cite">[2]</span>. The consolidated text also tightens transparency duties<span class="cite">[3]</span>.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Agents can reach the live web</div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Fresh answers, with <b>cited sources</b> — and recency you control</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---- build the shell (chrome registration, calm entrance) ----
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.05);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.15);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.45, stagger: 0.05, ease: 'power2.out' }, 0.35);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power2.out' }, 0.45);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power1.out' }, 0.5);
+      tl.from('.page-head h1, .page-head p', { y: 16, opacity: 0, duration: 0.45, stagger: 0.06, ease: 'power3.out' }, 0.45);
+
+      // ---- 1. user message bubble (0.6 -> in by ~0.85; first real entrance ~0.15 after head) ----
+      tl.fromTo('#msg-user', { opacity: 0, y: 18, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: 'back.out(1.6)' }, 0.6);
+
+      // ---- 2. tool-call card appears, assistant starts searching (~1.5s) ----
+      tl.fromTo('#tool-card', { opacity: 0, y: 22 },
+        { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 1.45);
+      // info status dot pulse (finite): subtle expanding ring, 4 cycles over searching window
+      tl.fromTo('#status-dot',
+        { boxShadow: '0 0 0 0 rgba(37,99,235,0.45)' },
+        { boxShadow: '0 0 0 9px rgba(37,99,235,0)', duration: 0.85, ease: 'power2.out', repeat: 3, yoyo: false },
+        1.7);
+      // finite spinner: exactly 4 full turns over ~3.0s of "searching", ease linear
+      tl.fromTo('#spinner', { rotation: 0 },
+        { rotation: 1440, duration: 3.0, ease: 'none' }, 1.7);
+
+      // ---- 3. caption 1 in (~1.8s), holds >=1.2s ----
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' }, 1.8);
+
+      // ---- 4. sources fold in, staggered (~3.0 -> 4.6s); status hands off to results ----
+      tl.to('#tc-status', { opacity: 0, y: -6, duration: 0.3, ease: 'power2.in' }, 3.0);
+      tl.set('#sources', { opacity: 1 }, 3.05);
+      tl.fromTo(['#src-1', '#src-2', '#src-3'],
+        { opacity: 0, y: 16, rotationX: -40, transformOrigin: 'top center' },
+        { opacity: 1, y: 0, rotationX: 0, duration: 0.5, stagger: 0.32, ease: 'power3.out' }, 3.1);
+
+      // ---- caption 1 out (~5.0s) ----
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 5.0);
+
+      // ---- 5. answer bubble reveals with citation chips (~5.2s) ----
+      tl.fromTo('#answer', { opacity: 0, y: 18 },
+        { opacity: 1, y: 0, duration: 0.5, ease: 'expo.out' }, 5.2);
+      // citation chips pop slightly after the bubble lands
+      tl.fromTo('#answer .cite', { scale: 0.4, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.34, stagger: 0.12, ease: 'back.out(2.2)' }, 5.75);
+
+      // ---- 6. caption 2 in (~6.6s), holds to end (>=1.8s: 6.6 -> 9.0) ----
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 6.6);
+
+      window.__timelines['web-search'] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+        font-family: "Manrope", system-ui, sans-serif;
+        letter-spacing: -0.025em;
+        color: #000000;
+      }
+
+      /* ---------- HOOK ---------- */
+      #hook {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 64px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        color: #000000;
+        text-align: center;
+        white-space: nowrap;
+      }
+      #hook .accent {
+        color: #1A1A1A;
+      }
+
+      /* ---------- STAGE (terminal + diagram) ---------- */
+      #stage {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1920px;
+        height: 1080px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 80px;
+        padding: 0 96px;
+      }
+
+      /* ---------- TERMINAL ---------- */
+      #terminal {
+        width: 820px;
+        height: 460px;
+        background: #0a0a0a;
+        border: 1px solid #1e1e22;
+        border-radius: 0.4rem;
+        padding: 28px 32px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 18px;
+        line-height: 1.55;
+        color: #fafafa;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.18);
+      }
+      #terminal .npm-chip {
+        position: absolute;
+        top: 14px;
+        left: 16px;
+        background: #1A1A1A;
+        color: #ffffff;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        padding: 3px 10px;
+        border-radius: 4px;
+        text-transform: lowercase;
+      }
+      #terminal .term-body {
+        margin-top: 40px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #terminal .prompt-line {
+        display: flex;
+        align-items: center;
+        white-space: pre;
+      }
+      #terminal .prompt {
+        color: #fafafa;
+      }
+      #terminal .cmd {
+        color: #fafafa;
+        white-space: pre;
+      }
+      #terminal .cursor {
+        display: inline-block;
+        width: 9px;
+        height: 18px;
+        background: #fafafa;
+        margin-left: 2px;
+        vertical-align: -3px;
+      }
+      #terminal .log {
+        color: #fafafa;
+        white-space: pre;
+      }
+      #terminal .log.ready {
+        color: #1A1A1A;
+        font-weight: 700;
+      }
+
+      /* ---------- DIAGRAM ---------- */
+      #diagram {
+        position: relative;
+        width: 720px;
+        height: 460px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #boundary {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 680px;
+        height: 360px;
+        border: 1px dashed #525252;
+        border-radius: 0.4rem;
+        background: transparent;
+        box-sizing: border-box;
+      }
+      #boundary-chip {
+        position: absolute;
+        top: -14px;
+        left: 20px;
+        background: #dde6ff;
+        color: #1e6cdc;
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 4px 10px;
+        border-radius: 4px;
+        transform-origin: center center;
+      }
+      #boundary-inner {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        padding: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-sizing: border-box;
+      }
+      .arch-box {
+        position: relative;
+        width: 210px;
+        background: #ffffff;
+        border: 1px solid #e8e8ee;
+        border-radius: 0.4rem;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        box-shadow: 0px 2px 3px hsl(0 0% 0% / 0.08), 0px 1px 2px -1px hsl(0 0% 0% / 0.08);
+      }
+      .arch-box .label {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        color: #000000;
+        letter-spacing: -0.01em;
+      }
+      .arch-box .sublabel {
+        font-family: "Manrope", system-ui, sans-serif;
+        font-weight: 400;
+        font-size: 12px;
+        color: #525252;
+      }
+      .arch-box.whisper {
+        padding-top: 18px;
+      }
+      .arch-box.whisper::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: #1A1A1A;
+        border-top-left-radius: 0.4rem;
+        border-top-right-radius: 0.4rem;
+      }
+      /* arrow */
+      #arrow-wrap {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 160px;
+        height: 60px;
+        pointer-events: none;
+      }
+      #arrow-label {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        color: #525252;
+        white-space: nowrap;
+        padding: 2px 6px;
+        border-radius: 3px;
+        background: transparent;
+      }
+      #arrow-svg {
+        position: absolute;
+        top: 28px;
+        left: 0;
+        width: 160px;
+        height: 24px;
+      }
+      #arrow-line,
+      #arrow-head {
+        stroke: #525252;
+        fill: none;
+        stroke-width: 1.2;
+      }
+      #arrow-head {
+        fill: #525252;
+        stroke: none;
+      }
+
+      /* ---------- PAYOFF ---------- */
+      #payoff {
+        position: absolute;
+        bottom: 96px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: "Manrope", system-ui, sans-serif;
+        font-size: 28px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        color: #000000;
+        text-align: center;
+      }
+      #payoff .accent {
+        color: #1A1A1A;
+      }
+    
+      /* OPEN CI accents */
+      .brand .mono,.brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="7.4"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- HOOK -->
+      <div
+        id="hook"
+        class="clip"
+        data-start="0"
+        data-duration="2.2"
+        data-track-index="1"
+      >
+        Same package. <span class="accent">Separate machine.</span> One env var.
+      </div>
+
+      <!-- STAGE: terminal + diagram (kept on screen from 1.8s through end) -->
+      <div
+        id="stage"
+        class="clip"
+        data-start="1.8"
+        data-duration="5.6"
+        data-track-index="2"
+      >
+        <!-- TERMINAL -->
+        <div id="terminal">
+          <div class="npm-chip">npm</div>
+          <div class="term-body">
+            <div class="prompt-line">
+              <span class="prompt">$&nbsp;</span><span id="cmd" class="cmd"></span><span id="cursor" class="cursor"></span>
+            </div>
+            <div id="log-1" class="log">[OPEN IMP-WHISPER] Starting whisper server on 127.0.0.1:9876</div>
+            <div id="log-2" class="log">[OPEN IMP-WHISPER] GPU support: enabled (Apple Silicon MPS)</div>
+            <div id="log-3" class="log">[OPEN IMP-WHISPER] Model: large-v3 (loading&hellip;)</div>
+            <div id="log-4" class="log">[OPEN IMP-WHISPER] Diarization: enabled (pyannote)</div>
+            <div id="log-5" class="log ready">[OPEN IMP-WHISPER] Ready.</div>
+          </div>
+        </div>
+
+        <!-- DIAGRAM -->
+        <div id="diagram">
+          <div id="boundary">
+            <div id="boundary-chip">your environment</div>
+            <div id="boundary-inner">
+              <div class="arch-box OPEN IMP">
+                <div class="label">OPEN IMP app</div>
+                <div class="sublabel">Node</div>
+              </div>
+              <div class="arch-box whisper">
+                <div class="label">Whisper server</div>
+                <div class="sublabel">GPU box</div>
+              </div>
+            </div>
+            <div id="arrow-wrap">
+              <div id="arrow-label">TRANSCRIPTION_SERVER</div>
+              <svg id="arrow-svg" viewBox="0 0 160 24" preserveAspectRatio="none">
+                <line id="arrow-line" x1="0" y1="12" x2="148" y2="12" />
+                <polygon id="arrow-head" points="148,6 160,12 148,18" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAYOFF -->
+      <div
+        id="payoff"
+        class="clip"
+        data-start="6.4"
+        data-duration="1.0"
+        data-track-index="3"
+      >
+        Your hardware. Your audio. <span class="accent">Your environment.</span>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---------- 0.0 – 0.4: HOOK fades in ----------
+      tl.from(
+        "#hook",
+        { opacity: 0, y: 20, duration: 0.4, ease: "power2.out" },
+        0
+      );
+
+      // 0.4 – 1.8: HOLD (1.4s sentence-fragment read time)
+
+      // ---------- 1.8 – 2.2: HOOK fades out, STAGE fades in ----------
+      tl.to(
+        "#hook",
+        { opacity: 0, y: -20, duration: 0.4, ease: "power2.in" },
+        1.8
+      );
+      tl.from(
+        "#terminal",
+        { opacity: 0, y: 30, duration: 0.4, ease: "power2.out" },
+        1.8
+      );
+      tl.from(
+        "#diagram",
+        { opacity: 0, y: 30, duration: 0.4, ease: "power2.out" },
+        1.8
+      );
+
+      // ---------- Hide things that appear later ----------
+      // Cursor visible initially, hidden after enter
+      // Logs hidden until they stream in
+      tl.set(["#log-1", "#log-2", "#log-3", "#log-4", "#log-5"], { opacity: 0 }, 0);
+      tl.call(
+        () => {
+          const el = document.getElementById("cmd");
+          if (el) el.textContent = "";
+        },
+        [],
+        0
+      );
+
+      // Arrow / label start in muted state
+      tl.set("#arrow-line", { stroke: "#525252" }, 0);
+      tl.set("#arrow-head", { fill: "#525252" }, 0);
+      tl.set("#arrow-label", { backgroundColor: "rgba(221,230,255,0)", color: "#525252" }, 0);
+      tl.set("#boundary", { borderColor: "#525252" }, 0);
+
+      // Cursor blink ONCE at stage settled (2.2 → 2.4: off then on)
+      tl.set("#cursor", { opacity: 0 }, 2.2);
+      tl.set("#cursor", { opacity: 1 }, 2.4);
+
+      // ---------- 2.4 – ~3.0: type the command ----------
+      // "npm run start:whisper" = 21 chars × 28ms ≈ 588ms → lands ~2.99
+      const cmd = "npm run start:whisper";
+      cmd.split("").forEach((ch, i) => {
+        const t = 2.4 + i * 0.028;
+        tl.call(
+          (c) => {
+            const el = document.getElementById("cmd");
+            if (el) el.textContent = el.textContent + c;
+          },
+          [ch],
+          t
+        );
+      });
+
+      // 3.0 – 3.1: Enter (cursor hides as command is "submitted")
+      tl.set("#cursor", { opacity: 0 }, 3.0);
+
+      // ---------- 3.1 – 5.0: log lines fade in (one every 0.25s) ----------
+      const logStarts = [3.1, 3.35, 3.6, 3.85, 4.1];
+      logStarts.forEach((t, i) => {
+        tl.to(`#log-${i + 1}`, { opacity: 1, duration: 0.1, ease: "power1.out" }, t);
+      });
+      // last log lands at 4.2 — leaves 4.2 → 5.0 = 800ms hold (>600ms breath after action)
+
+      // ---------- 5.0 – 5.6: arrow lights up ----------
+      tl.to(
+        "#arrow-line",
+        { stroke: "#1A1A1A", duration: 0.4, ease: "power2.out" },
+        5.0
+      );
+      tl.to(
+        "#arrow-head",
+        { fill: "#1A1A1A", duration: 0.4, ease: "power2.out" },
+        5.0
+      );
+      tl.to(
+        "#arrow-label",
+        {
+          backgroundColor: "#dde6ff",
+          color: "#1e6cdc",
+          duration: 0.4,
+          ease: "power2.out",
+        },
+        5.0
+      );
+
+      // ---------- 5.6 – 6.0: outer boundary glows once + chip pulse ----------
+      // Boundary stroke: muted → purple → muted over 400ms
+      tl.to(
+        "#boundary",
+        { borderColor: "#1A1A1A", duration: 0.2, ease: "power2.out" },
+        5.6
+      );
+      tl.to(
+        "#boundary",
+        { borderColor: "#525252", duration: 0.2, ease: "power2.in" },
+        5.8
+      );
+      // Chip pulse 1.0 → 1.04 → 1.0
+      tl.to(
+        "#boundary-chip",
+        { scale: 1.04, duration: 0.2, ease: "power2.out" },
+        5.6
+      );
+      tl.to(
+        "#boundary-chip",
+        { scale: 1.0, duration: 0.2, ease: "power2.in" },
+        5.8
+      );
+
+      // 6.0 – 6.4: HOLD (400ms breath before payoff)
+
+      // ---------- 6.4 – 6.8: payoff fades in ----------
+      tl.from(
+        "#payoff",
+        { opacity: 0, y: 16, duration: 0.4, ease: "power2.out" },
+        6.4
+      );
+
+      // 6.8 – 7.4: HOLD — resting frame (600ms)
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

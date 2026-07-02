@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --ok:#16A34A; --warn:#DB8500; --over:#E5484D; --info:#2563EB;
+      }
+      .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+
+      /* top-bar budget chip */
+      .tb-budget { position: relative; height: 38px; padding: 0 14px; border: 1px solid var(--border); border-radius: 9px;
+                   background: rgba(255,255,255,.6); display: flex; align-items: center; gap: 10px; }
+      .tb-budget .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: 0 0 9px;
+                        box-shadow: 0 0 0 3px rgba(219,133,0,.16); }
+      .tb-budget .fig { font-size: 16px; font-weight: 600; color: var(--fg); }
+      .tb-budget .fig .max { color: var(--muted-fg); font-weight: 500; }
+
+      /* popover under the chip */
+      .tb-pop { position: absolute; top: 48px; right: 0; min-width: 312px; background: #fff;
+                border: 1px solid var(--border); border-radius: 12px; padding: 15px 17px;
+                box-shadow: 0 16px 40px rgba(16,18,24,.18); z-index: 30; }
+      .tb-pop::before { content: ""; position: absolute; top: -7px; right: 30px; width: 13px; height: 13px;
+                        background: #fff; border-left: 1px solid var(--border); border-top: 1px solid var(--border);
+                        transform: rotate(45deg); }
+      .tb-pop .ph { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted-fg); }
+      .tb-pop .pmain { display: flex; align-items: baseline; gap: 9px; margin-top: 9px; }
+      .tb-pop .pmain .proj { font-size: 26px; font-weight: 700; color: var(--over); }
+      .tb-pop .pmain .lbl { font-size: 16px; color: var(--fg); }
+      .tb-pop .psub { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 15px; color: var(--muted-fg); }
+      .tb-pop .psub .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--over); }
+
+      .search { width: 320px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 48px 60px; overflow: hidden; z-index: 4; }
+      .hdr h1 { font-size: 44px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .hdr p { font-size: 20px; color: var(--muted-fg); margin-top: 9px; }
+
+      /* ---- attention list ("Budgets at risk") ---- */
+      .attention { margin-top: 30px; border: 1px solid #F3C7C8; border-radius: 16px; background: #FEF6F6;
+                   box-shadow: 0 2px 3px rgba(0,0,0,.04); padding: 18px 22px; }
+      .attention .ah { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; color: #B4373B; }
+      .attention .ah svg { width: 19px; height: 19px; }
+      .attn-row { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+      .attn-row .sdot { width: 11px; height: 11px; border-radius: 50%; background: var(--over); flex: 0 0 11px;
+                        box-shadow: 0 0 0 4px rgba(229,72,77,.14); }
+      .attn-row .atxt { font-size: 19px; color: var(--fg); font-weight: 500; }
+      .attn-row .atxt b { font-weight: 600; }
+      .attn-row .atxt .sub { color: var(--muted-fg); font-weight: 400; }
+      .attn-row .abtn { margin-left: auto; height: 40px; padding: 0 18px; border: 1px solid var(--over); border-radius: 9px;
+                        color: var(--over); background: #fff; font-size: 16px; font-weight: 600; display: flex; align-items: center; }
+
+      /* ---- entity budget table ---- */
+      .btable { margin-top: 30px; border: 1px solid var(--border); border-radius: 18px; background: #fff;
+                box-shadow: 0 2px 3px rgba(0,0,0,.05); overflow: hidden; }
+      .brow { display: grid; grid-template-columns: 360px 1fr 300px; align-items: center; gap: 30px;
+              padding: 24px 30px; border-top: 1px solid var(--border); }
+      .brow:first-child { border-top: none; }
+
+      .entity { display: flex; align-items: center; gap: 15px; min-width: 0; }
+      .entity .eic { width: 46px; height: 46px; border-radius: 12px; flex: 0 0 46px;
+                     display: flex; align-items: center; justify-content: center; }
+      .entity .eic svg { width: 23px; height: 23px; }
+      .entity .ename { font-size: 21px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .entity .ekind { font-size: 14px; color: var(--muted-fg); margin-top: 2px; }
+      .eic.proj { background: #EEF9C8; color: var(--primary); }
+      .eic.team { background: #EEF4FF; color: var(--info); }
+      .eic.agent { background: #FFF4E6; color: var(--warn); }
+      .eic.user { background: #F4F4F5; color: var(--muted-fg); }
+
+      /* budget bar (track + fill + projection marker) */
+      .bbar-wrap { min-width: 0; }
+      .bbar { position: relative; height: 14px; border-radius: 999px; background: var(--muted); overflow: visible; }
+      .bbar .fill { position: absolute; top: 0; left: 0; height: 100%; border-radius: 999px; transform-origin: left center; }
+      .bbar .fill.ok { background: var(--ok); }
+      .bbar .fill.warn { background: var(--warn); }
+      .bbar .fill.over { background: var(--over); }
+      /* dashed vertical projection marker, just past the 100% line */
+      .bbar .marker { position: absolute; top: -8px; bottom: -8px; width: 0; border-left: 2px dashed var(--over); }
+      .bbar .marker .mlbl { position: absolute; top: -26px; left: 7px; white-space: nowrap;
+                            font-size: 12px; font-weight: 600; color: var(--over); }
+      /* the 100% reference tick on the over-budget row */
+      .bbar .cap100 { position: absolute; top: -4px; bottom: -4px; left: 100%; width: 0; border-left: 1.5px solid rgba(10,10,10,.22); }
+
+      .bmeta { display: flex; align-items: baseline; justify-content: flex-end; gap: 12px; }
+      .bmeta .spend { font-size: 21px; font-weight: 600; color: var(--fg); }
+      .bmeta .spend .of { color: var(--muted-fg); font-weight: 500; }
+      .bmeta .pct { font-size: 16px; font-weight: 700; padding: 3px 10px; border-radius: 7px; }
+      .bmeta .pct.ok { color: var(--ok); background: rgba(22,163,74,.10); }
+      .bmeta .pct.warn { color: var(--warn); background: rgba(219,133,0,.12); }
+      .bmeta .pct.over { color: var(--over); background: rgba(229,72,77,.12); }
+
+      /* ---- cursor + ripple ---- */
+      #cursor { position: absolute; top: 0; left: 0; z-index: 40; filter: drop-shadow(0 3px 5px rgba(0,0,0,.28)); }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 920px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; flex: 0 0 4px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="budgets" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="logo">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <!-- top-bar budget chip -->
+            <div class="tb-budget" id="tb-budget">
+              <span class="dot"></span>
+              <span class="fig mono">$14.20 <span class="max">/ $20.00</span></span>
+              <!-- popover (hidden until hover at the end) -->
+              <div class="tb-pop" id="tb-pop" style="opacity:0">
+                <div class="ph">This month</div>
+                <div class="pmain"><span class="proj mono">≈ $23</span><span class="lbl">projected by reset</span></div>
+                <div class="psub"><span class="pdot"></span><span>over pace · cap is <span class="mono">$20.00</span></span></div>
+              </div>
+            </div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd mono">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div id="ws-header" class="nav-group-label first">Workspace</div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+
+          <div class="nav-group-label">Develop</div>
+          <div class="nav-item" id="nav-models">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></svg>
+            <span>Models</span>
+          </div>
+          <div class="nav-item" id="nav-evals">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+            <span>Evals</span>
+          </div>
+
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-analytics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M19 9l-5 5-4-4-3 3"/></svg>
+            <span>Analytics</span>
+          </div>
+          <div class="nav-item active" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+          <div class="nav-item" id="nav-access">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Access</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD -->
+        <div class="content">
+          <div class="hdr">
+            <h1>Budgets</h1>
+            <p>Spend caps by user, team, project, and agent</p>
+          </div>
+
+          <!-- ATTENTION LIST: Budgets at risk -->
+          <div class="attention" id="attention" style="opacity:0">
+            <div class="ah">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>Budgets at risk</span>
+            </div>
+            <div class="attn-row">
+              <span class="sdot"></span>
+              <span class="atxt"><b>Acme Project</b> — <span class="mono">112%</span> projected <span class="sub">· over pace</span></span>
+              <span class="abtn">Adjust</span>
+            </div>
+          </div>
+
+          <!-- ENTITY BUDGET TABLE -->
+          <div class="btable" id="btable">
+            <!-- Row 1: Acme Project — green ~46% -->
+            <div class="brow">
+              <div class="entity">
+                <div class="eic proj"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg></div>
+                <div><div class="ename">Acme Project</div><div class="ekind">Project</div></div>
+              </div>
+              <div class="bbar-wrap">
+                <div class="bbar"><div class="fill ok" data-pct="46" style="width:46%"></div></div>
+              </div>
+              <div class="bmeta">
+                <span class="spend mono">$229 <span class="of">/ $500</span></span>
+                <span class="pct ok mono">46%</span>
+              </div>
+            </div>
+
+            <!-- Row 2: Design Team — amber ~82% -->
+            <div class="brow">
+              <div class="entity">
+                <div class="eic team"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                <div><div class="ename">Design Team</div><div class="ekind">Team</div></div>
+              </div>
+              <div class="bbar-wrap">
+                <div class="bbar"><div class="fill warn" data-pct="82" style="width:82%"></div></div>
+              </div>
+              <div class="bmeta">
+                <span class="spend mono">$246 <span class="of">/ $300</span></span>
+                <span class="pct warn mono">82%</span>
+              </div>
+            </div>
+
+            <!-- Row 3: Support Agent — green ~30% -->
+            <div class="brow">
+              <div class="entity">
+                <div class="eic agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></div>
+                <div><div class="ename">Support Agent</div><div class="ekind">Agent</div></div>
+              </div>
+              <div class="bbar-wrap">
+                <div class="bbar"><div class="fill ok" data-pct="30" style="width:30%"></div></div>
+              </div>
+              <div class="bmeta">
+                <span class="spend mono">$45 <span class="of">/ $150</span></span>
+                <span class="pct ok mono">30%</span>
+              </div>
+            </div>
+
+            <!-- Row 4: daniel@open.de — RED, over 100% with projection marker -->
+            <div class="brow">
+              <div class="entity">
+                <div class="eic user"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+                <div><div class="ename">daniel@open.de</div><div class="ekind">User</div></div>
+              </div>
+              <div class="bbar-wrap">
+                <div class="bbar">
+                  <!-- fill scales to the 100% edge of the track; projection extends just past it -->
+                  <div class="fill over" data-pct="100" style="width:100%"></div>
+                  <div class="cap100"></div>
+                  <div class="marker" id="proj-marker" style="left:108%; opacity:0"><span class="mlbl">proj 112%</span></div>
+                </div>
+              </div>
+              <div class="bmeta">
+                <span class="spend mono">$22.40 <span class="of">/ $20.00</span></span>
+                <span class="pct over mono">112%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CURSOR -->
+        <svg id="cursor" width="32" height="32" viewBox="0 0 24 24" style="opacity:0"><path d="M5.4 3.1l13.9 7.4-6 1.8-2.8 5.8z" fill="#121317" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Set a budget for any <b>user, team, project, or agent</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Live burn-rate, with a <b>projection</b> that flags overspend before it happens</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure (plain CSS applied synchronously → rects reliable) ---
+      const sb = document.querySelector('.sidebar').getBoundingClientRect();
+      const spine = document.getElementById('spine');
+      const budR = document.getElementById('nav-budgets').getBoundingClientRect();
+      const SPINE_H = 22;
+      spine.style.top = (budR.top - sb.top + (budR.height - SPINE_H) / 2) + 'px';
+
+      // top-bar budget chip → cursor target
+      const chip = document.getElementById('tb-budget').getBoundingClientRect();
+      const chipCX = chip.left + chip.width / 2;
+      const chipCY = chip.top + chip.height / 2;
+
+      // budget bar fills: animate scaleX 0 -> 1 (CSS width encodes the target %)
+      const fills = gsap.utils.toArray('.bbar .fill');
+
+      gsap.set('#cursor', { x: 1180, y: 720 });
+      gsap.set(fills, { scaleX: 0 });
+
+      // --- entrances (build the shell) ---
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.05);
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.0);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.18);
+      tl.from('.brand, .tb-budget, .search, .avatar', { y: -12, opacity: 0, duration: 0.45, stagger: 0.06, ease: 'power2.out' }, 0.38);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.4, stagger: 0.035, ease: 'power2.out' }, 0.5);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.4, stagger: 0.04, ease: 'power1.out' }, 0.55);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.4, ease: 'power2.out' }, 0.8);
+      tl.from('.hdr h1', { y: 22, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.5);
+      tl.from('.hdr p',  { y: 18, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.6);
+
+      // table shell + rows in
+      tl.from('#btable', { y: 28, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.7);
+      tl.from('.brow .entity', { x: -16, opacity: 0, duration: 0.45, stagger: 0.08, ease: 'power2.out' }, 0.82);
+      tl.from('.bmeta', { opacity: 0, duration: 0.4, stagger: 0.08, ease: 'power1.out' }, 0.9);
+
+      // --- bar fills animate left→right (scaleX), staggered per row, ~0.6s ease-out ---
+      tl.to(fills, { scaleX: 1, duration: 0.6, stagger: 0.12, ease: 'power2.out' }, 1.25);
+      // projection marker appears just past 100% on row 4 (after its fill lands)
+      tl.fromTo('#proj-marker', { opacity: 0, scaleY: 0.6, x: -6 }, { opacity: 1, scaleY: 1, x: 0, duration: 0.4, ease: 'back.out(2)' }, 2.18);
+
+      // --- caption 1 (short phrase, hold >=1.4s: in 1.5, out 3.1) ---
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 1.5);
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 4.3);
+
+      // --- attention list "Budgets at risk" fades in above the table (~3.2s) ---
+      tl.fromTo('#attention', { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 3.2);
+
+      // --- caption 2 (full sentence, hold >=1.8s: in 4.6 → to end) ---
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 4.6);
+
+      // --- ONE cursor move: to the TOP-BAR budget chip → popover opens beneath it (~6.0s) ---
+      tl.to('#cursor', { opacity: 1, duration: 0.25, ease: 'power1.out' }, 5.9);
+      tl.to('#cursor', { x: chipCX - 2, y: chipCY + 2, duration: 0.7, ease: 'power3.inOut' }, 6.0);
+      // chip reacts to hover
+      tl.to('#tb-budget', { backgroundColor: '#ffffff', borderColor: '#D9D3F2', duration: 0.3, ease: 'power1.out' }, 6.55);
+      // popover beneath the chip
+      tl.fromTo('#tb-pop', { opacity: 0, y: -8, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: 'back.out(1.6)' }, 6.7);
+
+      window.__timelines['budgets'] = tl;
+    </script>
+  </body>
+</html>

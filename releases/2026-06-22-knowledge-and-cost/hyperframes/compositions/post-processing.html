@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#7033FF; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted:#F4F4F5; --muted-fg:#6B6B73; --border:#E8E8EF; --input:#E6E6EB;
+        --success:#16A34A; --info:#2563EB;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- faint dimmed desktop shell behind the sheet (optional, set dressing) ---- */
+      .shell { position: absolute; inset: 0; z-index: 1; }
+      .shell .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                       display: flex; align-items: center; padding: 0 26px; }
+      .shell .brand { display: flex; align-items: center; gap: 11px; }
+      .shell .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                            display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                            box-shadow: 0 2px 6px rgba(112,51,255,.35); }
+      .shell .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .shell .sidebar { position: absolute; top: 78px; left: 0; width: 360px; bottom: 0; background: var(--sidebar); padding: 18px; }
+      .shell .nav { height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px; padding: 0 14px;
+                    color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .shell .nav.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      .shell .nav .dot { width: 21px; height: 21px; border-radius: 6px; background: #DDE3EA; }
+      .shell .content { position: absolute; top: 78px; left: 360px; right: 0; bottom: 0; background: var(--bg);
+                        border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                        border-top-left-radius: 22px; padding: 48px 56px; }
+      .shell .ph-h1 { width: 360px; height: 40px; border-radius: 9px; background: #EFEFF3; }
+      .shell .ph-row { height: 70px; border-radius: 14px; border: 1px solid var(--border); margin-top: 18px; background: #fff; }
+
+      /* ---- dim scrim ---- */
+      #scrim { position: absolute; inset: 0; background: rgba(10,10,16,.34); z-index: 2; }
+
+      /* ---- review side-sheet ---- */
+      .sheet { position: absolute; top: 0; right: 0; width: 660px; height: 1080px; background: #fff;
+               border-left: 1px solid var(--border); box-shadow: -28px 0 70px rgba(10,10,16,.22);
+               z-index: 3; display: flex; flex-direction: column; }
+
+      .sh-head { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 12px; padding: 26px 30px; border-bottom: 1px solid var(--border); }
+      .sh-head .t { flex: 1; min-width: 0; }
+      .sh-head h2 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; color: var(--fg); }
+      .sh-head .sub { font-size: 17px; color: var(--muted-fg); margin-top: 6px; }
+      .sh-head .x { width: 44px; height: 44px; border-radius: 11px; display: flex; align-items: center; justify-content: center; color: var(--muted-fg); }
+
+      .sh-body { flex: 1; min-height: 0; padding: 26px 30px 30px; overflow: hidden; }
+      .sec-label { font-size: 19px; font-weight: 500; color: var(--fg); margin-bottom: 14px; }
+
+      /* transcript lines */
+      .transcript { display: flex; flex-direction: column; gap: 4px; }
+      .tline { border-radius: 10px; padding: 11px 12px; }
+      .tline .meta { display: flex; align-items: center; gap: 10px; }
+      .tline .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; }
+      .tline .name { font-size: 17px; font-weight: 600; color: var(--fg); }
+      .tline .ts { font-family: "JetBrains Mono", monospace; font-size: 15px; color: var(--muted-fg); }
+      .tline .text { font-size: 18px; line-height: 1.5; color: #2A2A30; margin-top: 4px; }
+
+      /* attached prompt rows */
+      .attached { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+      .arow { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 10px;
+              padding: 12px 14px; background: #FCFCFE; }
+      .arow .pname { font-size: 18px; font-weight: 500; color: var(--fg); }
+      .arow .arrow { color: var(--muted-fg); display: flex; align-items: center; }
+      .arow .badge { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px;
+                     border-radius: 8px; background: var(--muted); border: 1px solid var(--border);
+                     font-size: 15px; font-weight: 500; color: #44444C; }
+      .arow .badge .agdot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+
+      /* result cards */
+      .results { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+      .rcard { border: 1px solid var(--border); border-radius: 10px; padding: 16px; background: #fff;
+               box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      .rcard .rhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .rcard .rtitle { font-size: 19px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .rerun { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px; border-radius: 8px;
+               font-size: 15px; font-weight: 500; color: var(--muted-fg); flex: 0 0 auto; }
+      .rerun .spin { width: 16px; height: 16px; opacity: 0; flex: 0 0 16px; }
+      .rcard .rbody { margin-top: 10px; font-size: 16px; line-height: 1.55; color: var(--muted-fg); white-space: pre-wrap; }
+      .rcard .rbody .ok { color: var(--success); font-weight: 600; }
+      .rcard .rbody .check { display: inline-flex; vertical-align: -3px; margin-right: 6px; color: var(--success); }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 760px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 30px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #C9B6FF; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="post-processing" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- FAINT DIMMED DESKTOP SHELL (set dressing behind sheet) -->
+        <div class="shell">
+          <div class="topbar">
+            <div class="brand"><div class="mono">e</div><div class="word">exulu</div></div>
+          </div>
+          <div class="sidebar">
+            <div class="nav"><div class="dot"></div>Chat</div>
+            <div class="nav"><div class="dot"></div>Projects</div>
+            <div class="nav"><div class="dot"></div>Knowledge</div>
+            <div class="nav active"><div class="dot"></div>Transcripts</div>
+          </div>
+          <div class="content">
+            <div class="ph-h1"></div>
+            <div class="ph-row"></div>
+            <div class="ph-row"></div>
+            <div class="ph-row"></div>
+            <div class="ph-row"></div>
+          </div>
+        </div>
+
+        <!-- DIM SCRIM -->
+        <div id="scrim" style="opacity:0"></div>
+
+        <!-- REVIEW SIDE-SHEET -->
+        <div class="sheet" id="sheet">
+          <!-- header -->
+          <div class="sh-head">
+            <div class="t">
+              <h2>Weekly Sync</h2>
+              <div class="sub">32m 14s · 2 speakers</div>
+            </div>
+            <div class="x">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </div>
+          </div>
+
+          <div class="sh-body">
+            <!-- transcript -->
+            <div class="sec-label" id="lbl-transcript">Transcript</div>
+            <div class="transcript">
+              <div class="tline" id="t1">
+                <div class="meta">
+                  <span class="dot" style="background:#7033FF"></span>
+                  <span class="name">Alex</span>
+                  <span class="ts">00:42</span>
+                </div>
+                <div class="text">Let's lock the launch date and split the remaining work before we wrap.</div>
+              </div>
+              <div class="tline" id="t2">
+                <div class="meta">
+                  <span class="dot" style="background:#16A34A"></span>
+                  <span class="name">Priya</span>
+                  <span class="ts">01:07</span>
+                </div>
+                <div class="text">Agreed — I'll own the docs and sync the deal notes into HubSpot today.</div>
+              </div>
+            </div>
+
+            <!-- post-processing: attached prompt rows -->
+            <div class="sec-label" id="lbl-attached" style="margin-top:30px">Post-processing</div>
+            <div class="attached">
+              <div class="arow" id="a1">
+                <span class="pname">Meeting summary</span>
+                <span class="arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></span>
+                <span class="badge"><span class="agdot"></span>Notetaker</span>
+              </div>
+              <div class="arow" id="a2">
+                <span class="pname">Action items</span>
+                <span class="arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></span>
+                <span class="badge"><span class="agdot"></span>Extractor</span>
+              </div>
+              <div class="arow" id="a3">
+                <span class="pname">CRM update</span>
+                <span class="arrow"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></span>
+                <span class="badge"><span class="agdot"></span>Sales agent</span>
+              </div>
+            </div>
+
+            <!-- result cards (auto-populate when transcript ready) -->
+            <div class="results">
+              <div class="rcard" id="r1" style="opacity:0">
+                <div class="rhead">
+                  <span class="rtitle">Meeting summary</span>
+                  <span class="rerun">
+                    <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    Re-run
+                  </span>
+                </div>
+                <div class="rbody" id="r1-body">The team aligned on a launch date and divided the remaining tasks.
+Priya takes documentation; Alex coordinates engineering hand-off.</div>
+              </div>
+
+              <div class="rcard" id="r2" style="opacity:0">
+                <div class="rhead">
+                  <span class="rtitle">Action items</span>
+                  <span class="rerun">
+                    <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    Re-run
+                  </span>
+                </div>
+                <div class="rbody">• Priya — finalize launch docs by Friday
+• Alex — confirm engineering hand-off
+• Both — review the rollout checklist</div>
+              </div>
+
+              <div class="rcard" id="r3" style="opacity:0">
+                <div class="rhead">
+                  <span class="rtitle">CRM update</span>
+                  <span class="rerun">
+                    <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    Re-run
+                  </span>
+                </div>
+                <div class="rbody"><span class="ok"><span class="check"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>Updated 2 HubSpot deals</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Attach prompts once — they run on <b>every transcript</b></div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">Summaries, action items, CRM updates — <b>generated the moment recording ends</b></div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // --- measure (plain CSS is applied synchronously, so rects are reliable) ---
+      const sheet = document.getElementById('sheet');
+      const sheetW = sheet.getBoundingClientRect().width; // 660
+
+      // --- starting state: park the sheet off-screen right before its entrance ---
+      gsap.set('#sheet', { x: sheetW + 30 });
+
+      // --- BEAT 1 (0–1.4s): scrim + sheet slide in, header + transcript ---
+      tl.fromTo('#scrim', { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power2.out' }, 0.0);
+      tl.fromTo('#sheet', { x: sheetW + 30 }, { x: 0, duration: 0.72, ease: 'power3.out' }, 0.05);
+      tl.fromTo('.sh-head .t > *', { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.06, ease: 'power2.out' }, 0.55);
+      tl.fromTo('#lbl-transcript', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 0.7);
+      tl.fromTo(['#t1', '#t2'], { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.12, ease: 'expo.out' }, 0.82);
+
+      // --- BEAT 2 (~1.6s): post-processing label + 3 attached rows ---
+      tl.fromTo('#lbl-attached', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, 1.55);
+      tl.fromTo(['#a1', '#a2', '#a3'], { opacity: 0, x: 26 }, { opacity: 1, x: 0, duration: 0.42, stagger: 0.09, ease: 'back.out(1.3)' }, 1.7);
+
+      // --- CAPTION 1 (~1.9s, holds ≥1.2s) ---
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 1.95);
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.32, ease: 'power2.in' }, 6.55);
+      tl.set('#cap1', { opacity: 0 }, 6.9);
+
+      // --- BEAT 4 (~3.0–6.0s): result cards auto-populate ONE BY ONE ---
+      tl.fromTo('#r1', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 3.05);
+      tl.fromTo('#r2', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, 3.75);
+      tl.fromTo('#r3', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.55, ease: 'expo.out' }, 4.45);
+
+      // --- BEAT 5 (~6.2s): one card's Re-run spins (FINITE) then refreshes text ---
+      const spin1 = document.querySelector('#r1 .rerun .spin');
+      tl.to('#r1 .rerun', { color: '#7033FF', duration: 0.18, ease: 'power1.out' }, 5.55);
+      tl.to(spin1, { opacity: 1, duration: 0.12, ease: 'power1.out' }, 5.55);
+      // finite spinner: 0.7s total, 0.35s per rotation → 2 full turns (repeat:1 == 2 plays)
+      tl.fromTo(spin1, { rotation: 0 }, { rotation: 360, duration: 0.35, ease: 'none', repeat: 1 }, 5.55);
+      // refresh body: fade out, swap text, fade back in
+      tl.to('#r1-body', { opacity: 0, duration: 0.2, ease: 'power1.in' }, 5.95);
+      tl.set('#r1-body', { textContent: 'Decisions: launch date locked; scope split between Priya and Alex.\nNext sync scheduled to confirm the rollout checklist.' }, 6.15);
+      tl.fromTo('#r1-body', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power2.out' }, 6.15);
+      tl.to(spin1, { opacity: 0, duration: 0.15, ease: 'power1.in' }, 6.28);
+      tl.to('#r1 .rerun', { color: '#6B6B73', duration: 0.2, ease: 'power1.out' }, 6.28);
+
+      // --- CAPTION 2 (~7.0s, holds to end) ---
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, 6.95);
+
+      window.__timelines['post-processing'] = tl;
+    </script>
+  </body>
+</html>

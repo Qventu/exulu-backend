@@ -3,6 +3,8 @@ import type { allFileTypes } from "@EXULU_TYPES/file-types";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
+import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
+export { getTableName, getChunksTableName };
 import type { ExuluConfig } from "./app";
 import pgvector from "pgvector/knex"; // DONT REMOVE THIS
 import type { Item } from "@EXULU_TYPES/models/item";
@@ -22,6 +24,7 @@ import type { VectorMethod } from "@EXULU_TYPES/models/vector-methods";
 import { vectorSearch, type VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { applyFilters } from "@SRC/graphql/resolvers/apply-filters";
+import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { mapType } from "@SRC/utils/map-types";
 import { bullmqDecorator } from "@EE/queues/decorator";
 import type { ExuluEntitiesConfig, EntityFilter, EntityInsights } from "./entities/types";
@@ -62,13 +65,6 @@ export type ExuluContextFieldDefinition = {
   allowedFileTypes?: allFileTypes[];
 };
 
-export const getTableName = (id: string) => {
-  return sanitizeName(id) + "_items";
-};
-
-export const getChunksTableName = (id: string) => {
-  return sanitizeName(id) + "_chunks";
-};
 
 export type ExuluContextSource = {
   id: string;
@@ -395,6 +391,9 @@ export class ExuluContext {
       after?: number;
     };
     entityFilter?: EntityFilter;
+    /** Precomputed query embedding; forwarded to vectorSearch to skip re-embedding (caller must use
+     *  this context's embedding model). Spread into vectorSearch via `...options` below. */
+    queryEmbedding?: number[];
   }): Promise<{
     itemFilters: SearchFilters;
     chunkFilters: SearchFilters;
@@ -926,17 +925,31 @@ export class ExuluContext {
   public getItems = async ({
     filters,
     fields,
+    user,
+    role,
   }: {
     filters?: any[];
     fields?: string[];
+    user?: User;
+    role?: string;
   }): Promise<Item[]> => {
-    // Note this method does not apply access control, the developer that uses
-    // it is responsible for applying access control themselves. This is on
-    // to expose a method to retrieve items for internal user.
+    // When no `user` is passed, behavior is unchanged (no access control applied).
+    // When a `user` is passed, applyAccessControl is applied so callers only get
+    // rows the user may read.
     const { db } = await postgresClient();
-    let query = db.from(getTableName(this.id)).select(fields || "*");
     const tableDefinition = convertContextToTableDefinition(this);
+    let query = db.from(getTableName(this.id)).select(fields || "*");
     query = applyFilters(query, filters || [], tableDefinition);
+    if (user) {
+      // Fold a bare role id into user.role.id so the "roles" rights_mode branch works.
+      const acUser: User =
+        role && (!user.role || user.role.id !== role)
+          ? ({ ...user, role: { ...(user.role ?? ({} as any)), id: role } } as User)
+          : user;
+      // No field_prefix: items-only query → rights_mode/created_by resolve on the single table,
+      // and target_resource_id uses tableDefinition.name.plural (== the items table name).
+      query = applyAccessControl(tableDefinition, query, acUser);
+    }
     const items = await query;
     return items;
   };

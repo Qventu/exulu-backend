@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #EEF1F5; }
+      body { font-family: "Manrope", system-ui, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.011em; }
+      :root {
+        --primary:#1A1A1A; --accent-bg:#EEF9C8; --bg:#FDFDFD; --fg:#0A0A0A;
+        --sidebar:#F5F8FB; --sidebar-fg:#4A4A52; --sidebar-active-bg:#ECECEF; --sidebar-border:#E4E7EC;
+        --muted-fg:#6B6B73; --border:#E8E8EF; --hairline:#E4E7EC; --input:#E6E6EB;
+        --success:#16A34A; --info:#2563EB; --secondary:#F1F1F4; --secondary-fg:#27272E;
+      }
+
+      #scene { position: relative; width: 1920px; height: 1080px; background: var(--sidebar); overflow: hidden; }
+
+      /* ---- chrome: top bar ---- */
+      .topbar { position: absolute; top: 0; left: 0; right: 0; height: 78px; background: var(--sidebar);
+                display: flex; align-items: center; padding: 0 26px; z-index: 5; }
+      .tb-left { display: flex; align-items: center; gap: 16px; }
+      .tb-burger { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: var(--sidebar-fg); }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mono { width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+                     display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 18px;
+                     box-shadow: 0 2px 6px rgba(26,26,26,.35); }
+      .brand .word { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; color: var(--fg); }
+      .tb-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+      .search { width: 360px; height: 44px; border: 1px solid var(--input); background: rgba(255,255,255,.55); border-radius: 10px;
+                display: flex; align-items: center; gap: 11px; padding: 0 12px; color: var(--muted-fg); font-size: 17px; }
+      .search .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 14px; color: var(--muted-fg);
+                     border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; background: #fff; }
+      .avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg,#1A1A1A,#1A1A1A);
+                color: #fff; font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+      .ghost-btn { font-size: 16px; font-weight: 500; color: var(--muted-fg); padding: 0 6px; }
+
+      /* ---- chrome: sidebar ---- */
+      .sidebar { position: absolute; top: 78px; left: 0; width: 372px; bottom: 0; background: var(--sidebar);
+                 padding: 14px 18px; z-index: 5; }
+      .nav-group-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em;
+                         color: var(--muted-fg); padding: 0 10px; margin: 22px 0 8px; }
+      .nav-group-label.first { margin-top: 6px; }
+      .nav-item { position: relative; height: 50px; border-radius: 10px; display: flex; align-items: center; gap: 14px;
+                  padding: 0 12px; color: var(--sidebar-fg); font-size: 18px; font-weight: 500; }
+      .nav-item svg { width: 21px; height: 21px; flex: 0 0 21px; }
+      .nav-item.active { background: var(--sidebar-active-bg); color: var(--fg); }
+      #spine { position: absolute; left: 8px; width: 4px; height: 22px; border-radius: 3px; background: var(--primary); z-index: 6; }
+
+      /* ---- content card ---- */
+      .content { position: absolute; top: 78px; left: 372px; right: 0; bottom: 0; background: var(--bg);
+                 border-left: 1px solid var(--sidebar-border); border-top: 1px solid var(--sidebar-border);
+                 border-top-left-radius: 22px; padding: 46px 60px; overflow: hidden; z-index: 4; }
+
+      /* workspace header */
+      .ws-head { display: flex; align-items: center; gap: 16px; }
+      .ws-ic { width: 50px; height: 50px; border-radius: 13px; background: var(--accent-bg); color: var(--primary);
+               display: flex; align-items: center; justify-content: center; flex: 0 0 50px; }
+      .ws-ic svg { width: 26px; height: 26px; }
+      .ws-title h1 { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); }
+      .ws-title p { font-size: 18px; color: var(--muted-fg); margin-top: 4px; }
+
+      /* tabs */
+      .tabs { position: relative; display: flex; gap: 36px; margin: 26px 0 0; border-bottom: 1px solid var(--hairline); }
+      .tab { position: relative; padding: 0 2px 16px; font-size: 19px; font-weight: 500; color: var(--muted-fg); }
+      .tab.active { color: var(--fg); font-weight: 600; }
+      #tab-underline { position: absolute; bottom: -1px; height: 3px; border-radius: 3px; background: var(--primary); z-index: 2; }
+
+      /* ---- VIEW A: entity-types ---- */
+      #viewA { position: absolute; left: 60px; right: 60px; top: 232px; }
+
+      /* backfill alert — fixed-height content zone so the prompt and the
+         "extracting" overlay occupy the exact same space (crossfade by opacity,
+         no display toggling). */
+      .alert { position: relative; border: 1px solid var(--border); border-left: 4px solid var(--primary);
+               background: var(--accent-bg); border-radius: 14px; padding: 20px 22px 20px 60px; height: 86px; }
+      .alert .spark { position: absolute; left: 22px; top: 22px; color: var(--primary); }
+      .alert .spark svg { width: 24px; height: 24px; }
+      /* both states fill the content area (right of the icon) */
+      .alert .state { position: absolute; left: 60px; right: 22px; top: 20px; height: 46px;
+                      display: flex; align-items: center; gap: 18px; }
+      .alert .body { flex: 1; min-width: 0; }
+      .alert .a-title { font-size: 19px; font-weight: 600; color: var(--fg); margin-bottom: 4px; }
+      .alert .a-desc { font-size: 17px; color: #44454D; }
+      .alert .a-desc b { font-family: "JetBrains Mono", monospace; font-weight: 600; color: var(--fg); letter-spacing: -0.02em; }
+      .btn-outline { flex: 0 0 auto; height: 44px; padding: 0 22px; border-radius: 10px; border: 1px solid var(--primary);
+                     background: #fff; color: var(--primary); font-size: 17px; font-weight: 600;
+                     display: flex; align-items: center; justify-content: center; gap: 8px; }
+      /* extracting inline state */
+      .ex-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--info); flex: 0 0 12px; }
+      .ex-label { font-size: 18px; font-weight: 500; color: var(--info); }
+      .ex-bar { position: absolute; left: 60px; right: 22px; bottom: 12px; height: 4px; border-radius: 3px;
+                background: rgba(26,26,26,.16); overflow: hidden; }
+      .ex-bar .ind { position: absolute; left: 0; top: 0; height: 100%; width: 36%; border-radius: 3px; background: var(--primary); }
+
+      /* type list */
+      .list { margin-top: 22px; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: #fff; }
+      .row { display: flex; align-items: center; gap: 18px; padding: 22px 26px; }
+      .row + .row { border-top: 1px solid var(--hairline); }
+      .row .r-ic { width: 42px; height: 42px; border-radius: 11px; background: #F5F5F7; color: #3F3F46;
+                   display: flex; align-items: center; justify-content: center; flex: 0 0 42px; }
+      .row .r-ic svg { width: 23px; height: 23px; }
+      .row .r-main { flex: 1; min-width: 0; }
+      .row .r-name { font-size: 21px; font-weight: 600; color: var(--fg); }
+      .row .r-sub { font-size: 16px; color: var(--muted-fg); margin-top: 2px; }
+      .status-dot { display: inline-flex; align-items: center; gap: 9px; flex: 0 0 auto; }
+      .status-dot .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--success); }
+      .status-dot .lab { font-size: 16px; color: var(--muted-fg); }
+      .row .ov { flex: 0 0 auto; color: var(--muted-fg); display: flex; align-items: center; }
+      .row .ov svg { width: 24px; height: 24px; }
+
+      /* ---- VIEW B: item-detail Entities section ---- */
+      #viewB { position: absolute; left: 60px; right: 60px; top: 232px; }
+      .detail-card { position: relative; border: 1px solid var(--border); border-radius: 16px; background: #fff; padding: 30px 34px;
+                     box-shadow: 0 2px 3px rgba(0,0,0,.05); }
+      .ds-head { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; }
+      .ds-head .chev { color: var(--muted-fg); display: flex; }
+      .ds-head .chev svg { width: 22px; height: 22px; }
+      .ds-head h3 { font-size: 22px; font-weight: 600; color: var(--fg); }
+      .ds-head .ds-meta { font-size: 16px; color: var(--muted-fg); }
+      .ds-head .ds-actions { margin-left: auto; color: var(--muted-fg); display: flex; }
+      .ds-head .ds-actions svg { width: 24px; height: 24px; }
+
+      .grp { margin-top: 22px; }
+      .grp-label { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted-fg); margin-bottom: 12px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 12px; }
+      .chip { display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; background: var(--secondary);
+              color: var(--secondary-fg); padding: 9px 17px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+      .chip .mult { font-family: "JetBrains Mono", monospace; font-weight: 500; color: var(--muted-fg); font-size: 16px; }
+
+      /* connector SVG overlay (graph hint) */
+      #connectors { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 3; }
+      #connectors path { fill: none; stroke: var(--primary); stroke-width: 2.25; stroke-linecap: round; opacity: 0.55; }
+
+      /* ---- cursor + ripple ---- */
+      #cursor { position: absolute; top: 0; left: 0; z-index: 20; filter: drop-shadow(0 3px 5px rgba(0,0,0,.28)); }
+      #ripple { position: absolute; top: 0; left: 0; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+                border-radius: 50%; border: 3px solid var(--primary); z-index: 19; }
+
+      /* ---- caption lower-third ---- */
+      .caption { position: absolute; left: 432px; bottom: 66px; display: flex; align-items: stretch; gap: 16px;
+                 background: #121317; color: #fff; padding: 18px 28px 18px 20px; border-radius: 13px;
+                 box-shadow: 0 12px 38px rgba(0,0,0,.30); max-width: 940px; z-index: 25; }
+      .caption .bar { width: 4px; background: var(--primary); border-radius: 2px; }
+      .caption .txt { font-size: 31px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.26; }
+      .caption .txt b { color: #EFFE7C; font-weight: 600; }
+    
+      /* OPEN CI accents */
+      .brand .mono, .brand .logo{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:none !important;}
+      .primary{background:#EFFE7C !important;color:#1A1A1A !important;box-shadow:0 2px 10px rgba(26,26,26,.16) !important;}
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="entities" data-start="0" data-duration="9" data-width="1920" data-height="1080">
+      <div id="scene" class="clip" data-start="0" data-duration="9" data-track-index="0">
+
+        <!-- TOP BAR -->
+        <div class="topbar">
+          <div class="tb-left">
+            <div class="tb-burger">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </div>
+            <div class="brand"><div class="mono">O</div><div class="word">OPEN IMP</div></div>
+          </div>
+          <div class="tb-right">
+            <div class="ghost-btn">Feedback</div>
+            <div class="search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span>Search…</span><span class="kbd">⌘K</span>
+            </div>
+            <div class="avatar">DC</div>
+          </div>
+        </div>
+
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+          <div id="spine"></div>
+
+          <div class="nav-group-label first">Workspace</div>
+          <div class="nav-item" id="nav-chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <span>Chat</span>
+          </div>
+          <div class="nav-item" id="nav-projects">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+            <span>Projects</span>
+          </div>
+          <div class="nav-item active" id="nav-knowledge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            <span>Knowledge</span>
+          </div>
+          <div class="nav-item" id="nav-transcripts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+            <span>Transcripts</span>
+          </div>
+
+          <div class="nav-group-label">Build</div>
+          <div class="nav-item" id="nav-agents">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            <span>Agents</span>
+          </div>
+          <div class="nav-item" id="nav-skills">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <span>Skills</span>
+          </div>
+          <div class="nav-group-label">Administration</div>
+          <div class="nav-item" id="nav-budgets">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>
+            <span>Budgets</span>
+          </div>
+          <div class="nav-item" id="nav-access">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Access</span>
+          </div>
+        </div>
+
+        <!-- CONTENT CARD -->
+        <div class="content">
+          <!-- workspace header -->
+          <div class="ws-head" id="ws-head">
+            <div class="ws-ic">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            </div>
+            <div class="ws-title">
+              <h1>Customer Docs</h1>
+              <p>1,284 items · ready</p>
+            </div>
+          </div>
+
+          <!-- tabs -->
+          <div class="tabs" id="tabs">
+            <div id="tab-underline"></div>
+            <div class="tab" id="tab-items">Items</div>
+            <div class="tab" id="tab-pipeline">Pipeline</div>
+            <div class="tab active" id="tab-entities">Entities</div>
+          </div>
+
+          <!-- ============ VIEW A: entity types ============ -->
+          <div id="viewA">
+
+            <!-- backfill alert (slides in above list) -->
+            <div class="alert" id="alert" style="opacity:0">
+              <div class="spark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 4.7L18 9l-4.4 1.3L12 15l-1.6-4.7L6 9l4.4-1.3z"/><path d="M19 13l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/><path d="M5 14l.5 1.5L7 16l-1.5.5L5 18l-.5-1.5L3 16l1.5-.5z"/></svg>
+              </div>
+              <!-- prompt state -->
+              <div class="state" id="alert-prompt">
+                <div class="body">
+                  <div class="a-title">Backfill entity extraction</div>
+                  <div class="a-desc"><b>142,000</b> items predate these types — run extraction?</div>
+                </div>
+                <div class="btn-outline" id="alert-run">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                  Run
+                </div>
+              </div>
+              <!-- extracting state (hidden until click) -->
+              <div class="state" id="alert-extracting" style="opacity:0">
+                <span class="ex-dot" id="ex-dot"></span>
+                <span class="ex-label">Extracting…</span>
+              </div>
+              <div class="ex-bar" id="ex-bar" style="opacity:0"><div class="ind" id="ex-ind"></div></div>
+            </div>
+
+            <!-- type list -->
+            <div class="list" id="list">
+              <div class="row" id="row-person">
+                <div class="r-ic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
+                </div>
+                <div class="r-main">
+                  <div class="r-name">Person</div>
+                  <div class="r-sub">People named across documents</div>
+                </div>
+                <div class="status-dot"><span class="dot"></span><span class="lab">active</span></div>
+                <div class="ov">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+                </div>
+              </div>
+              <div class="row" id="row-company">
+                <div class="r-ic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v16"/><path d="M15 9h3a1 1 0 0 1 1 1v11"/><path d="M9 8h2M9 12h2M9 16h2"/></svg>
+                </div>
+                <div class="r-main">
+                  <div class="r-name">Company</div>
+                  <div class="r-sub">Organizations and accounts</div>
+                </div>
+                <div class="status-dot"><span class="dot"></span><span class="lab">active</span></div>
+                <div class="ov">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+                </div>
+              </div>
+              <div class="row" id="row-product">
+                <div class="r-ic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96 12 12.01l8.73-5.05"/><path d="M12 22.08V12"/></svg>
+                </div>
+                <div class="r-main">
+                  <div class="r-name">Product</div>
+                  <div class="r-sub">SKUs and product references</div>
+                </div>
+                <div class="status-dot"><span class="dot"></span><span class="lab">active</span></div>
+                <div class="ov">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============ VIEW B: item-detail Entities ============ -->
+          <div id="viewB" style="opacity:0">
+            <div class="detail-card">
+              <div class="ds-head">
+                <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+                <h3>Entities</h3>
+                <span class="ds-meta">5 linked</span>
+                <span class="ds-actions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></span>
+              </div>
+
+              <!-- connector lines: subtle graph hint between related chips
+                   (deterministic strokeDashoffset draw). Coordinates target the
+                   chip centers: Priya≈(150,140) Acme≈(150,235) Globex≈(330,235)
+                   Munich≈(150,330). -->
+              <svg id="connectors" viewBox="0 0 1388 400" preserveAspectRatio="none">
+                <path id="conn1" d="M 150 140 C 110 180, 110 200, 150 235" />
+                <path id="conn2" d="M 240 235 C 290 215, 300 215, 330 235" />
+                <path id="conn3" d="M 150 235 C 110 280, 110 300, 150 330" />
+              </svg>
+
+              <div class="grp" id="grp-person">
+                <div class="grp-label">Person</div>
+                <div class="chips">
+                  <div class="chip" id="chip-priya">Priya Shah <span class="mult">×2</span></div>
+                  <div class="chip" id="chip-alex">Alex Kim <span class="mult">×1</span></div>
+                </div>
+              </div>
+              <div class="grp" id="grp-company">
+                <div class="grp-label">Company</div>
+                <div class="chips">
+                  <div class="chip" id="chip-acme">Acme <span class="mult">×3</span></div>
+                  <div class="chip" id="chip-globex">Globex <span class="mult">×1</span></div>
+                </div>
+              </div>
+              <div class="grp" id="grp-place">
+                <div class="grp-label">Place</div>
+                <div class="chips">
+                  <div class="chip" id="chip-munich">Munich <span class="mult">×1</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CURSOR + RIPPLE -->
+        <div id="ripple" style="opacity:0"></div>
+        <svg id="cursor" width="32" height="32" viewBox="0 0 24 24" style="opacity:0"><path d="M5.4 3.1l13.9 7.4-6 1.8-2.8 5.8z" fill="#121317" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+
+        <!-- CAPTIONS -->
+        <div class="caption" id="cap1" style="opacity:0">
+          <div class="bar"></div><div class="txt">Switch on <b>entity extraction</b> per knowledge base</div>
+        </div>
+        <div class="caption" id="cap2" style="opacity:0">
+          <div class="bar"></div><div class="txt">OPEN IMP pulls <b>People</b>, <b>Companies</b> and <b>Products</b> from every document</div>
+        </div>
+
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---- measure (plain CSS applied synchronously → rects reliable) ----
+      const tabsEl   = document.getElementById('tabs').getBoundingClientRect();
+      const entTab   = document.getElementById('tab-entities').getBoundingClientRect();
+      const underline = document.getElementById('tab-underline');
+      underline.style.left  = (entTab.left - tabsEl.left) + 'px';
+      underline.style.width = entTab.width + 'px';
+
+      // run button center (for cursor target / ripple)
+      const runR = document.getElementById('alert-run').getBoundingClientRect();
+      const sceneR = document.getElementById('scene').getBoundingClientRect();
+      const runX = runR.left - sceneR.left + runR.width / 2;
+      const runY = runR.top  - sceneR.top  + runR.height / 2;
+
+      // connector path lengths (deterministic strokeDashoffset draw)
+      ['conn1','conn2','conn3'].forEach((id) => {
+        const p = document.getElementById(id);
+        const len = p.getTotalLength();
+        p.style.strokeDasharray = len;
+        p.style.strokeDashoffset = len;     // start hidden (undrawn)
+        p.dataset.len = len;
+      });
+
+      gsap.set('#cursor', { x: 1180, y: 600 });
+      gsap.set('#ripple', { x: runX, y: runY, scale: 0.3 });
+
+      // ===== BEAT 1 (0–1.2s): shell assembles + content =====
+      tl.from('.sidebar', { x: -120, opacity: 0, duration: 0.6,  ease: 'power3.out' }, 0.06);
+      tl.from('.topbar',  { yPercent: -100, opacity: 0, duration: 0.55, ease: 'power3.out' }, 0.1);
+      tl.from('.content', { x: 60, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.15);
+      tl.from('.brand, .search, .avatar, .ghost-btn', { y: -12, opacity: 0, duration: 0.45, stagger: 0.05, ease: 'power2.out' }, 0.4);
+      tl.from('.nav-item', { y: 10, opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power2.out' }, 0.45);
+      tl.from('.nav-group-label', { opacity: 0, duration: 0.4, stagger: 0.03, ease: 'power1.out' }, 0.5);
+      tl.from('#spine', { opacity: 0, scaleY: 0.3, duration: 0.4, ease: 'power2.out' }, 0.7);
+      // content: workspace header, tabs, then the three rows
+      tl.from('.ws-head', { y: 22, opacity: 0, duration: 0.5, ease: 'power3.out' }, 0.42);
+      tl.from('.tab', { y: 14, opacity: 0, duration: 0.42, stagger: 0.06, ease: 'power2.out' }, 0.6);
+      tl.fromTo('#tab-underline', { scaleX: 0, transformOrigin: 'left center' }, { scaleX: 1, duration: 0.45, ease: 'power3.out' }, 0.82);
+      tl.from('.row', { y: 26, opacity: 0, duration: 0.5, stagger: 0.09, ease: 'expo.out' }, 0.62);
+
+      // ===== Caption 1 in (~1.2s, holds ≥1.2s) =====
+      tl.fromTo('#cap1', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 1.2);
+
+      // ===== BEAT 3 (~2.6s): backfill Alert slides in above the list =====
+      tl.fromTo('#alert', { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.5, ease: 'back.out(1.4)' }, 2.55);
+      // list eases down to make room
+      tl.fromTo('#list', { y: -8 }, { y: 0, duration: 0.4, ease: 'power2.out' }, 2.6);
+
+      // ===== BEAT 4 (~3.4s): cursor clicks Run → Extracting state =====
+      tl.to('#cursor', { opacity: 1, duration: 0.22 }, 3.0);
+      tl.to('#cursor', { x: runX - 3, y: runY - 2, duration: 0.6, ease: 'power2.inOut' }, 3.05);
+      tl.to('#cursor', { scale: 0.9, duration: 0.1, yoyo: true, repeat: 1, ease: 'power1.inOut' }, 3.62); // click dip
+      tl.fromTo('#ripple', { scale: 0.3, opacity: 0.55 }, { scale: 1.7, opacity: 0, duration: 0.5, ease: 'power2.out' }, 3.64);
+
+      // swap alert prompt → extracting (both absolutely overlaid → opacity crossfade)
+      tl.to('#alert-prompt', { opacity: 0, x: -8, duration: 0.24, ease: 'power2.in' }, 3.74);
+      tl.fromTo('#alert-extracting', { opacity: 0, x: 8 }, { opacity: 1, x: 0, duration: 0.3, ease: 'power2.out' }, 3.98);
+      tl.fromTo('#ex-bar', { opacity: 0 }, { opacity: 1, duration: 0.3, ease: 'power1.out' }, 3.98);
+      // pulsing info dot (seekable, finite)
+      tl.fromTo('#ex-dot', { opacity: 0.35 }, { opacity: 1, duration: 0.5, yoyo: true, repeat: 9, ease: 'sine.inOut' }, 4.0);
+      // thin indeterminate bar sweep (finite repeats)
+      tl.fromTo('#ex-ind', { x: -180 }, { x: 1140, duration: 1.1, repeat: 4, ease: 'power1.inOut' }, 4.0);
+
+      // fade cursor away after the click
+      tl.to('#cursor', { opacity: 0, duration: 0.3, ease: 'power1.in' }, 4.25);
+
+      // ===== Caption 1 out, Caption 2 in (~4.6s, holds ≥1.8s) =====
+      tl.to('#cap1', { opacity: 0, y: -10, duration: 0.3, ease: 'power2.in' }, 4.45);
+      tl.fromTo('#cap2', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out' }, 4.7);
+
+      // ===== BEAT 6 (~5.8s): crossfade A → B (item-detail Entities) =====
+      tl.to('#viewA', { opacity: 0, y: -18, duration: 0.5, ease: 'power2.inOut' }, 5.75);
+      tl.fromTo('#viewB', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.55, ease: 'power3.out' }, 5.95);
+      // detail header + group labels settle
+      tl.from('.ds-head', { y: 12, opacity: 0, duration: 0.4, ease: 'power2.out' }, 6.05);
+      tl.from('.grp-label', { opacity: 0, x: -10, duration: 0.4, stagger: 0.1, ease: 'power2.out' }, 6.2);
+
+      // chips staggered reveal (grouped order: Person → Company → Place)
+      const chips = ['#chip-priya','#chip-alex','#chip-acme','#chip-globex','#chip-munich'];
+      tl.fromTo(chips, { opacity: 0, scale: 0.82, y: 10 },
+                       { opacity: 1, scale: 1, y: 0, duration: 0.4, stagger: 0.1, ease: 'back.out(1.6)' }, 6.35);
+
+      // connector lines draw in (deterministic strokeDashoffset → 0)
+      const drawConn = (sel, t) => {
+        tl.to(sel, { strokeDashoffset: 0, duration: 0.7, ease: 'power2.inOut' }, t);
+      };
+      drawConn('#conn1', 7.25);
+      drawConn('#conn2', 7.45);
+      drawConn('#conn3', 7.65);
+
+      window.__timelines['entities'] = tl;
+    </script>
+  </body>
+</html>

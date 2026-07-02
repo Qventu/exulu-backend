@@ -16,6 +16,9 @@ export type { ExuluContextEmbedder } from "./exulu/context.ts"
 export { ExuluProvider } from "./exulu/provider.ts"
 export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
+export { ExuluReadApi } from "./exulu/read-api.ts";
+export { postgresClient } from "./postgres/client";
+export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.ts";
 export { ExuluTool } from "./exulu/tool"
 export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/oauth/types"
 export { ExuluEval } from "./exulu/evals"
