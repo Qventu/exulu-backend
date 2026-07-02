@@ -60,6 +60,25 @@ function durationToDays(duration?: string | null): number {
 }
 
 /**
+ * Subtract one budget duration from a date using calendar-correct arithmetic.
+ * For "mo" durations, uses UTC month subtraction instead of a fixed 30-day
+ * approximation — critical for months with 31 days (e.g. July): subtracting
+ * 30 days from August 1 lands on July 2, not July 1, causing the first day of
+ * the month to be excluded from the spend window.
+ */
+function subtractDuration(date: Date, duration: string | null): Date {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(mo|[a-z]+)?\s*$/i.exec(String(duration ?? ""));
+  const unit = m ? (m[2] ?? "d").toLowerCase() : "d";
+  const n = m ? parseFloat(m[1]!) : NaN;
+  if (unit === "mo" && Number.isFinite(n) && n > 0) {
+    const result = new Date(date);
+    result.setUTCMonth(result.getUTCMonth() - Math.round(n));
+    return result;
+  }
+  return new Date(date.getTime() - durationToDays(duration) * DAY_MS);
+}
+
+/**
  * Start date (YYYY-MM-DD) of the budget's current period.
  *
  * Two distinct cases based on whether `budget_reset_at` is in the future or
@@ -79,19 +98,17 @@ function durationToDays(duration?: string | null): number {
  * spanning multiple old cycles.
  */
 function windowStartYmd(reset_at: string | null, duration: string | null): string {
-  const days = durationToDays(duration);
-  const windowMs = days * DAY_MS;
   const now = Date.now();
   const reset = reset_at ? new Date(reset_at) : null;
   const resetMs = reset && !Number.isNaN(reset.getTime()) ? reset.getTime() : null;
   // Trailing-window floor: never go further back than one full duration from
   // now, so a very stale reset_at doesn't pull in spend from multiple cycles.
-  const trailingStart = new Date(now - windowMs);
+  const trailingStart = subtractDuration(new Date(now), duration);
 
   if (resetMs !== null) {
     if (resetMs > now) {
       // Future reset: current period began one duration before the next reset.
-      const periodStart = new Date(resetMs - windowMs);
+      const periodStart = subtractDuration(reset!, duration);
       return ymd(periodStart > trailingStart ? periodStart : trailingStart);
     } else {
       // Past reset: the budget just reset; the new period started AT reset_at.
