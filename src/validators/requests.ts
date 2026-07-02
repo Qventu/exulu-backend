@@ -13,7 +13,7 @@ export const requestValidators = {
     // API keys always contain "/" (format: sk_xxx/name); JWTs use base64url
     // encoding which never includes "/". Route to the correct auth path here
     // so personal JWT tokens sent via x-api-key still reach getToken.
-    const apikey: string | null = stripped?.includes("/") ? stripped : null;
+    const apikey: string | undefined = stripped?.includes("/") ? stripped : undefined;
 
     const { db } = await postgresClient();
 
