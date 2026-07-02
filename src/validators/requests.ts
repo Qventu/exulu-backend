@@ -8,12 +8,17 @@ export const requestValidators = {
     req,
   ): Promise<{ error: boolean; message?: string; code?: number; user?: User }> => {
     const rawApiKey: string | undefined = req.headers["exulu-api-key"] || req.headers["x-api-key"];
-    const apikey: any = rawApiKey?.replace(/^Bearer\s+/i, "") || null;
+    const stripped = rawApiKey?.replace(/^Bearer\s+/i, "") ?? null;
+
+    // API keys always contain "/" (format: sk_xxx/name); JWTs use base64url
+    // encoding which never includes "/". Route to the correct auth path here
+    // so personal JWT tokens sent via x-api-key still reach getToken.
+    const apikey: string | undefined = stripped?.includes("/") ? stripped : undefined;
 
     const { db } = await postgresClient();
 
     let authtoken: any = null;
-    if (typeof apikey !== "string") {
+    if (!apikey) {
       // default to next auth tokens to authenticate
       authtoken = await getToken((req.headers["authorization"] || req.headers["x-api-key"]) ?? "");
     }
