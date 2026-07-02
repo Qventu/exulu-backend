@@ -201,11 +201,9 @@ export async function resolveReranker(
       }));
     reranked.sort((a, b) => b.rerank_score - a.rerank_score);
 
-    fs.writeFileSync("reranked.json", JSON.stringify(reranked, null, 2));
     return reranked;
     } catch (err) {
       console.error("[EXULU] Error reranking:", err);
-      fs.writeFileSync("reranked.json", JSON.stringify(err, null, 2));
       return [];
     }
   };
