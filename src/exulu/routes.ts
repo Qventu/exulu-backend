@@ -4357,6 +4357,55 @@ Mood: friendly and intelligent.
   // ─── End GDPR ─────────────────────────────────────────────────────────────────
 
   // ── Shareable artifacts ──────────────────────────────────────────────
+  // List all shares for a given s3key (created by the caller).
+  app.get("/shared-artifacts", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const s3keyRaw = req.query.s3key;
+    if (!s3keyRaw || typeof s3keyRaw !== "string") {
+      res.status(400).json({ detail: "s3key query parameter is required." });
+      return;
+    }
+    const bucket = config.fileUploads?.s3Bucket ?? "";
+    const normalizedKey = normalizeS3Key(s3keyRaw, bucket);
+    const rows = await db("shared_artifacts")
+      .where({ s3key: normalizedKey, created_by: auth.user.id })
+      .orderBy("createdAt", "desc")
+      .select("name", "auth_mode", "expires_at", "rights_mode");
+    res.json(rows.map((r: any) => ({
+      name: r.name,
+      auth_mode: r.auth_mode,
+      expires_at: r.expires_at ?? null,
+      rights_mode: r.rights_mode ?? null,
+    })));
+  });
+
+  // Delete a share (creator only). Removes RBAC entries before deleting the row.
+  app.delete("/shared-artifacts/:name", async (req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const auth = await requestValidators.authenticate(req);
+    if (!auth.user?.id) {
+      res.status(401).json({ detail: "Authentication required." });
+      return;
+    }
+    const row = await getSharedArtifactByName(db, req.params.name ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    if (row.created_by !== auth.user.id) {
+      res.status(403).json({ detail: "You can only delete your own share links." });
+      return;
+    }
+    await db("rbac").where({ entity: "shared_artifact", target_resource_id: row.id }).delete();
+    await db("shared_artifacts").where({ id: row.id }).delete();
+    res.status(204).end();
+  });
+
   // Create a share link. Authed as the real user; RBAC scoping for regular mode.
   app.post("/shared-artifacts", async (req: Request, res: Response) => {
     const { db } = await postgresClient();
