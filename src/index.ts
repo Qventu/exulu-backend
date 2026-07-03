@@ -8,7 +8,6 @@ import { redisClient } from "./redis/client";
 export { ExuluApp } from "./exulu/app/index.ts";
 import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "@EE/queues/queues.ts";
-export { trajectoryRegistry as ExuluTrajectoryRegistry } from "@EE/agentic-retrieval/v3/trajectory.ts";
 import { RecursiveChunker } from "./chunking/recursive";
 export { defaultChunker } from "./exulu/chunker.ts"
 export type { ChunkerOperation, ChunkerResponse } from "./exulu/chunker.ts"
@@ -68,7 +67,7 @@ import {
 } from './utils/python-setup';
 import { documentProcessor } from "@EE/python/documents/processing/doc_processor.ts";
 import { rerank } from "./exulu/reranker";
-import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index.ts";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index.ts";
 
 export const ExuluJobs = {
   redis: redisClient,
@@ -78,7 +77,7 @@ export const ExuluDefaultTools = {
   agentic: {
     retrieval: {
       create: {
-        v3: createAgenticRetrievalToolV3
+        pipeline: createAgenticRetrievalTool
       }
     },
   },

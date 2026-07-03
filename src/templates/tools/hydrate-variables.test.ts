@@ -1,10 +1,6 @@
 // Mock the modules with ESM dependencies before importing the main module
-jest.mock("@EE/agentic-retrieval/v3/index", () => ({
-  createAgenticRetrievalToolV3: jest.fn(),
-}));
-
-jest.mock("@EE/agentic-retrieval/v3/session-tools-registry", () => ({
-  getSessionTools: jest.fn(),
+jest.mock("@EE/agentic-retrieval/pipeline/index", () => ({
+  createAgenticRetrievalTool: jest.fn(),
 }));
 
 jest.mock("@SRC/postgres/client", () => ({
