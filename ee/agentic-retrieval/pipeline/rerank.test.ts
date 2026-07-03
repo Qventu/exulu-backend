@@ -37,7 +37,8 @@ describe("rerankResults", () => {
       items.map((it, i) => ({ ...it, rerank_score: 0.8 - i * 0.05 }))) } as any;
     const r = await rerankResults({ chunks, query: "q", state: state({ pinnedItemIds: new Set(["I7"]) }), reranker, tuning });
     expect(r.rerank_score_max_genuine).toBeCloseTo(0.8);
-    expect(r.limited_results.length).toBeGreaterThanOrEqual(5);
+    expect(r.limited_results.some((c: any) => c.item_id === "I7")).toBe(true);
+    expect(r.limited_results.length).toBe(6);
     const pinned = r.sorted_reranked_results.find((c: any) => c.item_id === "I7");
     expect(pinned!.rerank_score).toBeCloseTo(0.8 - 7 * 0.05 + 0.15);
   });
@@ -75,6 +76,8 @@ describe("rerankResults", () => {
     const reranker = { model: "m", rerank: jest.fn(async () => []) } as any;
     const r = await rerankResults({ chunks, query: "q", state: state(), reranker, tuning });
     expect(r.sorted_reranked_results).toHaveLength(1);
+    expect(r.rerank_score_max_genuine).toBe(0);
+    expect((r.sorted_reranked_results[0] as any).rerank_score).toBeUndefined();
   });
 
   it("returns empty result for empty chunk input", async () => {
