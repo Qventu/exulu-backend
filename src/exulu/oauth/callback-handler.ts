@@ -69,9 +69,13 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
     );
   }
 
-  const config = oauthRegistry.get(parsed.toolId);
+  const config = oauthRegistry.getByProvider(parsed.provider);
   if (!config) {
-    return send(404, false, `No OAuth configuration is registered for tool "${parsed.toolId}".`);
+    return send(
+      404,
+      false,
+      `No OAuth configuration is registered for provider "${parsed.provider}".`,
+    );
   }
 
   try {
@@ -80,7 +84,7 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
       code,
       codeVerifier: parsed.codeVerifier,
     });
-    await oauthTokenStore.upsert(parsed.toolId, parsed.userId, record);
+    await oauthTokenStore.upsert(parsed.provider, parsed.userId, parsed.toolId, record);
   } catch (caught) {
     console.error("[EXULU] OAuth code exchange failed:", caught);
     return send(

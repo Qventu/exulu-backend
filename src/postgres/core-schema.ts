@@ -673,7 +673,7 @@ const oauthTokensSchema: ExuluTableDefinition = {
     singular: "oauth_token",
   },
   // Rows are only ever read/written by the oauth token store for the owning
-  // (tool_id, user_id) pair — never exposed via GraphQL — so no RBAC fields.
+  // (provider, user_id) pair — never exposed via GraphQL — so no RBAC fields.
   RBAC: false,
   fields: [
     { name: "provider", type: "text", required: false, index: true },

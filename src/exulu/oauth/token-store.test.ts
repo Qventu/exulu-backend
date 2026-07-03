@@ -41,11 +41,11 @@ beforeEach(() => {
 
 describe("oauthTokenStore", () => {
   it("returns null when no row exists", async () => {
-    expect(await oauthTokenStore.get("tool", 1)).toBeNull();
+    expect(await oauthTokenStore.get("jira", 1)).toBeNull();
   });
 
   it("encrypts tokens at rest and decrypts them on read", async () => {
-    await oauthTokenStore.upsert("tool", 1, {
+    await oauthTokenStore.upsert("jira", 1, "jira_search", {
       accessToken: "plain-access",
       refreshToken: "plain-refresh",
       tokenType: "Bearer",
@@ -59,8 +59,10 @@ describe("oauthTokenStore", () => {
     expect(
       CryptoJS.AES.decrypt(row.access_token, "test-secret").toString(CryptoJS.enc.Utf8),
     ).toBe("plain-access");
+    expect(row.provider).toBe("jira");
+    expect(row.tool_id).toBe("jira_search");
 
-    const record = await oauthTokenStore.get("tool", 1);
+    const record = await oauthTokenStore.get("jira", 1);
     expect(record).toEqual({
       accessToken: "plain-access",
       refreshToken: "plain-refresh",
@@ -71,34 +73,36 @@ describe("oauthTokenStore", () => {
   });
 
   it("updates the existing row instead of inserting a duplicate", async () => {
-    await oauthTokenStore.upsert("tool", 1, { accessToken: "first" });
-    await oauthTokenStore.upsert("tool", 1, { accessToken: "second" });
+    await oauthTokenStore.upsert("jira", 1, "jira_search", { accessToken: "first" });
+    await oauthTokenStore.upsert("jira", 1, "jira_get", { accessToken: "second" });
     expect(rows).toHaveLength(1);
-    expect((await oauthTokenStore.get("tool", 1))!.accessToken).toBe("second");
+    expect((await oauthTokenStore.get("jira", 1))!.accessToken).toBe("second");
+    // tool_id column reflects the latest writer for audit
+    expect(rows[0].tool_id).toBe("jira_get");
   });
 
   it("preserves the stored refresh token when a new response omits it", async () => {
-    await oauthTokenStore.upsert("tool", 1, {
+    await oauthTokenStore.upsert("jira", 1, "jira_search", {
       accessToken: "first",
       refreshToken: "keep-me",
     });
-    await oauthTokenStore.upsert("tool", 1, { accessToken: "second" });
-    const record = await oauthTokenStore.get("tool", 1);
+    await oauthTokenStore.upsert("jira", 1, "jira_search", { accessToken: "second" });
+    const record = await oauthTokenStore.get("jira", 1);
     expect(record!.accessToken).toBe("second");
     expect(record!.refreshToken).toBe("keep-me");
   });
 
-  it("scopes rows to the (toolId, userId) pair", async () => {
-    await oauthTokenStore.upsert("tool", 1, { accessToken: "user-1" });
-    await oauthTokenStore.upsert("tool", 2, { accessToken: "user-2" });
-    await oauthTokenStore.upsert("other_tool", 1, { accessToken: "other-tool" });
+  it("scopes rows to the (provider, userId) pair", async () => {
+    await oauthTokenStore.upsert("jira", 1, "jira_search", { accessToken: "user-1" });
+    await oauthTokenStore.upsert("jira", 2, "jira_search", { accessToken: "user-2" });
+    await oauthTokenStore.upsert("google", 1, "google_calendar", { accessToken: "other-provider" });
     expect(rows).toHaveLength(3);
-    expect((await oauthTokenStore.get("tool", 2))!.accessToken).toBe("user-2");
+    expect((await oauthTokenStore.get("jira", 2))!.accessToken).toBe("user-2");
   });
 
   it("deletes a row", async () => {
-    await oauthTokenStore.upsert("tool", 1, { accessToken: "bye" });
-    await oauthTokenStore.delete("tool", 1);
-    expect(await oauthTokenStore.get("tool", 1)).toBeNull();
+    await oauthTokenStore.upsert("jira", 1, "jira_search", { accessToken: "bye" });
+    await oauthTokenStore.delete("jira", 1);
+    expect(await oauthTokenStore.get("jira", 1)).toBeNull();
   });
 });

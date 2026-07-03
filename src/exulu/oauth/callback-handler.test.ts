@@ -79,16 +79,16 @@ describe("handleOauthCallback", () => {
     expect(res.body).toContain("invalid or has expired");
   });
 
-  it("returns 404 for a toolId with no registered oauth config", async () => {
-    mockDecryptOauthState.mockReturnValue({ toolId: "unknown_tool", userId: 1, exp: 1 });
+  it("returns 404 for a provider with no registered oauth config", async () => {
+    mockDecryptOauthState.mockReturnValue({ provider: "unknown_provider", toolId: "unknown_tool", userId: 1, exp: 1 });
     const res = makeRes();
     await handleOauthCallback(makeReq({ code: "abc", state: "ok" }), res);
     expect(res.statusCode).toBe(404);
-    expect(res.body).toContain("unknown_tool");
+    expect(res.body).toContain("No OAuth configuration is registered for provider");
   });
 
   it("renders a failure page when the code exchange fails", async () => {
-    mockDecryptOauthState.mockReturnValue({ toolId: "my_tool", userId: 42, exp: 1 });
+    mockDecryptOauthState.mockReturnValue({ provider: "my_tool", toolId: "my_tool", userId: 42, exp: 1 });
     mockExchangeCodeForTokens.mockRejectedValue(new Error("boom"));
     const res = makeRes();
     await handleOauthCallback(makeReq({ code: "abc", state: "ok" }), res);
@@ -98,6 +98,7 @@ describe("handleOauthCallback", () => {
 
   it("exchanges the code, persists tokens, and renders the success page", async () => {
     mockDecryptOauthState.mockReturnValue({
+      provider: "my_tool",
       toolId: "my_tool",
       userId: 42,
       codeVerifier: "verifier",
@@ -114,7 +115,7 @@ describe("handleOauthCallback", () => {
       code: "the-code",
       codeVerifier: "verifier",
     });
-    expect(mockUpsert).toHaveBeenCalledWith("my_tool", 42, record);
+    expect(mockUpsert).toHaveBeenCalledWith("my_tool", 42, "my_tool", record);
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Connected");
   });
