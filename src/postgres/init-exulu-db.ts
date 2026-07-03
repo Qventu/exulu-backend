@@ -125,11 +125,30 @@ const up = async function (knex: Knex) {
     await createTable(schema);
   }
 
-  // The oauth token store upserts on (tool_id, user_id); enforce that key at
-  // the DB level so concurrent callbacks can't produce duplicate rows.
-  await knex.raw(
-    "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_tool_id_user_id_unique ON oauth_tokens (tool_id, user_id)",
-  );
+  // OAuth tokens migrated from (tool_id, user_id) to (provider, user_id) so
+  // multiple tools sharing a provider share one consent per user. The block
+  // below is idempotent: safe on a fresh DB, a mid-migration DB, and one
+  // already fully migrated.
+  if (await knex.schema.hasColumn("oauth_tokens", "provider")) {
+    // Backfill: for legacy rows written before the provider column existed,
+    // seed provider = tool_id so their tokens continue to resolve.
+    await knex("oauth_tokens").whereNull("provider").update({ provider: knex.ref("tool_id") });
+
+    // Swap the unique index. Postgres' CREATE UNIQUE INDEX IF NOT EXISTS is
+    // safe to run every boot; DROP INDEX IF EXISTS is a no-op on subsequent
+    // boots.
+    await knex.raw("DROP INDEX IF EXISTS oauth_tokens_tool_id_user_id_unique");
+    await knex.raw(
+      "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_provider_user_id_unique ON oauth_tokens (provider, user_id)",
+    );
+  } else {
+    // Column absent means the schema creator didn't add it yet (should not
+    // happen given the schema above declares it, but guard for a partial
+    // deploy). Fall back to the legacy index so writes still work.
+    await knex.raw(
+      "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_tool_id_user_id_unique ON oauth_tokens (tool_id, user_id)",
+    );
+  }
 
   // One-time data migration: agents.provider + agents.providerapikey  ->  models row + agents.model
   // Idempotent: gated on existence of the old columns. After first successful run the columns

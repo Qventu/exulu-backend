@@ -676,6 +676,7 @@ const oauthTokensSchema: ExuluTableDefinition = {
   // (tool_id, user_id) pair — never exposed via GraphQL — so no RBAC fields.
   RBAC: false,
   fields: [
+    { name: "provider", type: "text", required: false, index: true },
     { name: "tool_id", type: "text", required: true, index: true },
     { name: "user_id", type: "number", required: true, index: true },
     { name: "access_token", type: "longText", required: true }, // AES-encrypted
