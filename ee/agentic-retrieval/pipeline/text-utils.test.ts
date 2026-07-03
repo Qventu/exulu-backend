@@ -8,6 +8,14 @@ describe("text-utils", () => {
     expect(normalizeFileName("/bucket/folder/hb_PAM-E4_2023.de.pdf")).toBe("folder hbpame42023 de pdf");
   });
 
+  it("normalizeFileName drops the first segment for paths without leading slash", () => {
+    expect(normalizeFileName("bucket/folder/hb_PAM-E4_2023.de.pdf")).toBe("folder hbpame42023 de pdf");
+  });
+
+  it("normalizeFileName preserves bare filenames without dropping segments", () => {
+    expect(normalizeFileName("hb_FST-2XT_manual.pdf")).toBe("hbfst2xtmanual pdf");
+  });
+
   it("deriveKeywordVariants yields lowercased, separator- and digit-stripped forms ≥4 chars", () => {
     expect(deriveKeywordVariants("FST-2XT").sort()).toEqual(["fst-2xt", "fst2xt"].sort());
     expect(deriveKeywordVariants("MISCEL6")).toEqual(expect.arrayContaining(["miscel6", "miscel"]));
