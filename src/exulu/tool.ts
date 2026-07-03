@@ -44,8 +44,8 @@ export class ExuluTool {
   public config: {
     name: string;
     description: string;
-    type: "boolean" | "string" | "number" | "variable";
-    default?: string | boolean | number;
+    type: "boolean" | "string" | "number" | "variable" | "json";
+    default?: string | boolean | number | object;
   }[];
 
   constructor({
@@ -69,8 +69,8 @@ export class ExuluTool {
     config: {
       name: string;
       description: string;
-      type: "boolean" | "string" | "number" | "variable";
-      default?: string | boolean | number;
+      type: "boolean" | "string" | "number" | "variable" | "json";
+      default?: string | boolean | number | object;
     }[];
     needsApproval?: boolean;
     // When set, Exulu wraps execute with the OAuth 2.0 authorization-code

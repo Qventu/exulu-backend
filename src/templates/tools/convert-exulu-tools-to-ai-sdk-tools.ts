@@ -79,7 +79,7 @@ const getMimeType = (type: allFileTypes) => {
   }
 };
 
-const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
+export const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
   const { db } = await postgresClient();
   const promises = tool.config.map(async (toolConfig) => {
     if (!toolConfig.variable) {
@@ -98,6 +98,21 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
       return toolConfig;
     } else if (type === "string") {
       toolConfig.value = toolConfig.variable;
+      return toolConfig;
+    } else if (type === "json") {
+      if (typeof toolConfig.variable === "object") {
+        toolConfig.value = toolConfig.variable;
+        return toolConfig;
+      }
+      try {
+        toolConfig.value = JSON.parse(toolConfig.variable.toString());
+      } catch (err) {
+        console.warn(
+          `[EXULU] Config option "${toolConfig.name}" holds invalid JSON — falling back to the tool's declared default.`,
+          err,
+        );
+        toolConfig.value = undefined;
+      }
       return toolConfig;
     }
 
