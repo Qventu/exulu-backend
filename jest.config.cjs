@@ -25,13 +25,17 @@ module.exports = {
     // bash-tool's exports map only has an "import" condition, which jest's
     // CJS resolver can't use; point straight at the dist entry instead.
     "^bash-tool$": "<rootDir>/node_modules/bash-tool/dist/index.js",
+    // Mock problematic ESM-only modules
+    "^@anthropic-ai/sandbox-runtime$": "<rootDir>/src/__tests__/mocks/sandbox-runtime.js",
   },
-  // jose and bash-tool are ESM-only; let ts-jest transpile them (allowJs)
+  // Many dependencies are ESM-only; let ts-jest transpile them (allowJs)
   // instead of letting jest's CJS runtime choke on their export statements.
   transform: {
     "^.+\\.[tj]s$": ["ts-jest", { tsconfig: { allowJs: true } }],
   },
-  transformIgnorePatterns: ["/node_modules/(?!(jose|bash-tool)/)"],
+  transformIgnorePatterns: [
+    "/node_modules/(?!(jose|bash-tool|franc|natural|trigram-utils|n-gram|collapse-white-space|@anthropic-ai))",
+  ],
   setupFilesAfterEnv: ["<rootDir>/src/__tests__/setup.ts"],
   verbose: true,
   testTimeout: 10000,
