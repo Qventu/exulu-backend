@@ -61,7 +61,7 @@ describe("oauth state", () => {
   });
 
   it("produces URL-safe output", () => {
-    const encrypted = encryptOauthState({ toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
+    const encrypted = encryptOauthState({ provider: "my_tool", toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
     expect(encrypted).not.toMatch(/[+/=]/);
   });
 
@@ -85,7 +85,7 @@ describe("oauth state", () => {
   });
 
   it("rejects state encrypted with a different secret", () => {
-    const encrypted = encryptOauthState({ toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
+    const encrypted = encryptOauthState({ provider: "my_tool", toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
     const original = process.env.NEXTAUTH_SECRET;
     process.env.NEXTAUTH_SECRET = "other-secret";
     try {

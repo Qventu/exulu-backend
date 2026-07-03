@@ -113,5 +113,4 @@ describe("oauthRegistry.register", () => {
     ).not.toThrow();
   });
 
-
 });

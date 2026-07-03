@@ -6,7 +6,7 @@ type ExecuteFunction = (inputs: any, options?: any) => any;
 
 /**
  * Wraps a tool's execute so it only runs with a valid access token for the
- * calling (toolId, userId). Without one it short-circuits with the
+ * calling (providerKey, userId). Without one it short-circuits with the
  * authorization URL — as `result` text the agent can relay, plus a structured
  * `oauth.authorizationUrl` field the frontend can render as a connect button.
  * Generator-based executes pass through unchanged: the returned generator is
