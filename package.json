@@ -132,6 +132,7 @@
     "express": "^5.1.0",
     "express-http-proxy": "^2.1.2",
     "franc": "^6.2.0",
+    "fuse.js": "^7.4.2",
     "graphql": "^16.11.0",
     "graphql-tools": "^9.0.18",
     "graphql-type-json": "^0.3.2",
