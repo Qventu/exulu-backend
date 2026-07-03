@@ -1,5 +1,6 @@
 import type { ExuluOauthConfig, ExuluOauthToolContext } from "./types";
 import { buildAuthorizationUrl, getValidAccessToken } from "./flow";
+import { providerKeyFor } from "./provider-key";
 
 type ExecuteFunction = (inputs: any, options?: any) => any;
 
@@ -24,7 +25,8 @@ export const wrapExecuteWithOauth = (
         result: `The "${toolId}" tool requires OAuth authorization, which needs a signed-in user. No user identity is available for this run.`,
       };
     }
-    const token = await getValidAccessToken({ toolId, userId, config });
+    const providerKey = providerKeyFor(toolId, config);
+    const token = await getValidAccessToken({ providerKey, userId, toolId, config });
     if (!token) {
       const authorizationUrl = buildAuthorizationUrl({ toolId, userId, config });
       return {

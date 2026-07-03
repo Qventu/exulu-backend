@@ -59,11 +59,6 @@ export const oauthRegistry = {
     const providerKey = byTool.get(toolId);
     return providerKey ? byProvider.get(providerKey)?.config : undefined;
   },
-  // Deprecated alias retained until Task 4 removes the last caller.
-  get: (toolId: string): ExuluOauthConfig | undefined => {
-    const providerKey = byTool.get(toolId);
-    return providerKey ? byProvider.get(providerKey)?.config : undefined;
-  },
 };
 
 // Test-only. The registry is process-global; tests reset it in beforeEach.

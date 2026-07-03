@@ -40,7 +40,7 @@ describe("wrapExecuteWithOauth", () => {
 
     const response = await wrapped({ query: "x", user: { id: 42 } });
 
-    expect(mockGetValidAccessToken).toHaveBeenCalledWith({ toolId: "my_tool", userId: 42, config });
+    expect(mockGetValidAccessToken).toHaveBeenCalledWith({ providerKey: "my_tool", userId: 42, toolId: "my_tool", config });
     expect(response.oauth.authorizationUrl).toBe("https://provider.example.com/authorize?state=abc");
     expect(response.result).toContain("https://provider.example.com/authorize?state=abc");
     expect(execute).not.toHaveBeenCalled();
@@ -85,5 +85,32 @@ describe("wrapExecuteWithOauth", () => {
       chunks.push(chunk);
     }
     expect(chunks).toEqual([{ result: "chunk-1" }, { result: "chunk-2" }]);
+  });
+
+  it("uses config.provider as the token-store key when set", async () => {
+    mockGetValidAccessToken.mockResolvedValueOnce({
+      accessToken: "t",
+      refreshToken: null,
+      tokenType: "Bearer",
+      scopes: null,
+      expiresAt: null,
+    });
+    const inner = jest.fn().mockResolvedValue({ result: "ok" });
+    const wrapped = wrapExecuteWithOauth(
+      "jira_search",
+      {
+        provider: "jira",
+        authorizationUrl: "https://auth.example/authorize",
+        tokenUrl: "https://auth.example/token",
+        clientId: "c",
+        clientSecret: "s",
+        scopes: [],
+      },
+      inner,
+    );
+    await wrapped({ user: { id: 3 }, x: 1 });
+    expect(mockGetValidAccessToken).toHaveBeenCalledWith(
+      expect.objectContaining({ providerKey: "jira", toolId: "jira_search" }),
+    );
   });
 });

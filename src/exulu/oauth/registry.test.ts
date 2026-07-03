@@ -113,8 +113,5 @@ describe("oauthRegistry.register", () => {
     ).not.toThrow();
   });
 
-  it("preserves the deprecated get() alias for existing callers", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
-    expect(oauthRegistry.get("jira_search")).toBe(oauthRegistry.getByTool("jira_search"));
-  });
+
 });
