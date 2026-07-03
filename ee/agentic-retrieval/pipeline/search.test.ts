@@ -5,6 +5,7 @@ jest.mock("./multi-query", () => ({ multiQuerySearch: jest.fn(async () => []), s
 jest.mock("./hyde", () => ({ generateHydePassage: jest.fn(async () => "HYDE PASSAGE") }));
 jest.mock("./prefilter", () => ({ fuzzyPrefilter: jest.fn(async () => [{ id: "p1", name: "n", key: "k" }]) }));
 import { multiQuerySearch, singleSearch } from "./multi-query";
+import { generateHydePassage } from "./hyde";
 import { fuzzyPrefilter } from "./prefilter";
 
 const contextsById = new Map<string, any>([
@@ -28,6 +29,7 @@ beforeEach(() => {
   (multiQuerySearch as jest.Mock).mockClear();
   (singleSearch as jest.Mock).mockClear();
   (fuzzyPrefilter as jest.Mock).mockClear();
+  (generateHydePassage as jest.Mock).mockClear();
 });
 
 describe("searchContexts", () => {
@@ -83,5 +85,52 @@ describe("searchContexts", () => {
       memoryPinnedItemIds: new Set(["m1"]),
     });
     expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual([]);
+  });
+
+  it("conversations keyword prefilter still runs in the fallback pass (reference parity)", async () => {
+    await searchContexts({
+      ...base, contextIds: ["tickets"], skipPrefilter: true,
+    });
+    expect(fuzzyPrefilter).toHaveBeenCalled();
+    const call = (singleSearch as jest.Mock).mock.calls[0][0];
+    expect(call.pinnedItemIds).toEqual(["p1"]);
+  });
+
+  it("records kind single-searches with the keyword-joined query", async () => {
+    const contextsWithRecords = new Map<string, any>([
+      ["docs", { id: "docs", configuration: {} }],
+      ["tickets", { id: "tickets", configuration: {} }],
+      ["db", { id: "db", configuration: {} }],
+    ]);
+    const kbProfilesWithRecords = {
+      docs: { enabled: true, kind: "documents", instructions: "", overrides: {} },
+      tickets: { enabled: true, kind: "conversations", instructions: "", overrides: {} },
+      db: { enabled: true, kind: "records", instructions: "", overrides: {} },
+    } as any;
+    await searchContexts({
+      ...base,
+      contextIds: ["db"],
+      contextsById: contextsWithRecords,
+      kbProfiles: kbProfilesWithRecords,
+    });
+    expect(fuzzyPrefilter).not.toHaveBeenCalled();
+    const call = (singleSearch as jest.Mock).mock.calls[0][0];
+    expect(call.query).toBe("door E42 E42");
+    expect(call.config.limit).toBe(20);
+  });
+
+  it("hyde suppressed when settings.hyde is false", async () => {
+    const kbProfilesNoHyde = {
+      docs: { enabled: true, kind: "documents", instructions: "", overrides: { hyde: false } },
+      tickets: { enabled: true, kind: "conversations", instructions: "", overrides: {} },
+    } as any;
+    await searchContexts({
+      ...base,
+      contextIds: ["docs"],
+      kbProfiles: kbProfilesNoHyde,
+    });
+    expect(generateHydePassage).not.toHaveBeenCalled();
+    const call = (multiQuerySearch as jest.Mock).mock.calls[0][0];
+    expect(call.queries).not.toContain("HYDE PASSAGE");
   });
 });
