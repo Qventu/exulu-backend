@@ -4,7 +4,7 @@
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
-  roots: ["<rootDir>/src"],
+  roots: ["<rootDir>/src", "<rootDir>/ee"],
   // *.test/spec only — a bare **/__tests__/**/*.ts pattern would pick up
   // src/__tests__/setup.ts as an (empty) test suite.
   testMatch: ["**/*.test.ts", "**/*.spec.ts"],
