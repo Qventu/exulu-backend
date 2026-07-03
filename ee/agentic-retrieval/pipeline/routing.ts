@@ -41,6 +41,7 @@ export async function runRoutingPhase(opts: {
     model,
   } = opts;
 
+  try {
   const steps: PhaseStep[] = [];
   const enabledIds = new Set(enabledContexts.map((c) => c.id));
 
@@ -62,7 +63,7 @@ export async function runRoutingPhase(opts: {
     enabledContexts
       .map((c) => `- ${c.id}: ${c.name}${c.description ? " — " + c.description : ""}`)
       .join("\n") +
-    `\nIf so, return the knowledge base names. If not, return an empty array.`;
+    `\nIf so, return the knowledge base ids. If not, return an empty array.`;
 
   // --- Phase 1: parallel doc/page detection + explicit-KB detection ---
 
@@ -132,39 +133,44 @@ export async function runRoutingPhase(opts: {
   let userRequestedPage: number | null = null;
 
   if (docPageRaw.output.hasFilenameHint && docPageRaw.output.filenameHints?.length) {
-    const hints = docPageRaw.output.filenameHints;
+    try {
+      const hints = docPageRaw.output.filenameHints;
 
-    const contextMatches = await Promise.all(
-      documentContexts.map(async (ctx) => {
-        const matches = await fuzzyPrefilter({
-          cacheKey: "routing:" + ctx.id,
-          relevantKeywords: hints,
-          context: ctx,
-          fields: ["name", "id", "external_id"],
-          normalize: (item: any) =>
-            item.external_id ? normalizeFileName(item.external_id) : item.name,
-        });
-        return { ctxId: ctx.id as string, matches };
-      }),
-    );
+      const contextMatches = await Promise.all(
+        documentContexts.map(async (ctx) => {
+          const matches = await fuzzyPrefilter({
+            cacheKey: "routing:" + ctx.id,
+            relevantKeywords: hints,
+            context: ctx,
+            fields: ["name", "id", "external_id"],
+            normalize: (item: any) =>
+              item.external_id ? normalizeFileName(item.external_id) : item.name,
+          });
+          return { ctxId: ctx.id as string, matches };
+        }),
+      );
 
-    let totalMatched = 0;
-    const matchedNames: string[] = [];
+      let totalMatched = 0;
+      const matchedNames: string[] = [];
 
-    for (const { ctxId, matches } of contextMatches) {
-      if (matches.length > 0) {
-        userPinnedItemIdsByContext.set(ctxId, new Set(matches.map((m: any) => m.id)));
-        totalMatched += matches.length;
-        matchedNames.push(...matches.map((m: any) => m.name));
+      for (const { ctxId, matches } of contextMatches) {
+        if (matches.length > 0) {
+          userPinnedItemIdsByContext.set(ctxId, new Set(matches.map((m: any) => m.id)));
+          totalMatched += matches.length;
+          matchedNames.push(...matches.map((m: any) => m.name));
+        }
       }
-    }
 
-    steps.push({
-      text:
-        totalMatched > 0
-          ? `User referenced specific document(s); pinning ${totalMatched} file(s): ${matchedNames.join(", ")}`
-          : `User referenced document(s) ${hints.join(", ")} but no matching file was found.`,
-    });
+      steps.push({
+        text:
+          totalMatched > 0
+            ? `User referenced specific document(s); pinning ${totalMatched} file(s): ${matchedNames.join(", ")}`
+            : `User referenced document(s) ${hints.join(", ")} but no matching file was found.`,
+      });
+    } catch (err) {
+      console.warn("[EXULU pipeline] Document reference resolution failed:", err);
+      steps.push({ text: "Document reference resolution failed — continuing without file pins." });
+    }
   }
 
   if (
@@ -279,4 +285,15 @@ export async function runRoutingPhase(opts: {
     hasExplicitDocAndPage,
     steps,
   };
+  } catch (err) {
+    console.warn("[EXULU pipeline] runRoutingPhase failed:", err);
+    return {
+      mainContexts: enabledContexts.map((c) => c.id),
+      fallbackContexts: [],
+      userPinnedItemIdsByContext: new Map(),
+      userRequestedPage: null,
+      hasExplicitDocAndPage: false,
+      steps: [{ text: "Routing failed — searching all enabled knowledge bases." }],
+    };
+  }
 }

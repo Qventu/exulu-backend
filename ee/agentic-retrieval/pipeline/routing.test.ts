@@ -70,6 +70,19 @@ describe("runRoutingPhase", () => {
     expect(r.hasExplicitDocAndPage).toBe(true);
   });
 
+  it("degrades to no pins when document-reference resolution fails", async () => {
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({ output: { hasFilenameHint: true, filenameHints: ["manual X3"], hasPageHint: false, pageNumber: null } })
+      .mockResolvedValueOnce(noExplicit);
+    (fuzzyPrefilter as jest.Mock).mockRejectedValueOnce(new Error("getItems failed"));
+    const r = await runRoutingPhase({
+      question: "in manual X3", enabledContexts: enabled, documentContexts: [{ id: "docs" }],
+      routingRules: [], preselectedItems: new Map(), model: {},
+    });
+    expect(r.userPinnedItemIdsByContext.size).toBe(0);
+    expect(r.steps.some((s) => s.text.includes("continuing without file pins"))).toBe(true);
+  });
+
   it("degrades to all-main when the classifier throws", async () => {
     (generateText as jest.Mock)
       .mockResolvedValueOnce(noHints)
