@@ -1,6 +1,8 @@
 import { RRF_K } from "./config";
 import type { Chunk } from "./types";
 
+export type ChunkWithRRF = Chunk & { rrf_score: number; rrf_appearances: number };
+
 export type SearchCallConfig = {
   method: "hybridSearch" | "tsvector" | "cosineDistance";
   cutoffs?: { hybrid?: number; cosineDistance?: number; tsvector?: number };
@@ -74,7 +76,7 @@ export async function multiQuerySearch({
   role: any;
   pinnedItemIds: string[];
   context: any;
-}): Promise<Chunk[]> {
+}): Promise<ChunkWithRRF[]> {
   // Run searches for each query in parallel
   const searchPromises = queries.map((query) =>
     singleSearch({
@@ -90,7 +92,7 @@ export async function multiQuerySearch({
   const results = await Promise.all(searchPromises);
 
   // Merge results using Reciprocal Rank Fusion (RRF)
-  const merged = mergeResultsWithRRF(results, queries);
+  const merged = mergeResultsWithRRF(results);
 
   return merged;
 }
@@ -105,10 +107,7 @@ export async function multiQuerySearch({
  *
  * For chunks without a hybrid score, falls back to rrfScore * 10.
  */
-function mergeResultsWithRRF(
-  resultSets: Chunk[][],
-  queries: string[],
-): Chunk[] {
+function mergeResultsWithRRF(resultSets: Chunk[][]): ChunkWithRRF[] {
   const chunkScores = new Map<
     string,
     {
@@ -142,12 +141,14 @@ function mergeResultsWithRRF(
   const merged = Array.from(chunkScores.values())
     .map((entry) => ({
       ...entry.chunk,
+      rrf_score: entry.rrfScore,
+      rrf_appearances: entry.appearances,
       // Boost score if chunk appears in multiple query results
       chunk_hybrid_score: entry.chunk.chunk_hybrid_score
         ? entry.chunk.chunk_hybrid_score * (1 + 0.2 * (entry.appearances - 1))
         : entry.rrfScore * 10, // Fallback if no hybrid score
     }))
-    .sort((a, b) => (b.chunk_hybrid_score || 0) - (a.chunk_hybrid_score || 0));
+    .sort((a, b) => b.rrf_score - a.rrf_score);
 
   console.log(
     `[EXULU] Multi-query search merged ${resultSets.reduce((sum, r) => sum + r.length, 0)} results into ${merged.length} unique chunks.`,
