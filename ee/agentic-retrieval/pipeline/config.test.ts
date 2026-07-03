@@ -31,6 +31,32 @@ describe("parsePipelineConfig", () => {
     expect(cfg.memory.enabled).toBe(true);
     warn.mockRestore();
   });
+
+  it("never throws on any invalid input — structural guarantee", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    // All config keys set to garbage values
+    const cfg = parsePipelineConfig({
+      instructions: 123,
+      reranker: [],
+      managed_context: "invalid",
+      require_preselected_contexts: {},
+      logging: null,
+      utility_model: false,
+      knowledge_bases: 999,
+      routing: "not json",
+      vocabulary: [1, 2, 3],
+      memory: "broken{json",
+      tuning: Symbol("bad"),
+    });
+    // Must return a valid PipelineConfig with all required fields
+    expect(cfg).toHaveProperty("instructions");
+    expect(cfg).toHaveProperty("reranker");
+    expect(cfg).toHaveProperty("tuning");
+    expect(cfg.tuning.topK).toBe(5); // defaults are applied
+    expect(cfg.routing.rules).toEqual([]);
+    expect(cfg.knowledgeBases).toEqual({});
+    warn.mockRestore();
+  });
 });
 
 describe("effectiveKbSettings", () => {

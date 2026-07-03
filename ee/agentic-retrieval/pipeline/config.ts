@@ -100,7 +100,17 @@ function jsonVal<S extends z.ZodTypeAny>(name: string, schema: S, v: unknown): z
     if (parsed.success) return parsed.data;
     console.warn(`[EXULU pipeline] config "${name}" failed validation — using defaults.`, parsed.error.message);
   }
-  return schema.parse(defaultFor(name));
+  // Final fallback: try defaultFor, then undefined, then cast as last resort (never throw)
+  try {
+    return schema.parse(defaultFor(name));
+  } catch (err) {
+    console.warn(`[EXULU pipeline] failed to parse fallback for option "${name}" — falling back to schema.parse(undefined).`, err);
+    try {
+      return schema.parse(undefined);
+    } catch {
+      return defaultFor(name) as z.infer<S>;
+    }
+  }
 }
 
 function defaultFor(name: string): unknown {
