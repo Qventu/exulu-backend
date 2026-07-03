@@ -1,10 +1,11 @@
 /**
  * OAuth 2.0 configuration for an {@link ExuluTool}. When a tool is constructed
  * with an `oauth` property, Exulu wraps its `execute` so it only runs when a
- * valid access token exists for the calling (toolId, userId) pair. When no
- * valid token exists the tool short-circuits and returns an authorization URL
- * the agent can show the user; the generic /oauth/callback route completes the
- * flow and persists the tokens.
+ * valid access token exists for the calling (providerKey, userId) pair — where
+ * providerKey defaults to the tool's id but can be shared across tools by
+ * setting the "provider" field below. When no valid token exists the tool
+ * short-circuits and returns an authorization URL the agent can show the user;
+ * the generic /oauth/callback route completes the flow and persists the tokens.
  *
  * Only the standard authorization-code grant is supported. All values are
  * declared in code (source them from env vars or however you like) — none of

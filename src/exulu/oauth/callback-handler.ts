@@ -3,6 +3,14 @@ import { oauthRegistry } from "./registry";
 import { decryptOauthState, exchangeCodeForTokens } from "./flow";
 import { oauthTokenStore } from "./token-store";
 
+const escapeHtml = (s: string): string =>
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const renderResultPage = ({ success, message }: { success: boolean; message: string }) => `<!doctype html>
 <html lang="en">
   <head>
@@ -21,7 +29,7 @@ const renderResultPage = ({ success, message }: { success: boolean; message: str
     <main>
       <div class="icon">${success ? "✓" : "✕"}</div>
       <h1>${success ? "Connected" : "Authorization failed"}</h1>
-      <p>${message}</p>
+      <p>${escapeHtml(message)}</p>
     </main>
   </body>
 </html>`;
