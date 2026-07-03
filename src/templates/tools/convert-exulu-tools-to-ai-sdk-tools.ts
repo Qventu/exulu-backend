@@ -23,7 +23,9 @@ import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-sear
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { getPresignedUrl } from "@SRC/uppy";
+import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
+
 
 /**
  * @type {S3Client}
@@ -288,9 +290,45 @@ export const convertExuluToolsToAiSdkTools = async (
   // undefined and this becomes {}.
   const sandboxTools: Record<string, any> = sharedSessionSandbox
     ? {
-        readFile: { ...sharedSessionSandbox.tools.readFile, needsApproval: false },
+        readFile: {
+          ...sharedSessionSandbox.tools.readFile,
+          needsApproval: false,
+          execute: async (args: any, opts: any) => {
+            const origExecute = sharedSessionSandbox.tools.readFile.execute as
+              | ((input: any, options: any) => Promise<any>)
+              | undefined;
+            if (!origExecute) throw new Error('readFile execute is undefined');
+            const result = await origExecute(args, opts);
+            if (typeof result?.content === 'string') {
+              return {
+                ...result,
+                content: truncateToolOutput(result.content, agent?.maxContextLength, 'readFile', 0.05),
+              };
+            }
+            return result;
+          },
+        },
         writeFile: { ...sharedSessionSandbox.tools.writeFile, needsApproval: false },
-        bash: { ...sharedSessionSandbox.tools.bash, needsApproval: false },
+        bash: {
+          ...sharedSessionSandbox.tools.bash,
+          needsApproval: false,
+          execute: async (args: any, opts: any) => {
+            const origExecute = sharedSessionSandbox.tools.bash.execute as
+              | ((input: any, options: any) => Promise<any>)
+              | undefined;
+            if (!origExecute) throw new Error('bash execute is undefined');
+            const result = await origExecute(args, opts);
+            return {
+              ...result,
+              ...(typeof result?.stdout === 'string' && {
+                stdout: truncateToolOutput(result.stdout, agent?.maxContextLength, 'bash', 0.10),
+              }),
+              ...(typeof result?.stderr === 'string' && {
+                stderr: truncateToolOutput(result.stderr, agent?.maxContextLength, 'bash stderr', 0.40),
+              }),
+            };
+          },
+        },
       }
     : {};
 
