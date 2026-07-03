@@ -11,6 +11,14 @@
  * them are exposed as admin-configurable tool config.
  */
 export type ExuluOauthConfig = {
+  /**
+   * Identifier for the OAuth provider (e.g., "google", "jira", "github").
+   * Tools sharing the same provider share tokens under (provider, userId) —
+   * one consent screen per provider per user instead of per tool. When
+   * omitted, defaults to the tool's `id`, preserving per-tool behavior for
+   * tools that don't opt in.
+   */
+  provider?: string;
   /** The provider's authorization endpoint, e.g. https://app.hubspot.com/oauth/authorize */
   authorizationUrl: string;
   /** The provider's token endpoint, e.g. https://api.hubapi.com/oauth/v1/token */
