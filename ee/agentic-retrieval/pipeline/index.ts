@@ -53,6 +53,23 @@ export function parsePreselectedItems(globalIds: string[]): Map<string, string[]
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Accumulate chunks into result.chunks, deduplicating by chunk_id (first-seen wins).
+ */
+function addChunks(result: AgenticRetrievalOutput, chunks: ChunkWithScore[]): void {
+  const seen = new Set(result.chunks.map((c) => c.chunk_id));
+  for (const chunk of chunks) {
+    if (!seen.has(chunk.chunk_id)) {
+      seen.add(chunk.chunk_id);
+      result.chunks.push(chunk);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -117,7 +134,7 @@ export function createAgenticRetrievalTool(opts: {
       },
       {
         name: "logging",
-        description: "Save a detailed markdown + JSON log of every retrieval execution to disk. Useful for debugging and evaluation.",
+        description: "Verbose debug logging of each retrieval phase to the server console. Useful for debugging and evaluation.",
         type: "boolean",
         default: false,
       },
@@ -206,6 +223,16 @@ export function createAgenticRetrievalTool(opts: {
         return;
       }
 
+      // ── Initialise cumulative output (before try so catch can reference it) ──
+      const result: AgenticRetrievalOutput = {
+        steps: [],
+        reasoning: [],
+        chunks: [],
+        usage: [],
+        totalTokens: 0,
+      };
+
+      try {
       // ── Enabled contexts (knowledge_bases.enabled filter + restore-all) ───
       let enabledContexts = contexts.filter(
         (ctx) => cfg.knowledgeBases[ctx.id]?.enabled !== false,
@@ -267,15 +294,6 @@ export function createAgenticRetrievalTool(opts: {
         (c) => (cfg.knowledgeBases[c.id]?.kind ?? "documents") === "documents",
       );
 
-      // ── Initialise cumulative output ──────────────────────────────────────
-      const result: AgenticRetrievalOutput = {
-        steps: [],
-        reasoning: [],
-        chunks: [],
-        usage: [],
-        totalTokens: 0,
-      };
-
       // ── Phase 1: memory + routing in parallel ─────────────────────────────
       const extraInstructions = [cfg.instructions, adminInstructions]
         .filter(Boolean)
@@ -317,6 +335,8 @@ export function createAgenticRetrievalTool(opts: {
         });
         result.reasoning.push({ text: step.text, tools: [] });
       }
+      // Memory citable chunks go first (insertion-order dedup)
+      addChunks(result, memResult.memoryChunksForAnswer);
       yield { result: JSON.stringify(result) };
 
       // ── Preselection-subset guard (yield, not throw) ──────────────────────
@@ -466,8 +486,8 @@ export function createAgenticRetrievalTool(opts: {
         tokens: 0,
       });
 
-      // Update chunks with main results
-      result.chunks = mainRerank.limited_results;
+      // Accumulate main results (dedup by chunk_id, memory chunks already first)
+      addChunks(result, mainRerank.limited_results);
       yield { result: JSON.stringify(result) };
 
       // ── Literal-lookup short-circuit ──────────────────────────────────────
@@ -479,7 +499,7 @@ export function createAgenticRetrievalTool(opts: {
           return (
             typeof p === "number" &&
             userRequestedPage !== null &&
-            Math.abs(p - userRequestedPage) <= 1
+            Math.abs(p - userRequestedPage) <= cfg.tuning.pageWindow
           );
         });
 
@@ -534,7 +554,7 @@ export function createAgenticRetrievalTool(opts: {
           tokens: 0,
         });
         result.reasoning.push({ text: "Fallback results reranked", tools: [] });
-        result.chunks = fallbackRerank.limited_results;
+        addChunks(result, fallbackRerank.limited_results);
         yield { result: JSON.stringify(result) };
       }
 
@@ -562,6 +582,7 @@ export function createAgenticRetrievalTool(opts: {
           text: "A verified company-memory entry directly answers the question; instructing the answer to treat it as authoritative over the documents.",
           tools: [],
         });
+        addChunks(result, memoryOverride.chunks);
         yield { result: JSON.stringify(result) };
       }
 
@@ -570,6 +591,18 @@ export function createAgenticRetrievalTool(opts: {
       }
 
       return { result: JSON.stringify(result) };
+      } catch (err) {
+        console.warn("[EXULU pipeline] retrieval pipeline failed:", err);
+        result.steps.push({
+          stepNumber: 1,
+          text: "Retrieval degraded due to an internal error — returning partial results.",
+          toolCalls: [],
+          chunks: [],
+          tokens: 0,
+        });
+        yield { result: JSON.stringify(result) };
+        return;
+      }
     },
   });
 }

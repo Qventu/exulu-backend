@@ -69,6 +69,33 @@ describe("createAgenticRetrievalTool", () => {
     expect(last.steps.map((s: any) => s.text)).toContain("routed");
   });
 
+  it("accumulates top-level chunks across memory, main, and fallback evidence", async () => {
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    const { rerankResults } = jest.requireMock("./rerank");
+    runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [{ chunk_id: "m1" }],
+      memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIds: new Set(),
+      updatedQuestion: "q",
+      updatedKeywords: ["k"],
+      updatedImportantKeyword: "k",
+      steps: [],
+    });
+    rerankResults.mockResolvedValueOnce({
+      limited_results: [{ chunk_id: "r1" }, { chunk_id: "m1" }],
+      sorted_reranked_results: [],
+      rerank_score_max_genuine: 1,
+    });
+    const run = makeTool({});
+    const out = await drain(run(inputs));
+    const last = JSON.parse(out[out.length - 1].result);
+    const ids = last.chunks.map((c: any) => c.chunk_id);
+    expect(ids).toContain("m1");
+    expect(ids).toContain("r1");
+    // dedup: "m1" appears in both memory and rerank results but must appear only once
+    expect(ids.filter((id: string) => id === "m1").length).toBe(1);
+  });
+
   it("filters contexts by knowledge_bases enabled=false", async () => {
     const { searchContexts } = jest.requireMock("./search");
     const { runRoutingPhase } = jest.requireMock("./routing");
