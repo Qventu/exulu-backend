@@ -130,6 +130,9 @@ export async function searchContexts(opts: {
         }
 
         if (kind === "conversations") {
+          // Deliberately NOT gated on skipPrefilter: the keyword prefilter is intrinsic to how
+          // conversations-kind search works (reference parity — newlkiag ran it in the fallback
+          // pass too), unlike the cross-context identifier/memory/user pins suppressed above.
           // keywordPrefilter and no pins yet → fuzzyPrefilter; results become the pins
           if (keywordPrefilter && pinnedItemIds.length === 0) {
             const prefiltered = await fuzzyPrefilter({
