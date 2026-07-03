@@ -74,4 +74,20 @@ describe("resolveIdentifierPins", () => {
     });
     expect(r.pinsByContext.size).toBe(0);
   });
+
+  it("pins exact-matched items to both pinsByContext and exactPinsByContext", async () => {
+    (generateText as jest.Mock).mockResolvedValue({
+      output: { hasMatches: true, matches: ["8100-1"] },
+    });
+    const c = ctx("docs");
+    const r = await resolveIdentifierPins({
+      question: "Welche Norm beschreibt ISO 8100-1?",
+      identifierSets: [{ name: "Norms", description: "", examples: ["ISO 8100"], strategy: "exact", contexts: ["docs"] }],
+      contextsById: new Map([["docs", c]]),
+      kbKindById: new Map([["docs", "documents"]]),
+      model: {},
+    });
+    expect([...(r.pinsByContext.get("docs") ?? [])]).toContain("3");
+    expect([...(r.exactPinsByContext.get("docs") ?? [])]).toContain("3");
+  });
 });
