@@ -46,14 +46,16 @@ truncateToolOutput(
 
 ### Algorithm
 
-1. Compute `charLimit = floor((maxContextLength ?? 128_000) * 0.25 * 4)`.
-   - Default: 128 000 tokens → 128 000 chars limit.
+1. Compute `effectiveCtx = maxContextLength ?? 128_000`; if `effectiveCtx <= 0`, use `128_000`.
+   Then `charLimit = floor(effectiveCtx * 0.25 * 4)`.
    - Rationale: 1 token ≈ 4 characters; cap single tool output at 25% of context.
-2. If `output.length <= charLimit`, return `output` unchanged.
-3. Clamp `tailFraction` to `[0, 1]`.
+   - Example: 128 000-token window → charLimit = 128 000 characters.
+2. Clamp `tailFraction` to `[0, 1]`.
+3. If `output.length <= charLimit`, return `output` unchanged.
 4. `headChars = floor(charLimit * (1 - tailFraction))`.
 5. `tailChars = charLimit - headChars`.
-6. If `headChars + tailChars >= output.length`, return `output` unchanged (overlap guard).
+6. Safety guard: if `headChars + tailChars >= output.length` for any reason (e.g. rounding),
+   return `output` unchanged rather than producing a nonsensical split.
 7. Return:
    ```
    output.slice(0, headChars)
