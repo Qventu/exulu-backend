@@ -80,4 +80,22 @@ describe("runMemoryPhase", () => {
       memoryConfig: { enabled: true, override: false, filePrioritization: true, queryAugmentation: false } });
     expect([...r.memoryPinnedItemIds]).toEqual(["d1"]);
   });
+
+  it("never throws even when post-Promise.all processing encounters runtime errors", async () => {
+    // Mock relevance check to succeed
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({ output: { relevantChunkIds: ["1"] } })
+      // Mock override check
+      .mockResolvedValueOnce({ output: { overrides: false, confidence: "low", authoritativeChunkIds: [], reason: "" } })
+      .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: false, fileNameHints: [] } })
+      // Mock query augmentation: return malformed keywords (non-strings) that will fail during trim()
+      .mockResolvedValueOnce({ output: { updatedUserQuestion: baseOpts.question, updatedRelevantKeywords: [{ bad: "object" } as any], updatedImportantKeyword: "FST-2XT" } });
+
+    // This should resolve without throwing, returning a neutral result despite the runtime error in keyword merge
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "test")], memoryContext: undefined, memoryConfig: allOn });
+
+    // Verify it returns a neutral result (original question preserved, no crash)
+    expect(r).toBeDefined();
+    expect(r.updatedQuestion).toBe(baseOpts.question);
+  });
 });
