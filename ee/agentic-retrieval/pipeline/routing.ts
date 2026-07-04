@@ -57,13 +57,24 @@ export async function runRoutingPhase(opts: {
     };
   }
 
-  // Build dynamic explicit-KB prompt from enabled contexts
+  // Build dynamic explicit-KB prompt from enabled contexts.
+  // The listing includes names/descriptions so "search the tickets" can resolve to the
+  // right id — but that makes topical false positives easy (a question ABOUT software
+  // matching the software-docs KB), and an explicit match zeroes the fallback list. The
+  // strictness paragraph below exists because exactly that misfire suppressed fallback
+  // retrieval during the newlkiag migration gate.
   const kbSystemPrompt =
     `You are a helpful assistant that checks if the user has EXPLICITLY asked you to search in one or multiple of the following knowledge bases:\n` +
     enabledContexts
       .map((c) => `- ${c.id}: ${c.name}${c.description ? " — " + c.description : ""}`)
       .join("\n") +
-    `\nIf so, return the knowledge base ids. If not, return an empty array.`;
+    `\nEXPLICIT means the user names a knowledge base or clearly commands searching a` +
+    ` specific source (e.g. "search in the tickets", "look this up in the manuals KB").` +
+    ` A question that merely CONCERNS a topic related to a knowledge base's name or` +
+    ` contents (e.g. asking about software changes, norms, or a product) is NOT an` +
+    ` explicit request — classification routing handles those. When in doubt, return` +
+    ` an empty array.` +
+    `\nIf explicit, return the knowledge base ids. If not, return an empty array.`;
 
   // --- Phase 1: parallel doc/page detection + explicit-KB detection ---
 
