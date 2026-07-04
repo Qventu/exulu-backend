@@ -21,6 +21,9 @@ export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.
 export { ExuluTool } from "./exulu/tool"
 export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/oauth/types"
 export { ExuluEval } from "./exulu/evals"
+// For script/CLI consumers that resolve models/embeddings against a proxy managed by a
+// separately running server process (same mechanism the worker boot path uses).
+export { enableLiteLLMClientMode } from "./exulu/litellm/supervisor.ts"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initExuluDb } from "./postgres/init-exulu-db";
