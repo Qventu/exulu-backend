@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Target repo: `/Users/daniel.claessen/Desktop/Projects/newlkiag` (execution in a worktree of THAT repo; paths below relative to its root unless absolute).
-- **Prerequisite:** an `@exulu/backend` release containing the pipeline (cut from exulu/backend develop ≥ `68fa73c`). Until published, install the local build: `npm install /Users/daniel.claessen/Desktop/Projects/exulu/backend` (Task 1 smoke-verifies `ExuluDefaultTools.agentic.retrieval.create.pipeline` exists). Do not proceed past Task 1 on a version lacking it.
+- **Prerequisite:** `@exulu/backend` is SYMLINKED to the local exulu/backend repo (develop ≥ `68fa73c` — the pipeline merge). Task 1 smoke-verifies `ExuluDefaultTools.agentic.retrieval.create.pipeline` resolves through the symlink; if it doesn't, build the backend first (`npm run build` in /Users/daniel.claessen/Desktop/Projects/exulu/backend — the package entry points at `dist/`). Before any DEPLOY, the symlink must be replaced by a published release containing the pipeline.
 - **Context ids (exact):** `tech_doc_context`, `vorschriften_context`, `software_documentation_context`, `custom_documents_context`, `zendesk_context`, `new_servicedb_context`; memory: `newton_memory_context` (the agent's `memory` — it gets NO kb profile; the platform excludes it from the tool's contexts).
 - **Untouchable:** `src/harness/**` (incl. the `NEWTON_USE_AGENTIC_RETRIEVAL` flag path in `exulu.ts` and the `/agentic-retrieval` + citation/feedback endpoints in `server.ts`), `getZendeskTicket`, `src/utils/with-retry.ts` (used by `src/harness/feedback-agent.ts`), `src/utils/s3-path-info.ts` (used by `src/contexts/contexts.ts`), `src/integrations/**`.
 - **Deletion set (Task 6, only after the Task 5 gate):** `src/tools/knowledge_search/` (whole dir incl. tests); in `src/tools/index.ts` the `knowledgeSearchOld` tool, its local `splitChunksIntoGroups`, `parsePreselectedItems`, `AVAILABLE_SOURCES`, and all their now-unused imports (keep `getZendeskTicket` + its imports); `src/tools/techdoc.ts`, `src/tools/zendesk.ts`, `src/tools/new-services-db.ts`, `src/tools/newton-memory.ts`, `src/tools/exulu-search.ts`; `src/utils/rag-config.ts`, `src/utils/prefilter.ts`, `src/utils/reranker.ts`, `src/utils/retrieval-recall.ts`, `src/utils/multi-query-search.ts`, `src/utils/query-expansion.ts`; `src/types/rag.ts`, `src/types/retrieval.ts`; the `/knowledge-search` endpoint in `server.ts` (+ its then-unused imports: `knowledgeSearch`, `searchNewtonMemory`, `RAG_CONFIGURATION`); `scripts/compare-retrieval.ts` + `scripts/retrieval-queries.json` (validation served; git history preserves them).
@@ -38,40 +38,27 @@ Deleted (Task 6): per the Deletion set above
 
 ---
 
-### Task 1: Dependency bump + baseline
+### Task 1: Verify the symlinked package + record baseline
 
 **Files:**
-- Modify: `package.json` (`@exulu/backend`)
-- Create: `.superpowers/sdd/baseline.md` (recorded baseline — scratch, not committed)
+- Create: `.superpowers/sdd/baseline.md` (recorded baseline — scratch, not committed). No package.json change — `@exulu/backend` is already symlinked to the local repo.
 
 **Interfaces:**
-- Produces: an installed `@exulu/backend` exposing `ExuluDefaultTools.agentic.retrieval.create.pipeline` and `postgresClient`; a recorded vitest/tsc baseline.
+- Produces: a verified `@exulu/backend` exposing `ExuluDefaultTools.agentic.retrieval.create.pipeline` and `postgresClient` through the symlink; a recorded vitest/tsc baseline.
 
-- [ ] **Step 1: Record the baseline**
-
-Run: `npm test 2>&1 | tail -5` and `npx tsc --noEmit 2>&1 | grep -c "error TS"` — record both outputs (test counts and error count) in `.superpowers/sdd/baseline.md`.
-
-- [ ] **Step 2: Install the pipeline-bearing package**
-
-If a release is published: `npm install @exulu/backend@latest` (verify the installed version's changelog/commit includes the pipeline). Otherwise: `npm install /Users/daniel.claessen/Desktop/Projects/exulu/backend` (file dependency for the migration window; note it in the report — it must be swapped to the published version before deploy).
-
-- [ ] **Step 3: Smoke-verify the export**
+- [ ] **Step 1: Verify the symlink and smoke-verify the export**
 
 ```bash
+ls -la node_modules/@exulu/backend | head -2   # confirm it is a symlink to the local repo
 npx tsx -e "import { ExuluDefaultTools } from '@exulu/backend'; console.log(typeof ExuluDefaultTools.agentic.retrieval.create.pipeline)"
 ```
-Expected: `function`. If it prints `undefined` or the import fails, STOP — report BLOCKED (the package predates the pipeline or the dist build excludes it).
+Expected: `function`. If it prints `undefined` or the import fails: the backend `dist/` is stale — run `npm run build` in `/Users/daniel.claessen/Desktop/Projects/exulu/backend` and retry. Still failing → STOP, report BLOCKED.
 
-- [ ] **Step 4: Re-run baseline checks**
+- [ ] **Step 2: Record the baseline**
 
-Run: `npm test 2>&1 | tail -5` and `npx tsc --noEmit 2>&1 | grep -c "error TS"` — compare with Step 1. New failures caused by the version bump must be fixed or reported BLOCKED before proceeding (the old tool must keep compiling against the new package until Task 6 deletes it; note: the package still exports `ExuluTool`, `ExuluReranker`, `ExuluContext` — the old tool's imports remain valid).
+Run: `npm test 2>&1 | tail -5` and `npx tsc --noEmit 2>&1 | grep -c "error TS"` — record both outputs (test counts and error count) in `.superpowers/sdd/baseline.md`. Any failure caused by the new package version (the old tool must keep compiling — `ExuluTool`, `ExuluReranker`, `ExuluContext` are still exported) must be fixed or reported BLOCKED before proceeding.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add package.json package-lock.json
-git commit -m "chore: bump @exulu/backend to the agentic-retrieval pipeline release"
-```
+- [ ] **Step 3: No commit** (nothing tracked changed; proceed to Task 2).
 
 ---
 
@@ -546,7 +533,7 @@ git commit -m "feat!: retire local knowledge_search in favor of the exulu pipeli
 
 - [ ] **Step 2: Deployment notes**
 
-Write `docs/pipeline-migration.md` (in newlkiag) — 15 lines max: the agent now uses the platform tool `agentic_context_search`; config is edited in the agent editor's Knowledge section (wizard); `scripts/migrate-newton-agent.ts` is idempotent and safe to re-run per environment (staging/prod); the `NEWTON_USE_AGENTIC_RETRIEVAL` harness flag is unchanged and still swaps in the harness when set; if the package was installed as a file dependency in Task 1, swap to the published version before deploy.
+Write `docs/pipeline-migration.md` (in newlkiag) — 15 lines max: the agent now uses the platform tool `agentic_context_search`; config is edited in the agent editor's Knowledge section (wizard); `scripts/migrate-newton-agent.ts` is idempotent and safe to re-run per environment (staging/prod); the `NEWTON_USE_AGENTIC_RETRIEVAL` harness flag is unchanged and still swaps in the harness when set; `@exulu/backend` is currently symlinked to the local repo — replace with a published release containing the pipeline before deploy.
 
 - [ ] **Step 3: Commit**
 
