@@ -24,7 +24,7 @@ import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
-import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
@@ -1920,7 +1920,7 @@ type LiteLLMModel {
     let allTools = [...filtered, ...tools];
 
     if (contexts?.length) {
-      agenticRetrievalTool = createAgenticRetrievalToolV3({
+      agenticRetrievalTool = createAgenticRetrievalTool({
         contexts: contexts,
         user: context.user,
         role: context.user?.role?.id,

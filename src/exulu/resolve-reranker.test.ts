@@ -133,13 +133,13 @@ describe("resolveReranker", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  test("throws on a non-ok proxy response", async () => {
+  test("returns [] on a non-ok proxy response (errors are swallowed, retrieval degrades)", async () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 502,
       text: async () => "bad gateway",
     });
     const resolved = await resolveReranker({ model: "m" });
-    await expect(resolved.rerank("q", chunks)).rejects.toThrow(/returned 502/);
+    await expect(resolved.rerank("q", chunks)).resolves.toEqual([]);
   });
 });

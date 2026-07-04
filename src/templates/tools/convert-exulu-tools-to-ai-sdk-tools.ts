@@ -11,8 +11,7 @@ import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
-import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index";
-import { getSessionTools } from "@EE/agentic-retrieval/v3/session-tools-registry";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -79,7 +78,7 @@ const getMimeType = (type: allFileTypes) => {
   }
 };
 
-const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
+export const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentToolConfig> => {
   const { db } = await postgresClient();
   const promises = tool.config.map(async (toolConfig) => {
     if (!toolConfig.variable) {
@@ -98,6 +97,21 @@ const hydrateVariables = async (tool: ExuluAgentToolConfig): Promise<ExuluAgentT
       return toolConfig;
     } else if (type === "string") {
       toolConfig.value = toolConfig.variable;
+      return toolConfig;
+    } else if (type === "json") {
+      if (typeof toolConfig.variable === "object") {
+        toolConfig.value = toolConfig.variable;
+        return toolConfig;
+      }
+      try {
+        toolConfig.value = JSON.parse(toolConfig.variable.toString());
+      } catch (err) {
+        console.warn(
+          `[EXULU] Config option "${toolConfig.name}" holds invalid JSON — falling back to the tool's declared default.`,
+          err,
+        );
+        toolConfig.value = undefined;
+      }
       return toolConfig;
     }
 
@@ -230,8 +244,9 @@ export const convertExuluToolsToAiSdkTools = async (
 
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
   if (contexts?.length && model) {
-    const agenticSearchTool = createAgenticRetrievalToolV3({
-      contexts: contexts.filter((context) => context.id !== agent?.memory), // dont include the agents memory in the agentic search tool!
+    const agenticSearchTool = createAgenticRetrievalTool({
+      contexts: contexts.filter((context) => context.id !== agent?.memory), // memory is searched by the memory phase, not as a KB
+      memoryContext: agent?.memory ? contexts.find((c) => c.id === agent.memory) : undefined,
       user: user,
       role: user?.role?.id,
       model: model,
@@ -270,16 +285,6 @@ export const convertExuluToolsToAiSdkTools = async (
   );
 
   console.log("[EXULU] Approved tools", approvedTools);
-
-  // Session-scoped dynamic tools created by agentic retrieval (e.g. get_more_content_from_X).
-  // These are registered during retrieval runs so the outer agent can call them directly
-  // on follow-up questions without re-running the full retrieval loop.
-  const sessionDynamicTools = sessionID
-    ? Object.entries(getSessionTools(sessionID)).reduce<Record<string, any>>((acc, [name, t]) => {
-      acc[name] = { ...t, needsApproval: false };
-      return acc;
-    }, {})
-    : {};
 
   // Expose the shared sandbox's readFile/writeFile/bash to the OUTER agent. It
   // executes skills directly (no skill sub-agent), so it needs bash to run skill
@@ -333,7 +338,6 @@ export const convertExuluToolsToAiSdkTools = async (
     : {};
 
   return {
-    ...sessionDynamicTools,
     ...sandboxTools,
     ...sanitizedTools?.reduce((prev, cur) => {
       let toolVariableConfig = configs?.find((config) => config.id === cur.id);
