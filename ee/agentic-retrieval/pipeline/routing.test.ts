@@ -55,6 +55,20 @@ describe("runRoutingPhase", () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
 
+  it("explicit-KB prompt carries the topical-false-positive guard (newlkiag gate regression)", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(noHints).mockResolvedValueOnce(noExplicit);
+    await runRoutingPhase({
+      question: "Welche Software-Änderungen gab es zuletzt?", enabledContexts: enabled,
+      documentContexts: [], routingRules: [], preselectedItems: new Map(), model: {},
+    });
+    const kbCall = (generateText as jest.Mock).mock.calls.find(([args]) =>
+      String(args?.system ?? "").includes("EXPLICITLY asked"),
+    );
+    expect(kbCall).toBeDefined();
+    expect(kbCall![0].system).toContain("is NOT an explicit request");
+    expect(kbCall![0].system).toContain("When in doubt, return");
+  });
+
   it("resolves filename hints against document contexts and reports the page", async () => {
     (generateText as jest.Mock)
       .mockResolvedValueOnce({ output: { hasFilenameHint: true, filenameHints: ["manual X3"], hasPageHint: true, pageNumber: 12 } })
