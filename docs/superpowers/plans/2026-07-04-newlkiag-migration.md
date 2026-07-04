@@ -20,6 +20,7 @@
 - Value conventions on saved config entries: booleans `"true"`/`"false"` strings; strings raw; json values `JSON.stringify`'d strings — identical to what the exulu frontend wizard writes.
 - Accepted parity deltas (spec §5.3 "small deltas in generalized edges are acceptable, missing documents are not"): (a) the error-code COMPOSITION pattern (`S2 CMP Input` → `S2-FEHL.CMP-INPUT` variants) is not expressible as literal find/replace rewrites — HyDE + glossary augmentation compensate; (b) German suffix-stemming in the fuzzy prefilter was generalized away; (c) query augmentation runs only when memory recall finds relevant chunks (reference parity of the library tool).
 - Tests: vitest (`npm test`). Record the baseline suite state in Task 1 before any change; criterion thereafter: no NEW failures.
+- Commit format (commitlint-enforced in this repo): header `[FEATURE|FIX|CHANGE|DOC|TASK] subject`, and the body is MANDATORY — pass the Co-Authored-By trailer as a second `-m`. Conventional-commit style (`feat:`) is REJECTED by the hook.
 - Commit after every task with trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
 
 ## File Structure
@@ -210,7 +211,7 @@ Run: `npx vitest run src/migration/newton-pipeline-config.test.ts` — PASS (4 t
 
 ```bash
 git add src/migration/
-git commit -m "feat(migration): newton pipeline config translating knowledge_search behavior"
+git commit -m "[FEATURE] newton pipeline config translating knowledge_search behavior" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -323,7 +324,7 @@ Run: `npx vitest run src/migration/apply-to-agent.test.ts` — PASS (4 tests). `
 
 ```bash
 git add src/migration/ scripts/migrate-newton-agent.ts
-git commit -m "feat(migration): agent tool-list rewrite script for the pipeline tool"
+git commit -m "[FEATURE] agent tool-list rewrite script for the pipeline tool" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -436,7 +437,7 @@ Run: `npx tsc --noEmit 2>&1 | grep -c "error TS"` — at the Task 1 baseline. `n
 
 ```bash
 git add scripts/compare-retrieval.ts scripts/retrieval-queries.json
-git commit -m "feat(migration): temporary side-by-side retrieval comparison harness"
+git commit -m "[FEATURE] temporary side-by-side retrieval comparison harness" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -520,7 +521,7 @@ Run: `npx tsc --noEmit 2>&1 | grep -c "error TS"` (at baseline), `npm test 2>&1 
 
 ```bash
 git add -A
-git commit -m "feat!: retire local knowledge_search in favor of the exulu pipeline tool"
+git commit -m "[CHANGE] retire local knowledge_search in favor of the exulu pipeline tool" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -539,7 +540,7 @@ Write `docs/pipeline-migration.md` (in newlkiag) — 15 lines max: the agent now
 
 ```bash
 git add docs/pipeline-migration.md
-git commit -m "docs: pipeline migration runbook"
+git commit -m "[DOC] pipeline migration runbook" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
