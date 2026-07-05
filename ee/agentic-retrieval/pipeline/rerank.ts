@@ -38,6 +38,8 @@ function buildRerankObjects(chunks: Chunk[]): Chunk[] {
       if (!group[0]) continue;
       objects.push({
         chunk_content: group.map(c => c.chunk_content).join('\n'),
+        // Preserve the source-KB tag attached by searchContexts (citation attribution)
+        context: (group[0] as any).context,
         chunk_index: group[0].chunk_index,
         chunk_id: group[0].chunk_id,
         chunk_source: group[0].chunk_source,

@@ -5,6 +5,13 @@ import { fuzzyPrefilter } from "./prefilter";
 import { applyRewrites } from "./text-utils";
 import type { Chunk } from "./types";
 
+/** Attach the source knowledge base to each chunk so citations and the chat UI can
+ * attribute passages deterministically. Only memory chunks were labeled before; the
+ * answering model improvised labels for the rest (e.g. "fallback context", or "memory"
+ * bleeding onto tech-doc passages). */
+const tagContext = (chunks: any[], ctx: any): any[] =>
+  chunks.map((c) => ({ ...c, context: { id: ctx.id, name: ctx.name ?? ctx.id } }));
+
 export async function searchContexts(opts: {
   contextIds: string[];
   contextsById: Map<string, any>;
@@ -123,9 +130,9 @@ export async function searchContexts(opts: {
             ];
             const queries = [...new Set(candidates)].slice(0, maxQueries);
 
-            return await multiQuerySearch({ queries, config: searchConfig, user, role, pinnedItemIds, context: ctx });
+            return tagContext(await multiQuerySearch({ queries, config: searchConfig, user, role, pinnedItemIds, context: ctx }), ctx);
           } else {
-            return await singleSearch({ query: question, config: searchConfig, user, role, pinnedItemIds, context: ctx });
+            return tagContext(await singleSearch({ query: question, config: searchConfig, user, role, pinnedItemIds, context: ctx }), ctx);
           }
         }
 
@@ -150,7 +157,7 @@ export async function searchContexts(opts: {
             ? keywords.join(" ") + " " + importantKeyword
             : question;
 
-          return await singleSearch({ query: keywordQuery, config: searchConfig, user, role, pinnedItemIds, context: ctx });
+          return tagContext(await singleSearch({ query: keywordQuery, config: searchConfig, user, role, pinnedItemIds, context: ctx }), ctx);
         }
 
         if (kind === "records") {
@@ -158,7 +165,7 @@ export async function searchContexts(opts: {
             ? keywords.join(" ") + " " + importantKeyword
             : question;
 
-          return await singleSearch({ query: keywordQuery, config: searchConfig, user, role, pinnedItemIds, context: ctx });
+          return tagContext(await singleSearch({ query: keywordQuery, config: searchConfig, user, role, pinnedItemIds, context: ctx }), ctx);
         }
 
         return [];
