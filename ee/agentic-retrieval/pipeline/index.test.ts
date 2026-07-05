@@ -107,6 +107,30 @@ describe("createAgenticRetrievalTool", () => {
   });
 });
 
+describe("payload deduplication", () => {
+  it("strips chunk_content from step chunks in the serialized payload; top-level keeps it", async () => {
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    const memChunk = { chunk_id: "m1", chunk_content: "FULL MEMORY CONTENT", item_id: "i1", item_name: "Mem" };
+    runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [memChunk],
+      memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIds: new Set(), updatedQuestion: "q", updatedKeywords: ["k"],
+      updatedImportantKeyword: "k",
+      steps: [{ text: "memory step", chunks: [memChunk] }],
+    });
+    const run = makeTool({});
+    const out = await drain(run(inputs));
+    const last = JSON.parse(out[out.length - 1].result);
+    const stepWithChunks = last.steps.find((s: any) => s.chunks?.length > 0);
+    expect(stepWithChunks).toBeDefined();
+    expect(stepWithChunks.chunks[0].chunk_content).toBeUndefined();
+    expect(stepWithChunks.chunks[0].item_name).toBe("Mem");
+    const topLevel = last.chunks.find((c: any) => c.chunk_id === "m1");
+    expect(topLevel).toBeDefined();
+    expect(topLevel.chunk_content).toBe("FULL MEMORY CONTENT");
+  });
+});
+
 describe("parsePreselectedItems", () => {
   it("parses ctx/item pairs and whole-context entries (null wins)", () => {
     const m = parsePreselectedItems(["a/1", "a/2", "b", "b/3"]);

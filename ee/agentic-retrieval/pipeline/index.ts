@@ -69,6 +69,27 @@ function addChunks(result: AgenticRetrievalOutput, chunks: ChunkWithScore[]): vo
   }
 }
 
+/**
+ * Serialize the cumulative output for yielding. Full chunk content lives ONLY in the
+ * top-level `chunks` (what the chat UI cites and the calling agent reads); the per-step
+ * chunk copies keep ids/names/metadata for counts and traceability but drop
+ * `chunk_content` — serializing the same content twice roughly doubled the tool payload
+ * and, across a few calls, overflowed the calling agent's context window.
+ */
+function serializeOutput(result: AgenticRetrievalOutput): string {
+  return JSON.stringify({
+    ...result,
+    steps: result.steps.map((step) =>
+      step.chunks.length === 0
+        ? step
+        : {
+            ...step,
+            chunks: step.chunks.map((c) => ({ ...c, chunk_content: undefined })),
+          },
+    ),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -103,7 +124,7 @@ export function createAgenticRetrievalTool(opts: {
   return ExuluTool.internal({
     id: "agentic_context_search",
     name: "Context Search",
-    description: `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages.`,
+    description: `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).`,
     category: "contexts",
     needsApproval: false,
     type: "context",
@@ -340,7 +361,7 @@ export function createAgenticRetrievalTool(opts: {
       }
       // Memory citable chunks go first (insertion-order dedup)
       addChunks(result, memResult.memoryChunksForAnswer);
-      yield { result: JSON.stringify(result) };
+      yield { result: serializeOutput(result) };
 
       // ── Preselection-subset guard (yield, not throw) ──────────────────────
       const { mainContexts, fallbackContexts, userPinnedItemIdsByContext, userRequestedPage, hasExplicitDocAndPage } = routResult;
@@ -458,7 +479,7 @@ export function createAgenticRetrievalTool(opts: {
         tokens: 0,
       });
       result.reasoning.push({ text: `Reranking ${mainSearch.chunks.length} chunks`, tools: [] });
-      yield { result: JSON.stringify(result) };
+      yield { result: serializeOutput(result) };
 
       const mainRerank = await rerankResults({
         chunks: mainSearch.chunks,
@@ -491,7 +512,7 @@ export function createAgenticRetrievalTool(opts: {
 
       // Accumulate main results (dedup by chunk_id, memory chunks already first)
       addChunks(result, mainRerank.limited_results);
-      yield { result: JSON.stringify(result) };
+      yield { result: serializeOutput(result) };
 
       // ── Literal-lookup short-circuit ──────────────────────────────────────
       const literalLookupSatisfied =
@@ -515,7 +536,7 @@ export function createAgenticRetrievalTool(opts: {
           tokens: 0,
         });
         result.reasoning.push({ text: "Literal lookup satisfied; skipping fallback.", tools: [] });
-        yield { result: JSON.stringify(result) };
+        yield { result: serializeOutput(result) };
       }
 
       // ── Fallback gate ─────────────────────────────────────────────────────
@@ -534,7 +555,7 @@ export function createAgenticRetrievalTool(opts: {
           tokens: 0,
         });
         result.reasoning.push({ text: `Fallback search in ${fallbackContexts.join(", ")}`, tools: [] });
-        yield { result: JSON.stringify(result) };
+        yield { result: serializeOutput(result) };
 
         const fallbackRerank = await rerankResults({
           chunks: speculativeFallbackSearch.chunks,
@@ -558,7 +579,7 @@ export function createAgenticRetrievalTool(opts: {
         });
         result.reasoning.push({ text: "Fallback results reranked", tools: [] });
         addChunks(result, fallbackRerank.limited_results);
-        yield { result: JSON.stringify(result) };
+        yield { result: serializeOutput(result) };
       }
 
       // ── Phase 4: memory override directive ────────────────────────────────
@@ -586,14 +607,14 @@ export function createAgenticRetrievalTool(opts: {
           tools: [],
         });
         addChunks(result, memoryOverride.chunks);
-        yield { result: JSON.stringify(result) };
+        yield { result: serializeOutput(result) };
       }
 
       if (cfg.logging) {
         console.log("[EXULU pipeline] final result:", JSON.stringify({ steps: result.steps.length, chunks: result.chunks.length }));
       }
 
-      return { result: JSON.stringify(result) };
+      return { result: serializeOutput(result) };
       } catch (err) {
         console.warn("[EXULU pipeline] retrieval pipeline failed:", err);
         result.steps.push({
@@ -603,7 +624,7 @@ export function createAgenticRetrievalTool(opts: {
           chunks: [],
           tokens: 0,
         });
-        yield { result: JSON.stringify(result) };
+        yield { result: serializeOutput(result) };
         return;
       }
     },
