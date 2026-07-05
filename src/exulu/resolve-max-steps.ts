@@ -1,0 +1,25 @@
+import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config";
+
+/**
+ * Read the `max_steps` option from the agentic retrieval tool's saved config.
+ *
+ * The agentic pipeline can trigger several reasoning/tool rounds in the CALLING
+ * agent (retry-with-rephrasing loops). `max_steps` lets an admin bound that step
+ * budget per agent from the retrieval tool's configuration UI instead of the
+ * hardcoded platform default (5, or 10 when skills are enabled).
+ *
+ * Returns a positive integer, or undefined when unset/0/invalid — callers fall
+ * back to the platform default. An explicit `maxStepCount` argument to
+ * generateSync/generateStream always takes precedence over this config value.
+ */
+export function resolveMaxStepsFromToolConfigs(
+  toolConfigs: ExuluAgentToolConfig[] | undefined,
+): number | undefined {
+  const agentic = toolConfigs?.find((t) => t.id === "agentic_context_search");
+  if (!agentic?.config) return undefined;
+  const entry = agentic.config.find((c) => c.name === "max_steps");
+  if (!entry) return undefined;
+  const raw = (entry as { value?: unknown }).value ?? entry.variable;
+  const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
