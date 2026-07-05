@@ -55,6 +55,38 @@ describe("runRoutingPhase", () => {
     expect(generateText).toHaveBeenCalledTimes(2);
   });
 
+  it("discards doc-reference pins when the hint matches too many files (token-bomb regression)", async () => {
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({ output: { hasFilenameHint: true, filenameHints: ["FST-2XT"], hasPageHint: false, pageNumber: null } })
+      .mockResolvedValueOnce(noExplicit);
+    (fuzzyPrefilter as jest.Mock).mockResolvedValue(
+      Array.from({ length: 30 }, (_, i) => ({ id: "f" + i, name: "file" + i + ".pdf", key: "k" + i })),
+    );
+    const r = await runRoutingPhase({
+      question: "Was bedeutet der Fehler S2 CMP Input beim FST-2XT?",
+      enabledContexts: enabled, documentContexts: [{ id: "docs" }],
+      routingRules: [], preselectedItems: new Map(), model: {},
+    });
+    expect(r.userPinnedItemIdsByContext.size).toBe(0);
+    expect(r.hasExplicitDocAndPage).toBe(false);
+    expect(r.steps.some((s) => s.text.includes("too broad"))).toBe(true);
+  });
+
+  it("doc-reference prompt carries the file-marker rule and configured identifier examples", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(noHints).mockResolvedValueOnce(noExplicit);
+    await runRoutingPhase({
+      question: "q", enabledContexts: enabled, documentContexts: [], routingRules: [],
+      preselectedItems: new Map(), knownIdentifiers: ["FST", "ECO", "CBM-2"], model: {},
+    });
+    const docCall = (generateText as jest.Mock).mock.calls.find(([args]) =>
+      String(args?.system ?? "").includes("filename hint"),
+    );
+    expect(docCall).toBeDefined();
+    expect(docCall![0].system).toContain("STRICT RULE");
+    expect(docCall![0].system).toContain("FST, ECO, CBM-2");
+    expect(docCall![0].system).toContain("NOT be treated as filenames");
+  });
+
   it("explicit-KB prompt carries the topical-false-positive guard (newlkiag gate regression)", async () => {
     (generateText as jest.Mock).mockResolvedValueOnce(noHints).mockResolvedValueOnce(noExplicit);
     await runRoutingPhase({

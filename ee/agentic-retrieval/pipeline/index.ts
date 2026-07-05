@@ -320,6 +320,9 @@ export function createAgenticRetrievalTool(opts: {
           routingRules: cfg.routing.rules,
           preselectedItems,
           extraInstructions: extraInstructions || undefined,
+          // Configured identifier examples (product names, standards) — the doc-reference
+          // detector must never treat these as filename hints.
+          knownIdentifiers: cfg.vocabulary.identifiers.flatMap((i) => i.examples),
           model: utilityModel,
         }),
       ]);

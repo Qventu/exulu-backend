@@ -114,11 +114,17 @@ export async function rerankResults(opts: {
     }
   }
 
-  // Identify pinned groups for force-inclusion in limited_results
+  // Identify pinned groups for force-inclusion in limited_results. Force-inclusion is
+  // capped at topK groups (taken in current score order, i.e. the best-scoring pins):
+  // an unbounded cap made the output size proportional to the pin count — with a broad
+  // pin set the tool returned 30+ concatenated chunk-groups per call (hundreds of
+  // thousands of tokens), overflowing the calling agent's context window. Worst case
+  // is now ~2×topK groups regardless of how many items are pinned.
   const pinnedGroups: ChunkWithScore[] = [];
   if (state.pinnedItemIds.size > 0) {
     const seen = new Set<string>();
     for (const r of sorted) {
+      if (pinnedGroups.length >= tuning.topK) break;
       if (r.item_id && state.pinnedItemIds.has(r.item_id) && !seen.has(r.item_id)) {
         seen.add(r.item_id);
         pinnedGroups.push(r);

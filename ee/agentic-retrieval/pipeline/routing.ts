@@ -6,20 +6,38 @@ import { normalizeFileName } from "./text-utils";
 import type { RoutingRule } from "./config";
 import type { RoutingPhaseResult, PhaseStep } from "./types";
 
-const PROMPT_CHECK_FOR_DOC_AND_PAGE_REFERENCES = `
+/** A genuine document reference resolves to a handful of files. When the fuzzy match
+ * returns more than this many, the "hint" was really a product/topic token (e.g. a model
+ * name matching 30 brochures/certificates) — pinning all of them replaces the product
+ * prefilter with paperwork, force-includes every pin past topK in the rerank, and blows
+ * the tool output up by hundreds of thousands of tokens (observed in the newlkiag
+ * migration smoke test: 4 retries × ~35 pinned chunk-groups ≈ 1.8M tokens). */
+const MAX_USER_PIN_MATCHES = 8;
+
+const buildDocPagePrompt = (knownIdentifiers: string[]) => `
 You are checking whether the user's question explicitly references a specific
 document (by filename or distinctive filename fragment) and/or a specific page number.
 
 Filename hints: things like "manual_v4.2.de.pdf", "HB_PAM-E4",
 "installation guide model X3". Return them as bare names
-without folder paths. Do NOT include generic product names on their own —
-those are handled by a different step.
+without folder paths.
+
+STRICT RULE: only report a filename hint when the reference carries a document marker —
+a file extension (.pdf, .docx, …), a filename-like pattern (underscores/version tags like
+"hb_X_2023"), or wording that names a document ("im Dokument X", "im Handbuch Y",
+"in the X manual/guide"). A bare product, model, or component designation is NOT a
+filename hint, even when files about it exist — product terms are handled by a
+different step.${
+  knownIdentifiers.length > 0
+    ? `\nKnown product/model designations that must NOT be treated as filenames on their own: ${knownIdentifiers.join(", ")}.`
+    : ""
+}
 
 Page hints: explicit page references like "page 38", "p. 38", "Seite 38".
 Only set pageNumber when the user names a specific page.
 
 Return hasFilenameHint/hasPageHint false (and omit the hint fields) when neither
-is present.
+is present. When in doubt, return false.
 `;
 
 export async function runRoutingPhase(opts: {
@@ -29,6 +47,9 @@ export async function runRoutingPhase(opts: {
   routingRules: RoutingRule[];
   preselectedItems: Map<string, string[] | null>;
   extraInstructions?: string;
+  /** Example product/model designations from the configured identifier vocabularies —
+   * injected into the doc-reference prompt so they are never mistaken for filenames. */
+  knownIdentifiers?: string[];
   model: any;
 }): Promise<RoutingPhaseResult> {
   const {
@@ -38,6 +59,7 @@ export async function runRoutingPhase(opts: {
     routingRules,
     preselectedItems,
     extraInstructions,
+    knownIdentifiers = [],
     model,
   } = opts;
 
@@ -86,7 +108,7 @@ export async function runRoutingPhase(opts: {
             generateText({
               model,
               temperature: 0,
-              system: PROMPT_CHECK_FOR_DOC_AND_PAGE_REFERENCES,
+              system: buildDocPagePrompt(knownIdentifiers),
               messages: [{ role: "user", content: question }],
               output: Output.object({
                 schema: z.object({
@@ -172,12 +194,23 @@ export async function runRoutingPhase(opts: {
         }
       }
 
-      steps.push({
-        text:
-          totalMatched > 0
-            ? `User referenced specific document(s); pinning ${totalMatched} file(s): ${matchedNames.join(", ")}`
-            : `User referenced document(s) ${hints.join(", ")} but no matching file was found.`,
-      });
+      // Plausibility cap: a real document reference matches a few files (language/version
+      // variants). A hint that fans out wider was a product/topic token — discard the pins
+      // and let the normal prefilter/routing handle it.
+      if (totalMatched > MAX_USER_PIN_MATCHES) {
+        userPinnedItemIdsByContext.clear();
+        steps.push({
+          text: `Reference "${hints.join(", ")}" matched ${totalMatched} files — too broad for a specific document reference; continuing without file pins.`,
+        });
+        totalMatched = 0;
+      } else {
+        steps.push({
+          text:
+            totalMatched > 0
+              ? `User referenced specific document(s); pinning ${totalMatched} file(s): ${matchedNames.join(", ")}`
+              : `User referenced document(s) ${hints.join(", ")} but no matching file was found.`,
+        });
+      }
     } catch (err) {
       console.warn("[EXULU pipeline] Document reference resolution failed:", err);
       steps.push({ text: "Document reference resolution failed — continuing without file pins." });
