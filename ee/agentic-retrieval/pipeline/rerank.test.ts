@@ -43,6 +43,21 @@ describe("rerankResults", () => {
     expect(pinned!.rerank_score).toBeCloseTo(0.8 - 7 * 0.05 + 0.15);
   });
 
+  it("caps force-included pinned groups at topK (token-bomb regression)", async () => {
+    // 30 pinned items — an unbounded force-include would return 30+ groups.
+    const chunks = Array.from({ length: 30 }, (_, i) => chunk("c" + i, "P" + i, 1));
+    const reranker = { model: "m", rerank: jest.fn(async (_q: string, items: any[]) =>
+      items.map((it, i) => ({ ...it, rerank_score: 0.9 - i * 0.01 }))) } as any;
+    const r = await rerankResults({
+      chunks, query: "q",
+      state: state({ pinnedItemIds: new Set(Array.from({ length: 30 }, (_, i) => "P" + i)) }),
+      reranker, tuning,
+    });
+    expect(r.limited_results.length).toBeLessThanOrEqual(2 * tuning.topK);
+    // The best-scoring pinned groups survive the cap
+    expect(r.limited_results.some((c: any) => c.item_id === "P0")).toBe(true);
+  });
+
   it("boosts items whose name matches an identifier token", async () => {
     const chunks = [chunk("c1", "A", 1), chunk("c2", "B", 1)];
     chunks[1].item_name = "hb_FST-2XT_manual";
