@@ -1,5 +1,5 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
-import { resolveMaxStepsFromToolConfigs } from "./resolve-max-steps";
+import { resolveMaxStepsFromToolConfigs, finalAnswerGuard } from "./resolve-max-steps";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
 import type { audioTypes } from "@EXULU_TYPES/models/agent";
@@ -553,6 +553,7 @@ export class ExuluProvider {
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
+        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5),
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
@@ -637,6 +638,7 @@ export class ExuluProvider {
           agent,
           memoryItems
         ),
+        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5),
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5), hasToolCall("image_generation")],
       });
 
@@ -1127,6 +1129,7 @@ ${skillsList}
       },
       // provide more loops for skills because they are more complex to execute
       // todo allow configuring this per skill
+      prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? (currentSkills?.length ? 10 : 5)),
       stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? (currentSkills?.length ? 10 : 5)), hasToolCall("image_generation")],
     });
 
