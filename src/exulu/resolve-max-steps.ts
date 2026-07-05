@@ -23,3 +23,15 @@ export function resolveMaxStepsFromToolConfigs(
   const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
 }
+
+/**
+ * prepareStep guard: on the LAST budgeted step, force `toolChoice: "none"` so the
+ * model must answer in text from the material gathered so far. Without this, a
+ * model that spends every step on tool calls hits the stepCountIs cap mid-loop and
+ * the turn ends with a dangling tool call and NO answer (observed with the agentic
+ * retrieval tool: three searches, zero answer text).
+ */
+export function finalAnswerGuard(maxSteps: number) {
+  return ({ stepNumber }: { stepNumber: number }) =>
+    stepNumber >= maxSteps - 1 ? { toolChoice: "none" as const } : undefined;
+}
