@@ -166,6 +166,12 @@ export function createAgenticRetrievalTool(opts: {
         default: "",
       },
       {
+        name: "max_steps",
+        description: "Maximum reasoning/tool steps the CALLING agent may take on a message while this tool is enabled (bounds retry loops and token cost). 0 = platform default (5, or 10 with skills).",
+        type: "number",
+        default: 0,
+      },
+      {
         name: "knowledge_bases",
         description: "Per-knowledge-base profiles: enabled, kind (documents | conversations | records), instructions, and per-KB overrides (limit, expand, multiQuery, hyde). JSON object keyed by context id.",
         type: "json",
