@@ -58,6 +58,17 @@ describe("rerankResults", () => {
     expect(r.limited_results.some((c: any) => c.item_id === "P0")).toBe(true);
   });
 
+  it("preserves the source-KB context tag through chunk grouping", async () => {
+    const chunks = [
+      { ...chunk("c1", "A", 1), context: { id: "docs", name: "Tech Doc" } },
+      { ...chunk("c2", "A", 2), context: { id: "docs", name: "Tech Doc" } },
+    ];
+    const reranker = { model: "m", rerank: jest.fn(async (_q: string, items: any[]) =>
+      items.map((it) => ({ ...it, rerank_score: 0.5 }))) } as any;
+    const r = await rerankResults({ chunks, query: "q", state: state(), reranker, tuning });
+    expect((r.limited_results[0] as any).context).toEqual({ id: "docs", name: "Tech Doc" });
+  });
+
   it("boosts items whose name matches an identifier token", async () => {
     const chunks = [chunk("c1", "A", 1), chunk("c2", "B", 1)];
     chunks[1].item_name = "hb_FST-2XT_manual";

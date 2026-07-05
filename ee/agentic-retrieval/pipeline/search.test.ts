@@ -78,6 +78,19 @@ describe("searchContexts", () => {
     expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual(["s1", "s2"]);
   });
 
+  it("tags every returned chunk with its source knowledge base (citation attribution)", async () => {
+    (multiQuerySearch as jest.Mock).mockResolvedValueOnce([
+      { chunk_id: "c1", item_id: "i1", item_name: "Doc", chunk_content: "x" },
+    ]);
+    (singleSearch as jest.Mock).mockResolvedValueOnce([
+      { chunk_id: "c2", item_id: "i2", item_name: "Ticket", chunk_content: "y" },
+    ]);
+    const r = await searchContexts({ ...base, contextIds: ["docs", "tickets"] });
+    const byId = Object.fromEntries(r.chunks.map((c: any) => [c.chunk_id, c]));
+    expect(byId["c1"].context).toEqual({ id: "docs", name: "docs" });
+    expect(byId["c2"].context).toEqual({ id: "tickets", name: "tickets" });
+  });
+
   it("skipPrefilter (fallback pass) suppresses identifier/memory pins", async () => {
     await searchContexts({
       ...base, contextIds: ["docs"], skipPrefilter: true,
