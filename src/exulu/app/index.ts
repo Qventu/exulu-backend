@@ -37,7 +37,6 @@ import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
 import { emailTool } from "@SRC/templates/tools/email.ts";
-import { transcribeTool } from "@SRC/templates/tools/transcribe.ts";
 import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-generation.ts";
 import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
 import { resolve } from "node:path";
@@ -250,21 +249,6 @@ export class ExuluApp {
             mcpTools.push(...responses.flat());
         } */
 
-    // The transcription tool is only registered when both a transcription
-    // model is configured and S3 file uploads are set up — the tool stores
-    // transcripts on S3 and returns the URL.
-    const transcriptionTools: ExuluTool[] = [];
-    if (
-      process.env.TRANSCRIPTION_MODEL &&
-      config?.fileUploads &&
-      config?.fileUploads?.s3region &&
-      config?.fileUploads?.s3key &&
-      config?.fileUploads?.s3secret &&
-      config?.fileUploads?.s3Bucket
-    ) {
-      transcriptionTools.push(transcribeTool);
-    }
-
     // A single image_generation tool — the per-model loop was replaced by
     // one unified tool that opens an in-chat widget where the user picks
     // the model, size, quality, n, optional reference images, and an
@@ -301,7 +285,6 @@ export class ExuluApp {
       ...questionTools,
       ...perplexityTools,
       emailTool,
-      ...transcriptionTools,
       ...imageGenerationTools,
       // Because agents are stored in the database, we add those as tools
       // at request time, not during ExuluApp initialization. We add them
