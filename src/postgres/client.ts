@@ -5,9 +5,12 @@ import pgvector from "pgvector/knex"; // Side-effect import: registers pgvector 
 let db: Record<string, KnexType | undefined> = {};
 let databaseExistsChecked = false;
 
-const dbName = process.env.POSTGRES_DB_NAME || "exulu";
+// Resolved lazily: at module scope this file can be evaluated (via a shared
+// bundle chunk) before dotenv has populated process.env.
+const getDbName = () => process.env.POSTGRES_DB_NAME || "exulu";
 
 async function ensureDatabaseExists(): Promise<void> {
+  const dbName = getDbName();
   // Connect to default postgres database to check/create exulu database
   const defaultKnex = Knex({
     client: "pg",
@@ -71,7 +74,7 @@ export async function postgresClient(): Promise<{
           host: process.env.POSTGRES_DB_HOST,
           port: parseInt(process.env.POSTGRES_DB_PORT || "5432"),
           user: process.env.POSTGRES_DB_USER,
-          database: dbName,
+          database: getDbName(),
           password: process.env.POSTGRES_DB_PASSWORD,
           ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
           // TCP keepalive prevents idle sockets from being silently dropped by
