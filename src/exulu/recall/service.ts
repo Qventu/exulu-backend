@@ -33,7 +33,7 @@ import {
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
 
 const TABLE = "transcription_jobs";
-const DEFAULT_BOT_NAME = "Exulu Notetaker";
+const DEFAULT_BOT_NAME = "Company Notetaker";
 
 const log = (msg: string) => console.log(`[EXULU-RECALL] ${msg}`);
 
