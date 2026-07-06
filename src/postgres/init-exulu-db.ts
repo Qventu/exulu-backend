@@ -125,10 +125,12 @@ const up = async function (knex: Knex) {
     await createTable(schema);
   }
 
-  // The oauth token store upserts on (tool_id, user_id); enforce that key at
-  // the DB level so concurrent callbacks can't produce duplicate rows.
+  // OAuth tokens are keyed by (provider, user_id). No backfill is required —
+  // the feature had no production users when the key changed. DROP IF EXISTS
+  // handles dev installs that had the earlier tool_id-based index.
+  await knex.raw("DROP INDEX IF EXISTS oauth_tokens_tool_id_user_id_unique");
   await knex.raw(
-    "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_tool_id_user_id_unique ON oauth_tokens (tool_id, user_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_provider_user_id_unique ON oauth_tokens (provider, user_id)",
   );
 
   // One-time data migration: agents.provider + agents.providerapikey  ->  models row + agents.model

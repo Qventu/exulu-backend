@@ -2875,11 +2875,8 @@ Mood: friendly and intelligent.
       }
 
       const page = parsePositiveInt(req.query.page, 1, 1_000_000);
-      const page_size = parsePositiveInt(req.query.page_size, 50, 1000);
-      if (page == null || page_size == null) {
-        res
-          .status(400)
-          .json({ detail: "page must be >=1 and page_size must be 1..1000." });
+      if (page == null) {
+        res.status(400).json({ detail: "page must be >=1." });
         return;
       }
 
@@ -2969,13 +2966,26 @@ Mood: friendly and intelligent.
             .filter(Boolean);
         }
 
+        // LiteLLM_DailyTagSpend has one row per (tag, date). Passing a
+        // small page_size (default 50) cuts off historical days when there
+        // are many tags — e.g. 17 user_id_ tags × page_size=50 yields only
+        // ~3 days of results. Calculate the minimum page_size to cover the
+        // full window and cap at 10 000 to keep payloads bounded.
+        const daysInRange =
+          Math.round(
+            (new Date(end_date).getTime() - new Date(start_date).getTime()) /
+              (1000 * 60 * 60 * 24),
+          ) + 1;
+        const numTags = tags ? tags.length : 1;
+        const litellmPageSize = Math.min(daysInRange * numTags + 100, 10_000);
+
         const raw = await getTagDailyActivity({
           startDate: start_date,
           endDate: end_date,
           tags,
           model,
-          page,
-          pageSize: page_size,
+          page: 1,
+          pageSize: litellmPageSize,
           excludeTeamTags,
         });
 

@@ -8,7 +8,6 @@ import { redisClient } from "./redis/client";
 export { ExuluApp } from "./exulu/app/index.ts";
 import { authentication } from "./auth/auth";
 export { queues as ExuluQueues } from "@EE/queues/queues.ts";
-export { trajectoryRegistry as ExuluTrajectoryRegistry } from "@EE/agentic-retrieval/v3/trajectory.ts";
 import { RecursiveChunker } from "./chunking/recursive";
 export { defaultChunker } from "./exulu/chunker.ts"
 export type { ChunkerOperation, ChunkerResponse } from "./exulu/chunker.ts"
@@ -22,6 +21,9 @@ export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.
 export { ExuluTool } from "./exulu/tool"
 export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/oauth/types"
 export { ExuluEval } from "./exulu/evals"
+// For script/CLI consumers that resolve models/embeddings against a proxy managed by a
+// separately running server process (same mechanism the worker boot path uses).
+export { enableLiteLLMClientMode } from "./exulu/litellm/supervisor.ts"
 import { SentenceChunker } from "./chunking/sentence";
 import { RecursiveRules } from "./chunking/types/recursive";
 import { execute as initExuluDb } from "./postgres/init-exulu-db";
@@ -68,7 +70,7 @@ import {
 } from './utils/python-setup';
 import { documentProcessor } from "@EE/python/documents/processing/doc_processor.ts";
 import { rerank } from "./exulu/reranker";
-import { createAgenticRetrievalToolV3 } from "@EE/agentic-retrieval/v3/index.ts";
+import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index.ts";
 
 export const ExuluJobs = {
   redis: redisClient,
@@ -78,7 +80,7 @@ export const ExuluDefaultTools = {
   agentic: {
     retrieval: {
       create: {
-        v3: createAgenticRetrievalToolV3
+        pipeline: createAgenticRetrievalTool
       }
     },
   },

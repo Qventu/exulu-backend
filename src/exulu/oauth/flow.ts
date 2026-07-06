@@ -2,6 +2,7 @@ import CryptoJS from "crypto-js";
 import { createHash, randomBytes } from "node:crypto";
 import type { ExuluOauthConfig } from "./types";
 import { oauthTokenStore, type OauthTokenRecord } from "./token-store";
+import { providerKeyFor } from "./provider-key";
 
 export const OAUTH_CALLBACK_PATH = "/oauth/callback";
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -18,6 +19,7 @@ export const getOauthRedirectUri = () => {
 };
 
 export type OauthState = {
+  provider: string;
   toolId: string;
   userId: number;
   codeVerifier?: string;
@@ -59,7 +61,7 @@ export const decryptOauthState = (value: string): OauthState => {
   } catch {
     throw new Error("[EXULU] Invalid OAuth state.");
   }
-  if (!state?.toolId || !state?.userId || !state?.exp) {
+  if (!state?.provider || !state?.toolId || !state?.userId || !state?.exp) {
     throw new Error("[EXULU] Invalid OAuth state.");
   }
   if (Date.now() > state.exp) {
@@ -80,6 +82,7 @@ export const buildAuthorizationUrl = ({
   const pkce = config.pkce !== false;
   const codeVerifier = pkce ? randomBytes(48).toString("base64url") : undefined;
   const state = encryptOauthState({
+    provider: providerKeyFor(toolId, config),
     toolId,
     userId,
     codeVerifier,
@@ -193,20 +196,24 @@ export const refreshAccessToken = async ({
   );
 
 /**
- * Returns a usable access token for (toolId, userId), transparently refreshing
- * an expired one. Returns null when the user needs to (re-)authorize — stale
- * rows are deleted so the caller falls back to the authorization path.
+ * Returns a usable access token for (providerKey, userId), transparently
+ * refreshing an expired one. Returns null when the user needs to
+ * (re-)authorize — stale rows are deleted so the caller falls back to the
+ * authorization path. `toolId` is only used as the audit column when a
+ * refresh writes back to the row.
  */
 export const getValidAccessToken = async ({
-  toolId,
+  providerKey,
   userId,
+  toolId,
   config,
 }: {
-  toolId: string;
+  providerKey: string;
   userId: number;
+  toolId: string;
   config: ExuluOauthConfig;
 }): Promise<OauthTokenRecord | null> => {
-  const stored = await oauthTokenStore.get(toolId, userId);
+  const stored = await oauthTokenStore.get(providerKey, userId);
   if (!stored) {
     return null;
   }
@@ -217,7 +224,7 @@ export const getValidAccessToken = async ({
     return stored;
   }
   if (!stored.refreshToken) {
-    await oauthTokenStore.delete(toolId, userId);
+    await oauthTokenStore.delete(providerKey, userId);
     return null;
   }
   try {
@@ -225,14 +232,14 @@ export const getValidAccessToken = async ({
     if (!refreshed.refreshToken) {
       refreshed.refreshToken = stored.refreshToken;
     }
-    await oauthTokenStore.upsert(toolId, userId, refreshed);
+    await oauthTokenStore.upsert(providerKey, userId, toolId, refreshed);
     return refreshed;
   } catch (error) {
     console.error(
-      `[EXULU] OAuth token refresh failed for tool "${toolId}" user ${userId}:`,
+      `[EXULU] OAuth token refresh failed for provider "${providerKey}" tool "${toolId}" user ${userId}:`,
       error,
     );
-    await oauthTokenStore.delete(toolId, userId);
+    await oauthTokenStore.delete(providerKey, userId);
     return null;
   }
 };

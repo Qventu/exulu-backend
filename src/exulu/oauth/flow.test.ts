@@ -49,9 +49,10 @@ describe("getOauthRedirectUri", () => {
 });
 
 describe("oauth state", () => {
-  it("round-trips through encrypt/decrypt", () => {
+  it("round-trips through encrypt/decrypt including provider", () => {
     const state = {
-      toolId: "my_tool",
+      provider: "jira",
+      toolId: "jira_search",
       userId: 42,
       codeVerifier: "verifier",
       exp: Date.now() + 60_000,
@@ -60,12 +61,12 @@ describe("oauth state", () => {
   });
 
   it("produces URL-safe output", () => {
-    const encrypted = encryptOauthState({ toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
+    const encrypted = encryptOauthState({ provider: "my_tool", toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
     expect(encrypted).not.toMatch(/[+/=]/);
   });
 
   it("rejects expired state", () => {
-    const encrypted = encryptOauthState({ toolId: "my_tool", userId: 1, exp: Date.now() - 1 });
+    const encrypted = encryptOauthState({ provider: "my_tool", toolId: "my_tool", userId: 1, exp: Date.now() - 1 });
     expect(() => decryptOauthState(encrypted)).toThrow(/expired/);
   });
 
@@ -73,8 +74,18 @@ describe("oauth state", () => {
     expect(() => decryptOauthState("not-a-real-state")).toThrow(/Invalid/);
   });
 
+  it("rejects state missing provider", () => {
+    const raw = encryptOauthState({
+      // provider intentionally omitted
+      toolId: "t",
+      userId: 1,
+      exp: Date.now() + 60_000,
+    } as any);
+    expect(() => decryptOauthState(raw)).toThrow(/Invalid OAuth state/);
+  });
+
   it("rejects state encrypted with a different secret", () => {
-    const encrypted = encryptOauthState({ toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
+    const encrypted = encryptOauthState({ provider: "my_tool", toolId: "my_tool", userId: 1, exp: Date.now() + 60_000 });
     const original = process.env.NEXTAUTH_SECRET;
     process.env.NEXTAUTH_SECRET = "other-secret";
     try {
@@ -99,6 +110,7 @@ describe("buildAuthorizationUrl", () => {
   it("derives the PKCE challenge from the verifier carried in state", () => {
     const url = new URL(buildAuthorizationUrl({ toolId: "my_tool", userId: 42, config }));
     const state = decryptOauthState(url.searchParams.get("state")!);
+    expect(state.provider).toBe("my_tool");
     expect(state.toolId).toBe("my_tool");
     expect(state.userId).toBe(42);
     expect(state.codeVerifier).toBeTruthy();
@@ -107,6 +119,20 @@ describe("buildAuthorizationUrl", () => {
       .digest("base64url");
     expect(url.searchParams.get("code_challenge")).toBe(expectedChallenge);
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("includes an encrypted state parameter with provider and toolId", () => {
+    const url = new URL(
+      buildAuthorizationUrl({
+        toolId: "jira_search",
+        userId: 42,
+        config: { ...config, provider: "jira" },
+      }),
+    );
+    const state = decryptOauthState(url.searchParams.get("state")!);
+    expect(state.provider).toBe("jira");
+    expect(state.toolId).toBe("jira_search");
+    expect(state.userId).toBe(42);
   });
 
   it("omits PKCE params when pkce is false", () => {
@@ -208,20 +234,29 @@ describe("getValidAccessToken", () => {
 
   it("returns null when no token is stored", async () => {
     mockTokenStore.get.mockResolvedValue(null);
-    expect(await getValidAccessToken({ toolId: "t", userId: 1, config })).toBeNull();
+    expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBeNull();
   });
 
-  it("returns the stored token when not expired", async () => {
-    const stored = { accessToken: "a", expiresAt: new Date(Date.now() + 3600_000) };
-    mockTokenStore.get.mockResolvedValue(stored);
-    expect(await getValidAccessToken({ toolId: "t", userId: 1, config })).toBe(stored);
-    expect(mockFetch).not.toHaveBeenCalled();
+  it("returns the stored token when it is not expired", async () => {
+    mockTokenStore.get.mockResolvedValueOnce({
+      accessToken: "still-good",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const token = await getValidAccessToken({
+      providerKey: "provider-x",
+      userId: 1,
+      toolId: "tool-x",
+      config,
+    });
+    expect(token?.accessToken).toBe("still-good");
+    expect(mockTokenStore.get).toHaveBeenCalledWith("provider-x", 1);
+    expect(mockTokenStore.upsert).not.toHaveBeenCalled();
   });
 
   it("treats a null expiry as non-expiring", async () => {
     const stored = { accessToken: "a", expiresAt: null };
     mockTokenStore.get.mockResolvedValue(stored);
-    expect(await getValidAccessToken({ toolId: "t", userId: 1, config })).toBe(stored);
+    expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBe(stored);
   });
 
   it("refreshes an expired token, preserving the refresh token", async () => {
@@ -235,10 +270,10 @@ describe("getValidAccessToken", () => {
       status: 200,
       text: async () => JSON.stringify({ access_token: "new", expires_in: 3600 }),
     });
-    const result = await getValidAccessToken({ toolId: "t", userId: 1, config });
+    const result = await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config });
     expect(result!.accessToken).toBe("new");
     expect(result!.refreshToken).toBe("the-refresh");
-    expect(mockTokenStore.upsert).toHaveBeenCalledWith("t", 1, result);
+    expect(mockTokenStore.upsert).toHaveBeenCalledWith("t", 1, "t", result);
   });
 
   it("deletes the row and returns null when expired with no refresh token", async () => {
@@ -247,7 +282,7 @@ describe("getValidAccessToken", () => {
       refreshToken: null,
       expiresAt: new Date(Date.now() - 1000),
     });
-    expect(await getValidAccessToken({ toolId: "t", userId: 1, config })).toBeNull();
+    expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBeNull();
     expect(mockTokenStore.delete).toHaveBeenCalledWith("t", 1);
   });
 
@@ -262,7 +297,7 @@ describe("getValidAccessToken", () => {
       status: 400,
       text: async () => JSON.stringify({ error: "invalid_grant" }),
     });
-    expect(await getValidAccessToken({ toolId: "t", userId: 1, config })).toBeNull();
+    expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBeNull();
     expect(mockTokenStore.delete).toHaveBeenCalledWith("t", 1);
   });
 });

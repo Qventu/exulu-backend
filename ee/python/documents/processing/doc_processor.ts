@@ -834,7 +834,7 @@ async function processPdf(
 
       const splitResult = await executePythonScript({
         scriptPath: 'ee/python/documents/processing/split_pdf.py',
-        args: [paths.source, chunksDir, '--chunk-size', String(maxPagesPerChunk)],
+        args: [paths.source, chunksDir, '--chunk-size', String(maxPagesPerChunk), '--max-size-mb', '25'],
         timeout: 5 * 60 * 1000,
       });
 

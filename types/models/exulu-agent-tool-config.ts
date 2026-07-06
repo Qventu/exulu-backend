@@ -3,9 +3,9 @@ export type ExuluAgentToolConfig = {
     type: string;
     config: {
       name: string;
-      variable: string | boolean | number; // is a variable name
-      type: "boolean" | "string" | "number" | "variable";
+      variable: string | boolean | number | object; // is a variable name
+      type: "boolean" | "string" | "number" | "variable" | "json";
       value?: any; // fetched on demand from the database based on the variable name
-      default?: string | boolean | number;
+      default?: string | boolean | number | object;
     }[];
   }

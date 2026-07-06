@@ -21,9 +21,9 @@ const decrypt = (value: string) =>
   CryptoJS.AES.decrypt(value, process.env.NEXTAUTH_SECRET).toString(CryptoJS.enc.Utf8);
 
 export const oauthTokenStore = {
-  get: async (toolId: string, userId: number): Promise<OauthTokenRecord | null> => {
+  get: async (providerKey: string, userId: number): Promise<OauthTokenRecord | null> => {
     const { db } = await postgresClient();
-    const row = await db.from(TABLE).where({ tool_id: toolId, user_id: userId }).first();
+    const row = await db.from(TABLE).where({ provider: providerKey, user_id: userId }).first();
     if (!row) {
       return null;
     }
@@ -36,10 +36,22 @@ export const oauthTokenStore = {
     };
   },
 
-  upsert: async (toolId: string, userId: number, record: OauthTokenRecord) => {
+  // toolId is stored on every written row as an audit trail — which tool
+  // triggered the last grant/refresh — but does NOT participate in the key.
+  upsert: async (
+    providerKey: string,
+    userId: number,
+    toolId: string,
+    record: OauthTokenRecord,
+  ): Promise<void> => {
     const { db } = await postgresClient();
-    const existing = await db.from(TABLE).where({ tool_id: toolId, user_id: userId }).first();
+    const existing = await db
+      .from(TABLE)
+      .where({ provider: providerKey, user_id: userId })
+      .first();
     const values = {
+      provider: providerKey,
+      tool_id: toolId,
       access_token: encrypt(record.accessToken),
       // Providers like Google only send a refresh_token on first consent;
       // never overwrite a stored one with nothing.
@@ -52,14 +64,17 @@ export const oauthTokenStore = {
       updatedAt: new Date(),
     };
     if (existing) {
-      await db.from(TABLE).where({ tool_id: toolId, user_id: userId }).update(values);
+      await db
+        .from(TABLE)
+        .where({ provider: providerKey, user_id: userId })
+        .update(values);
     } else {
-      await db.from(TABLE).insert({ tool_id: toolId, user_id: userId, ...values });
+      await db.from(TABLE).insert({ user_id: userId, ...values });
     }
   },
 
-  delete: async (toolId: string, userId: number) => {
+  delete: async (providerKey: string, userId: number): Promise<void> => {
     const { db } = await postgresClient();
-    await db.from(TABLE).where({ tool_id: toolId, user_id: userId }).del();
+    await db.from(TABLE).where({ provider: providerKey, user_id: userId }).del();
   },
 };

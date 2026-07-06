@@ -3,6 +3,14 @@ import { oauthRegistry } from "./registry";
 import { decryptOauthState, exchangeCodeForTokens } from "./flow";
 import { oauthTokenStore } from "./token-store";
 
+const escapeHtml = (s: string): string =>
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const renderResultPage = ({ success, message }: { success: boolean; message: string }) => `<!doctype html>
 <html lang="en">
   <head>
@@ -21,7 +29,7 @@ const renderResultPage = ({ success, message }: { success: boolean; message: str
     <main>
       <div class="icon">${success ? "✓" : "✕"}</div>
       <h1>${success ? "Connected" : "Authorization failed"}</h1>
-      <p>${message}</p>
+      <p>${escapeHtml(message)}</p>
     </main>
   </body>
 </html>`;
@@ -69,9 +77,13 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
     );
   }
 
-  const config = oauthRegistry.get(parsed.toolId);
+  const config = oauthRegistry.getByProvider(parsed.provider);
   if (!config) {
-    return send(404, false, `No OAuth configuration is registered for tool "${parsed.toolId}".`);
+    return send(
+      404,
+      false,
+      `No OAuth configuration is registered for provider "${parsed.provider}".`,
+    );
   }
 
   try {
@@ -80,7 +92,7 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
       code,
       codeVerifier: parsed.codeVerifier,
     });
-    await oauthTokenStore.upsert(parsed.toolId, parsed.userId, record);
+    await oauthTokenStore.upsert(parsed.provider, parsed.userId, parsed.toolId, record);
   } catch (caught) {
     console.error("[EXULU] OAuth code exchange failed:", caught);
     return send(

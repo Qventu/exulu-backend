@@ -20,6 +20,17 @@ export const validateOauthConfig = (toolId: string, config: ExuluOauthConfig) =>
       `ExuluTool "${toolId}": oauth.scopes must be an array of strings (use [] to request no scopes).`,
     );
   }
+  if (config.provider !== undefined) {
+    if (
+      typeof config.provider !== "string" ||
+      config.provider.length === 0 ||
+      config.provider.trim() !== config.provider
+    ) {
+      throw new Error(
+        `ExuluTool "${toolId}": oauth.provider must be a non-empty string with no leading or trailing whitespace when set.`,
+      );
+    }
+  }
   if (!process.env.BACKEND) {
     throw new Error(
       `ExuluTool "${toolId}": oauth requires the BACKEND environment variable (the backend's public base URL) to build the redirect URI.`,
