@@ -1,5 +1,6 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
 import { resolveMaxStepsFromToolConfigs, finalAnswerGuard } from "./resolve-max-steps";
+import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
 import type { audioTypes } from "@EXULU_TYPES/models/agent";
@@ -926,6 +927,16 @@ export class ExuluProvider {
     messages = messages.filter(
       (message, index, self) => index === self.findLastIndex((t) => t.id === message.id),
     );
+
+    // Tool calls still waiting for an approval response (the user sent a new
+    // message instead of accepting/declining) would make the AI SDK throw
+    // "Tool result is missing for tool call". Auto-decline them and persist
+    // the rewritten messages so the UI stops showing the stale prompt.
+    const { messages: reconciledMessages, declined } = autoDeclineStaleApprovals(messages);
+    messages = reconciledMessages;
+    if (declined.length && session && user) {
+      await saveChat({ session, user: user.id, messages: declined });
+    }
 
     // Process file parts to convert them to OpenAI Responses API compatible format
     // which mostly means converting file parts to text parts unless they are images.
