@@ -33,5 +33,12 @@ export function resolveMaxStepsFromToolConfigs(
  */
 export function finalAnswerGuard(maxSteps: number) {
   return ({ stepNumber }: { stepNumber: number }) =>
-    stepNumber >= maxSteps - 1 ? { toolChoice: "none" as const } : undefined;
+    stepNumber >= maxSteps - 1
+      ? // activeTools: [] strips the tool definitions BEFORE they reach the provider —
+        // toolChoice "none" alone is advisory in some provider chains (observed in
+        // production: Gemini via LiteLLM still emitted a tool call on the guarded
+        // step). With no tools declared, a tool call is impossible and the model
+        // must answer in text.
+        { toolChoice: "none" as const, activeTools: [] as string[] }
+      : undefined;
 }

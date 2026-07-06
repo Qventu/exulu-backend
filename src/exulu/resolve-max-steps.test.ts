@@ -36,7 +36,7 @@ describe("finalAnswerGuard", () => {
     const guard = finalAnswerGuard(4);
     expect(guard({ stepNumber: 0 })).toBeUndefined();
     expect(guard({ stepNumber: 2 })).toBeUndefined();
-    expect(guard({ stepNumber: 3 })).toEqual({ toolChoice: "none" });
-    expect(guard({ stepNumber: 5 })).toEqual({ toolChoice: "none" });
+    expect(guard({ stepNumber: 3 })).toEqual({ toolChoice: "none", activeTools: [] });
+    expect(guard({ stepNumber: 5 })).toEqual({ toolChoice: "none", activeTools: [] });
   });
 });
