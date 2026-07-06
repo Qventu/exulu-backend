@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+  </style>
+</head>
+<body>
+  <!--
+    Root composition: sequences all three shorts back-to-back.
+    Render each individually for the release page:
+      npx hyperframes render --composition share-dialog   --output ../shorts/share-dialog.mp4
+      npx hyperframes render --composition artifact-render --output ../shorts/artifact-render.mp4
+      npx hyperframes render --composition api-endpoint   --output ../shorts/api-endpoint.mp4
+  -->
+  <div id="root" data-composition-id="main" data-start="0" data-duration="23" data-width="1920" data-height="1080">
+
+    <!-- Share dialog: 0–8s -->
+    <div id="c1"
+         class="clip"
+         data-composition-id="share-dialog"
+         data-composition-src="compositions/share-dialog.html"
+         data-start="0"
+         data-duration="8"
+         data-track-index="0"
+         data-width="1920"
+         data-height="1080">
+    </div>
+
+    <!-- Artifact render: 8–15s -->
+    <div id="c2"
+         class="clip"
+         data-composition-id="artifact-render"
+         data-composition-src="compositions/artifact-render.html"
+         data-start="8"
+         data-duration="7"
+         data-track-index="0"
+         data-width="1920"
+         data-height="1080">
+    </div>
+
+    <!-- API endpoint: 15–23s -->
+    <div id="c3"
+         class="clip"
+         data-composition-id="api-endpoint"
+         data-composition-src="compositions/api-endpoint.html"
+         data-start="15"
+         data-duration="8"
+         data-track-index="0"
+         data-width="1920"
+         data-height="1080">
+    </div>
+
+  </div>
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+    window.__timelines["main"] = tl;
+  </script>
+</body>
+</html>
