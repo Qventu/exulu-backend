@@ -31,12 +31,55 @@ describe("resolveMaxStepsFromToolConfigs", () => {
   });
 });
 
+import { flattenToolHistory } from "./resolve-max-steps";
+
 describe("finalAnswerGuard", () => {
-  it("forces toolChoice none on the last budgeted step only", () => {
+  it("does nothing before the last budgeted step", () => {
     const guard = finalAnswerGuard(4);
     expect(guard({ stepNumber: 0 })).toBeUndefined();
     expect(guard({ stepNumber: 2 })).toBeUndefined();
-    expect(guard({ stepNumber: 3 })).toEqual({ toolChoice: "none", activeTools: [] });
+  });
+
+  it("on the final step strips tools and flattens history with an answer-now instruction", () => {
+    const guard = finalAnswerGuard(3);
+    const messages = [
+      { role: "user", content: "Frage?" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "search", input: { q: "x" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "search", output: { value: "RESULT TEXT" } }] },
+    ];
+    const r = guard({ stepNumber: 2, messages }) as any;
+    expect(r.toolChoice).toBe("none");
+    expect(r.activeTools).toEqual([]);
+    const msgs = r.messages as any[];
+    // No structured tool parts survive
+    expect(JSON.stringify(msgs)).not.toContain("tool-call");
+    expect(JSON.stringify(msgs)).not.toContain("tool-result");
+    expect(msgs.find((m) => m.role === "tool")).toBeUndefined();
+    // Tool results became readable text, original user turn intact
+    expect(msgs[2]).toEqual({ role: "user", content: expect.stringContaining("RESULT TEXT") });
+    expect(msgs[0]).toEqual({ role: "user", content: "Frage?" });
+    // Trailing answer-now instruction
+    expect(msgs[msgs.length - 1].content).toContain("Do not attempt any further tool calls");
+  });
+
+  it("omits the messages override when none are provided (sync callers)", () => {
+    const guard = finalAnswerGuard(3);
     expect(guard({ stepNumber: 5 })).toEqual({ toolChoice: "none", activeTools: [] });
+  });
+});
+
+describe("flattenToolHistory", () => {
+  it("passes plain user/system messages through untouched", () => {
+    const msgs = [{ role: "system", content: "s" }, { role: "user", content: "u" }];
+    expect(flattenToolHistory(msgs)).toEqual(msgs);
+  });
+
+  it("falls back to placeholders for empty structured content", () => {
+    const r = flattenToolHistory([
+      { role: "assistant", content: [] },
+      { role: "tool", content: [] },
+    ]) as any[];
+    expect(r[0].content).toBe("(searching)");
+    expect(r[1]).toEqual({ role: "user", content: "(tool results)" });
   });
 });
