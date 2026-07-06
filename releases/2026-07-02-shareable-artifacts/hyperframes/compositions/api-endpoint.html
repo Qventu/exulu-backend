@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 1920px; height: 1080px; overflow: hidden; background: #282B3A; }
+    body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+    :root {
+      --primary: #7033FF;
+      --code-bg: #282B3A;
+      --code-fg: #F7F7F0;
+      --code-muted: #8B8FA8;
+      --code-purple: #C9B3FF;
+      --code-green: #98E06A;
+      --code-orange: #F5A623;
+      --code-blue: #79C0FF;
+      --accent: #DBE9FF;
+    }
+
+    #scene {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+    }
+
+    /* ---- Hook ---- */
+    #hook {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #F5F8FB;
+    }
+    .hook-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin-bottom: 18px;
+    }
+    .hook-text {
+      font-size: 100px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      color: #000;
+      text-align: center;
+      line-height: 1.0;
+    }
+    .hook-text em {
+      font-style: normal;
+      color: var(--primary);
+    }
+
+    /* ---- Terminal scene ---- */
+    #terminal-scene {
+      position: absolute;
+      inset: 0;
+      background: var(--code-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+    }
+    .terminal-window {
+      width: 1200px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,.5), 0 12px 28px rgba(0,0,0,.3);
+    }
+    .terminal-bar {
+      height: 44px;
+      background: #1E2130;
+      border-bottom: 1px solid #363A4E;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 8px;
+    }
+    .term-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+    }
+    .term-dot.red { background: #FF5F57; }
+    .term-dot.yellow { background: #FEBC2E; }
+    .term-dot.green { background: #28C840; }
+    .term-title {
+      flex: 1;
+      text-align: center;
+      font-size: 13px;
+      color: #666;
+      font-family: "JetBrains Mono", monospace;
+    }
+    .terminal-body {
+      background: var(--code-bg);
+      padding: 36px 40px 44px;
+      min-height: 340px;
+    }
+    .term-prompt {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      color: var(--code-green);
+      margin-bottom: 4px;
+    }
+    .term-cmd {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      line-height: 1.65;
+      color: var(--code-fg);
+      white-space: pre;
+    }
+    .tc-method { color: var(--code-purple); }
+    .tc-url { color: var(--code-blue); }
+    .tc-flag { color: var(--code-orange); }
+    .tc-str { color: var(--code-green); }
+    .tc-key { color: var(--code-purple); }
+    .tc-val { color: var(--code-green); }
+    .tc-muted { color: var(--code-muted); }
+    .term-separator {
+      height: 1px;
+      background: #363A4E;
+      margin: 24px 0;
+      opacity: 0;
+    }
+    .term-response {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 18px;
+      color: var(--code-fg);
+      opacity: 0;
+    }
+    .resp-arrow { color: var(--code-muted); margin-right: 8px; }
+    .resp-brace { color: var(--code-muted); }
+    .resp-key { color: var(--code-purple); }
+    .resp-val { color: var(--code-green); }
+
+    /* Blinking cursor in terminal */
+    .term-caret {
+      display: inline-block;
+      width: 10px;
+      height: 19px;
+      background: var(--code-fg);
+      margin-left: 2px;
+      vertical-align: middle;
+    }
+
+    /* Typed text container */
+    #typed-cmd { display: inline; }
+
+    /* ---- Payoff ---- */
+    #payoff {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+    }
+    .payoff-text {
+      font-size: 40px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      color: var(--code-fg);
+    }
+    .payoff-text .accent { color: #C9B3FF; }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="api-endpoint" data-start="0" data-duration="8" data-width="1920" data-height="1080">
+
+    <div id="scene" class="clip" data-start="0" data-duration="8" data-track-index="0">
+
+      <!-- Hook -->
+      <div id="hook">
+        <div class="hook-label">Developer API</div>
+        <div class="hook-text">From the <em>API</em></div>
+      </div>
+
+      <!-- Terminal scene -->
+      <div id="terminal-scene">
+        <div class="terminal-window" id="term-window">
+          <div class="terminal-bar">
+            <div class="term-dot red"></div>
+            <div class="term-dot yellow"></div>
+            <div class="term-dot green"></div>
+            <div class="term-title">bash</div>
+          </div>
+          <div class="terminal-body">
+            <div class="term-prompt">~</div>
+            <div class="term-cmd">
+              <span id="typed-cmd"></span><span class="term-caret" id="term-caret"></span>
+            </div>
+            <div class="term-separator" id="term-sep"></div>
+            <div class="term-response" id="term-resp">
+              <span class="resp-arrow">→</span>
+              <span class="resp-brace">{</span>
+              <span class="resp-key"> "name"</span><span class="resp-brace">:</span>
+              <span class="resp-val"> "q4-report" </span>
+              <span class="resp-brace">}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payoff text (below terminal) -->
+      <div id="payoff">
+        <div class="payoff-text">
+          <span class="accent">Three</span> access modes. <span class="accent">One</span> endpoint.
+        </div>
+      </div>
+
+    </div><!-- /scene -->
+  </div><!-- /root -->
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // ---- Typing setup (runs synchronously before timeline starts) ----
+    // Build the curl command as HTML spans for syntax highlighting
+    var cmdParts = [
+      { text: "curl ", cls: null },
+      { text: "-X ", cls: "tc-flag" },
+      { text: "POST ", cls: "tc-method" },
+      { text: "https://api.exulu.app/shared-artifacts", cls: "tc-url" },
+      { text: " \\\n  ", cls: null },
+      { text: "-H ", cls: "tc-flag" },
+      { text: '"Authorization: Bearer $TOKEN"', cls: "tc-str" },
+      { text: " \\\n  ", cls: null },
+      { text: "-d ", cls: "tc-flag" },
+      { text: "'{\n    ", cls: "tc-str" },
+      { text: '"s3key"', cls: "tc-key" },
+      { text: ": ", cls: "tc-str" },
+      { text: '"uploads/q4-report.html"', cls: "tc-val" },
+      { text: ",\n    ", cls: "tc-str" },
+      { text: '"name"', cls: "tc-key" },
+      { text: ":     ", cls: "tc-str" },
+      { text: '"q4-report"', cls: "tc-val" },
+      { text: ",\n    ", cls: "tc-str" },
+      { text: '"auth_mode"', cls: "tc-key" },
+      { text: ": ", cls: "tc-str" },
+      { text: '"public"', cls: "tc-val" },
+      { text: "\n  }'", cls: "tc-str" }
+    ];
+
+    // Flatten into individual characters with color info
+    var chars = [];
+    cmdParts.forEach(function(part) {
+      part.text.split("").forEach(function(c) {
+        chars.push({ char: c, cls: part.cls });
+      });
+    });
+
+    // Build spans for each character (hidden initially)
+    var typedEl = document.getElementById("typed-cmd");
+    var charEls = [];
+    chars.forEach(function(info) {
+      if (info.char === "\n") {
+        typedEl.appendChild(document.createElement("br"));
+        charEls.push(null); // placeholder, no element to animate
+      } else {
+        var span = document.createElement("span");
+        span.textContent = info.char === " " ? " " : info.char;
+        if (info.cls) span.className = info.cls;
+        span.style.opacity = "0";
+        typedEl.appendChild(span);
+        charEls.push(span);
+      }
+    });
+
+    // ---- Initial states ----
+    tl.set("#terminal-scene", { opacity: 0 }, 0);
+    tl.set("#term-caret", { opacity: 1 }, 0);
+    tl.set("#term-sep", { opacity: 0 }, 0);
+    tl.set("#term-resp", { opacity: 0 }, 0);
+    tl.set("#payoff", { opacity: 0 }, 0);
+
+    // ---- Hook entrance (t=0) ----
+    tl.from(".hook-label", { opacity: 0, y: 10, duration: 0.35, ease: "power3.out" }, 0.1);
+    tl.from(".hook-text", { opacity: 0, y: 22, duration: 0.5, ease: "power3.out" }, 0.25);
+
+    // ---- Hook out, terminal in (t=1.5–1.8) ----
+    tl.to("#hook", { opacity: 0, duration: 0.35, ease: "power2.in" }, 1.5);
+    tl.to("#terminal-scene", { opacity: 1, duration: 0.4, ease: "power2.out" }, 1.75);
+    tl.from("#term-window", { y: 16, scale: 0.98, duration: 0.45, ease: "power3.out" }, 1.75);
+
+    // ---- Caret blinks (t=1.8) — finite repeats ----
+    tl.to("#term-caret", { opacity: 0, duration: 0.4, repeat: 3, yoyo: true, ease: "none", overwrite: "auto" }, 1.85);
+
+    // ---- Characters type in (t=2.2) ----
+    var typingStart = 2.2;
+    var charDelay = 0.028; // seconds per character
+    var charIdx = 0;
+    chars.forEach(function(info, i) {
+      if (info.char === "\n") {
+        charIdx++;
+        return; // br elements have no span to animate
+      }
+      var el = charEls[i];
+      if (el) {
+        var t = typingStart + charIdx * charDelay;
+        tl.to(el, { opacity: 1, duration: 0.001, ease: "none" }, t);
+        charIdx++;
+      }
+    });
+
+    // Total typing time ≈ charIdx * charDelay
+    var typingEnd = typingStart + charIdx * charDelay;
+
+    // ---- Caret hides at end of typing ----
+    tl.to("#term-caret", { opacity: 0, duration: 0.1 }, typingEnd + 0.1);
+
+    // ---- Response appears (typingEnd + 0.5s breath) ----
+    var respStart = typingEnd + 0.5;
+    tl.to("#term-sep", { opacity: 1, duration: 0.2 }, respStart);
+    tl.to("#term-resp", { opacity: 1, duration: 0.35, ease: "power2.out" }, respStart + 0.15);
+    tl.from("#term-resp", { y: 8 }, respStart + 0.15);
+
+    // ---- Payoff text (respStart + 1.2s) ----
+    var payoffStart = respStart + 1.2;
+    tl.to("#payoff", { opacity: 1, duration: 0.4, ease: "power3.out" }, payoffStart);
+    tl.from("#payoff", { y: 14 }, payoffStart);
+
+    // ---- Loop rest: still frame for last ~0.6s ----
+
+    window.__timelines["api-endpoint"] = tl;
+  </script>
+</body>
+</html>

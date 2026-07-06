@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · July 2, 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+
+    /* ---- Header ---- */
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+      line-height: 1.6;
+    }
+
+    /* ---- Feature section ---- */
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+
+    /* ---- Slices ---- */
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+      aspect-ratio: 16/9;
+    }
+
+    .slice p { margin: 0 0 16px; font-size: 16px; line-height: 1.65; }
+    .slice p:last-of-type { margin-bottom: 0; }
+
+    /* ---- Code snippets ---- */
+    .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.6;
+    }
+    pre .c-keyword { color: #C9B3FF; }
+    pre .c-url     { color: #79C0FF; }
+    pre .c-flag    { color: #F5A623; }
+    pre .c-str     { color: #98E06A; }
+    pre .c-muted   { color: #666; }
+
+    /* ---- Access mode badges ---- */
+    .access-modes {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 20px 0;
+    }
+    .mode-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      font-size: 13px;
+      font-weight: 500;
+      color: hsl(var(--foreground));
+      background: hsl(var(--background));
+    }
+    .mode-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
+    .mode-dot.green  { background: #16A34A; }
+    .mode-dot.yellow { background: #CA8A04; }
+    .mode-dot.blue   { background: #2563EB; }
+
+    /* ---- Footer ---- */
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- ===== Hero ===== -->
+    <header>
+      <span class="pill">Release · July 2, 2026</span>
+      <h1 class="hero">Every file your agent creates —<br><em>shareable in two clicks.</em></h1>
+      <p class="lede">Agents build things: HTML pages, reports, spreadsheets, PDFs. Now you can turn any of those files into a shareable link right from the chat — public, password-protected, or scoped to your team.</p>
+    </header>
+
+    <main>
+
+      <!-- ===== Feature: Shareable Artifact Links ===== -->
+      <section class="feature" id="shareable-artifacts">
+        <h2>Shareable Artifact Links</h2>
+        <p class="one-liner">Share any agent-created file in two clicks — with your choice of access control.</p>
+
+        <!-- Slice 1: Share from chat -->
+        <div class="slice">
+          <video src="./shorts/share-dialog.mp4" autoplay loop muted playsinline></video>
+
+          <p>A new share icon lives on every file row in the Session Files panel. Click it, pick an access mode, set an expiry, and hit <strong>Create link</strong> — the URL is copied to your clipboard and the link is live immediately.</p>
+          <p>The same dialog is available from file references inside chat messages and from inline S3 artifact links that agents paste into their replies. Wherever an artifact surfaces, the share affordance is right there.</p>
+
+          <div class="access-modes">
+            <div class="mode-badge">
+              <div class="mode-dot green"></div>
+              Public — anyone with the URL
+            </div>
+            <div class="mode-badge">
+              <div class="mode-dot yellow"></div>
+              Password — gated by a secret
+            </div>
+            <div class="mode-badge">
+              <div class="mode-dot blue"></div>
+              Login required — scoped to Exulu users
+            </div>
+          </div>
+        </div>
+
+        <!-- Slice 2: HTML renders inline -->
+        <div class="slice">
+          <video src="./shorts/artifact-render.mp4" autoplay loop muted playsinline></video>
+
+          <p>When the artifact is an HTML file, visiting the link renders it live in the browser — no login prompt, no download step. The page runs inside a sandboxed iframe so artifact scripts can't reach your Exulu session. Every other file type (Word, Excel, PDF, …) triggers an automatic download with the correct filename.</p>
+          <p>For public links, the unguessable share name is the entire access token — there are no shared secrets or service-to-service credentials in the URL. Password links store the credential in an httpOnly cookie and send it as an <code style="font-family:'JetBrains Mono',monospace;font-size:14px;background:hsl(var(--accent));padding:1px 5px;border-radius:3px;">x-share-password</code> header — never in the URL or page HTML.</p>
+        </div>
+
+        <!-- REST API snippet -->
+        <div class="snippet-label">REST API — create a share link</div>
+        <pre><span class="c-keyword">curl</span> <span class="c-flag">-X POST</span> https://api.exulu.app/shared-artifacts \
+  <span class="c-flag">-H</span> <span class="c-str">"Authorization: Bearer $TOKEN"</span> \
+  <span class="c-flag">-d</span> <span class="c-str">'{
+    "s3key":     "uploads/q4-report.html",
+    "name":      "q4-report",
+    "auth_mode": "public",
+    "expires_at": "2026-08-01T00:00:00Z"
+  }'</span>
+<span class="c-muted"># → { "name": "q4-report" }</span>
+<span class="c-muted"># Shareable at: /artifacts/q4-report</span></pre>
+
+      </section><!-- /shareable-artifacts -->
+
+    </main>
+
+    <footer>
+      <span>Released July 2, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+
+  </div>
+
+</body>
+</html>
