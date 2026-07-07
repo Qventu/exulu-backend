@@ -32,6 +32,7 @@ export interface ExuluAgent {
     feedback?: boolean;
     suggestions_enabled?: boolean;
     sandbox_enabled?: boolean;
+    max_tool_steps?: number | null;
     slug?: string;
     tools?: {
         id: string;
