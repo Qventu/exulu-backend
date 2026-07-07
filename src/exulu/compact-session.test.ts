@@ -54,20 +54,29 @@ describe("serializeForSummary", () => {
 });
 
 describe("compactSession", () => {
-  const bigHistory = () => {
+  const buildBigHistory = () => {
     // 20 fat turns + 2 small recent ones; window 10K → tail budget ~800 tokens
-    const rows: Array<{ content: string }> = [];
+    // Fat messages ~525 tokens, small ~25 tokens. splitTail: messages 39-41 form
+    // the tail (3 messages; msg[39] adds 525, but would exceed 800 at msg[38] which
+    // is 4th msg beyond minTail=2), leaving messages[0..38] as head. lastHeadId = messages[38].
+    const messages: UIMessage[] = [];
     for (let i = 0; i < 20; i++) {
-      rows.push({ content: JSON.stringify(msg("user", `question ${i} ` + "x".repeat(2_000))) });
-      rows.push({ content: JSON.stringify(msg("assistant", `answer ${i} ` + "y".repeat(2_000))) });
+      messages.push(msg("user", `question ${i} ` + "x".repeat(2_000)));
+      messages.push(msg("assistant", `answer ${i} ` + "y".repeat(2_000)));
     }
-    rows.push({ content: JSON.stringify(msg("user", "recent question")) });
-    rows.push({ content: JSON.stringify(msg("assistant", "recent answer")) });
-    return rows;
+    const tailUser = msg("user", "recent question");
+    const tailAssistant = msg("assistant", "recent answer");
+    messages.push(tailUser, tailAssistant);
+    return {
+      rows: messages.map((m) => ({ content: JSON.stringify(m) })),
+      lastHeadId: messages[messages.length - 4]!.id,
+      tailIds: [tailUser.id, tailAssistant.id],
+    };
   };
 
   it("summarizes the head, saves and returns a checkpoint message", async () => {
-    providerMock.getAgentMessages.mockResolvedValue(bigHistory());
+    const history = buildBigHistory();
+    providerMock.getAgentMessages.mockResolvedValue(history.rows);
     const summarize = jest.fn().mockResolvedValue("Dense summary of the work so far.");
     const result = await compactSession({
       sessionID: "s1",
@@ -89,8 +98,8 @@ describe("compactSession", () => {
       expect.objectContaining({ session: "s1", user: 1, messages: [result.checkpoint] }),
     );
     // coversUpTo marks the last HEAD message — never one of the tail messages.
-    expect(compaction.coversUpTo).toBeTruthy();
-    expect(compaction.coversUpTo).not.toBe(result.checkpoint.id);
+    expect(compaction.coversUpTo).toBe(history.lastHeadId);
+    expect(history.tailIds).not.toContain(compaction.coversUpTo);
   });
 
   it("throws CompactionInsufficientError when there is nothing to compact", async () => {
@@ -105,7 +114,7 @@ describe("compactSession", () => {
   });
 
   it("throws CompactionInsufficientError when the result still exceeds the block threshold", async () => {
-    providerMock.getAgentMessages.mockResolvedValue(bigHistory());
+    providerMock.getAgentMessages.mockResolvedValue(buildBigHistory().rows);
     // Summary so large it cannot help (summarize stub ignores maxOutputTokens).
     const summarize = jest.fn().mockResolvedValue("s".repeat(80_000));
     await expect(
