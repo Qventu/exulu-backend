@@ -1,4 +1,5 @@
-import { resolveRetrievalCallBudget, resolveTurnStepBudget, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, resolveTurnStepBudget, finalAnswerGuard, DEFAULT_MAX_STEPS, retrievalBudgetGuard } from "./resolve-max-steps";
+import { composePrepareSteps } from "./context-guard";
 
 const cfg = (entries: { name: string; variable: any; type: string }[]) =>
   [{ id: "agentic_context_search", type: "context", name: "Context Search", config: entries }] as any;
@@ -138,5 +139,48 @@ describe("flattenToolHistory", () => {
     ]) as any[];
     expect(r[0].content).toBe("(searching)");
     expect(r[1]).toEqual({ role: "user", content: "(tool results)" });
+  });
+});
+
+describe("retrievalBudgetGuard", () => {
+  const step = (...toolNames: string[]) => ({ toolCalls: toolNames.map((toolName) => ({ toolName })) });
+  const KEYS = ["Context_Search", "bash", "writeFile"];
+
+  it("is inert without a limit, without a key, or when the key is not registered", async () => {
+    expect(await retrievalBudgetGuard(undefined, "Context_Search", KEYS)({ stepNumber: 1, steps: [step("Context_Search")] })).toBeUndefined();
+    expect(await retrievalBudgetGuard(0, "Context_Search", KEYS)({ stepNumber: 1, steps: [step("Context_Search")] })).toBeUndefined();
+    expect(await retrievalBudgetGuard(1, undefined, KEYS)({ stepNumber: 1, steps: [step("Context_Search")] })).toBeUndefined();
+    expect(await retrievalBudgetGuard(1, "not_registered", KEYS)({ stepNumber: 1, steps: [step("not_registered")] })).toBeUndefined();
+  });
+
+  it("is inert while calls are under the limit", async () => {
+    const guard = retrievalBudgetGuard(2, "Context_Search", KEYS);
+    expect(await guard({ stepNumber: 0, steps: [] })).toBeUndefined();
+    expect(await guard({ stepNumber: 1, steps: [step("Context_Search"), step("bash")] })).toBeUndefined();
+  });
+
+  it("removes ONLY the agentic tool once the limit is reached, on every later step", async () => {
+    const guard = retrievalBudgetGuard(2, "Context_Search", KEYS);
+    const spent = [step("Context_Search"), step("Context_Search")];
+    expect(await guard({ stepNumber: 2, steps: spent })).toEqual({ activeTools: ["bash", "writeFile"] });
+    // re-asserted on later steps too (activeTools applies per-step)
+    expect(await guard({ stepNumber: 5, steps: [...spent, step("bash")] })).toEqual({ activeTools: ["bash", "writeFile"] });
+  });
+
+  it("counts multiple calls within one step", async () => {
+    const guard = retrievalBudgetGuard(2, "Context_Search", KEYS);
+    expect(await guard({ stepNumber: 1, steps: [step("Context_Search", "Context_Search")] })).toEqual({ activeTools: ["bash", "writeFile"] });
+  });
+
+  it("composes so finalAnswerGuard still strips ALL tools on the last step", async () => {
+    const composed = composePrepareSteps(
+      retrievalBudgetGuard(1, "Context_Search", KEYS),
+      finalAnswerGuard(5),
+    );
+    const spent = [step("Context_Search")];
+    // mid-turn: retrieval hidden, other tools alive
+    expect(((await composed({ stepNumber: 2, steps: spent })) as { activeTools: string[] }).activeTools).toEqual(["bash", "writeFile"]);
+    // final step: finalAnswerGuard's [] wins the shallow merge
+    expect(((await composed({ stepNumber: 4, steps: spent })) as { activeTools: string[] }).activeTools).toEqual([]);
   });
 });
