@@ -79,3 +79,18 @@ describe("effectiveKbSettings", () => {
     expect(s.kind).toBe("documents");
   });
 });
+
+describe("project_search option", () => {
+  it("defaults to true when absent or empty (empty string = backend default)", () => {
+    expect(parsePipelineConfig({}).projectSearch).toBe(true);
+    expect(parsePipelineConfig(undefined).projectSearch).toBe(true);
+    expect(parsePipelineConfig({ project_search: "" }).projectSearch).toBe(true);
+  });
+
+  it("parses explicit values", () => {
+    expect(parsePipelineConfig({ project_search: "false" }).projectSearch).toBe(false);
+    expect(parsePipelineConfig({ project_search: false }).projectSearch).toBe(false);
+    expect(parsePipelineConfig({ project_search: "true" }).projectSearch).toBe(true);
+    expect(parsePipelineConfig({ project_search: true }).projectSearch).toBe(true);
+  });
+});
