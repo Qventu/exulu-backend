@@ -1027,6 +1027,10 @@ Mood: friendly and intelligent.
       }
       const { db } = await postgresClient();
       const sessionRow = await db.from("agent_sessions").where({ id: sessionID }).first();
+      if (!sessionRow) {
+        res.status(404).json({ message: "Session not found for session ID: " + sessionID });
+        return;
+      }
       const hasAccessToSession = await checkRecordAccess(sessionRow, "write", user);
       if (!hasAccessToSession) {
         res.status(401).json({ message: "You don't have access to this session." });
