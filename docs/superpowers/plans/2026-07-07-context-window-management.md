@@ -1622,10 +1622,9 @@ Expected: PASS.
 
 Import in provider.ts: `import { contextGuard, composePrepareSteps } from "./context-guard";`
 
-Replace the three `prepareStep:` values:
-- generateSync prompt path (line ~557): `prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5)) as never,`
-- generateSync messages path (line ~642): same expression.
-- generateStream (line ~1143): `prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? (currentSkills?.length ? 10 : 5))) as never,`
+Replace the three `prepareStep:` values. NOTE: since commit `c918b23` ("raise step budget to 10") all three sites read `finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)` — wrap that CURRENT expression, do not reintroduce the old `?? 5` fallbacks:
+- generateSync prompt path (line ~557), generateSync messages path (line ~642), generateStream (line ~1140) — each becomes:
+  `prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,`
 
 (The `as never` matches the existing cast style if TS complains about the AI SDK's PrepareStepFunction type; drop it if it compiles without.)
 
@@ -2110,6 +2109,7 @@ import { isLiteLLMEnabled } from "./litellm/supervisor";
         });
 ```
 - Pass `contextWindow` as the new final argument (17th, after `agent` — insert `undefined` for `memoryItems` first) to the `convertExuluToolsToAiSdkTools(...)` call (line ~434): the call currently ends `..., languageModel, agent,)` — make it `..., languageModel, agent, undefined, contextWindow,)`.
+- Also compose the in-flight guard into the gateway's two `prepareStep` sites (added by commit `c918b23`): both `prepareStep: clientTools.length > 0 ? undefined : finalAnswerGuard(DEFAULT_MAX_STEPS)` become `prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(DEFAULT_MAX_STEPS))` (import `contextGuard, composePrepareSteps` from `./context-guard`).
 - After `const { systemPrompt: requestSystemPrompt, coreMessages } = convertOpenAIMessagesToModelMessages(openaiMessages);` add the stateless pre-check (the gateway client owns its own history, so the correct behavior at overflow is an OpenAI-style 400, not a compaction offer):
 ```ts
         const gatewayBudget = deriveContextBudget(contextWindow);
