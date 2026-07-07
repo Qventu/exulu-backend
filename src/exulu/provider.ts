@@ -39,7 +39,7 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { setSessionCurrentTask } from "./task-description.ts";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
-import { sliceHistoryAtCheckpoint, getCompaction } from "./context-budget";
+import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -287,7 +287,8 @@ export class ExuluProvider {
     agent,
     instructions,
     maxStepCount,
-    onTokenUsage
+    onTokenUsage,
+    contextWindow
   }: {
     prompt?: string;
     user?: User;
@@ -308,6 +309,7 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
+    contextWindow?: number;
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -355,6 +357,11 @@ export class ExuluProvider {
         // append the new message to the previous messages:
         messages: [...previousMessagesContent, ...messages],
       });
+      const contextBudget = deriveContextBudget(contextWindow);
+      const occupancy = contextOccupancy(messages);
+      if (occupancy >= contextBudget.blockThreshold) {
+        throw new ContextCompactionRequiredError(occupancy, contextBudget);
+      }
       messages = sliceHistoryAtCheckpoint(messages);
     }
 
@@ -550,7 +557,7 @@ export class ExuluProvider {
           model,
           agent,
           memoryItems,
-          undefined
+          contextWindow
         ),
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
@@ -639,7 +646,7 @@ export class ExuluProvider {
           model,
           agent,
           memoryItems,
-          undefined
+          contextWindow
         ),
         prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS),
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
@@ -805,7 +812,8 @@ export class ExuluProvider {
     exuluConfig,
     instructions,
     req,
-    maxStepCount
+    maxStepCount,
+    contextWindow
   }: {
     user?: User;
     session?: string;
@@ -824,6 +832,7 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     req?: Request;
+    contextWindow?: number;
   }): Promise<{
     stream: ReturnType<typeof streamText>;
     originalMessages: UIMessage[];
@@ -943,11 +952,22 @@ export class ExuluProvider {
 
     messages = await this.processFilePartsInMessages(messages);
 
-    // Keep the chronological view for occupancy accounting (Task 8 uses it);
-    // the model view collapses everything a compaction checkpoint covers.
+    // Keep the chronological view for occupancy accounting; the model view
+    // collapses everything a compaction checkpoint covers.
     const chronologicalMessages = messages;
+
+    // Pre-flight budget gate (spec §3): never send a prompt past 95% of the
+    // usable window — fail fast with the structured compaction-required error.
+    const contextBudget = deriveContextBudget(contextWindow);
+    const occupancy = contextOccupancy(chronologicalMessages);
+    if (occupancy >= contextBudget.blockThreshold) {
+      console.warn(
+        `[EXULU] Blocking request: occupancy ${occupancy} >= blockThreshold ${contextBudget.blockThreshold} (window ${contextBudget.contextWindow}).`,
+      );
+      throw new ContextCompactionRequiredError(occupancy, contextBudget);
+    }
+
     messages = sliceHistoryAtCheckpoint(chronologicalMessages);
-    void chronologicalMessages;
 
     // Simple things like the current date, time, etc.
     // we add these to the context to help the agent
@@ -1119,7 +1139,7 @@ ${skillsList}
       model,
       agent,
       memoryItems,
-      undefined
+      contextWindow
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
