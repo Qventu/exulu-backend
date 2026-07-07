@@ -61,15 +61,21 @@ export const createSessionFileReadTool = ({
         const lines = textBody.split("\n");
         const start = (offset ?? 1) - 1;
         const requested = limit ?? DEFAULT_LIMIT;
-        let content = lines.slice(start, start + requested).join("\n");
+        const sliced = lines.slice(start, start + requested);
+        let content = sliced.join("\n");
+        let linesReturned = sliced.length;
         if (content.length > MAX_CONTENT_CHARS) {
-          content = content.slice(0, MAX_CONTENT_CHARS) + "\n[slice truncated — request fewer lines]";
+          content = content.slice(0, MAX_CONTENT_CHARS);
+          // Count only COMPLETE lines actually delivered so paging with
+          // offset + linesReturned never skips content.
+          linesReturned = Math.max(1, content.split("\n").length - 1);
+          content = content + "\n[slice truncated — request fewer lines]";
         }
         return {
           content,
           totalLines: lines.length,
           offset: start + 1,
-          linesReturned: Math.max(0, Math.min(requested, lines.length - start)),
+          linesReturned,
         };
       } catch (err) {
         return { error: `Failed to read session file "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
