@@ -52,9 +52,10 @@ describe("finalAnswerGuard", () => {
     expect(r.toolChoice).toBe("none");
     expect(r.activeTools).toEqual([]);
     const msgs = r.messages as any[];
-    // No structured tool parts survive
-    expect(JSON.stringify(msgs)).not.toContain("tool-call");
-    expect(JSON.stringify(msgs)).not.toContain("tool-result");
+    // No old bracket-syntax templates survive (check for specific pattern with toolname)
+    const flat = JSON.stringify(msgs);
+    expect(flat).not.toContain("[called tool search:");
+    expect(flat).not.toContain("[result of search]:");
     expect(msgs.find((m) => m.role === "tool")).toBeUndefined();
     // Tool results became readable text, original user turn intact
     expect(msgs[2]).toEqual({ role: "user", content: expect.stringContaining("RESULT TEXT") });
@@ -77,8 +78,11 @@ describe("finalAnswerGuard", () => {
     ];
     const r = guard({ stepNumber: 4, messages }) as any;
     const flat = JSON.stringify(r.messages);
-    expect(flat).not.toContain("tool-call");
-    expect(flat).not.toContain("tool-result");
+    // No old bracket-syntax templates survive (check for specific patterns with toolnames)
+    expect(flat).not.toContain("[called tool bash:");
+    expect(flat).not.toContain("[result of bash]:");
+    expect(flat).not.toContain("[called tool write_file:");
+    expect(flat).not.toContain("[result of write_file]:");
     // tool outputs survive as readable text, mixed text parts survive too
     expect(flat).toContain("TUERANTRIEB DEFEKT");
     expect(flat).toContain("Ich schreibe nun das Analyse-Skript.");
@@ -99,6 +103,29 @@ describe("finalAnswerGuard", () => {
   it("omits the messages override when none are provided (sync callers)", () => {
     const guard = finalAnswerGuard(3);
     expect(guard({ stepNumber: 5 })).toEqual({ toolChoice: "none", activeTools: [] });
+  });
+
+  it("flattens history as prose — no copyable tool-call templates (mimicry hardening)", () => {
+    const guard = finalAnswerGuard(3);
+    const messages = [
+      { role: "user", content: "Frage?" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "bash", input: { command: "ls" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "bash", output: { value: "file.pdf" } }] },
+    ];
+    const r = guard({ stepNumber: 2, messages }) as any;
+    // Use unescaped text for flexible assertions (fallback approach from brief)
+    const texts = (r.messages as any[]).map((m) => String(m.content)).join("\n");
+    // old bracket-syntax templates are gone from flattened history
+    expect(texts).not.toContain("[called tool bash:");
+    expect(texts).not.toContain("[result of bash]:");
+    // prose phrasing present, content preserved
+    expect(texts).toContain("ran the \"bash\" tool with input");
+    expect(texts).toContain("The \"bash\" tool returned");
+    expect(texts).toContain("file.pdf");
+    // the instruction forbids tool-call-shaped output
+    const instruction = r.messages[r.messages.length - 1].content as string;
+    expect(instruction).toContain("normal prose");
+    expect(instruction).toContain("[called tool ...]");
   });
 });
 

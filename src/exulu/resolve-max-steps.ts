@@ -56,11 +56,11 @@ function flattenPart(part: unknown): string {
   const p = part as { type?: string; text?: string; toolName?: string; input?: unknown; output?: { value?: unknown } };
   if (p?.type === "text") return p.text ?? "";
   if (p?.type === "tool-call") {
-    return `[called tool ${p.toolName}: ${JSON.stringify(p.input ?? {}).slice(0, 300)}]`;
+    return `Earlier, the assistant ran the "${p.toolName}" tool with input: ${JSON.stringify(p.input ?? {}).slice(0, 300)}`;
   }
   if (p?.type === "tool-result") {
     const out = p.output?.value ?? p.output;
-    return `[result of ${p.toolName}]: ${typeof out === "string" ? out : JSON.stringify(out ?? "")}`;
+    return `The "${p.toolName}" tool returned: ${typeof out === "string" ? out : JSON.stringify(out ?? "")}`;
   }
   return "";
 }
@@ -70,6 +70,8 @@ function flattenPart(part: unknown): string {
  * in the conversation invite models (observed: Gemini via LiteLLM) to MIMIC another
  * tool call even when the request declares no tools and tool_choice is "none" —
  * flattening removes the pattern, making a text answer the only possible output.
+ * The flattened text is deliberately prose (not copyable tool-call syntax) so it
+ * cannot serve as a mimicry template.
  */
 export function flattenToolHistory(messages: unknown[]): unknown[] {
   return messages.map((m) => {
@@ -90,7 +92,9 @@ export function flattenToolHistory(messages: unknown[]): unknown[] {
 }
 
 const FINAL_ANSWER_INSTRUCTION =
-  "This is your last step for this turn. Answer the user's original question now, in plain text, using only the information gathered above. If you could not finish the task, tell the user you reached the maximum number of tool steps, summarize what you found and did so far, and say what remains — they can ask you to continue. Do not attempt any further tool calls.";
+  "This is your last step for this turn. Answer the user's original question now, in plain text, using only the information gathered above. " +
+  "If you could not finish the task, tell the user you reached the maximum number of tool steps, summarize what you found and did so far, and say what remains — they can ask you to continue. " +
+  "Do not attempt any further tool calls. Write your answer as normal prose for the user: do not output tool-call syntax, JSON commands, or bracketed lines such as \"[called tool ...]\" — describe anything you did or still plan to do in plain language.";
 
 /**
  * prepareStep guard: on the LAST budgeted step, force a text answer. Three layers,
