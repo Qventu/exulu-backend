@@ -1,4 +1,4 @@
-import { resolveMaxStepsFromToolConfigs, finalAnswerGuard } from "./resolve-max-steps";
+import { resolveMaxStepsFromToolConfigs, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
 
 const cfg = (entries: { name: string; variable: any; type: string }[]) =>
   [{ id: "agentic_context_search", type: "context", name: "Context Search", config: entries }] as any;
@@ -60,6 +60,39 @@ describe("finalAnswerGuard", () => {
     expect(msgs[0]).toEqual({ role: "user", content: "Frage?" });
     // Trailing answer-now instruction
     expect(msgs[msgs.length - 1].content).toContain("Do not attempt any further tool calls");
+  });
+
+  it("flattens non-retrieval tool history (bash/code-execution shape from the client trace)", () => {
+    const guard = finalAnswerGuard(5);
+    const messages = [
+      { role: "user", content: "Bitte analysiere die hochgeladene Datei." },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "bash", input: { command: "pandoc Serviceanfragen.docx -t plain -o out.txt" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "bash", output: { value: { stdout: "TUERANTRIEB DEFEKT\n", stderr: "", exitCode: 0 } } }] },
+      { role: "assistant", content: [
+        { type: "text", text: "Ich schreibe nun das Analyse-Skript." },
+        { type: "tool-call", toolName: "write_file", input: { path: "analyze.py" } },
+      ] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "write_file", output: { value: "ok" } }] },
+    ];
+    const r = guard({ stepNumber: 4, messages }) as any;
+    const flat = JSON.stringify(r.messages);
+    expect(flat).not.toContain("tool-call");
+    expect(flat).not.toContain("tool-result");
+    // tool outputs survive as readable text, mixed text parts survive too
+    expect(flat).toContain("TUERANTRIEB DEFEKT");
+    expect(flat).toContain("Ich schreibe nun das Analyse-Skript.");
+    expect(flat).toContain("write_file");
+  });
+
+  it("instructs the model to disclose the step limit when the task is unfinished", () => {
+    const guard = finalAnswerGuard(3);
+    const r = guard({ stepNumber: 2, messages: [{ role: "user", content: "Frage?" }] }) as any;
+    const instruction = r.messages[r.messages.length - 1].content as string;
+    expect(instruction).toContain("maximum number of tool steps");
+  });
+
+  it("exposes a platform default step budget of 10", () => {
+    expect(DEFAULT_MAX_STEPS).toBe(10);
   });
 
   it("omits the messages override when none are provided (sync callers)", () => {

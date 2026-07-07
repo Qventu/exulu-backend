@@ -25,6 +25,7 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluConfig } from "./app/index.ts";
 import type { ExuluProvider } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
+import { finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -488,7 +489,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
+            prepareStep: clientTools.length > 0 ? undefined : finalAnswerGuard(DEFAULT_MAX_STEPS),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
             },
@@ -529,7 +531,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
+            prepareStep: clientTools.length > 0 ? undefined : finalAnswerGuard(DEFAULT_MAX_STEPS),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
           });
 
           res.json(transformCompletion(text, usage.inputTokens ?? 0, usage.outputTokens ?? 0, ctx));
