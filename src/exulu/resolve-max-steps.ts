@@ -10,16 +10,14 @@ export const DEFAULT_MAX_STEPS = 10;
 /**
  * Read the `max_steps` option from the agentic retrieval tool's saved config.
  *
- * The agentic pipeline can trigger several reasoning/tool rounds in the CALLING
- * agent (retry-with-rephrasing loops). `max_steps` lets an admin bound that step
- * budget per agent from the retrieval tool's configuration UI instead of the
- * hardcoded platform default (DEFAULT_MAX_STEPS).
+ * Since 2026-07-08 this bounds ONLY agentic-retrieval CALLS per message —
+ * enforced by retrievalBudgetGuard, which removes the retrieval tool from
+ * activeTools once the budget is spent. It no longer feeds the turn-wide step
+ * budget (that is resolveTurnStepBudget / agents.max_tool_steps).
  *
- * Returns a positive integer, or undefined when unset/0/invalid — callers fall
- * back to the platform default. An explicit `maxStepCount` argument to
- * generateSync/generateStream always takes precedence over this config value.
+ * Returns a positive integer, or undefined when unset/0/invalid.
  */
-export function resolveMaxStepsFromToolConfigs(
+export function resolveRetrievalCallBudget(
   toolConfigs: ExuluAgentToolConfig[] | undefined,
 ): number | undefined {
   const agentic = toolConfigs?.find((t) => t.id === "agentic_context_search");
@@ -29,6 +27,27 @@ export function resolveMaxStepsFromToolConfigs(
   const raw = (entry as { value?: unknown }).value ?? entry.variable;
   const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+}
+
+/**
+ * The per-turn step budget for ALL tools (bash, files, retrieval,
+ * integrations). Precedence: explicit maxStepCount argument →
+ * agents.max_tool_steps column (positive number; strings tolerated for pg
+ * driver configs that return numerics as text) → DEFAULT_MAX_STEPS.
+ */
+export function resolveTurnStepBudget(
+  maxStepCount: number | undefined,
+  agent: { max_tool_steps?: number | string | null } | undefined,
+): number {
+  if (typeof maxStepCount === "number" && Number.isFinite(maxStepCount) && maxStepCount > 0) {
+    return Math.floor(maxStepCount);
+  }
+  const raw = agent?.max_tool_steps;
+  const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
+  if (Number.isFinite(n) && n > 0) {
+    return Math.floor(n);
+  }
+  return DEFAULT_MAX_STEPS;
 }
 
 /** Render one structured message part as plain text for the final-answer step. */

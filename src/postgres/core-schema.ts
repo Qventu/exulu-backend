@@ -278,6 +278,13 @@ const agentsSchema: ExuluTableDefinition = {
       name: "sandbox_enabled",
       type: "boolean",
       default: false,
+    },
+    {
+      // Per-turn budget for ALL tool steps on one chat message (bash, files,
+      // knowledge search, integrations). 0/null = platform default
+      // (DEFAULT_MAX_STEPS in resolve-max-steps.ts). Auto-ALTERed on boot.
+      name: "max_tool_steps",
+      type: "number",
     }
   ],
 };

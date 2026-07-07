@@ -1,33 +1,33 @@
-import { resolveMaxStepsFromToolConfigs, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, resolveTurnStepBudget, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
 
 const cfg = (entries: { name: string; variable: any; type: string }[]) =>
   [{ id: "agentic_context_search", type: "context", name: "Context Search", config: entries }] as any;
 
-describe("resolveMaxStepsFromToolConfigs", () => {
+describe("resolveRetrievalCallBudget", () => {
   it("returns the configured positive integer (string-stored, platform convention)", () => {
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: "4", type: "number" }]))).toBe(4);
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: "4", type: "number" }]))).toBe(4);
   });
 
   it("accepts numeric values and floors them", () => {
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: 6.7, type: "number" }]))).toBe(6);
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: 6.7, type: "number" }]))).toBe(6);
   });
 
   it("returns undefined for unset, zero, negative, or garbage values", () => {
-    expect(resolveMaxStepsFromToolConfigs(undefined)).toBeUndefined();
-    expect(resolveMaxStepsFromToolConfigs([] as any)).toBeUndefined();
-    expect(resolveMaxStepsFromToolConfigs(cfg([]))).toBeUndefined();
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: "0", type: "number" }]))).toBeUndefined();
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: "-3", type: "number" }]))).toBeUndefined();
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: "banana", type: "number" }]))).toBeUndefined();
+    expect(resolveRetrievalCallBudget(undefined)).toBeUndefined();
+    expect(resolveRetrievalCallBudget([] as any)).toBeUndefined();
+    expect(resolveRetrievalCallBudget(cfg([]))).toBeUndefined();
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: "0", type: "number" }]))).toBeUndefined();
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: "-3", type: "number" }]))).toBeUndefined();
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: "banana", type: "number" }]))).toBeUndefined();
   });
 
   it("ignores other tools' configs", () => {
     const configs = [{ id: "other_tool", type: "function", name: "x", config: [{ name: "max_steps", variable: "9", type: "number" }] }] as any;
-    expect(resolveMaxStepsFromToolConfigs(configs)).toBeUndefined();
+    expect(resolveRetrievalCallBudget(configs)).toBeUndefined();
   });
 
   it("prefers hydrated value over raw variable when present", () => {
-    expect(resolveMaxStepsFromToolConfigs(cfg([{ name: "max_steps", variable: "2", value: 8, type: "number" } as any]))).toBe(8);
+    expect(resolveRetrievalCallBudget(cfg([{ name: "max_steps", variable: "2", value: 8, type: "number" } as any]))).toBe(8);
   });
 });
 
@@ -98,6 +98,30 @@ describe("finalAnswerGuard", () => {
   it("omits the messages override when none are provided (sync callers)", () => {
     const guard = finalAnswerGuard(3);
     expect(guard({ stepNumber: 5 })).toEqual({ toolChoice: "none", activeTools: [] });
+  });
+});
+
+describe("resolveTurnStepBudget", () => {
+  it("uses the explicit maxStepCount argument first", () => {
+    expect(resolveTurnStepBudget(4, { max_tool_steps: 7 })).toBe(4);
+    expect(resolveTurnStepBudget(4.9, undefined)).toBe(4);
+  });
+
+  it("falls back to the agent's max_tool_steps column", () => {
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: 7 })).toBe(7);
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: 7.9 })).toBe(7);
+    // pg number columns can surface as strings depending on driver config
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: "12" as never })).toBe(12);
+  });
+
+  it("returns the platform default for unset/zero/negative/garbage", () => {
+    expect(resolveTurnStepBudget(undefined, undefined)).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(undefined, {})).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: null })).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: 0 })).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: -3 })).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(undefined, { max_tool_steps: "banana" as never })).toBe(DEFAULT_MAX_STEPS);
+    expect(resolveTurnStepBudget(0, { max_tool_steps: 0 })).toBe(DEFAULT_MAX_STEPS);
   });
 });
 

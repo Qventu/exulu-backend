@@ -1,5 +1,5 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
-import { resolveMaxStepsFromToolConfigs, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
 import { contextGuard, composePrepareSteps } from "./context-guard";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
@@ -564,8 +564,8 @@ export class ExuluProvider {
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-        stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")]
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
+        stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
       const {
@@ -650,8 +650,8 @@ export class ExuluProvider {
           memoryItems,
           contextWindow
         ),
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-        stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
+        stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
       });
 
       if (statistics) {
@@ -1189,8 +1189,8 @@ ${skillsList}
         );
       },
       // todo allow configuring the step budget per skill
-      prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-      stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
+      stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
     });
 
     return {
