@@ -23,6 +23,9 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
+import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
+import { createSessionFileReadTool } from "./session-file-read-tool";
+import { deriveContextBudget } from "@SRC/exulu/context-budget";
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 
@@ -159,7 +162,8 @@ export const convertExuluToolsToAiSdkTools = async (
   sessionItems?: string[],
   model?: LanguageModel,
   agent?: ExuluAgent,
-  memoryItems?: VectorSearchChunkResult[]
+  memoryItems?: VectorSearchChunkResult[],
+  contextWindow?: number,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -170,6 +174,9 @@ export const convertExuluToolsToAiSdkTools = async (
   if (!contexts) {
     contexts = [];
   }
+
+  const budget = deriveContextBudget(contextWindow);
+  const toolOutputCharLimit = budget.toolOutputCapTokens * 4;
 
   // Eagerly create the shared session sandbox so the OUTER agent can read/write
   // files (and run skill scripts — it executes skills directly, there is no skill
@@ -242,6 +249,11 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
+  if (sessionFileReadTool) {
+    currentTools.push(sessionFileReadTool);
+  }
+
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
   if (contexts?.length && model) {
     const agenticSearchTool = createAgenticRetrievalTool({
@@ -307,7 +319,7 @@ export const convertExuluToolsToAiSdkTools = async (
             if (typeof result?.content === 'string') {
               return {
                 ...result,
-                content: truncateToolOutput(result.content, agent?.maxContextLength, 'readFile', 0.05),
+                content: truncateToolOutput(result.content, budget.contextWindow, 'readFile', 0.05, toolOutputCharLimit),
               };
             }
             return result;
@@ -326,10 +338,10 @@ export const convertExuluToolsToAiSdkTools = async (
             return {
               ...result,
               ...(typeof result?.stdout === 'string' && {
-                stdout: truncateToolOutput(result.stdout, agent?.maxContextLength, 'bash', 0.10),
+                stdout: truncateToolOutput(result.stdout, budget.contextWindow, 'bash', 0.10, toolOutputCharLimit),
               }),
               ...(typeof result?.stderr === 'string' && {
-                stderr: truncateToolOutput(result.stderr, agent?.maxContextLength, 'bash stderr', 0.40),
+                stderr: truncateToolOutput(result.stderr, budget.contextWindow, 'bash stderr', 0.40, toolOutputCharLimit),
               }),
             };
           },
@@ -505,6 +517,14 @@ export const convertExuluToolsToAiSdkTools = async (
               role: user?.role?.id,
             });
 
+            const guardCtx = {
+              toolName: cur.name,
+              contextWindow,
+              sessionID,
+              user,
+              exuluConfig,
+            };
+
             // Check if response is an async generator
             if (response && typeof response === "object" && Symbol.asyncIterator in response) {
               let lastValue;
@@ -513,11 +533,17 @@ export const convertExuluToolsToAiSdkTools = async (
                 yield value;
                 lastValue = value;
               }
-              return lastValue;
+              // Cap + offload the FINAL value — that is what becomes the
+              // persisted tool result and what every later turn re-sends.
+              const guarded = await guardToolOutput(lastValue, guardCtx);
+              if (guarded !== lastValue) {
+                yield guarded;
+              }
+              return guarded;
             } else {
-              // Regular response (not a generator)
-              yield response;
-              return response;
+              const guarded = await guardToolOutput(response, guardCtx);
+              yield guarded;
+              return guarded;
             }
           },
         },
