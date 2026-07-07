@@ -447,6 +447,8 @@ export const registerOpenAIGatewayRoutes = async (
           undefined,
           languageModel,
           agent,
+          undefined,
+          undefined,
         );
 
         // Client-provided tools (e.g. from Continue.dev) take priority — they are

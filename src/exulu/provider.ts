@@ -549,7 +549,8 @@ export class ExuluProvider {
           sessionItems,
           model,
           agent,
-          memoryItems
+          memoryItems,
+          undefined
         ),
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
@@ -637,7 +638,8 @@ export class ExuluProvider {
           sessionItems,
           model,
           agent,
-          memoryItems
+          memoryItems,
+          undefined
         ),
         prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS),
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
@@ -1112,7 +1114,8 @@ ${skillsList}
       sessionItems,
       model,
       agent,
-      memoryItems
+      memoryItems,
+      undefined
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
