@@ -8,9 +8,13 @@ export const truncateToolOutput = (
   maxContextLength: number | undefined,
   toolName: string,
   tailFraction = 0.1,
+  charLimitOverride?: number,
 ): string => {
   const effectiveCtx = (maxContextLength != null && maxContextLength > 0) ? maxContextLength : 128_000;
-  const charLimit = Math.floor(effectiveCtx * 0.25 * 4);
+  const charLimit =
+    charLimitOverride != null && charLimitOverride > 0
+      ? charLimitOverride
+      : Math.floor(effectiveCtx * 0.25 * 4);
   const clampedTail = Math.min(1, Math.max(0, tailFraction));
   if (output.length <= charLimit) return output;
   const headChars = Math.floor(charLimit * (1 - clampedTail));
