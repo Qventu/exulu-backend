@@ -37,7 +37,7 @@ describe("createAgenticRetrievalTool", () => {
     const names = tool.config.map((c) => c.name).sort();
     expect(names).toEqual([
       "instructions", "knowledge_bases", "logging", "managed_context", "memory",
-      "max_steps", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
+      "max_steps", "project_search", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
       .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
@@ -136,5 +136,26 @@ describe("parsePreselectedItems", () => {
     const m = parsePreselectedItems(["a/1", "a/2", "b", "b/3"]);
     expect(m.get("a")).toEqual(["1", "2"]);
     expect(m.get("b")).toBeNull();
+  });
+});
+
+describe("projectScope factory surface", () => {
+  it("declares the project_search config option with default true", () => {
+    const tool = createAgenticRetrievalTool({ contexts: [], user: undefined, role: undefined, model: undefined });
+    const entry = tool!.config.find((c: { name: string }) => c.name === "project_search");
+    expect(entry).toBeDefined();
+    expect(entry!.type).toBe("boolean");
+    expect(entry!.default).toBe(true);
+  });
+
+  it("mentions the attached project in the tool description", () => {
+    const tool = createAgenticRetrievalTool({
+      contexts: [],
+      user: undefined,
+      role: undefined,
+      model: undefined,
+      projectScope: { id: "p1", name: "Modernization", items: ["docs/i1"] },
+    });
+    expect(tool!.description).toContain('project "Modernization"');
   });
 });

@@ -8,6 +8,7 @@ import { resolveReranker } from "@SRC/exulu/resolve-reranker";
 import { resolveModel } from "@SRC/exulu/resolve-model";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { parsePipelineConfig, effectiveKbSettings } from "./config";
+import { resolveProjectScope, type ProjectScope } from "./project-scope";
 import { runRoutingPhase } from "./routing";
 import { runMemoryPhase } from "./memory";
 import { resolveIdentifierPins } from "./prefilter";
@@ -69,6 +70,7 @@ export function createAgenticRetrievalTool(opts: {
   instructions?: string;
   preselected?: string[];
   memoryItems?: VectorSearchChunkResult[];
+  projectScope?: ProjectScope;
 }): ExuluTool | undefined {
   const {
     contexts,
@@ -79,6 +81,7 @@ export function createAgenticRetrievalTool(opts: {
     instructions: adminInstructions,
     preselected,
     memoryItems,
+    projectScope,
   } = opts;
 
   const license = checkLicense();
@@ -90,7 +93,9 @@ export function createAgenticRetrievalTool(opts: {
   return ExuluTool.internal({
     id: "agentic_context_search",
     name: "Context Search",
-    description: `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).`,
+    description:
+      `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).` +
+      (projectScope ? ` Also searches the knowledge items attached to the project "${projectScope.name}".` : ""),
     category: "contexts",
     needsApproval: false,
     type: "context",
@@ -136,6 +141,13 @@ export function createAgenticRetrievalTool(opts: {
         description: "Maximum reasoning/tool steps the CALLING agent may take on a message while this tool is enabled (bounds retry loops and token cost). 0 = platform default (5, or 10 with skills).",
         type: "number",
         default: 0,
+      },
+      {
+        name: "project_search",
+        description:
+          "Automatically include items attached to the chat's project as an additional knowledge source (boosts them in shared sources, adds scoped search for others).",
+        type: "boolean",
+        default: true,
       },
       {
         name: "knowledge_bases",
@@ -275,6 +287,33 @@ export function createAgenticRetrievalTool(opts: {
       // ── Preselected items map ─────────────────────────────────────────────
       const preselectedItems = parsePreselectedItems(preselected ?? []);
 
+      // ── Project scope: additional source, never narrows configured sources ──
+      const availableContextsById = new Map(contexts.map((c) => [c.id, c]));
+      const resolvedProject = cfg.projectSearch
+        ? resolveProjectScope({
+            scope: projectScope,
+            enabledContextIds: new Set(enabledContexts.map((c) => c.id)),
+            availableContextIds: new Set(availableContextsById.keys()),
+          })
+        : undefined;
+      if (resolvedProject) {
+        // Synthesized profile defaults (e.g. transcriptions → conversations kind);
+        // a stored knowledge_bases profile always wins.
+        if (projectScope?.kbProfileDefaults) {
+          for (const [ctxId, profile] of Object.entries(projectScope.kbProfileDefaults)) {
+            if (!cfg.knowledgeBases[ctxId]) cfg.knowledgeBases[ctxId] = profile;
+          }
+        }
+        // Copy-on-write: enabledContexts may alias the factory's contexts array
+        // (the restore-all branch above), so never push into it.
+        enabledContexts = [
+          ...enabledContexts,
+          ...resolvedProject.addedContextIds
+            .map((id) => availableContextsById.get(id))
+            .filter((c): c is NonNullable<typeof c> => Boolean(c)),
+        ];
+      }
+
       // ── Derived maps ──────────────────────────────────────────────────────
       const contextsById = new Map(enabledContexts.map((c) => [c.id, c]));
       const kbKindById = new Map(
@@ -288,7 +327,13 @@ export function createAgenticRetrievalTool(opts: {
       );
 
       // ── Phase 1: memory + routing in parallel ─────────────────────────────
-      const extraInstructions = [cfg.instructions, adminInstructions]
+      const extraInstructions = [
+        cfg.instructions,
+        adminInstructions,
+        projectScope?.customInstructions
+          ? `Instructions for the attached project "${projectScope.name}":\n${projectScope.customInstructions}`
+          : "",
+      ]
         .filter(Boolean)
         .join("\n");
 
@@ -343,6 +388,29 @@ export function createAgenticRetrievalTool(opts: {
         return;
       }
 
+      // ── Project sources are always-main (attaching a project is an explicit signal) ──
+      let effectiveMainContexts = mainContexts;
+      if (resolvedProject) {
+        const mainSet = new Set(mainContexts);
+        const appended = resolvedProject.allProjectContextIds.filter(
+          (id) => !mainSet.has(id) && contextsById.has(id),
+        );
+        if (appended.length > 0) {
+          effectiveMainContexts = [...mainContexts, ...appended];
+          result.steps.push({
+            stepNumber: 1,
+            text: `Including sources from project "${projectScope!.name}": ${appended.join(", ")}`,
+            toolCalls: [],
+            chunks: [],
+            tokens: 0,
+          });
+          result.reasoning.push({
+            text: `Including project sources: ${appended.join(", ")}`,
+            tools: [],
+          });
+        }
+      }
+
       const {
         updatedQuestion,
         updatedKeywords,
@@ -375,7 +443,7 @@ export function createAgenticRetrievalTool(opts: {
       // ── Phase 2: main + speculative fallback searchContexts in parallel ───
       const [mainSearch, speculativeFallbackSearch] = await Promise.all([
         searchContexts({
-          contextIds: mainContexts,
+          contextIds: effectiveMainContexts,
           contextsById,
           kbProfiles: cfg.knowledgeBases,
           question: updatedQuestion,
@@ -388,6 +456,7 @@ export function createAgenticRetrievalTool(opts: {
           identifierPinsByContext,
           memoryPinnedItemIds,
           userPinnedItemIdsByContext,
+          scopedItemsByContext: resolvedProject?.scopedItemsByContext,
           rewrites: cfg.vocabulary.rewrites,
           styleHint: cfg.vocabulary.styleHint,
           maxQueries: cfg.tuning.maxQueriesPerContext,
@@ -408,6 +477,7 @@ export function createAgenticRetrievalTool(opts: {
               identifierPinsByContext,
               memoryPinnedItemIds,
               userPinnedItemIdsByContext,
+              scopedItemsByContext: resolvedProject?.scopedItemsByContext,
               rewrites: cfg.vocabulary.rewrites,
               styleHint: cfg.vocabulary.styleHint,
               maxQueries: cfg.tuning.maxQueriesPerContext,
@@ -417,7 +487,7 @@ export function createAgenticRetrievalTool(opts: {
       ]);
 
       // ── Build rerank state ────────────────────────────────────────────────
-      // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins
+      // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins ∪ project pins
       const pinnedItemIds = new Set<string>([
         ...memoryPinnedItemIds,
         ...(function* () {
@@ -425,6 +495,9 @@ export function createAgenticRetrievalTool(opts: {
         })(),
         ...(function* () {
           for (const s of userPinnedItemIdsByContext.values()) yield* s;
+        })(),
+        ...(function* () {
+          if (resolvedProject) for (const s of resolvedProject.pinsByContext.values()) yield* s;
         })(),
       ]);
       // userPinnedItemIds = user pins only
