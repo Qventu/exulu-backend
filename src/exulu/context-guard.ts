@@ -3,6 +3,8 @@ import { deriveContextBudget, estimateTokens } from "./context-budget";
 export type PrepareStepFn = (opts: {
   stepNumber: number;
   messages?: unknown[];
+  /** Prior steps' results — the AI SDK provides toolCalls per step. */
+  steps?: Array<{ toolCalls?: Array<{ toolName?: string }> }>;
 }) => Promise<Record<string, unknown> | undefined> | Record<string, unknown> | undefined;
 
 const KEEP_RECENT_TOOL_MESSAGES = 2;

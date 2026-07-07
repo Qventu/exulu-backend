@@ -1,4 +1,5 @@
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config";
+import type { PrepareStepFn } from "./context-guard";
 
 /**
  * Platform default step budget per agent turn. Raised from 5 after a production
@@ -118,4 +119,31 @@ export function finalAnswerGuard(maxSteps: number) {
             : {}),
         }
       : undefined;
+}
+
+/**
+ * Bound agentic-retrieval CALLS per turn (spec 2026-07-08). Counts prior
+ * steps' tool calls against the retrieval tool's REGISTERED key (the
+ * sanitized tool name — resolve it at wiring time) and, once the budget is
+ * spent, removes only that tool from activeTools. activeTools applies
+ * per-step, so the exhausted state is re-asserted on every later step;
+ * finalAnswerGuard runs later in the composition and its activeTools: []
+ * still wins the final step.
+ */
+export function retrievalBudgetGuard(
+  limit: number | undefined,
+  agenticToolKey: string | undefined,
+  allToolKeys: string[],
+): PrepareStepFn {
+  if (limit == null || limit <= 0 || !agenticToolKey || !allToolKeys.includes(agenticToolKey)) {
+    return () => undefined;
+  }
+  const remainingTools = allToolKeys.filter((k) => k !== agenticToolKey);
+  return ({ steps }) => {
+    const calls = (steps ?? [])
+      .flatMap((s) => s?.toolCalls ?? [])
+      .filter((c) => c?.toolName === agenticToolKey).length;
+    if (calls < limit) return undefined;
+    return { activeTools: remainingTools };
+  };
 }
