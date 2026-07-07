@@ -69,6 +69,8 @@ export type PipelineConfig = {
   managedContext: boolean;
   requirePreselectedContexts: boolean;
   logging: boolean;
+  /** Search items attached to the chat's project as an additional source. Default true. */
+  projectSearch: boolean;
   utilityModel: string;
   knowledgeBases: Record<string, KbProfile>;
   routing: z.infer<typeof routingSchema>;
@@ -132,6 +134,10 @@ export function parsePipelineConfig(raw?: Record<string, unknown>): PipelineConf
     managedContext: boolVal(r["managed_context"]),
     requirePreselectedContexts: boolVal(r["require_preselected_contexts"]),
     logging: boolVal(r["logging"]),
+    projectSearch:
+      r["project_search"] === undefined || r["project_search"] === ""
+        ? true
+        : boolVal(r["project_search"]),
     utilityModel: strVal(r["utility_model"], ""),
     knowledgeBases: jsonVal("knowledge_bases", knowledgeBasesSchema, r["knowledge_bases"]),
     routing: jsonVal("routing", routingSchema, r["routing"]),
