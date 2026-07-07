@@ -1,5 +1,6 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
 import { resolveMaxStepsFromToolConfigs, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
+import { contextGuard, composePrepareSteps } from "./context-guard";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
@@ -562,7 +563,7 @@ export class ExuluProvider {
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
-        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS),
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
@@ -648,7 +649,7 @@ export class ExuluProvider {
           memoryItems,
           contextWindow
         ),
-        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS),
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
       });
 
@@ -1166,7 +1167,7 @@ ${skillsList}
         );
       },
       // todo allow configuring the step budget per skill
-      prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS),
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
       stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
     });
 
