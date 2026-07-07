@@ -146,4 +146,31 @@ describe("searchContexts", () => {
     const call = (multiQuerySearch as jest.Mock).mock.calls[0][0];
     expect(call.queries).not.toContain("HYDE PASSAGE");
   });
+
+  it("project-scoped contexts hard-filter to the project's items", async () => {
+    await searchContexts({
+      ...base, contextIds: ["docs"],
+      scopedItemsByContext: new Map([["docs", ["pj1", "pj2"]]]),
+      identifierPinsByContext: new Map([["docs", new Set(["i1"])]]),
+    });
+    expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual(["pj1", "pj2"]);
+  });
+
+  it("project-scoped whole-context entry (null) searches the context unfiltered", async () => {
+    await searchContexts({
+      ...base, contextIds: ["docs"],
+      scopedItemsByContext: new Map([["docs", null]]),
+      identifierPinsByContext: new Map([["docs", new Set(["i1"])]]),
+    });
+    expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual([]);
+  });
+
+  it("session preselection wins over project scoping", async () => {
+    await searchContexts({
+      ...base, contextIds: ["docs"],
+      preselectedItems: new Map([["docs", ["s1"]]]),
+      scopedItemsByContext: new Map([["docs", ["pj1"]]]),
+    });
+    expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual(["s1"]);
+  });
 });

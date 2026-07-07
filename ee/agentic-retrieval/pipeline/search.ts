@@ -23,6 +23,7 @@ export async function searchContexts(opts: {
   role: any;
   model: any;
   preselectedItems: Map<string, string[] | null>;
+  scopedItemsByContext?: Map<string, string[] | null>;  // Project-added sources: hard item filter per context (null = whole context).
   identifierPinsByContext: Map<string, Set<string>>;   // from resolveIdentifierPins
   memoryPinnedItemIds: Set<string>;                     // from memory phase (documents kind only)
   userPinnedItemIdsByContext: Map<string, Set<string>>; // from routing phase
@@ -42,6 +43,7 @@ export async function searchContexts(opts: {
     role,
     model,
     preselectedItems,
+    scopedItemsByContext,
     identifierPinsByContext,
     memoryPinnedItemIds,
     userPinnedItemIdsByContext,
@@ -80,6 +82,11 @@ export async function searchContexts(opts: {
         if (hasPreselection) {
           // null value = whole context = no filter = []
           pinnedItemIds = preselectedItems.get(ctxId) ?? [];
+        } else if (scopedItemsByContext?.has(ctxId)) {
+          // Project-scoped source: restrict to the project's items for this
+          // context (null = whole context). Deliberately NOT unioned with
+          // identifier/memory pins — those would widen a scoped source.
+          pinnedItemIds = scopedItemsByContext.get(ctxId) ?? [];
         } else if (!skipPrefilter) {
           // Rule 2: No preselection and !skipPrefilter
 
