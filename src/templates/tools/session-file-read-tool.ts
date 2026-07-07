@@ -24,6 +24,47 @@ export const createSessionFileReadTool = ({
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
+  const readSessionFileExecute = async ({ filename, offset, limit }: { filename: string; offset?: number; limit?: number }) => {
+    const safeName = String(filename ?? "").trim();
+    if (!safeName || safeName.includes("..") || safeName.includes("/") || safeName.includes("\\")) {
+      return {
+        error: "Invalid filename — pass the bare file name exactly as listed in the session files (no paths).",
+      };
+    }
+    const uploads = exuluConfig.fileUploads!;
+    const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
+    const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
+    try {
+      const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
+      const res = await fetch(url);
+      if (!res.ok) {
+        return { error: `Could not read session file "${safeName}" (status ${res.status}). Check the exact file name.` };
+      }
+      const textBody = await res.text();
+      const lines = textBody.split("\n");
+      const start = (offset ?? 1) - 1;
+      const requested = limit ?? DEFAULT_LIMIT;
+      const sliced = lines.slice(start, start + requested);
+      let content = sliced.join("\n");
+      let linesReturned = sliced.length;
+      if (content.length > MAX_CONTENT_CHARS) {
+        content = content.slice(0, MAX_CONTENT_CHARS);
+        // Count only COMPLETE lines actually delivered so paging with
+        // offset + linesReturned never skips content.
+        linesReturned = Math.max(1, content.split("\n").length - 1);
+        content = content + "\n[slice truncated — request fewer lines]";
+      }
+      return {
+        content,
+        totalLines: lines.length,
+        offset: start + 1,
+        linesReturned,
+      };
+    } catch (err) {
+      return { error: `Failed to read session file "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
+    }
+  };
+
   return ExuluTool.internal({
     id: "read_session_file",
     name: "read_session_file",
@@ -41,45 +82,9 @@ export const createSessionFileReadTool = ({
     type: "function",
     category: "session",
     config: [],
-    execute: async ({ filename, offset, limit }: { filename: string; offset?: number; limit?: number }) => {
-      const safeName = String(filename ?? "").trim();
-      if (!safeName || safeName.includes("..") || safeName.includes("/") || safeName.includes("\\")) {
-        return {
-          error: "Invalid filename — pass the bare file name exactly as listed in the session files (no paths).",
-        };
-      }
-      const uploads = exuluConfig.fileUploads!;
-      const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
-      const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
-      try {
-        const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
-        const res = await fetch(url);
-        if (!res.ok) {
-          return { error: `Could not read session file "${safeName}" (status ${res.status}). Check the exact file name.` };
-        }
-        const textBody = await res.text();
-        const lines = textBody.split("\n");
-        const start = (offset ?? 1) - 1;
-        const requested = limit ?? DEFAULT_LIMIT;
-        const sliced = lines.slice(start, start + requested);
-        let content = sliced.join("\n");
-        let linesReturned = sliced.length;
-        if (content.length > MAX_CONTENT_CHARS) {
-          content = content.slice(0, MAX_CONTENT_CHARS);
-          // Count only COMPLETE lines actually delivered so paging with
-          // offset + linesReturned never skips content.
-          linesReturned = Math.max(1, content.split("\n").length - 1);
-          content = content + "\n[slice truncated — request fewer lines]";
-        }
-        return {
-          content,
-          totalLines: lines.length,
-          offset: start + 1,
-          linesReturned,
-        };
-      } catch (err) {
-        return { error: `Failed to read session file "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };
-      }
-    },
+    // ExuluTool's execute type is modeled on retrieval tools ({result/job/items});
+    // internal utility tools return richer shapes (memory-tool has the same
+    // mismatch). The AI SDK passes the object through verbatim, so cast.
+    execute: readSessionFileExecute as never,
   });
 };
