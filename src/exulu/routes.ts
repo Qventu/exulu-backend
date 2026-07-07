@@ -53,6 +53,9 @@ import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
+import { resolveContextWindow } from "./resolve-context-window.ts";
+import { ContextCompactionRequiredError, mapStreamErrorMessage } from "./context-budget.ts";
+import { markStreamActive, clearStreamActive } from "./active-streams.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -770,6 +773,10 @@ Mood: friendly and intelligent.
       const providerapikey = resolved.apiKey;
       const resolvedLanguageModel = resolved.languageModel;
       const resolvedModelId = resolved.model.id;
+      const contextWindow = await resolveContextWindow({
+        modelId: resolved.model.id,
+        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+      });
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
       if (!!headers.stream) {
@@ -804,24 +811,38 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        const result = await provider.generateStream({
-          contexts: contexts,
-          agent: agent,
-          user,
-          instructions: instructions,
-          session: headers.session as string,
-          message,
-          previousMessages,
-          currentTools: enabledTools,
-          currentSkills: enabledSkills,
-          approvedTools: approvedTools,
-          allExuluTools: tools,
-          languageModel: resolvedLanguageModel,
-          providerapikey,
-          toolConfigs: agent.tools,
-          exuluConfig: config,
-          req: req,
-        });
+        if (headers.session) markStreamActive(headers.session as string);
+        let result: Awaited<ReturnType<typeof provider.generateStream>>;
+        try {
+          result = await provider.generateStream({
+            contexts: contexts,
+            agent: agent,
+            user,
+            instructions: instructions,
+            session: headers.session as string,
+            message,
+            previousMessages,
+            currentTools: enabledTools,
+            currentSkills: enabledSkills,
+            approvedTools: approvedTools,
+            allExuluTools: tools,
+            languageModel: resolvedLanguageModel,
+            providerapikey,
+            toolConfigs: agent.tools,
+            exuluConfig: config,
+            req: req,
+            contextWindow,
+          });
+        } catch (err) {
+          if (headers.session) clearStreamActive(headers.session as string);
+          if (err instanceof ContextCompactionRequiredError) {
+            // Body is the JSON string; the AI SDK transport surfaces it as
+            // err.message on the client.
+            res.status(413).send(err.message);
+            return;
+          }
+          throw err;
+        }
 
         // consume the stream to ensure it runs to completion & triggers onFinish
         // even when the client response is aborted:
@@ -845,22 +866,20 @@ Mood: friendly and intelligent.
           sendSources: true,
           onError: (error) => {
             console.error("[EXULU] chat response error.", error);
-            if (error == null) {
-              return "unknown error";
-            }
-            if (typeof error === "string") {
-              return error;
-            }
-            if (error instanceof Error) {
-              return error.message;
-            }
-            return JSON.stringify(error);
+            if (headers.session) clearStreamActive(headers.session as string);
+            let message: string;
+            if (error == null) message = "unknown error";
+            else if (typeof error === "string") message = error;
+            else if (error instanceof Error) message = error.message;
+            else message = JSON.stringify(error);
+            return mapStreamErrorMessage(message);
           },
           generateMessageId: createIdGenerator({
             prefix: "msg_",
             size: 16,
           }),
           onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
+            if (headers.session) clearStreamActive(headers.session as string);
             console.log(
               "[EXULU] onFinish",
               messages
@@ -937,28 +956,38 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        const response = await provider.generateSync({
-          contexts: contexts,
-          agent: agent,
-          user,
-          req: req,
-          instructions: instructions,
-          session: headers.session as string,
-          inputMessages: [req.body.message],
-          currentTools: enabledTools,
-          currentSkills: enabledSkills,
-          allExuluTools: tools,
-          languageModel: resolvedLanguageModel,
-          providerapikey,
-          exuluConfig: config,
-          toolConfigs: agent.tools,
-          statistics: {
-            label: agent.name,
-            trigger: "agent",
-          },
-          onTokenUsage: async ({ inputTokens, outputTokens }) => {
-          },
-        });
+        let response: Awaited<ReturnType<typeof provider.generateSync>>;
+        try {
+          response = await provider.generateSync({
+            contexts: contexts,
+            agent: agent,
+            user,
+            req: req,
+            instructions: instructions,
+            session: headers.session as string,
+            inputMessages: [req.body.message],
+            currentTools: enabledTools,
+            currentSkills: enabledSkills,
+            allExuluTools: tools,
+            languageModel: resolvedLanguageModel,
+            providerapikey,
+            exuluConfig: config,
+            toolConfigs: agent.tools,
+            contextWindow,
+            statistics: {
+              label: agent.name,
+              trigger: "agent",
+            },
+            onTokenUsage: async ({ inputTokens, outputTokens }) => {
+            },
+          });
+        } catch (err) {
+          if (err instanceof ContextCompactionRequiredError) {
+            res.status(413).send(err.message);
+            return;
+          }
+          throw err;
+        }
         res.status(200).json(response);
         return;
       }
