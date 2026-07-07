@@ -143,7 +143,15 @@ describe("charLimitOverride", () => {
   });
 
   it("ignores a non-positive override", () => {
-    const output = "a".repeat(10);
-    expect(truncateToolOutput(output, 128_000, "bash", 0.1, 0)).toBe(output);
+    // 200K chars exceeds the 25% rule limit for a 128K window (128,000 chars),
+    // so the fallback path actually truncates — proving the zero override was
+    // ignored rather than short-circuiting.
+    const output = "a".repeat(200_000);
+    const withZeroOverride = truncateToolOutput(output, 128_000, "bash", 0.1, 0);
+    const withoutOverride = truncateToolOutput(output, 128_000, "bash", 0.1);
+    expect(withZeroOverride).toBe(withoutOverride);
+    expect(withZeroOverride).toContain("OUTPUT TRUNCATED");
+    // short outputs still pass through untouched
+    expect(truncateToolOutput("short", 128_000, "bash", 0.1, 0)).toBe("short");
   });
 });

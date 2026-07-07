@@ -2,6 +2,7 @@
  * Truncates a sandbox tool output string that exceeds 25% of the agent's context window.
  * Uses a head+tail split so the agent sees both the beginning and end of the output.
  * The omitted middle is replaced with a marker listing granular recovery commands.
+ * Pass charLimitOverride (a positive character count) to use a fixed budget instead of the 25% rule.
  */
 export const truncateToolOutput = (
   output: string,
