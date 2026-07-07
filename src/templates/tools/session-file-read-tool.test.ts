@@ -65,4 +65,20 @@ describe("createSessionFileReadTool", () => {
     const result = await (tool.tool!.execute as (i: unknown) => Promise<{ error?: string }>)({ filename: "gone.txt" });
     expect(result.error).toContain("404");
   });
+
+  it("caps the content slice at MAX_CONTENT_CHARS and reports only delivered lines", async () => {
+    const longBody = Array.from({ length: 500 }, (_, i) => `line ${i + 1} ${"x".repeat(60)}`).join("\n");
+    (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, text: async () => longBody } as never);
+    const tool = createSessionFileReadTool({ sessionID: "s1", user, exuluConfig })!;
+    const result = await (tool.tool!.execute as (i: unknown) => Promise<{ content: string; linesReturned: number; totalLines: number }>)(
+      { filename: "big.txt", offset: 1, limit: 500 },
+    );
+    expect(result.content.length).toBeLessThanOrEqual(16_000 + "\n[slice truncated — request fewer lines]".length);
+    expect(result.content).toContain("[slice truncated");
+    expect(result.linesReturned).toBeLessThan(500);
+    expect(result.linesReturned).toBeGreaterThan(0);
+    // Paging invariant: the reported lines are fully present in the content.
+    expect(result.content).toContain(`line ${result.linesReturned} `);
+    expect(result.totalLines).toBe(500);
+  });
 });
