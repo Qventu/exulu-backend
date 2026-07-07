@@ -1,6 +1,7 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
-import { resolveRetrievalCallBudget, finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps";
 import { contextGuard, composePrepareSteps } from "./context-guard";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
@@ -536,36 +537,48 @@ export class ExuluProvider {
         "with prompt: " + prompt?.slice(0, 100) + "...",
       );
 
+      const toolsObject = await convertExuluToolsToAiSdkTools(
+        currentTools,
+        currentSkills,
+        approvedTools,
+        allExuluTools,
+        toolConfigs,
+        providerapikey,
+        contexts,
+        user,
+        exuluConfig,
+        session,
+        req,
+        project,
+        sessionItems,
+        model,
+        agent,
+        memoryItems,
+        contextWindow
+      );
+      // The retrieval budget matches tool calls by their REGISTERED key
+      // (sanitized name of the post-conversion entry) — resolve after convert.
+      const agenticEntry = currentTools?.find((t) => t.id === "agentic_context_search");
+      const agenticToolKey = agenticEntry ? sanitizeToolName(agenticEntry.name) : undefined;
+      const retrievalGuard = retrievalBudgetGuard(
+        resolveRetrievalCallBudget(toolConfigs),
+        agenticToolKey,
+        Object.keys(toolsObject),
+      );
+      const turnBudget = resolveTurnStepBudget(maxStepCount, agent);
+
       const output = await generateText({
         temperature: 0, // TODO Make this configurable
         model: model,
         system,
         prompt: prompt,
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems,
-          contextWindow
-        ),
+        tools: toolsObject,
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-        stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")]
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
       const {
@@ -623,6 +636,36 @@ export class ExuluProvider {
         "[EXULU] Generating text for agent: " + this.name,
         "with messages: " + messages.length,
       );
+      const toolsObject = await convertExuluToolsToAiSdkTools(
+        currentTools,
+        currentSkills,
+        approvedTools,
+        allExuluTools,
+        toolConfigs,
+        providerapikey,
+        contexts,
+        user,
+        exuluConfig,
+        session,
+        req,
+        project,
+        sessionItems,
+        model,
+        agent,
+        memoryItems,
+        contextWindow
+      );
+      // The retrieval budget matches tool calls by their REGISTERED key
+      // (sanitized name of the post-conversion entry) — resolve after convert.
+      const agenticEntry = currentTools?.find((t) => t.id === "agentic_context_search");
+      const agenticToolKey = agenticEntry ? sanitizeToolName(agenticEntry.name) : undefined;
+      const retrievalGuard = retrievalBudgetGuard(
+        resolveRetrievalCallBudget(toolConfigs),
+        agenticToolKey,
+        Object.keys(toolsObject),
+      );
+      const turnBudget = resolveTurnStepBudget(maxStepCount, agent);
+
       const { text, totalUsage } = await generateText({
         temperature: 0, // TODO Make this configurable
         model: model, // Should be a LanguageModelV1
@@ -631,27 +674,9 @@ export class ExuluProvider {
           ignoreIncompleteToolCalls: true,
         }),
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems,
-          contextWindow
-        ),
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-        stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
+        tools: toolsObject,
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
       });
 
       if (statistics) {
@@ -1166,6 +1191,15 @@ ${skillsList}
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
+    const agenticEntry = currentTools?.find((t) => t.id === "agentic_context_search");
+    const agenticToolKey = agenticEntry ? sanitizeToolName(agenticEntry.name) : undefined;
+    const retrievalGuard = retrievalBudgetGuard(
+      resolveRetrievalCallBudget(toolConfigs),
+      agenticToolKey,
+      Object.keys(tools),
+    );
+    const turnBudget = resolveTurnStepBudget(maxStepCount, agent);
+
     const result = streamText({
       temperature: 0, // TODO Make this configurable
       model: model, // Should be a LanguageModelV1
@@ -1189,8 +1223,8 @@ ${skillsList}
         );
       },
       // todo allow configuring the step budget per skill
-      prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
-      stopWhen: [stepCountIs(maxStepCount ?? resolveRetrievalCallBudget(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+      stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
     });
 
     return {
