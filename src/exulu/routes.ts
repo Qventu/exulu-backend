@@ -55,7 +55,8 @@ import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
 import { resolveContextWindow } from "./resolve-context-window.ts";
 import { ContextCompactionRequiredError, mapStreamErrorMessage } from "./context-budget.ts";
-import { markStreamActive, clearStreamActive } from "./active-streams.ts";
+import { markStreamActive, clearStreamActive, isStreamActive } from "./active-streams.ts";
+import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -994,6 +995,90 @@ Mood: friendly and intelligent.
     });
   };
 
+  // Compaction endpoint (spec §4) — sibling of the run route. Summarizes the
+  // session's older history into a checkpoint message and returns it.
+  const registerAgentCompactRoute = (slug: string) => {
+    app.post(slug + "/:instance", async (req: Request, res: Response) => {
+      const instance = req.params.instance;
+      if (!instance) {
+        res.status(400).json({ message: "Missing instance in request." });
+        return;
+      }
+      const sessionID = (req.headers["session"] as string) || null;
+      if (!sessionID) {
+        res.status(400).json({ message: "Missing session header." });
+        return;
+      }
+      const agent = await exuluApp.get().agent(instance);
+      if (!agent) {
+        res.status(404).json({ message: "Agent with id " + instance + " not found." });
+        return;
+      }
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res.status(authenticationResult.code || 401).json({ detail: `${authenticationResult.message}` });
+        return;
+      }
+      const user = authenticationResult.user;
+      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+      if (!hasAccessToAgent) {
+        res.status(401).json({ message: "You don't have access to this agent." });
+        return;
+      }
+      const { db } = await postgresClient();
+      const sessionRow = await db.from("agent_sessions").where({ id: sessionID }).first();
+      const hasAccessToSession = await checkRecordAccess(sessionRow, "write", user);
+      if (!hasAccessToSession) {
+        res.status(401).json({ message: "You don't have access to this session." });
+        return;
+      }
+      if (isStreamActive(sessionID)) {
+        res.status(409).json({ message: "A response is still streaming for this session — try again when it finishes." });
+        return;
+      }
+      const overrideModelId = req.headers["x-exulu-model-override"] as string | undefined;
+      const modelId = overrideModelId ?? agent.model;
+      if (!modelId) {
+        res.status(400).json({ message: `Agent ${agent.name} (${agent.id}) has no model configured.` });
+        return;
+      }
+      let resolved: Awaited<ReturnType<typeof resolveModel>>;
+      try {
+        resolved = await resolveModel({ modelId, user, providers, agent });
+      } catch (err) {
+        if (err instanceof ResolveModelError) {
+          const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+          res.status(status).json({ message: err.message, code: err.code });
+          return;
+        }
+        throw err;
+      }
+      const contextWindow = await resolveContextWindow({
+        modelId: resolved.model.id,
+        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+      });
+      const steer = typeof req.body?.steer === "string" ? req.body.steer : undefined;
+      try {
+        const result = await compactSession({
+          sessionID,
+          user,
+          languageModel: resolved.languageModel,
+          contextWindow,
+          steer,
+          modelId: resolved.model.id,
+        });
+        res.json(result);
+      } catch (err) {
+        if (err instanceof CompactionInsufficientError) {
+          res.status(422).send(err.message);
+          return;
+        }
+        console.error("[EXULU] compactSession failed.", err);
+        res.status(500).json({ message: err instanceof Error ? err.message : "Compaction failed." });
+      }
+    });
+  };
+
   // Spec A: one handler per code-defined ExuluProvider, mounted at its slug.
   providers.forEach((provider) => {
     const slug = provider.slug as string;
@@ -1006,6 +1091,16 @@ Mood: friendly and intelligent.
   // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
   if (isLiteLLMEnabled() && providers.length > 0) {
     registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  }
+
+  // Compact routes: one per code-defined provider, plus LiteLLM fixed path.
+  providers.forEach((provider) => {
+    const slug = provider.slug as string;
+    if (!slug) return;
+    registerAgentCompactRoute(slug.replace(/\/run$/, "/compact"));
+  });
+  if (isLiteLLMEnabled() && providers.length > 0) {
+    registerAgentCompactRoute("/agents/litellm/compact");
   }
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.
