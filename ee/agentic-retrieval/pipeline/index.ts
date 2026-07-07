@@ -95,6 +95,8 @@ export function createAgenticRetrievalTool(opts: {
     name: "Context Search",
     description:
       `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).` +
+      // Note: the description suffix intentionally remains even when the per-agent project_search
+      // config is off — the config is only known at execute time, not at factory time.
       (projectScope ? ` Also searches the knowledge items attached to the project "${projectScope.name}".` : ""),
     category: "contexts",
     needsApproval: false,
@@ -327,10 +329,12 @@ export function createAgenticRetrievalTool(opts: {
       );
 
       // ── Phase 1: memory + routing in parallel ─────────────────────────────
+      // Gate on resolvedProject: when project_search is off, resolvedProject is undefined
+      // and project custom instructions must NOT leak into routing/HyDE.
       const extraInstructions = [
         cfg.instructions,
         adminInstructions,
-        projectScope?.customInstructions
+        resolvedProject && projectScope?.customInstructions
           ? `Instructions for the attached project "${projectScope.name}":\n${projectScope.customInstructions}`
           : "",
       ]
@@ -411,6 +415,13 @@ export function createAgenticRetrievalTool(opts: {
         }
       }
 
+      // A project context appended to effectiveMainContexts can also appear in fallbackContexts
+      // (routing classified it as enabled before the project append). Deduplicate to avoid
+      // double-searching the same context in the speculative fallback pass.
+      const fallbackContextsToSearch = fallbackContexts.filter(
+        (id) => !effectiveMainContexts.includes(id),
+      );
+
       const {
         updatedQuestion,
         updatedKeywords,
@@ -462,9 +473,9 @@ export function createAgenticRetrievalTool(opts: {
           maxQueries: cfg.tuning.maxQueriesPerContext,
           skipPrefilter: false,
         }),
-        fallbackContexts.length > 0 && !hasExplicitDocAndPage
+        fallbackContextsToSearch.length > 0 && !hasExplicitDocAndPage
           ? searchContexts({
-              contextIds: fallbackContexts,
+              contextIds: fallbackContextsToSearch,
               contextsById,
               kbProfiles: cfg.knowledgeBases,
               question: updatedQuestion,
@@ -587,19 +598,19 @@ export function createAgenticRetrievalTool(opts: {
       // ── Fallback gate ─────────────────────────────────────────────────────
       if (
         !literalLookupSatisfied &&
-        fallbackContexts.length > 0 &&
+        fallbackContextsToSearch.length > 0 &&
         (reranker
           ? mainRerank.rerank_score_max_genuine < cfg.tuning.fallbackThreshold
           : mainRerank.limited_results.length < cfg.tuning.topK)
       ) {
         result.steps.push({
           stepNumber: 1,
-          text: `Using fallback search in ${fallbackContexts.join(", ")}`,
+          text: `Using fallback search in ${fallbackContextsToSearch.join(", ")}`,
           toolCalls: [],
           chunks: [],
           tokens: 0,
         });
-        result.reasoning.push({ text: `Fallback search in ${fallbackContexts.join(", ")}`, tools: [] });
+        result.reasoning.push({ text: `Fallback search in ${fallbackContextsToSearch.join(", ")}`, tools: [] });
         yield { result: serializeOutput(result) };
 
         const fallbackRerank = await rerankResults({
