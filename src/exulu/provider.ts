@@ -41,6 +41,7 @@ import { setSessionCurrentTask } from "./task-description.ts";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
+import { guardExtractedFileText } from "./tool-output-offload";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -710,7 +711,15 @@ export class ExuluProvider {
    * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
    * - Image files -> image parts (which ARE supported by Responses API)
    */
-  private async processFilePartsInMessages(messages: UIMessage[]): Promise<UIMessage[]> {
+  private async processFilePartsInMessages(
+    messages: UIMessage[],
+    offloadCtx: {
+      contextWindow?: number;
+      sessionID?: string;
+      user?: User;
+      exuluConfig?: ExuluConfig;
+    },
+  ): Promise<UIMessage[]> {
     const processedMessages = await Promise.all(
       messages.map(async (message) => {
         // Only process user messages with content array
@@ -769,10 +778,14 @@ export class ExuluProvider {
                 newlineDelimiter: "\n",
               });
 
+              // Cap + offload (spec §2): a 400-page manual becomes a session
+              // file + preview instead of megabytes of inline prompt.
+              const guardedText = await guardExtractedFileText(filename, String(extractedText), offloadCtx);
+
               // Return as text part with extracted content wrapped in XML-like tags
               return {
                 type: "text",
-                text: `<file file name = "${filename}" >\n${extractedText} \n </file>`,
+                text: `<file file name = "${filename}" >\n${guardedText} \n </file>`,
               };
             } catch (error) {
               console.error(`[EXULU] Error processing file ${filename}:`, error);
@@ -788,7 +801,6 @@ export class ExuluProvider {
           ...message,
           parts: processedParts,
         };
-        console.log("[EXULU] Result: " + JSON.stringify(result, null, 2));
         return result;
       }),
     );
@@ -951,7 +963,12 @@ export class ExuluProvider {
     // Process file parts to convert them to OpenAI Responses API compatible format
     // which mostly means converting file parts to text parts unless they are images.
 
-    messages = await this.processFilePartsInMessages(messages);
+    messages = await this.processFilePartsInMessages(messages, {
+      contextWindow,
+      sessionID: session,
+      user,
+      exuluConfig,
+    });
 
     // Keep the chronological view for occupancy accounting; the model view
     // collapses everything a compaction checkpoint covers.
