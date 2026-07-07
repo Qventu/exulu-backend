@@ -1,12 +1,19 @@
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config";
 
 /**
+ * Platform default step budget per agent turn. Raised from 5 after a production
+ * report: multi-tool tasks (e.g. docx → pandoc → python analysis) exhausted 5
+ * steps on tool calls alone, leaving no room for the final text answer.
+ */
+export const DEFAULT_MAX_STEPS = 10;
+
+/**
  * Read the `max_steps` option from the agentic retrieval tool's saved config.
  *
  * The agentic pipeline can trigger several reasoning/tool rounds in the CALLING
  * agent (retry-with-rephrasing loops). `max_steps` lets an admin bound that step
  * budget per agent from the retrieval tool's configuration UI instead of the
- * hardcoded platform default (5, or 10 when skills are enabled).
+ * hardcoded platform default (DEFAULT_MAX_STEPS).
  *
  * Returns a positive integer, or undefined when unset/0/invalid — callers fall
  * back to the platform default. An explicit `maxStepCount` argument to
@@ -29,11 +36,11 @@ function flattenPart(part: unknown): string {
   const p = part as { type?: string; text?: string; toolName?: string; input?: unknown; output?: { value?: unknown } };
   if (p?.type === "text") return p.text ?? "";
   if (p?.type === "tool-call") {
-    return `[searched ${p.toolName}: ${JSON.stringify(p.input ?? {}).slice(0, 300)}]`;
+    return `[called tool ${p.toolName}: ${JSON.stringify(p.input ?? {}).slice(0, 300)}]`;
   }
   if (p?.type === "tool-result") {
     const out = p.output?.value ?? p.output;
-    return `[results from ${p.toolName}]: ${typeof out === "string" ? out : JSON.stringify(out ?? "")}`;
+    return `[result of ${p.toolName}]: ${typeof out === "string" ? out : JSON.stringify(out ?? "")}`;
   }
   return "";
 }
@@ -63,7 +70,7 @@ export function flattenToolHistory(messages: unknown[]): unknown[] {
 }
 
 const FINAL_ANSWER_INSTRUCTION =
-  "Answer the user's original question now, in plain text, using only the material already retrieved above. Do not attempt any further tool calls.";
+  "This is your last step for this turn. Answer the user's original question now, in plain text, using only the information gathered above. If you could not finish the task, tell the user you reached the maximum number of tool steps, summarize what you found and did so far, and say what remains — they can ask you to continue. Do not attempt any further tool calls.";
 
 /**
  * prepareStep guard: on the LAST budgeted step, force a text answer. Three layers,
