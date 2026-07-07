@@ -26,6 +26,10 @@ import type { ExuluConfig } from "./app/index.ts";
 import type { ExuluProvider } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps.ts";
+import { resolveContextWindow } from "./resolve-context-window.ts";
+import { deriveContextBudget, estimateTokens } from "./context-budget.ts";
+import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
+import { contextGuard, composePrepareSteps } from "./context-guard.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -421,6 +425,11 @@ export const registerOpenAIGatewayRoutes = async (
         const providerapikey = resolved.apiKey;
         const languageModel = resolved.languageModel;
 
+        const contextWindow = await resolveContextWindow({
+          modelId: resolved.model.id,
+          exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        });
+
         const disabledTools: string[] = req.body.disabledTools ?? [];
         const enabledTools = await getEnabledTools(
           agent,
@@ -448,7 +457,7 @@ export const registerOpenAIGatewayRoutes = async (
           languageModel,
           agent,
           undefined,
-          undefined,
+          contextWindow,
         );
 
         // Client-provided tools (e.g. from Continue.dev) take priority — they are
@@ -462,6 +471,21 @@ export const registerOpenAIGatewayRoutes = async (
         const openaiMessages: OpenAIMessage[] = req.body.messages ?? [];
         const { systemPrompt: requestSystemPrompt, coreMessages } =
           convertOpenAIMessagesToModelMessages(openaiMessages);
+
+        const gatewayBudget = deriveContextBudget(contextWindow);
+        const promptTokens = estimateTokens(JSON.stringify(openaiMessages));
+        if (promptTokens >= gatewayBudget.blockThreshold) {
+          res.status(400).json({
+            error: {
+              message:
+                `This request is ~${promptTokens.toLocaleString("en-US")} tokens, which exceeds the model's usable context ` +
+                `window (${gatewayBudget.usableWindow.toLocaleString("en-US")} tokens). Reduce the conversation history.`,
+              type: "invalid_request_error",
+              code: "context_length_exceeded",
+            },
+          });
+          return;
+        }
 
         const agentInstructions = agent.instructions ?? "";
         const systemParts = [
@@ -491,7 +515,7 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : finalAnswerGuard(DEFAULT_MAX_STEPS),
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(DEFAULT_MAX_STEPS)),
             stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
@@ -533,7 +557,7 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : finalAnswerGuard(DEFAULT_MAX_STEPS),
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(DEFAULT_MAX_STEPS)),
             stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
           });
 

@@ -1115,6 +1115,11 @@ ${skillsList}
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
         commands like \`node create_doc.js\`) live in the same place. These files are scoped to
         this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+
+        Note on large outputs: oversized tool outputs and large uploaded documents are automatically
+        truncated in the conversation; the FULL content is saved as a session file (named in the
+        truncation notice, e.g. tool-output-*.txt). Use the read_session_file tool with offset/limit
+        to page through it — do not ask the user to re-upload.
       `
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
