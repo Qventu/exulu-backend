@@ -833,6 +833,7 @@ Mood: friendly and intelligent.
             exuluConfig: config,
             req: req,
             contextWindow,
+            disabledTools,
           });
         } catch (err) {
           if (headers.session) clearStreamActive(headers.session as string);
@@ -985,6 +986,7 @@ Mood: friendly and intelligent.
             exuluConfig: config,
             toolConfigs: agent.tools,
             contextWindow,
+            disabledTools,
             statistics: {
               label: agent.name,
               trigger: "agent",

@@ -290,7 +290,8 @@ export class ExuluProvider {
     instructions,
     maxStepCount,
     onTokenUsage,
-    contextWindow
+    contextWindow,
+    disabledTools,
   }: {
     prompt?: string;
     user?: User;
@@ -312,6 +313,7 @@ export class ExuluProvider {
     instructions?: string;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
     contextWindow?: number;
+    disabledTools?: string[];
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -452,6 +454,30 @@ export class ExuluProvider {
       system += "\n\n" + memoryContext;
     }
 
+    // Convert BEFORE deciding citation instructions: convert injects tools
+    // (project-scoped agentic search, memory, session items) into currentTools,
+    // and the citation gate must see them (design spec §7.1).
+    const tools = await convertExuluToolsToAiSdkTools(
+      currentTools,
+      currentSkills,
+      approvedTools,
+      allExuluTools,
+      toolConfigs,
+      providerapikey,
+      contexts,
+      user,
+      exuluConfig,
+      session,
+      req,
+      project,
+      sessionItems,
+      model,
+      agent,
+      memoryItems,
+      contextWindow,
+      disabledTools,
+    );
+
     const includesContextSearchTool = currentTools?.some(
       (tool) =>
         tool.name.toLowerCase().includes("context_search") ||
@@ -473,12 +499,12 @@ export class ExuluProvider {
       system +=
         "\n\n" +
         `
-  
+
               When you use a context search tool, you will include references to the items
               retrieved from the tool call result inline in the response using this exact JSON format
               (all on one line, no line breaks):
               {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
-  
+
               IMPORTANT formatting rules:
               - Do NOT reference just chunks like "Looking at chunk_index 5 and chunk_index 0 from the search result", always use the JSON format above.
               - Use the exact format shown above, all on ONE line
@@ -486,9 +512,9 @@ export class ExuluProvider {
               - Use the context ID from the tool result
               - Include the file/item name, not the full path
               - Separate multiple citations with spaces
-  
+
               Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
-  
+
               The citations will be rendered as interactive badges in the UI.
               `;
     }
@@ -500,12 +526,12 @@ export class ExuluProvider {
               When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
               (all on one line, no line breaks):
               {url: <url>, title: <title>, snippet: <snippet>}
-  
+
               IMPORTANT formatting rules:
               - Use the exact format shown above, all on ONE line
               - Do NOT use quotes around field names or values
               - Separate multiple results with spaces
-  
+
               Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
               `;
     }
@@ -542,25 +568,7 @@ export class ExuluProvider {
         system,
         prompt: prompt,
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems,
-          contextWindow
-        ),
+        tools: tools,
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
@@ -631,25 +639,7 @@ export class ExuluProvider {
           ignoreIncompleteToolCalls: true,
         }),
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems,
-          contextWindow
-        ),
+        tools: tools,
         prepareStep: composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS)) as never,
         stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? DEFAULT_MAX_STEPS), hasToolCall("image_generation")],
       });
@@ -826,7 +816,8 @@ export class ExuluProvider {
     instructions,
     req,
     maxStepCount,
-    contextWindow
+    contextWindow,
+    disabledTools,
   }: {
     user?: User;
     session?: string;
@@ -846,6 +837,7 @@ export class ExuluProvider {
     instructions?: string;
     req?: Request;
     contextWindow?: number;
+    disabledTools?: string[];
   }): Promise<{
     stream: ReturnType<typeof streamText>;
     originalMessages: UIMessage[];
@@ -1011,61 +1003,8 @@ export class ExuluProvider {
       system += "\n\n" + memoryContext;
     } */
 
-    const includesContextSearchTool = currentTools?.some(
-      (tool) =>
-        tool.name.toLowerCase().includes("context_search") ||
-        tool.id.includes("context_search") ||
-        tool.type === "context",
-    );
-    const includesWebSearchTool = currentTools?.some(
-      (tool) =>
-        tool.name.toLowerCase().includes("web_search") ||
-        tool.id.includes("web_search") ||
-        tool.type === "web_search",
-    );
-    console.log("[EXULU] Current tools: " + currentTools?.map((tool) => tool.name).join("\n"));
-    console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
-    console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
-
-    if (includesContextSearchTool) {
-      system +=
-        "\n\n" +
-        `
-  
-              When you use a context search tool, you will include references to the items
-              retrieved from the tool call result inline in the response using this exact JSON format
-              (all on one line, no line breaks):
-              {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
-  
-              IMPORTANT formatting rules:
-              - Use the exact format shown above, all on ONE line
-              - Do NOT use quotes around field names or values
-              - Use the context ID from the tool result
-              - Include the file/item name, not the full path
-              - Separate multiple citations with spaces
-  
-              Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
-  
-              The citations will be rendered as interactive badges in the UI.
-              `;
-    }
-
-    if (includesWebSearchTool) {
-      system +=
-        "\n\n" +
-        `
-              When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
-              (all on one line, no line breaks):
-              {url: <url>, title: <title>, snippet: <snippet>}
-  
-              IMPORTANT formatting rules:
-              - Use the exact format shown above, all on ONE line
-              - Do NOT use quotes around field names or values
-              - Separate multiple results with spaces
-  
-              Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
-              `;
-    }
+    // Citation gate is evaluated AFTER convert (below), once convert has had
+    // a chance to inject project-scoped tools into currentTools (spec §7.1).
 
     if (currentSkills?.length) {
       // Render each skill as a bulleted name + description block. Listing only
@@ -1162,9 +1101,67 @@ ${skillsList}
       model,
       agent,
       memoryItems,
-      contextWindow
+      contextWindow,
+      disabledTools,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
+
+    // Citation gate: evaluated AFTER convert so injected tools are visible.
+    const includesContextSearchTool = currentTools?.some(
+      (tool) =>
+        tool.name.toLowerCase().includes("context_search") ||
+        tool.id.includes("context_search") ||
+        tool.type === "context",
+    );
+    const includesWebSearchTool = currentTools?.some(
+      (tool) =>
+        tool.name.toLowerCase().includes("web_search") ||
+        tool.id.includes("web_search") ||
+        tool.type === "web_search",
+    );
+    console.log("[EXULU] Current tools: " + currentTools?.map((tool) => tool.name).join("\n"));
+    console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
+    console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
+
+    if (includesContextSearchTool) {
+      system +=
+        "\n\n" +
+        `
+
+              When you use a context search tool, you will include references to the items
+              retrieved from the tool call result inline in the response using this exact JSON format
+              (all on one line, no line breaks):
+              {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
+
+              IMPORTANT formatting rules:
+              - Use the exact format shown above, all on ONE line
+              - Do NOT use quotes around field names or values
+              - Use the context ID from the tool result
+              - Include the file/item name, not the full path
+              - Separate multiple citations with spaces
+
+              Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
+
+              The citations will be rendered as interactive badges in the UI.
+              `;
+    }
+
+    if (includesWebSearchTool) {
+      system +=
+        "\n\n" +
+        `
+              When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
+              (all on one line, no line breaks):
+              {url: <url>, title: <title>, snippet: <snippet>}
+
+              IMPORTANT formatting rules:
+              - Use the exact format shown above, all on ONE line
+              - Do NOT use quotes around field names or values
+              - Separate multiple results with spaces
+
+              Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
+              `;
+    }
 
     const result = streamText({
       temperature: 0, // TODO Make this configurable

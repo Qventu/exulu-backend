@@ -458,6 +458,7 @@ export const registerOpenAIGatewayRoutes = async (
           agent,
           undefined,
           contextWindow,
+          disabledTools,
         );
 
         // Client-provided tools (e.g. from Continue.dev) take priority — they are
