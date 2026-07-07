@@ -70,6 +70,15 @@ describe("guardToolOutput", () => {
     await expect(guardToolOutput(null, baseCtx)).resolves.toBeNull();
     await expect(guardToolOutput(undefined, baseCtx)).resolves.toBeUndefined();
   });
+
+  it("passes circular (unserializable) objects through unchanged", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const circular: any = {};
+    circular.self = circular;
+    const result = await guardToolOutput(circular, baseCtx);
+    expect(result).toBe(circular); // same reference, no crash
+    expect(uploadFile).not.toHaveBeenCalled();
+  });
 });
 
 describe("guardExtractedFileText", () => {
