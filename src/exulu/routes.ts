@@ -851,6 +851,16 @@ Mood: friendly and intelligent.
 
         result.stream.pipeUIMessageStreamToResponse(res, {
           messageMetadata: ({ part }) => {
+            // Per-step usage: the LAST step's inputTokens reflects the actual
+            // prompt size of this turn (totalUsage sums every step's full
+            // prompt, inflating multi-step turns ~stepCount×). Last write wins
+            // because the SDK merges message-metadata chunks.
+            if (part.type === "finish-step") {
+              return {
+                lastStepInputTokens: part.usage.inputTokens,
+                lastStepOutputTokens: part.usage.outputTokens,
+              };
+            }
             if (part.type === "finish") {
               return {
                 totalTokens: part.totalUsage.totalTokens,

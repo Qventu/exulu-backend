@@ -69,8 +69,15 @@ export const guardToolOutput = async (
   ctx: ToolOutputGuardContext,
 ): Promise<unknown> => {
   if (value == null) return value;
-  const serialized = typeof value === "string" ? value : JSON.stringify(value);
-  if (typeof serialized !== "string") return value; // unserializable — leave alone
+  let serialized: string;
+  try {
+    serialized = typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    // Circular or otherwise unserializable — leave the value alone rather
+    // than break the universal tool path.
+    return value;
+  }
+  if (typeof serialized !== "string") return value; // undefined from Symbol/Function
   const budget = deriveContextBudget(ctx.contextWindow);
   const tokens = estimateTokens(serialized);
   if (tokens <= budget.toolOutputCapTokens) return value;

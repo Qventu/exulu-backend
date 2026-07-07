@@ -473,7 +473,26 @@ export const registerOpenAIGatewayRoutes = async (
           convertOpenAIMessagesToModelMessages(openaiMessages);
 
         const gatewayBudget = deriveContextBudget(contextWindow);
-        const promptTokens = estimateTokens(JSON.stringify(openaiMessages));
+        // Build a text-only copy of the messages for estimation: replace
+        // base64/URL image payloads with a fixed placeholder and add a
+        // per-image constant to account for vision token overhead.
+        const IMAGE_TOKEN_ALLOWANCE = 1_000;
+        let imageCount = 0;
+        const textOnlyMessages = openaiMessages.map((m) => {
+          if (!Array.isArray(m.content)) return m;
+          return {
+            ...m,
+            content: m.content.map((p: { type?: string; image_url?: unknown }) => {
+              if (p && typeof p === "object" && "image_url" in p && p.image_url) {
+                imageCount += 1;
+                return { ...p, image_url: { url: "[image]" } };
+              }
+              return p;
+            }),
+          };
+        });
+        const promptTokens =
+          estimateTokens(JSON.stringify(textOnlyMessages)) + imageCount * IMAGE_TOKEN_ALLOWANCE;
         if (promptTokens >= gatewayBudget.blockThreshold) {
           res.status(400).json({
             error: {

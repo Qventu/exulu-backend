@@ -10,7 +10,8 @@ const { findLiteLLMModel } = require("./litellm/catalog") as { findLiteLLMModel:
 
 const ORIGINAL_ENV = process.env.EXULU_USE_LITELLM;
 afterEach(() => {
-  process.env.EXULU_USE_LITELLM = ORIGINAL_ENV;
+  if (ORIGINAL_ENV === undefined) delete process.env.EXULU_USE_LITELLM;
+  else process.env.EXULU_USE_LITELLM = ORIGINAL_ENV;
   jest.clearAllMocks();
 });
 

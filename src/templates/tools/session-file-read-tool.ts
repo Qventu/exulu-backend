@@ -68,6 +68,7 @@ export const createSessionFileReadTool = ({
   return ExuluTool.internal({
     id: "read_session_file",
     name: "read_session_file",
+    needsApproval: false,
     description:
       "Read a line range from a file stored in this session's files — including offloaded tool outputs " +
       "(tool-output-*.txt) and uploaded documents. Use offset (1-based line number) and limit to page " +
