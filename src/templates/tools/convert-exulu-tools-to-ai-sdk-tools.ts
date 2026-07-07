@@ -9,9 +9,12 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
-import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
+import {
+  buildProjectKbProfileDefaults,
+  type ProjectScope,
+} from "@EE/agentic-retrieval/pipeline/project-scope";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -164,6 +167,7 @@ export const convertExuluToolsToAiSdkTools = async (
   agent?: ExuluAgent,
   memoryItems?: VectorSearchChunkResult[],
   contextWindow?: number,
+  disabledTools?: string[],
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -203,16 +207,32 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  let projectRetrievalTool: ExuluTool | undefined;
-  if (project) {
-    projectRetrievalTool = await createProjectItemsRetrievalTool({
-      user: user,
-      role: user?.role?.id,
-      contexts: contexts,
-      projectId: project,
-    });
-    if (projectRetrievalTool) {
-      currentTools.push(projectRetrievalTool);
+  const disabled = new Set(disabledTools ?? []);
+
+  // Project scope: when the session belongs to a project, its items become an
+  // additional source for the agentic retrieval pipeline (EE-only by design —
+  // the legacy basic project tool was removed; see the 2026-07-07 design spec).
+  let projectScope: ProjectScope | undefined;
+  if (project && !disabled.has("agentic_context_search")) {
+    const { db } = await postgresClient();
+    const projectRow = await db.from("projects").where("id", project).first();
+    let rawItems: unknown = projectRow?.project_items;
+    if (typeof rawItems === "string") {
+      try {
+        rawItems = JSON.parse(rawItems);
+      } catch {
+        rawItems = undefined;
+      }
+    }
+    if (projectRow && Array.isArray(rawItems) && rawItems.length > 0) {
+      projectScope = {
+        id: projectRow.id,
+        name: projectRow.name,
+        description: projectRow.description ?? undefined,
+        customInstructions: projectRow.custom_instructions ?? undefined,
+        items: rawItems as string[],
+        kbProfileDefaults: buildProjectKbProfileDefaults(rawItems as string[]),
+      };
     }
   }
 
@@ -228,7 +248,7 @@ export const convertExuluToolsToAiSdkTools = async (
     }
 
     const createNewMemoryTool = createNewMemoryItemTool(agent, context);
-    if (createNewMemoryTool) {
+    if (createNewMemoryTool && !disabled.has(createNewMemoryTool.id)) {
       if (!currentTools) {
         currentTools = [];
       }
@@ -244,35 +264,68 @@ export const convertExuluToolsToAiSdkTools = async (
       contexts: contexts,
       items: sessionItems,
     });
-    if (sessionItemsRetrievalTool) {
+    if (sessionItemsRetrievalTool && !disabled.has(sessionItemsRetrievalTool.id)) {
       currentTools.push(sessionItemsRetrievalTool);
     }
   }
 
   const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
-  if (sessionFileReadTool) {
+  if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
-  if (contexts?.length && model) {
-    const agenticSearchTool = createAgenticRetrievalTool({
-      contexts: contexts.filter((context) => context.id !== agent?.memory), // memory is searched by the memory phase, not as a KB
-      memoryContext: agent?.memory ? contexts.find((c) => c.id === agent.memory) : undefined,
-      user: user,
-      role: user?.role?.id,
-      model: model,
-      preselected: sessionItems,
-      memoryItems: memoryItems,
-    });
-    if (agenticSearchTool) {
-      // Replace the agentic search tool with the new one.
-      const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");
-      if (index !== -1) {
+  if (contexts?.length && model && !disabled.has("agentic_context_search")) {
+    const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");
+    const memoryContext = agent?.memory
+      ? contexts.find((c) => c.id === agent.memory)
+      : undefined;
+    if (index !== -1) {
+      // Case 2: the agent has agentic retrieval configured — the project (when
+      // present) rides the same instance as an additional source.
+      const agenticSearchTool = createAgenticRetrievalTool({
+        contexts: contexts.filter((context) => context.id !== agent?.memory), // memory is searched by the memory phase, not as a KB
+        memoryContext,
+        user: user,
+        role: user?.role?.id,
+        model: model,
+        preselected: sessionItems,
+        memoryItems: memoryItems,
+        projectScope,
+      });
+      if (agenticSearchTool) {
         currentTools[index] = {
           ...currentTools[index], // important to keep the original tool config
           ...agenticSearchTool,
         };
+      }
+    } else if (projectScope) {
+      // Case 1: no agentic retrieval configured, but the chat has a project —
+      // auto-inject an instance scoped to the project's knowledge. Zod defaults
+      // are the preset (no stored config exists for a pushed tool).
+      const projectContextIds = new Set(
+        projectScope.items.map((gid) => {
+          const i = gid.indexOf("/");
+          return i === -1 ? gid : gid.slice(0, i);
+        }),
+      );
+      const scopedContexts = contexts.filter(
+        (c) => projectContextIds.has(c.id) && c.id !== agent?.memory,
+      );
+      if (scopedContexts.length > 0) {
+        const projectSearchTool = createAgenticRetrievalTool({
+          contexts: scopedContexts,
+          memoryContext,
+          user: user,
+          role: user?.role?.id,
+          model: model,
+          preselected: [...(sessionItems ?? []), ...projectScope.items],
+          memoryItems: memoryItems,
+          projectScope,
+        });
+        if (projectSearchTool) {
+          currentTools.push(projectSearchTool);
+        }
       }
     }
   } else {
