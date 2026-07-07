@@ -39,6 +39,7 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { setSessionCurrentTask } from "./task-description.ts";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
+import { sliceHistoryAtCheckpoint, getCompaction } from "./context-budget";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -344,8 +345,6 @@ export class ExuluProvider {
       const previousMessages = await getAgentMessages({
         session,
         user: user.id,
-        limit: 50,
-        page: 1,
       });
 
       const previousMessagesContent = previousMessages.map((message) =>
@@ -356,6 +355,7 @@ export class ExuluProvider {
         // append the new message to the previous messages:
         messages: [...previousMessagesContent, ...messages],
       });
+      messages = sliceHistoryAtCheckpoint(messages);
     }
 
     console.log(
@@ -853,8 +853,6 @@ export class ExuluProvider {
       const previousMessages = await getAgentMessages({
         session,
         user: user?.id,
-        limit: 50,
-        page: 1,
       });
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
@@ -944,6 +942,12 @@ export class ExuluProvider {
     // which mostly means converting file parts to text parts unless they are images.
 
     messages = await this.processFilePartsInMessages(messages);
+
+    // Keep the chronological view for occupancy accounting (Task 8 uses it);
+    // the model view collapses everything a compaction checkpoint covers.
+    const chronologicalMessages = messages;
+    messages = sliceHistoryAtCheckpoint(chronologicalMessages);
+    void chronologicalMessages;
 
     // Simple things like the current date, time, etc.
     // we add these to the context to help the agent
@@ -1154,35 +1158,26 @@ ${skillsList}
   };
 }
 
-// todo deal with session pagination
-const getAgentMessages = async ({
+// Full ordered history. The previous version had `limit: 50` with NO ORDER BY
+// — sessions past 50 messages sent an arbitrary heap-ordered subset to the
+// model. Compaction (sliceHistoryAtCheckpoint) keeps the assembled prompt
+// bounded, so loading the full session is safe.
+export const getAgentMessages = async ({
   session,
   user,
-  limit,
-  page,
 }: {
   session: string;
   user?: number;
-  limit: number;
-  page: number;
 }) => {
   const { db } = await postgresClient();
-  console.log(
-    "[EXULU] getting agent messages for session: " +
-    session +
-    " and user: " +
-    user +
-    " and page: " +
-    page,
-  );
-  const query = db
+  console.log("[EXULU] getting agent messages for session: " + session + " and user: " + user);
+  const messages = await db
     .from("agent_messages")
     .where({ session, user: user || null })
-    .limit(limit);
-  if (page > 0) {
-    query.offset((page - 1) * limit);
-  }
-  const messages = await query;
+    .orderBy([
+      { column: "createdAt", order: "asc" },
+      { column: "id", order: "asc" },
+    ]);
   return messages;
 };
 
