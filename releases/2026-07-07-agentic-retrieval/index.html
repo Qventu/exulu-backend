@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Agentic Retrieval, revamped</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-07 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .toggle-list {
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      margin: 24px 0;
+    }
+    .toggle-row {
+      display: flex;
+      gap: 16px;
+      padding: 16px 20px;
+      align-items: flex-start;
+    }
+    .toggle-row + .toggle-row { border-top: 1px solid hsl(var(--border)); }
+    .toggle-dot {
+      flex: none;
+      margin-top: 3px;
+      width: 34px; height: 20px; border-radius: 999px;
+      background: hsl(var(--primary));
+      position: relative;
+    }
+    .toggle-dot.off { background: hsl(var(--border)); }
+    .toggle-dot::after {
+      content: ""; position: absolute; top: 3px; right: 3px;
+      width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    }
+    .toggle-dot.off::after { right: auto; left: 3px; }
+    .toggle-row .t-label { font-size: 15.5px; font-weight: 600; margin: 0 0 2px; }
+    .toggle-row .t-hint { font-size: 14.5px; color: hsl(var(--muted-foreground)); margin: 0; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · July 7, 2026</span>
+      <h1 class="hero">Agentic Retrieval, <em>rebuilt around you</em>.</h1>
+      <p class="lede">The retrieval engine behind knowledge search is now a deterministic four-phase pipeline — understand, search, rerank, verify against memory — and every part of it is configurable from a guided, plain-language wizard in the agent editor. No JSON, no guesswork: say what your sources hold, how your users talk, and how thorough you want answers to be.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="wizard">
+        <h2>A guided setup, not a settings dump</h2>
+        <p class="one-liner">A summary card shows the whole configuration at a glance; a six-step wizard edits it in plain language.</p>
+        <div class="slice">
+          <video src="./shorts/wizard-open.mp4" poster="./shorts/wizard-open-poster.png" autoplay loop muted playsinline></video>
+          <p>The Agentic retrieval card in the agent editor now carries a one-line digest of the whole setup — <em>"4 knowledge bases · 3 routing rules · memory on · reranker: …"</em> — with buttons that jump straight into the relevant step of the new configuration wizard: <strong>Sources → Routing → Vocabulary → Memory → Behavior → Review</strong>. It opens automatically the first time you enable the tool.</p>
+          <p>Every control in the wizard comes with a one-sentence explanation and a concrete example, so the person configuring retrieval doesn't need to know what "RRF fusion" or "HyDE" is — they just answer questions about their content. Under the hood, each query runs a deterministic pipeline of small LLM calls that classify the question, detect document references, search the right sources in parallel, rerank, and check curated memory. And it degrades gracefully: if any single step fails, the pipeline skips that feature and still retrieves.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="sources">
+        <h2>Sources — say what each knowledge base holds</h2>
+        <p class="one-liner">Each knowledge base gets a content profile, and the pipeline searches it the way that content wants to be searched.</p>
+        <div class="slice">
+          <video src="./shorts/sources.mp4" autoplay loop muted playsinline></video>
+          <p>For every knowledge base you enable, you answer one question — <strong>"What's in it?"</strong> — and the pipeline adapts its whole search strategy:</p>
+          <ul>
+            <li><strong>Documents &amp; manuals</strong> — searched thoroughly with query expansion: multiple query variants are fused together, and matching passages bring up to seven neighboring sections with them. Best for manuals, PDFs, and long documents (up to 100 passages).</li>
+            <li><strong>Conversations &amp; tickets</strong> — matched by names and keywords first, then searched. Best for support tickets and email threads, where titles and participants matter more than prose (up to 20 passages).</li>
+            <li><strong>Structured records</strong> — searched directly by keywords. Best for database rows and short entries (up to 20 passages).</li>
+          </ul>
+          <p>An optional <em>"When should the assistant look here?"</em> note per source feeds the router, and per-source overrides (passage limits, neighbor expansion, query expansion on/off) are there when you need them. The win: no more one-size-fits-all search that reads a support ticket like a PDF manual.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="routing">
+        <h2>Routing — the right sources first</h2>
+        <p class="one-liner">Describe kinds of questions in plain language and point them at primary and backup sources.</p>
+        <div class="slice">
+          <video src="./shorts/routing.mp4" autoplay loop muted playsinline></video>
+          <p>A routing rule is just a label, a plain-language description ("Questions about products, error codes, installation or specifications."), a set of sources to <strong>search first</strong>, and a set to <strong>also check when the first search looks weak</strong>. The pipeline classifies each incoming question against your descriptions and searches accordingly — main sources immediately, backup sources speculatively in parallel, merged only if the main results actually score poorly.</p>
+          <p>No rules configured? Every enabled knowledge base is searched for every question — a fine default. Rules are how you buy speed and focus: fewer irrelevant sources searched per question, less noise handed to the assistant, and a safety net when the primary sources come up empty. Explicit user requests ("check the regulations") always win over classification.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="vocabulary">
+        <h2>Vocabulary — teach it your domain language</h2>
+        <p class="one-liner">Users don't phrase questions the way documents are written. This step closes that gap.</p>
+        <div class="slice">
+          <video src="./shorts/vocabulary.mp4" autoplay loop muted playsinline></video>
+          <p>Four tools, all optional, all compounding:</p>
+          <ul>
+            <li><strong>Glossary</strong> — abbreviations and terms your documents use (<em>FST → field bus controller</em>). Glossary terms expand queries so a user's shorthand still finds the formally-worded manual.</li>
+            <li><strong>Names &amp; codes</strong> — identifier sets that map mentions to specific files. Product names match approximately (<em>FST, ECO, CBM-2</em>); standards and error codes match exactly (<em>DIN 8100, EN 81-20</em>). When a user mentions one, the matching files are pinned into the search and boosted in ranking.</li>
+            <li><strong>Describe your documents</strong> — a free-text description of how your corpus is written (language, structure, conventions). It shapes the hypothetical-answer queries the pipeline generates, so expanded searches sound like your documents.</li>
+            <li><strong>Query rewrites</strong> (advanced) — systematic find→replace on the user's question, for wording differences too mechanical to leave to the model.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="feature" id="memory">
+        <h2>Memory — curated knowledge that participates in retrieval</h2>
+        <p class="one-liner">Four toggles control how the agent's curated memory entries shape answers.</p>
+        <div class="slice">
+          <div class="toggle-list">
+            <div class="toggle-row">
+              <span class="toggle-dot"></span>
+              <span><p class="t-label">Use memory during retrieval</p><p class="t-hint">Relevant memory entries are retrieved and offered to the assistant alongside document results — as citable results.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot off"></span>
+              <span><p class="t-label">Let verified memory override documents</p><p class="t-hint">When a curated entry directly answers the question, the answer leads with it — even over the documents. Strictly gated: it requires high confidence and authoritative entries, so a stray note can't hijack an answer.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot off"></span>
+              <span><p class="t-label">Follow file hints in memory</p><p class="t-hint">Memory notes like "always check X first" pin those files into the search.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot"></span>
+              <span><p class="t-label">Expand queries with memory &amp; glossary</p><p class="t-hint">Adds synonyms and expansions from memory and your glossary to the search.</p></span>
+            </div>
+          </div>
+          <p>This is how correction feedback loops work: when a document is outdated or an answer needs a caveat, a curated memory entry fixes it — without re-ingesting the corpus. If the agent has no memory knowledge base, the wizard explains that and points to the memory picker instead of showing dead toggles.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="behavior">
+        <h2>Behavior — production-grade tuning without code</h2>
+        <p class="one-liner">The dials that decide answer quality, speed, and cost — each explained in a sentence.</p>
+        <div class="slice">
+          <video src="./shorts/behavior.mp4" autoplay loop muted playsinline></video>
+          <p>The essentials sit up front: the <strong>reranker</strong> (re-scores results for relevance; strongly recommended, but the pipeline works without one), <strong>results to hand the assistant</strong> (top-K — more means broader context, slower and costlier answers), and the <strong>backup-source trigger</strong> — a slider that decides how readily backup sources kick in when the first search looks weak.</p>
+          <p>Behind an Advanced collapsible: score boosts for pinned files and identifier matches, the page window for "page 12"-style references, max query variations per source, a <strong>utility model</strong> to run the pipeline's internal micro-calls on a cheaper model than the agent's own, access gates (managed context, require chosen knowledge bases), debug logging, and a cap on agent steps per message.</p>
+
+          <div class="snippet-label">What the wizard writes (agent tool config, excerpt)</div>
+          <pre><code>"routing": { "rules": [ { "label": "Technical questions",
+    "description": "Products, error codes, installation…",
+    "main": ["product_manuals"], "fallback": ["support_tickets"] } ] },
+"vocabulary": {
+  "glossary":    [ { "term": "FST", "meaning": "Field bus controller" } ],
+  "identifiers": [ { "name": "Standards", "examples": ["DIN 8100"],
+                     "strategy": "exact", "contexts": ["regulations"] } ] },
+"tuning": { "topK": 5, "fallbackThreshold": 0.95, "pinBoost": 0.15 }</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 7, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>
