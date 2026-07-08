@@ -143,6 +143,15 @@ A single guard wraps **every** tool's output in
 retrieval tools, sandbox tools — replacing the three bespoke
 `truncateToolOutput` call sites):
 
+> **Amendment (2026-07-08):** agentic retrieval (`agentic_context_search`) is
+> **exempt** from the cap+offload (`OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS` in the
+> converter). Its chunks are consumed inline (answer + citations); offloading
+> them only produced read_session_file round-trips. The retrieval pipeline
+> bounds its own output (per-step chunk limits, dedupe, step-copy content
+> stripping). Also note: the sandbox tools kept their bespoke
+> `truncateToolOutput` wrappers — the "replacing" clause above was never
+> implemented.
+
 - `estimateTokens(serializedOutput) ≤ toolOutputCap` → pass through unchanged.
 - Over the cap →
   1. Store the **full output** via the existing storage layer and register it
