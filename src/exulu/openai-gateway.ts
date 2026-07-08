@@ -25,6 +25,12 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluConfig } from "./app/index.ts";
 import type { ExuluProvider } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
+import { finalAnswerGuard, resolveRetrievalCallBudget, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps.ts";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
+import { resolveContextWindow } from "./resolve-context-window.ts";
+import { deriveContextBudget, estimateTokens } from "./context-budget.ts";
+import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
+import { contextGuard, composePrepareSteps } from "./context-guard.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -420,6 +426,11 @@ export const registerOpenAIGatewayRoutes = async (
         const providerapikey = resolved.apiKey;
         const languageModel = resolved.languageModel;
 
+        const contextWindow = await resolveContextWindow({
+          modelId: resolved.model.id,
+          exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        });
+
         const disabledTools: string[] = req.body.disabledTools ?? [];
         const enabledTools = await getEnabledTools(
           agent,
@@ -446,7 +457,19 @@ export const registerOpenAIGatewayRoutes = async (
           undefined,
           languageModel,
           agent,
+          undefined,
+          contextWindow,
+          disabledTools,
         );
+
+        const gatewayAgenticEntry = enabledTools?.find((t) => t.id === "agentic_context_search");
+        const gatewayAgenticKey = gatewayAgenticEntry ? sanitizeToolName(gatewayAgenticEntry.name) : undefined;
+        const gatewayRetrievalGuard = retrievalBudgetGuard(
+          resolveRetrievalCallBudget(agent.tools),
+          gatewayAgenticKey,
+          Object.keys(convertedTools),
+        );
+        const turnBudget = resolveTurnStepBudget(undefined, agent);
 
         // Client-provided tools (e.g. from Continue.dev) take priority — they are
         // executed client-side, so we pass them without execute functions.
@@ -459,6 +482,40 @@ export const registerOpenAIGatewayRoutes = async (
         const openaiMessages: OpenAIMessage[] = req.body.messages ?? [];
         const { systemPrompt: requestSystemPrompt, coreMessages } =
           convertOpenAIMessagesToModelMessages(openaiMessages);
+
+        const gatewayBudget = deriveContextBudget(contextWindow);
+        // Build a text-only copy of the messages for estimation: replace
+        // base64/URL image payloads with a fixed placeholder and add a
+        // per-image constant to account for vision token overhead.
+        const IMAGE_TOKEN_ALLOWANCE = 1_000;
+        let imageCount = 0;
+        const textOnlyMessages = openaiMessages.map((m) => {
+          if (!Array.isArray(m.content)) return m;
+          return {
+            ...m,
+            content: m.content.map((p: { type?: string; image_url?: unknown }) => {
+              if (p && typeof p === "object" && "image_url" in p && p.image_url) {
+                imageCount += 1;
+                return { ...p, image_url: { url: "[image]" } };
+              }
+              return p;
+            }),
+          };
+        });
+        const promptTokens =
+          estimateTokens(JSON.stringify(textOnlyMessages)) + imageCount * IMAGE_TOKEN_ALLOWANCE;
+        if (promptTokens >= gatewayBudget.blockThreshold) {
+          res.status(400).json({
+            error: {
+              message:
+                `This request is ~${promptTokens.toLocaleString("en-US")} tokens, which exceeds the model's usable context ` +
+                `window (${gatewayBudget.usableWindow.toLocaleString("en-US")} tokens). Reduce the conversation history.`,
+              type: "invalid_request_error",
+              code: "context_length_exceeded",
+            },
+          });
+          return;
+        }
 
         const agentInstructions = agent.instructions ?? "";
         const systemParts = [
@@ -488,7 +545,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
             },
@@ -529,7 +587,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(5)],
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
           });
 
           res.json(transformCompletion(text, usage.inputTokens ?? 0, usage.outputTokens ?? 0, ctx));

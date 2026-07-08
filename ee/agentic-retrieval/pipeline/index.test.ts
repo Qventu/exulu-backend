@@ -37,7 +37,7 @@ describe("createAgenticRetrievalTool", () => {
     const names = tool.config.map((c) => c.name).sort();
     expect(names).toEqual([
       "instructions", "knowledge_bases", "logging", "managed_context", "memory",
-      "max_steps", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
+      "max_steps", "project_search", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
       .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
@@ -136,5 +136,90 @@ describe("parsePreselectedItems", () => {
     const m = parsePreselectedItems(["a/1", "a/2", "b", "b/3"]);
     expect(m.get("a")).toEqual(["1", "2"]);
     expect(m.get("b")).toBeNull();
+  });
+});
+
+describe("projectScope factory surface", () => {
+  it("declares the project_search config option with default true", () => {
+    const tool = createAgenticRetrievalTool({ contexts: [], user: undefined, role: undefined, model: undefined });
+    const entry = tool!.config.find((c: { name: string }) => c.name === "project_search");
+    expect(entry).toBeDefined();
+    expect(entry!.type).toBe("boolean");
+    expect(entry!.default).toBe(true);
+  });
+
+  it("mentions the attached project in the tool description", () => {
+    const tool = createAgenticRetrievalTool({
+      contexts: [],
+      user: undefined,
+      role: undefined,
+      model: undefined,
+      projectScope: { id: "p1", name: "Modernization", items: ["docs/i1"] },
+    });
+    expect(tool!.description).toContain('project "Modernization"');
+  });
+});
+
+describe("projectScope execute-level wiring", () => {
+  beforeEach(() => {
+    jest.requireMock("./routing").runRoutingPhase.mockClear();
+    jest.requireMock("./search").searchContexts.mockClear();
+    jest.requireMock("./rerank").rerankResults.mockClear();
+    // Restore routing default (some tests override it with mockResolvedValueOnce)
+    jest.requireMock("./routing").runRoutingPhase.mockResolvedValue({
+      mainContexts: ["docs"], fallbackContexts: [], userPinnedItemIdsByContext: new Map(),
+      userRequestedPage: null, hasExplicitDocAndPage: false, steps: [{ text: "routed" }],
+    });
+  });
+
+  it("gate-off: project_search:false suppresses project instructions, context append, and scopedItemsByContext", async () => {
+    const { runRoutingPhase } = jest.requireMock("./routing");
+    const { searchContexts } = jest.requireMock("./search");
+    const run = makeTool(
+      { project_search: false },
+      { projectScope: { id: "p1", name: "MyProject", customInstructions: "Do X", items: ["tickets/item1"] } },
+    );
+    const out = await drain(run(inputs));
+    // No "Including sources from project" step text in final output
+    const lastParsed = JSON.parse(out[out.length - 1].result);
+    expect(lastParsed.steps.every((s: any) => !s.text.includes("Including sources from project"))).toBe(true);
+    // Routing must NOT receive project custom instructions
+    const routingCall = runRoutingPhase.mock.calls[runRoutingPhase.mock.calls.length - 1][0];
+    expect(routingCall.extraInstructions ?? "").not.toContain("Instructions for the attached project");
+    // searchContexts must not receive any scopedItemsByContext entries
+    const mainSearchCall = searchContexts.mock.calls[0][0];
+    const scoped: Map<string, unknown> | undefined = mainSearchCall.scopedItemsByContext;
+    expect(scoped == null || scoped.size === 0).toBe(true);
+  });
+
+  it("case-2: enabled-context project items boost rerank pins; non-enabled context is appended and item-scoped", async () => {
+    const { searchContexts } = jest.requireMock("./search");
+    const { rerankResults } = jest.requireMock("./rerank");
+    // tickets disabled in agent config so the project adds it as a scoped source
+    const run = makeTool(
+      { knowledge_bases: { tickets: { enabled: false } } },
+      {
+        projectScope: {
+          id: "p1",
+          name: "MyProject",
+          customInstructions: "Always cite sources",
+          items: ["docs/item1", "tickets/item2"],
+        },
+      },
+    );
+    const out = await drain(run(inputs));
+    const lastParsed = JSON.parse(out[out.length - 1].result);
+    // Step announces the appended project context
+    expect(lastParsed.steps.some((s: any) => s.text.includes("Including sources from project"))).toBe(true);
+    // Main searchContexts call gets the appended context id
+    const mainSearchCall = searchContexts.mock.calls[0][0];
+    expect(mainSearchCall.contextIds).toContain("tickets");
+    // scopedItemsByContext carries the non-enabled context's item ids
+    const scoped: Map<string, string[] | null> = mainSearchCall.scopedItemsByContext;
+    expect(scoped).toBeDefined();
+    expect(scoped.get("tickets")).toEqual(["item2"]);
+    // Rerank receives pinnedItemIds that include the enabled context's project item
+    const rerankCall = rerankResults.mock.calls[0][0];
+    expect(rerankCall.state.pinnedItemIds.has("item1")).toBe(true);
   });
 });

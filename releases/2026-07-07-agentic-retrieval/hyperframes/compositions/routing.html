@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agentic retrieval — routing step</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 22px; font-size: 100px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+      #hook .sub { font-size: 36px; color: #525252; font-weight: 500; }
+
+      #app { display: grid; place-items: center; }
+      #sheet {
+        position: relative; width: 1120px; height: 920px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        padding: 40px 46px 32px; display: flex; flex-direction: column; overflow: hidden;
+      }
+      #sheet-title { font-size: 31px; font-weight: 600; }
+      #sheet-desc { margin-top: 8px; font-size: 21px; color: #525252; }
+      #step-pills { display: flex; gap: 8px; margin-top: 18px; padding-bottom: 24px; border-bottom: 1px solid #e7e7ee; }
+      .step-pill {
+        padding: 8px 17px; border-radius: 999px; font-size: 18.5px; font-weight: 500;
+        background: #f0f0f3; color: #8a8a93; white-space: nowrap; letter-spacing: -0.01em;
+      }
+      .step-pill.done { color: #1a1a1a; }
+      .step-pill.active { background: #7033ff; color: #fff; }
+      #sheet-body { flex: 1; padding-top: 26px; }
+      .intro { font-size: 21px; color: #525252; line-height: 1.45; }
+      #default-note {
+        margin-top: 18px; padding: 16px 20px; border-radius: 9px;
+        background: #eef3ff; color: #1e69dc; font-size: 19px; line-height: 1.5;
+      }
+
+      #rule-card { margin-top: 24px; border: 1px solid #e7e7ee; border-radius: 10px; background: #fff; padding: 26px 28px; }
+      .field-label { font-size: 18.5px; font-weight: 600; margin-bottom: 9px; }
+      .field-box {
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        padding: 13px 16px; font-size: 21px;
+      }
+      .field-box.muted { color: #525252; font-size: 20px; }
+      .chip-row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .chip {
+        display: inline-flex; align-items: center; padding: 9px 18px; border-radius: 999px;
+        background: #edf1f5; font-size: 19px; font-weight: 500; color: #1a1a1a;
+      }
+      .mt22 { margin-top: 22px; }
+
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="routing" data-start="0" data-width="1920" data-height="1080" data-duration="9.8">
+      <div id="bg" class="clip" data-start="0" data-duration="9.8" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Routing</span>
+          <h1>Point questions at the <em>right sources</em></h1>
+          <div class="sub">Rules in plain language.</div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="2.0" data-duration="7.8" data-track-index="3" data-layout-allow-occlusion>
+        <div id="sheet">
+          <div id="sheet-title">Configure knowledge search</div>
+          <div id="sheet-desc">Teach the assistant which sources to check first for different kinds of questions.</div>
+          <div id="step-pills">
+            <span class="step-pill done">Sources</span>
+            <span class="step-pill active">Routing</span>
+            <span class="step-pill">Vocabulary</span>
+            <span class="step-pill">Memory</span>
+            <span class="step-pill">Behavior</span>
+            <span class="step-pill">Review</span>
+          </div>
+          <div id="sheet-body">
+            <div class="intro">Routing rules describe kinds of questions in plain language and point them at the right sources.</div>
+            <div id="default-note">No rules means every enabled knowledge base is searched for every question. That's a fine default — add rules when you want faster, more focused answers.</div>
+
+            <div id="rule-card">
+              <div id="rc-label">
+                <div class="field-label">New rule</div>
+                <div class="field-box">Technical questions</div>
+              </div>
+              <div id="rc-desc" class="mt22">
+                <div class="field-box muted">Questions about products, error codes, installation or specifications.</div>
+              </div>
+              <div id="rc-main" class="mt22">
+                <div class="field-label">Search these first</div>
+                <div class="chip-row">
+                  <span class="chip" id="chip-m1">Product manuals</span>
+                  <span class="chip" id="chip-m2">Regulations</span>
+                </div>
+              </div>
+              <div id="rc-fallback" class="mt22">
+                <div class="field-label">Also check when the first search looks weak</div>
+                <div class="chip-row">
+                  <span class="chip" id="chip-f1">Support tickets</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2.6" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">The right sources first</span>
+          <span class="b"> — focused, faster answers.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.95);
+
+      tl.from("#sheet", { y: 30, opacity: 0, duration: 0.5, ease: "power2.out" }, 2.05);
+
+      /* the rule composes itself, field by field */
+      tl.from("#rc-label", { y: 16, opacity: 0, duration: 0.4, ease: "power2.out" }, 3.0);
+      tl.from("#rc-desc", { y: 16, opacity: 0, duration: 0.4, ease: "power2.out" }, 3.7);
+      tl.from("#rc-main .field-label", { opacity: 0, duration: 0.3 }, 4.5);
+      tl.from("#chip-m1", { scale: 0.6, opacity: 0, duration: 0.35, ease: "back.out(1.5)" }, 4.65);
+      tl.from("#chip-m2", { scale: 0.6, opacity: 0, duration: 0.35, ease: "back.out(1.5)" }, 4.8);
+      tl.from("#rc-fallback .field-label", { opacity: 0, duration: 0.3 }, 5.5);
+      tl.from("#chip-f1", { scale: 0.6, opacity: 0, duration: 0.35, ease: "back.out(1.5)" }, 5.65);
+
+      /* breath 6.0 → 7.25 */
+
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 7.25);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 7.35);
+
+      window.__timelines["routing"] = tl;
+    </script>
+  </body>
+</html>

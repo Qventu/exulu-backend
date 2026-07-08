@@ -4,7 +4,6 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import { postgresClient } from "@SRC/postgres/client";
-import { createProjectItemsRetrievalTool } from "@SRC/templates/tools/project-retrieval-tool.ts";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
@@ -242,15 +241,30 @@ const addProviderFields = async (
       );
 
       if (args.project) {
-        const projectTool = await createProjectItemsRetrievalTool({
-          projectId: args.project,
-          user: user,
-          role: user.role?.id,
-          contexts: contexts,
-        });
-
-        if (projectTool) {
-          result.tools.unshift(projectTool);
+        // Project chats surface the agentic search capability in the tool sheet.
+        // When the agent already has the tool there is nothing to add (no
+        // duplicate ids); when it doesn't, show the pipeline entry the runtime
+        // will auto-inject (EE license permitting — unlicensed → no entry).
+        const hasAgentic = result.tools.some(
+          (tool: { id?: string } | null) => tool?.id === "agentic_context_search",
+        );
+        if (!hasAgentic) {
+          const instance = createAgenticRetrievalTool({
+            contexts: [],
+            user: user,
+            role: user.role?.id,
+            model: undefined,
+          });
+          if (instance) {
+            result.tools.unshift({
+              id: instance.id,
+              name: instance.name,
+              description: instance.description,
+              category: instance.category,
+              type: instance.type,
+              config: [],
+            });
+          }
         }
       }
 

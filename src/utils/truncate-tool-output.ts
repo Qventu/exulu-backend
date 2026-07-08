@@ -2,15 +2,20 @@
  * Truncates a sandbox tool output string that exceeds 25% of the agent's context window.
  * Uses a head+tail split so the agent sees both the beginning and end of the output.
  * The omitted middle is replaced with a marker listing granular recovery commands.
+ * Pass charLimitOverride (a positive character count) to use a fixed budget instead of the 25% rule.
  */
 export const truncateToolOutput = (
   output: string,
   maxContextLength: number | undefined,
   toolName: string,
   tailFraction = 0.1,
+  charLimitOverride?: number,
 ): string => {
   const effectiveCtx = (maxContextLength != null && maxContextLength > 0) ? maxContextLength : 128_000;
-  const charLimit = Math.floor(effectiveCtx * 0.25 * 4);
+  const charLimit =
+    charLimitOverride != null && charLimitOverride > 0
+      ? charLimitOverride
+      : Math.floor(effectiveCtx * 0.25 * 4);
   const clampedTail = Math.min(1, Math.max(0, tailFraction));
   if (output.length <= charLimit) return output;
   const headChars = Math.floor(charLimit * (1 - clampedTail));

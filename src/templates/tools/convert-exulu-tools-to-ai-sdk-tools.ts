@@ -9,9 +9,12 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { LanguageModel, Tool } from "ai";
 import type { allFileTypes, ExuluAgent } from "@EXULU_TYPES/models/agent";
-import { createProjectItemsRetrievalTool } from "./project-retrieval-tool";
 import { createSessionItemsRetrievalTool } from "./session-items-retrieval-tool";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
+import {
+  buildProjectKbProfileDefaults,
+  type ProjectScope,
+} from "@EE/agentic-retrieval/pipeline/project-scope";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { randomUUID } from "node:crypto";
@@ -23,6 +26,18 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
+import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
+import { createSessionFileReadTool } from "./session-file-read-tool";
+import { deriveContextBudget } from "@SRC/exulu/context-budget";
+
+/**
+ * Tools whose outputs are consumed inline by the model and must NOT be
+ * offloaded to session files. Agentic retrieval chunks feed the answer and
+ * its citations directly; capping them just forces read_session_file
+ * round-trips (2026-07-08 decision, amends context-window spec §2's
+ * "every tool" rule).
+ */
+const OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS = new Set(["agentic_context_search"]);
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 
@@ -159,7 +174,9 @@ export const convertExuluToolsToAiSdkTools = async (
   sessionItems?: string[],
   model?: LanguageModel,
   agent?: ExuluAgent,
-  memoryItems?: VectorSearchChunkResult[]
+  memoryItems?: VectorSearchChunkResult[],
+  contextWindow?: number,
+  disabledTools?: string[],
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -170,6 +187,9 @@ export const convertExuluToolsToAiSdkTools = async (
   if (!contexts) {
     contexts = [];
   }
+
+  const budget = deriveContextBudget(contextWindow);
+  const toolOutputCharLimit = budget.toolOutputCapTokens * 4;
 
   // Eagerly create the shared session sandbox so the OUTER agent can read/write
   // files (and run skill scripts — it executes skills directly, there is no skill
@@ -196,16 +216,32 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  let projectRetrievalTool: ExuluTool | undefined;
-  if (project) {
-    projectRetrievalTool = await createProjectItemsRetrievalTool({
-      user: user,
-      role: user?.role?.id,
-      contexts: contexts,
-      projectId: project,
-    });
-    if (projectRetrievalTool) {
-      currentTools.push(projectRetrievalTool);
+  const disabled = new Set(disabledTools ?? []);
+
+  // Project scope: when the session belongs to a project, its items become an
+  // additional source for the agentic retrieval pipeline (EE-only by design —
+  // the legacy basic project tool was removed; see the 2026-07-07 design spec).
+  let projectScope: ProjectScope | undefined;
+  if (project && !disabled.has("agentic_context_search")) {
+    const { db } = await postgresClient();
+    const projectRow = await db.from("projects").where("id", project).first();
+    let rawItems: unknown = projectRow?.project_items;
+    if (typeof rawItems === "string") {
+      try {
+        rawItems = JSON.parse(rawItems);
+      } catch {
+        rawItems = undefined;
+      }
+    }
+    if (projectRow && Array.isArray(rawItems) && rawItems.length > 0) {
+      projectScope = {
+        id: projectRow.id,
+        name: projectRow.name,
+        description: projectRow.description ?? undefined,
+        customInstructions: projectRow.custom_instructions ?? undefined,
+        items: rawItems as string[],
+        kbProfileDefaults: buildProjectKbProfileDefaults(rawItems as string[]),
+      };
     }
   }
 
@@ -221,7 +257,7 @@ export const convertExuluToolsToAiSdkTools = async (
     }
 
     const createNewMemoryTool = createNewMemoryItemTool(agent, context);
-    if (createNewMemoryTool) {
+    if (createNewMemoryTool && !disabled.has(createNewMemoryTool.id)) {
       if (!currentTools) {
         currentTools = [];
       }
@@ -237,30 +273,68 @@ export const convertExuluToolsToAiSdkTools = async (
       contexts: contexts,
       items: sessionItems,
     });
-    if (sessionItemsRetrievalTool) {
+    if (sessionItemsRetrievalTool && !disabled.has(sessionItemsRetrievalTool.id)) {
       currentTools.push(sessionItemsRetrievalTool);
     }
   }
 
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
+  if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
+    currentTools.push(sessionFileReadTool);
+  }
+
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);
-  if (contexts?.length && model) {
-    const agenticSearchTool = createAgenticRetrievalTool({
-      contexts: contexts.filter((context) => context.id !== agent?.memory), // memory is searched by the memory phase, not as a KB
-      memoryContext: agent?.memory ? contexts.find((c) => c.id === agent.memory) : undefined,
-      user: user,
-      role: user?.role?.id,
-      model: model,
-      preselected: sessionItems,
-      memoryItems: memoryItems,
-    });
-    if (agenticSearchTool) {
-      // Replace the agentic search tool with the new one.
-      const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");
-      if (index !== -1) {
+  if (contexts?.length && model && !disabled.has("agentic_context_search")) {
+    const index = currentTools.findIndex((tool) => tool.id === "agentic_context_search");
+    const memoryContext = agent?.memory
+      ? contexts.find((c) => c.id === agent.memory)
+      : undefined;
+    if (index !== -1) {
+      // Case 2: the agent has agentic retrieval configured — the project (when
+      // present) rides the same instance as an additional source.
+      const agenticSearchTool = createAgenticRetrievalTool({
+        contexts: contexts.filter((context) => context.id !== agent?.memory), // memory is searched by the memory phase, not as a KB
+        memoryContext,
+        user: user,
+        role: user?.role?.id,
+        model: model,
+        preselected: sessionItems,
+        memoryItems: memoryItems,
+        projectScope,
+      });
+      if (agenticSearchTool) {
         currentTools[index] = {
           ...currentTools[index], // important to keep the original tool config
           ...agenticSearchTool,
         };
+      }
+    } else if (projectScope) {
+      // Case 1: no agentic retrieval configured, but the chat has a project —
+      // auto-inject an instance scoped to the project's knowledge. Zod defaults
+      // are the preset (no stored config exists for a pushed tool).
+      const projectContextIds = new Set(
+        projectScope.items.map((gid) => {
+          const i = gid.indexOf("/");
+          return i === -1 ? gid : gid.slice(0, i);
+        }),
+      );
+      const scopedContexts = contexts.filter(
+        (c) => projectContextIds.has(c.id) && c.id !== agent?.memory,
+      );
+      if (scopedContexts.length > 0) {
+        const projectSearchTool = createAgenticRetrievalTool({
+          contexts: scopedContexts,
+          memoryContext,
+          user: user,
+          role: user?.role?.id,
+          model: model,
+          preselected: [...(sessionItems ?? []), ...projectScope.items],
+          memoryItems: memoryItems,
+          projectScope,
+        });
+        if (projectSearchTool) {
+          currentTools.push(projectSearchTool);
+        }
       }
     }
   } else {
@@ -307,7 +381,7 @@ export const convertExuluToolsToAiSdkTools = async (
             if (typeof result?.content === 'string') {
               return {
                 ...result,
-                content: truncateToolOutput(result.content, agent?.maxContextLength, 'readFile', 0.05),
+                content: truncateToolOutput(result.content, budget.contextWindow, 'readFile', 0.05, toolOutputCharLimit),
               };
             }
             return result;
@@ -326,10 +400,10 @@ export const convertExuluToolsToAiSdkTools = async (
             return {
               ...result,
               ...(typeof result?.stdout === 'string' && {
-                stdout: truncateToolOutput(result.stdout, agent?.maxContextLength, 'bash', 0.10),
+                stdout: truncateToolOutput(result.stdout, budget.contextWindow, 'bash', 0.10, toolOutputCharLimit),
               }),
               ...(typeof result?.stderr === 'string' && {
-                stderr: truncateToolOutput(result.stderr, agent?.maxContextLength, 'bash stderr', 0.40),
+                stderr: truncateToolOutput(result.stderr, budget.contextWindow, 'bash stderr', 0.40, toolOutputCharLimit),
               }),
             };
           },
@@ -505,6 +579,15 @@ export const convertExuluToolsToAiSdkTools = async (
               role: user?.role?.id,
             });
 
+            const guardCtx = {
+              toolName: cur.name,
+              contextWindow,
+              sessionID,
+              user,
+              exuluConfig,
+            };
+            const offloadExempt = OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS.has(cur.id);
+
             // Check if response is an async generator
             if (response && typeof response === "object" && Symbol.asyncIterator in response) {
               let lastValue;
@@ -513,11 +596,20 @@ export const convertExuluToolsToAiSdkTools = async (
                 yield value;
                 lastValue = value;
               }
-              return lastValue;
+              if (offloadExempt) return lastValue;
+              // Cap + offload the FINAL value — that is what becomes the
+              // persisted tool result and what every later turn re-sends.
+              const guarded = await guardToolOutput(lastValue, guardCtx);
+              if (guarded !== lastValue) {
+                yield guarded;
+              }
+              return guarded;
             } else {
-              // Regular response (not a generator)
-              yield response;
-              return response;
+              const guarded = offloadExempt
+                ? response
+                : await guardToolOutput(response, guardCtx);
+              yield guarded;
+              return guarded;
             }
           },
         },

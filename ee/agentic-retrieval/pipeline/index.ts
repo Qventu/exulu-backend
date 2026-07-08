@@ -8,6 +8,7 @@ import { resolveReranker } from "@SRC/exulu/resolve-reranker";
 import { resolveModel } from "@SRC/exulu/resolve-model";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { parsePipelineConfig, effectiveKbSettings } from "./config";
+import { resolveProjectScope, type ProjectScope } from "./project-scope";
 import { runRoutingPhase } from "./routing";
 import { runMemoryPhase } from "./memory";
 import { resolveIdentifierPins } from "./prefilter";
@@ -15,42 +16,8 @@ import { searchContexts } from "./search";
 import { rerankResults } from "./rerank";
 import type { AgenticRetrievalOutput, RerankState, ChunkWithScore } from "./types";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
-
-// ---------------------------------------------------------------------------
-// parsePreselectedItems — verbatim copy of parseGlobalItemIds from v3/tools.ts
-// (renamed for the pipeline public API)
-// ---------------------------------------------------------------------------
-
-/**
- * Parse a list of global preselected IDs into a per-context map.
- *
- * Two supported formats:
- *   "<context_id>/<item_id>" → specific item; value is a non-empty string[]
- *   "<context_id>"           → full context (no item filter); value is null
- *
- * If both a full-context entry and specific-item entries exist for the same
- * context, full-context (null) wins.
- */
-export function parsePreselectedItems(globalIds: string[]): Map<string, string[] | null> {
-  const map = new Map<string, string[] | null>();
-  for (const gid of globalIds) {
-    const slashIdx = gid.indexOf("/");
-    if (slashIdx === -1) {
-      // No slash → entire context selected
-      if (gid) map.set(gid, null);
-      continue;
-    }
-    const contextId = gid.slice(0, slashIdx);
-    const itemId = gid.slice(slashIdx + 1);
-    if (!contextId || !itemId) continue;
-    // Full-context entry already wins — don't downgrade to specific items
-    if (map.get(contextId) === null) continue;
-    const existing = map.get(contextId) ?? [];
-    existing.push(itemId);
-    map.set(contextId, existing);
-  }
-  return map;
-}
+import { parsePreselectedItems } from "./global-ids";
+export { parsePreselectedItems } from "./global-ids";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,6 +70,7 @@ export function createAgenticRetrievalTool(opts: {
   instructions?: string;
   preselected?: string[];
   memoryItems?: VectorSearchChunkResult[];
+  projectScope?: ProjectScope;
 }): ExuluTool | undefined {
   const {
     contexts,
@@ -113,6 +81,7 @@ export function createAgenticRetrievalTool(opts: {
     instructions: adminInstructions,
     preselected,
     memoryItems,
+    projectScope,
   } = opts;
 
   const license = checkLicense();
@@ -124,7 +93,11 @@ export function createAgenticRetrievalTool(opts: {
   return ExuluTool.internal({
     id: "agentic_context_search",
     name: "Context Search",
-    description: `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).`,
+    description:
+      `Intelligent knowledge search across the available knowledge bases: ${contexts.map((c) => c.name || c.id).join(", ")}. Routes the question to the right sources, searches them with query expansion, and returns reranked passages. Results are exhaustive for the given query: do NOT repeat the call with a rephrased version of the same question — re-call only with genuinely new information (a different product or model, an explicitly named source or document, or new details from the user).` +
+      // Note: the description suffix intentionally remains even when the per-agent project_search
+      // config is off — the config is only known at execute time, not at factory time.
+      (projectScope ? ` Also searches the knowledge items attached to the project "${projectScope.name}".` : ""),
     category: "contexts",
     needsApproval: false,
     type: "context",
@@ -167,9 +140,16 @@ export function createAgenticRetrievalTool(opts: {
       },
       {
         name: "max_steps",
-        description: "Maximum reasoning/tool steps the CALLING agent may take on a message while this tool is enabled (bounds retry loops and token cost). 0 = platform default (5, or 10 with skills).",
+        description: "Maximum knowledge searches the agent may run for one message. Once spent, the search tool is disabled for the rest of the turn. 0 = no search-specific cap (the agent's overall tool-step budget still applies).",
         type: "number",
         default: 0,
+      },
+      {
+        name: "project_search",
+        description:
+          "Automatically include items attached to the chat's project as an additional knowledge source (boosts them in shared sources, adds scoped search for others).",
+        type: "boolean",
+        default: true,
       },
       {
         name: "knowledge_bases",
@@ -309,6 +289,33 @@ export function createAgenticRetrievalTool(opts: {
       // ── Preselected items map ─────────────────────────────────────────────
       const preselectedItems = parsePreselectedItems(preselected ?? []);
 
+      // ── Project scope: additional source, never narrows configured sources ──
+      const availableContextsById = new Map(contexts.map((c) => [c.id, c]));
+      const resolvedProject = cfg.projectSearch
+        ? resolveProjectScope({
+            scope: projectScope,
+            enabledContextIds: new Set(enabledContexts.map((c) => c.id)),
+            availableContextIds: new Set(availableContextsById.keys()),
+          })
+        : undefined;
+      if (resolvedProject) {
+        // Synthesized profile defaults (e.g. transcriptions → conversations kind);
+        // a stored knowledge_bases profile always wins.
+        if (projectScope?.kbProfileDefaults) {
+          for (const [ctxId, profile] of Object.entries(projectScope.kbProfileDefaults)) {
+            if (!cfg.knowledgeBases[ctxId]) cfg.knowledgeBases[ctxId] = profile;
+          }
+        }
+        // Copy-on-write: enabledContexts may alias the factory's contexts array
+        // (the restore-all branch above), so never push into it.
+        enabledContexts = [
+          ...enabledContexts,
+          ...resolvedProject.addedContextIds
+            .map((id) => availableContextsById.get(id))
+            .filter((c): c is NonNullable<typeof c> => Boolean(c)),
+        ];
+      }
+
       // ── Derived maps ──────────────────────────────────────────────────────
       const contextsById = new Map(enabledContexts.map((c) => [c.id, c]));
       const kbKindById = new Map(
@@ -322,7 +329,15 @@ export function createAgenticRetrievalTool(opts: {
       );
 
       // ── Phase 1: memory + routing in parallel ─────────────────────────────
-      const extraInstructions = [cfg.instructions, adminInstructions]
+      // Gate on resolvedProject: when project_search is off, resolvedProject is undefined
+      // and project custom instructions must NOT leak into routing/HyDE.
+      const extraInstructions = [
+        cfg.instructions,
+        adminInstructions,
+        resolvedProject && projectScope?.customInstructions
+          ? `Instructions for the attached project "${projectScope.name}":\n${projectScope.customInstructions}`
+          : "",
+      ]
         .filter(Boolean)
         .join("\n");
 
@@ -377,6 +392,36 @@ export function createAgenticRetrievalTool(opts: {
         return;
       }
 
+      // ── Project sources are always-main (attaching a project is an explicit signal) ──
+      let effectiveMainContexts = mainContexts;
+      if (resolvedProject) {
+        const mainSet = new Set(mainContexts);
+        const appended = resolvedProject.allProjectContextIds.filter(
+          (id) => !mainSet.has(id) && contextsById.has(id),
+        );
+        if (appended.length > 0) {
+          effectiveMainContexts = [...mainContexts, ...appended];
+          result.steps.push({
+            stepNumber: 1,
+            text: `Including sources from project "${projectScope!.name}": ${appended.join(", ")}`,
+            toolCalls: [],
+            chunks: [],
+            tokens: 0,
+          });
+          result.reasoning.push({
+            text: `Including project sources: ${appended.join(", ")}`,
+            tools: [],
+          });
+        }
+      }
+
+      // A project context appended to effectiveMainContexts can also appear in fallbackContexts
+      // (routing classified it as enabled before the project append). Deduplicate to avoid
+      // double-searching the same context in the speculative fallback pass.
+      const fallbackContextsToSearch = fallbackContexts.filter(
+        (id) => !effectiveMainContexts.includes(id),
+      );
+
       const {
         updatedQuestion,
         updatedKeywords,
@@ -409,7 +454,7 @@ export function createAgenticRetrievalTool(opts: {
       // ── Phase 2: main + speculative fallback searchContexts in parallel ───
       const [mainSearch, speculativeFallbackSearch] = await Promise.all([
         searchContexts({
-          contextIds: mainContexts,
+          contextIds: effectiveMainContexts,
           contextsById,
           kbProfiles: cfg.knowledgeBases,
           question: updatedQuestion,
@@ -422,14 +467,15 @@ export function createAgenticRetrievalTool(opts: {
           identifierPinsByContext,
           memoryPinnedItemIds,
           userPinnedItemIdsByContext,
+          scopedItemsByContext: resolvedProject?.scopedItemsByContext,
           rewrites: cfg.vocabulary.rewrites,
           styleHint: cfg.vocabulary.styleHint,
           maxQueries: cfg.tuning.maxQueriesPerContext,
           skipPrefilter: false,
         }),
-        fallbackContexts.length > 0 && !hasExplicitDocAndPage
+        fallbackContextsToSearch.length > 0 && !hasExplicitDocAndPage
           ? searchContexts({
-              contextIds: fallbackContexts,
+              contextIds: fallbackContextsToSearch,
               contextsById,
               kbProfiles: cfg.knowledgeBases,
               question: updatedQuestion,
@@ -442,6 +488,7 @@ export function createAgenticRetrievalTool(opts: {
               identifierPinsByContext,
               memoryPinnedItemIds,
               userPinnedItemIdsByContext,
+              scopedItemsByContext: resolvedProject?.scopedItemsByContext,
               rewrites: cfg.vocabulary.rewrites,
               styleHint: cfg.vocabulary.styleHint,
               maxQueries: cfg.tuning.maxQueriesPerContext,
@@ -451,7 +498,7 @@ export function createAgenticRetrievalTool(opts: {
       ]);
 
       // ── Build rerank state ────────────────────────────────────────────────
-      // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins
+      // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins ∪ project pins
       const pinnedItemIds = new Set<string>([
         ...memoryPinnedItemIds,
         ...(function* () {
@@ -459,6 +506,9 @@ export function createAgenticRetrievalTool(opts: {
         })(),
         ...(function* () {
           for (const s of userPinnedItemIdsByContext.values()) yield* s;
+        })(),
+        ...(function* () {
+          if (resolvedProject) for (const s of resolvedProject.pinsByContext.values()) yield* s;
         })(),
       ]);
       // userPinnedItemIds = user pins only
@@ -548,19 +598,19 @@ export function createAgenticRetrievalTool(opts: {
       // ── Fallback gate ─────────────────────────────────────────────────────
       if (
         !literalLookupSatisfied &&
-        fallbackContexts.length > 0 &&
+        fallbackContextsToSearch.length > 0 &&
         (reranker
           ? mainRerank.rerank_score_max_genuine < cfg.tuning.fallbackThreshold
           : mainRerank.limited_results.length < cfg.tuning.topK)
       ) {
         result.steps.push({
           stepNumber: 1,
-          text: `Using fallback search in ${fallbackContexts.join(", ")}`,
+          text: `Using fallback search in ${fallbackContextsToSearch.join(", ")}`,
           toolCalls: [],
           chunks: [],
           tokens: 0,
         });
-        result.reasoning.push({ text: `Fallback search in ${fallbackContexts.join(", ")}`, tools: [] });
+        result.reasoning.push({ text: `Fallback search in ${fallbackContextsToSearch.join(", ")}`, tools: [] });
         yield { result: serializeOutput(result) };
 
         const fallbackRerank = await rerankResults({

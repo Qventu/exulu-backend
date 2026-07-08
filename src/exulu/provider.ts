@@ -1,5 +1,7 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
-import { resolveMaxStepsFromToolConfigs, finalAnswerGuard } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps";
+import { contextGuard, composePrepareSteps } from "./context-guard";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
 import type { fileTypes } from "@EXULU_TYPES/models/agent";
@@ -39,6 +41,8 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { setSessionCurrentTask } from "./task-description.ts";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
+import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
+import { guardExtractedFileText } from "./tool-output-offload";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -286,7 +290,9 @@ export class ExuluProvider {
     agent,
     instructions,
     maxStepCount,
-    onTokenUsage
+    onTokenUsage,
+    contextWindow,
+    disabledTools,
   }: {
     prompt?: string;
     user?: User;
@@ -307,6 +313,8 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void> | void;
+    contextWindow?: number;
+    disabledTools?: string[];
     // todo get rid of any
   }): Promise<any> => {
     console.log(
@@ -344,8 +352,6 @@ export class ExuluProvider {
       const previousMessages = await getAgentMessages({
         session,
         user: user.id,
-        limit: 50,
-        page: 1,
       });
 
       const previousMessagesContent = previousMessages.map((message) =>
@@ -356,6 +362,12 @@ export class ExuluProvider {
         // append the new message to the previous messages:
         messages: [...previousMessagesContent, ...messages],
       });
+      const contextBudget = deriveContextBudget(contextWindow);
+      const occupancy = contextOccupancy(messages);
+      if (occupancy >= contextBudget.blockThreshold) {
+        throw new ContextCompactionRequiredError(occupancy, contextBudget);
+      }
+      messages = sliceHistoryAtCheckpoint(messages);
     }
 
     console.log(
@@ -443,6 +455,41 @@ export class ExuluProvider {
       system += "\n\n" + memoryContext;
     }
 
+    // Convert BEFORE deciding citation instructions: convert injects tools
+    // (project-scoped agentic search, memory, session items) into currentTools,
+    // and the citation gate must see them (design spec §7.1).
+    const tools = await convertExuluToolsToAiSdkTools(
+      currentTools,
+      currentSkills,
+      approvedTools,
+      allExuluTools,
+      toolConfigs,
+      providerapikey,
+      contexts,
+      user,
+      exuluConfig,
+      session,
+      req,
+      project,
+      sessionItems,
+      model,
+      agent,
+      memoryItems,
+      contextWindow,
+      disabledTools,
+    );
+
+    // The retrieval budget matches tool calls by their REGISTERED key
+    // (sanitized name of the post-conversion entry) — resolve after convert.
+    const agenticEntry = currentTools?.find((t) => t.id === "agentic_context_search");
+    const agenticToolKey = agenticEntry ? sanitizeToolName(agenticEntry.name) : undefined;
+    const retrievalGuard = retrievalBudgetGuard(
+      resolveRetrievalCallBudget(toolConfigs),
+      agenticToolKey,
+      Object.keys(tools),
+    );
+    const turnBudget = resolveTurnStepBudget(maxStepCount, agent);
+
     const includesContextSearchTool = currentTools?.some(
       (tool) =>
         tool.name.toLowerCase().includes("context_search") ||
@@ -464,12 +511,12 @@ export class ExuluProvider {
       system +=
         "\n\n" +
         `
-  
+
               When you use a context search tool, you will include references to the items
               retrieved from the tool call result inline in the response using this exact JSON format
               (all on one line, no line breaks):
               {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
-  
+
               IMPORTANT formatting rules:
               - Do NOT reference just chunks like "Looking at chunk_index 5 and chunk_index 0 from the search result", always use the JSON format above.
               - Use the exact format shown above, all on ONE line
@@ -477,9 +524,9 @@ export class ExuluProvider {
               - Use the context ID from the tool result
               - Include the file/item name, not the full path
               - Separate multiple citations with spaces
-  
+
               Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
-  
+
               The citations will be rendered as interactive badges in the UI.
               `;
     }
@@ -491,12 +538,12 @@ export class ExuluProvider {
               When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
               (all on one line, no line breaks):
               {url: <url>, title: <title>, snippet: <snippet>}
-  
+
               IMPORTANT formatting rules:
               - Use the exact format shown above, all on ONE line
               - Do NOT use quotes around field names or values
               - Separate multiple results with spaces
-  
+
               Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
               `;
     }
@@ -533,29 +580,12 @@ export class ExuluProvider {
         system,
         prompt: prompt,
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems
-        ),
+        tools: tools,
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
-        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5),
-        stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5), hasToolCall("image_generation")]
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
       const {
@@ -621,26 +651,9 @@ export class ExuluProvider {
           ignoreIncompleteToolCalls: true,
         }),
         maxRetries: 2,
-        tools: await convertExuluToolsToAiSdkTools(
-          currentTools,
-          currentSkills,
-          approvedTools,
-          allExuluTools,
-          toolConfigs,
-          providerapikey,
-          contexts,
-          user,
-          exuluConfig,
-          session,
-          req,
-          project,
-          sessionItems,
-          model,
-          agent,
-          memoryItems
-        ),
-        prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5),
-        stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? 5), hasToolCall("image_generation")],
+        tools: tools,
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
       });
 
       if (statistics) {
@@ -700,7 +713,15 @@ export class ExuluProvider {
    * - Document files (PDF, DOCX, etc.) -> text parts with extracted content using officeparser
    * - Image files -> image parts (which ARE supported by Responses API)
    */
-  private async processFilePartsInMessages(messages: UIMessage[]): Promise<UIMessage[]> {
+  private async processFilePartsInMessages(
+    messages: UIMessage[],
+    offloadCtx: {
+      contextWindow?: number;
+      sessionID?: string;
+      user?: User;
+      exuluConfig?: ExuluConfig;
+    },
+  ): Promise<UIMessage[]> {
     const processedMessages = await Promise.all(
       messages.map(async (message) => {
         // Only process user messages with content array
@@ -759,10 +780,14 @@ export class ExuluProvider {
                 newlineDelimiter: "\n",
               });
 
+              // Cap + offload (spec §2): a 400-page manual becomes a session
+              // file + preview instead of megabytes of inline prompt.
+              const guardedText = await guardExtractedFileText(filename, String(extractedText), offloadCtx);
+
               // Return as text part with extracted content wrapped in XML-like tags
               return {
                 type: "text",
-                text: `<file file name = "${filename}" >\n${extractedText} \n </file>`,
+                text: `<file file name = "${filename}" >\n${guardedText} \n </file>`,
               };
             } catch (error) {
               console.error(`[EXULU] Error processing file ${filename}:`, error);
@@ -778,7 +803,6 @@ export class ExuluProvider {
           ...message,
           parts: processedParts,
         };
-        console.log("[EXULU] Result: " + JSON.stringify(result, null, 2));
         return result;
       }),
     );
@@ -803,7 +827,9 @@ export class ExuluProvider {
     exuluConfig,
     instructions,
     req,
-    maxStepCount
+    maxStepCount,
+    contextWindow,
+    disabledTools,
   }: {
     user?: User;
     session?: string;
@@ -822,6 +848,8 @@ export class ExuluProvider {
     exuluConfig?: ExuluConfig;
     instructions?: string;
     req?: Request;
+    contextWindow?: number;
+    disabledTools?: string[];
   }): Promise<{
     stream: ReturnType<typeof streamText>;
     originalMessages: UIMessage[];
@@ -851,8 +879,6 @@ export class ExuluProvider {
       const previousMessages = await getAgentMessages({
         session,
         user: user?.id,
-        limit: 50,
-        page: 1,
       });
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
@@ -941,7 +967,29 @@ export class ExuluProvider {
     // Process file parts to convert them to OpenAI Responses API compatible format
     // which mostly means converting file parts to text parts unless they are images.
 
-    messages = await this.processFilePartsInMessages(messages);
+    messages = await this.processFilePartsInMessages(messages, {
+      contextWindow,
+      sessionID: session,
+      user,
+      exuluConfig,
+    });
+
+    // Keep the chronological view for occupancy accounting; the model view
+    // collapses everything a compaction checkpoint covers.
+    const chronologicalMessages = messages;
+
+    // Pre-flight budget gate (spec §3): never send a prompt past 95% of the
+    // usable window — fail fast with the structured compaction-required error.
+    const contextBudget = deriveContextBudget(contextWindow);
+    const occupancy = contextOccupancy(chronologicalMessages);
+    if (occupancy >= contextBudget.blockThreshold) {
+      console.warn(
+        `[EXULU] Blocking request: occupancy ${occupancy} >= blockThreshold ${contextBudget.blockThreshold} (window ${contextBudget.contextWindow}).`,
+      );
+      throw new ContextCompactionRequiredError(occupancy, contextBudget);
+    }
+
+    messages = sliceHistoryAtCheckpoint(chronologicalMessages);
 
     // Simple things like the current date, time, etc.
     // we add these to the context to help the agent
@@ -967,61 +1015,8 @@ export class ExuluProvider {
       system += "\n\n" + memoryContext;
     } */
 
-    const includesContextSearchTool = currentTools?.some(
-      (tool) =>
-        tool.name.toLowerCase().includes("context_search") ||
-        tool.id.includes("context_search") ||
-        tool.type === "context",
-    );
-    const includesWebSearchTool = currentTools?.some(
-      (tool) =>
-        tool.name.toLowerCase().includes("web_search") ||
-        tool.id.includes("web_search") ||
-        tool.type === "web_search",
-    );
-    console.log("[EXULU] Current tools: " + currentTools?.map((tool) => tool.name).join("\n"));
-    console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
-    console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
-
-    if (includesContextSearchTool) {
-      system +=
-        "\n\n" +
-        `
-  
-              When you use a context search tool, you will include references to the items
-              retrieved from the tool call result inline in the response using this exact JSON format
-              (all on one line, no line breaks):
-              {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
-  
-              IMPORTANT formatting rules:
-              - Use the exact format shown above, all on ONE line
-              - Do NOT use quotes around field names or values
-              - Use the context ID from the tool result
-              - Include the file/item name, not the full path
-              - Separate multiple citations with spaces
-  
-              Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
-  
-              The citations will be rendered as interactive badges in the UI.
-              `;
-    }
-
-    if (includesWebSearchTool) {
-      system +=
-        "\n\n" +
-        `
-              When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
-              (all on one line, no line breaks):
-              {url: <url>, title: <title>, snippet: <snippet>}
-  
-              IMPORTANT formatting rules:
-              - Use the exact format shown above, all on ONE line
-              - Do NOT use quotes around field names or values
-              - Separate multiple results with spaces
-  
-              Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
-              `;
-    }
+    // Citation gate is evaluated AFTER convert (below), once convert has had
+    // a chance to inject project-scoped tools into currentTools (spec §7.1).
 
     if (currentSkills?.length) {
       // Render each skill as a bulleted name + description block. Listing only
@@ -1088,6 +1083,11 @@ ${skillsList}
         read them with the readFile tool. Files you produce yourself (via writeFile or via shell
         commands like \`node create_doc.js\`) live in the same place. These files are scoped to
         this single session; they are NOT visible in other sessions, projects, or knowledge bases.
+
+        Note on large outputs: oversized tool outputs and large uploaded documents are automatically
+        truncated in the conversation; the FULL content is saved as a session file (named in the
+        truncation notice, e.g. tool-output-*.txt). Use the read_session_file tool with offset/limit
+        to page through it — do not ask the user to re-upload.
       `
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
@@ -1112,9 +1112,77 @@ ${skillsList}
       sessionItems,
       model,
       agent,
-      memoryItems
+      memoryItems,
+      contextWindow,
+      disabledTools,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
+
+    // Citation gate: evaluated AFTER convert so injected tools are visible.
+    const includesContextSearchTool = currentTools?.some(
+      (tool) =>
+        tool.name.toLowerCase().includes("context_search") ||
+        tool.id.includes("context_search") ||
+        tool.type === "context",
+    );
+    const includesWebSearchTool = currentTools?.some(
+      (tool) =>
+        tool.name.toLowerCase().includes("web_search") ||
+        tool.id.includes("web_search") ||
+        tool.type === "web_search",
+    );
+    console.log("[EXULU] Current tools: " + currentTools?.map((tool) => tool.name).join("\n"));
+    console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
+    console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
+
+    if (includesContextSearchTool) {
+      system +=
+        "\n\n" +
+        `
+
+              When you use a context search tool, you will include references to the items
+              retrieved from the tool call result inline in the response using this exact JSON format
+              (all on one line, no line breaks):
+              {item_name: <item_name>, item_id: <item_id>, context: <context_id>, chunk_id: <chunk_id>, chunk_index: <chunk_index>}
+
+              IMPORTANT formatting rules:
+              - Use the exact format shown above, all on ONE line
+              - Do NOT use quotes around field names or values
+              - Use the context ID from the tool result
+              - Include the file/item name, not the full path
+              - Separate multiple citations with spaces
+
+              Example: {item_name: document.pdf, item_id: abc123, context: my-context-id, chunk_id: chunk_456, chunk_index: 0}
+
+              The citations will be rendered as interactive badges in the UI.
+              `;
+    }
+
+    if (includesWebSearchTool) {
+      system +=
+        "\n\n" +
+        `
+              When you use a web search tool, you will include references to the results of the tool call result inline in the response using this exact JSON format
+              (all on one line, no line breaks):
+              {url: <url>, title: <title>, snippet: <snippet>}
+
+              IMPORTANT formatting rules:
+              - Use the exact format shown above, all on ONE line
+              - Do NOT use quotes around field names or values
+              - Separate multiple results with spaces
+
+              Example: {url: https://www.google.com, title: Google, snippet: The result of the web search.}
+              `;
+    }
+
+    const agenticEntry = currentTools?.find((t) => t.id === "agentic_context_search");
+    const agenticToolKey = agenticEntry ? sanitizeToolName(agenticEntry.name) : undefined;
+    const retrievalGuard = retrievalBudgetGuard(
+      resolveRetrievalCallBudget(toolConfigs),
+      agenticToolKey,
+      Object.keys(tools),
+    );
+    const turnBudget = resolveTurnStepBudget(maxStepCount, agent);
 
     const result = streamText({
       temperature: 0, // TODO Make this configurable
@@ -1138,10 +1206,9 @@ ${skillsList}
           `Chat stream error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
         );
       },
-      // provide more loops for skills because they are more complex to execute
-      // todo allow configuring this per skill
-      prepareStep: finalAnswerGuard(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? (currentSkills?.length ? 10 : 5)),
-      stopWhen: [stepCountIs(maxStepCount ?? resolveMaxStepsFromToolConfigs(toolConfigs) ?? (currentSkills?.length ? 10 : 5)), hasToolCall("image_generation")],
+      // todo allow configuring the step budget per skill
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+      stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
     });
 
     return {
@@ -1152,35 +1219,26 @@ ${skillsList}
   };
 }
 
-// todo deal with session pagination
-const getAgentMessages = async ({
+// Full ordered history. The previous version had `limit: 50` with NO ORDER BY
+// — sessions past 50 messages sent an arbitrary heap-ordered subset to the
+// model. Compaction (sliceHistoryAtCheckpoint) keeps the assembled prompt
+// bounded, so loading the full session is safe.
+export const getAgentMessages = async ({
   session,
   user,
-  limit,
-  page,
 }: {
   session: string;
   user?: number;
-  limit: number;
-  page: number;
 }) => {
   const { db } = await postgresClient();
-  console.log(
-    "[EXULU] getting agent messages for session: " +
-    session +
-    " and user: " +
-    user +
-    " and page: " +
-    page,
-  );
-  const query = db
+  console.log("[EXULU] getting agent messages for session: " + session + " and user: " + user);
+  const messages = await db
     .from("agent_messages")
     .where({ session, user: user || null })
-    .limit(limit);
-  if (page > 0) {
-    query.offset((page - 1) * limit);
-  }
-  const messages = await query;
+    .orderBy([
+      { column: "createdAt", order: "asc" },
+      { column: "id", order: "asc" },
+    ]);
   return messages;
 };
 

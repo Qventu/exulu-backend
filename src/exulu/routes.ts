@@ -53,6 +53,10 @@ import { ExuluProvider, saveChat } from "./provider.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
+import { resolveContextWindow } from "./resolve-context-window.ts";
+import { ContextCompactionRequiredError, mapStreamErrorMessage } from "./context-budget.ts";
+import { markStreamActive, clearStreamActive, isStreamActive } from "./active-streams.ts";
+import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -770,6 +774,10 @@ Mood: friendly and intelligent.
       const providerapikey = resolved.apiKey;
       const resolvedLanguageModel = resolved.languageModel;
       const resolvedModelId = resolved.model.id;
+      const contextWindow = await resolveContextWindow({
+        modelId: resolved.model.id,
+        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+      });
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
       if (!!headers.stream) {
@@ -804,24 +812,39 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        const result = await provider.generateStream({
-          contexts: contexts,
-          agent: agent,
-          user,
-          instructions: instructions,
-          session: headers.session as string,
-          message,
-          previousMessages,
-          currentTools: enabledTools,
-          currentSkills: enabledSkills,
-          approvedTools: approvedTools,
-          allExuluTools: tools,
-          languageModel: resolvedLanguageModel,
-          providerapikey,
-          toolConfigs: agent.tools,
-          exuluConfig: config,
-          req: req,
-        });
+        if (headers.session) markStreamActive(headers.session as string);
+        let result: Awaited<ReturnType<typeof provider.generateStream>>;
+        try {
+          result = await provider.generateStream({
+            contexts: contexts,
+            agent: agent,
+            user,
+            instructions: instructions,
+            session: headers.session as string,
+            message,
+            previousMessages,
+            currentTools: enabledTools,
+            currentSkills: enabledSkills,
+            approvedTools: approvedTools,
+            allExuluTools: tools,
+            languageModel: resolvedLanguageModel,
+            providerapikey,
+            toolConfigs: agent.tools,
+            exuluConfig: config,
+            req: req,
+            contextWindow,
+            disabledTools,
+          });
+        } catch (err) {
+          if (headers.session) clearStreamActive(headers.session as string);
+          if (err instanceof ContextCompactionRequiredError) {
+            // Body is the JSON string; the AI SDK transport surfaces it as
+            // err.message on the client.
+            res.status(413).send(err.message);
+            return;
+          }
+          throw err;
+        }
 
         // consume the stream to ensure it runs to completion & triggers onFinish
         // even when the client response is aborted:
@@ -829,6 +852,16 @@ Mood: friendly and intelligent.
 
         result.stream.pipeUIMessageStreamToResponse(res, {
           messageMetadata: ({ part }) => {
+            // Per-step usage: the LAST step's inputTokens reflects the actual
+            // prompt size of this turn (totalUsage sums every step's full
+            // prompt, inflating multi-step turns ~stepCount×). Last write wins
+            // because the SDK merges message-metadata chunks.
+            if (part.type === "finish-step") {
+              return {
+                lastStepInputTokens: part.usage.inputTokens,
+                lastStepOutputTokens: part.usage.outputTokens,
+              };
+            }
             if (part.type === "finish") {
               return {
                 totalTokens: part.totalUsage.totalTokens,
@@ -845,22 +878,20 @@ Mood: friendly and intelligent.
           sendSources: true,
           onError: (error) => {
             console.error("[EXULU] chat response error.", error);
-            if (error == null) {
-              return "unknown error";
-            }
-            if (typeof error === "string") {
-              return error;
-            }
-            if (error instanceof Error) {
-              return error.message;
-            }
-            return JSON.stringify(error);
+            if (headers.session) clearStreamActive(headers.session as string);
+            let message: string;
+            if (error == null) message = "unknown error";
+            else if (typeof error === "string") message = error;
+            else if (error instanceof Error) message = error.message;
+            else message = JSON.stringify(error);
+            return mapStreamErrorMessage(message);
           },
           generateMessageId: createIdGenerator({
             prefix: "msg_",
             size: 16,
           }),
           onFinish: async ({ messages, isContinuation, isAborted, responseMessage }) => {
+            if (headers.session) clearStreamActive(headers.session as string);
             console.log(
               "[EXULU] onFinish",
               messages
@@ -937,30 +968,129 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        const response = await provider.generateSync({
-          contexts: contexts,
-          agent: agent,
-          user,
-          req: req,
-          instructions: instructions,
-          session: headers.session as string,
-          inputMessages: [req.body.message],
-          currentTools: enabledTools,
-          currentSkills: enabledSkills,
-          allExuluTools: tools,
-          languageModel: resolvedLanguageModel,
-          providerapikey,
-          exuluConfig: config,
-          toolConfigs: agent.tools,
-          statistics: {
-            label: agent.name,
-            trigger: "agent",
-          },
-          onTokenUsage: async ({ inputTokens, outputTokens }) => {
-          },
-        });
+        let response: Awaited<ReturnType<typeof provider.generateSync>>;
+        try {
+          response = await provider.generateSync({
+            contexts: contexts,
+            agent: agent,
+            user,
+            req: req,
+            instructions: instructions,
+            session: headers.session as string,
+            inputMessages: [req.body.message],
+            currentTools: enabledTools,
+            currentSkills: enabledSkills,
+            allExuluTools: tools,
+            languageModel: resolvedLanguageModel,
+            providerapikey,
+            exuluConfig: config,
+            toolConfigs: agent.tools,
+            contextWindow,
+            disabledTools,
+            statistics: {
+              label: agent.name,
+              trigger: "agent",
+            },
+            onTokenUsage: async ({ inputTokens, outputTokens }) => {
+            },
+          });
+        } catch (err) {
+          if (err instanceof ContextCompactionRequiredError) {
+            res.status(413).send(err.message);
+            return;
+          }
+          throw err;
+        }
         res.status(200).json(response);
         return;
+      }
+    });
+  };
+
+  // Compaction endpoint (spec §4) — sibling of the run route. Summarizes the
+  // session's older history into a checkpoint message and returns it.
+  const registerAgentCompactRoute = (slug: string) => {
+    app.post(slug + "/:instance", async (req: Request, res: Response) => {
+      const instance = req.params.instance;
+      if (!instance) {
+        res.status(400).json({ message: "Missing instance in request." });
+        return;
+      }
+      const sessionID = (req.headers["session"] as string) || null;
+      if (!sessionID) {
+        res.status(400).json({ message: "Missing session header." });
+        return;
+      }
+      const agent = await exuluApp.get().agent(instance);
+      if (!agent) {
+        res.status(404).json({ message: "Agent with id " + instance + " not found." });
+        return;
+      }
+      const authenticationResult = await requestValidators.authenticate(req);
+      if (!authenticationResult.user?.id) {
+        res.status(authenticationResult.code || 401).json({ detail: `${authenticationResult.message}` });
+        return;
+      }
+      const user = authenticationResult.user;
+      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+      if (!hasAccessToAgent) {
+        res.status(401).json({ message: "You don't have access to this agent." });
+        return;
+      }
+      const { db } = await postgresClient();
+      const sessionRow = await db.from("agent_sessions").where({ id: sessionID }).first();
+      if (!sessionRow) {
+        res.status(404).json({ message: "Session not found for session ID: " + sessionID });
+        return;
+      }
+      const hasAccessToSession = await checkRecordAccess(sessionRow, "write", user);
+      if (!hasAccessToSession) {
+        res.status(401).json({ message: "You don't have access to this session." });
+        return;
+      }
+      if (isStreamActive(sessionID)) {
+        res.status(409).json({ message: "A response is still streaming for this session — try again when it finishes." });
+        return;
+      }
+      const overrideModelId = req.headers["x-exulu-model-override"] as string | undefined;
+      const modelId = overrideModelId ?? agent.model;
+      if (!modelId) {
+        res.status(400).json({ message: `Agent ${agent.name} (${agent.id}) has no model configured.` });
+        return;
+      }
+      let resolved: Awaited<ReturnType<typeof resolveModel>>;
+      try {
+        resolved = await resolveModel({ modelId, user, providers, agent });
+      } catch (err) {
+        if (err instanceof ResolveModelError) {
+          const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
+          res.status(status).json({ message: err.message, code: err.code });
+          return;
+        }
+        throw err;
+      }
+      const contextWindow = await resolveContextWindow({
+        modelId: resolved.model.id,
+        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+      });
+      const steer = typeof req.body?.steer === "string" ? req.body.steer : undefined;
+      try {
+        const result = await compactSession({
+          sessionID,
+          user,
+          languageModel: resolved.languageModel,
+          contextWindow,
+          steer,
+          modelId: resolved.model.id,
+        });
+        res.json(result);
+      } catch (err) {
+        if (err instanceof CompactionInsufficientError) {
+          res.status(422).send(err.message);
+          return;
+        }
+        console.error("[EXULU] compactSession failed.", err);
+        res.status(500).json({ message: err instanceof Error ? err.message : "Compaction failed." });
       }
     });
   };
@@ -977,6 +1107,16 @@ Mood: friendly and intelligent.
   // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
   if (isLiteLLMEnabled() && providers.length > 0) {
     registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  }
+
+  // Compact routes: one per code-defined provider, plus LiteLLM fixed path.
+  providers.forEach((provider) => {
+    const slug = provider.slug as string;
+    if (!slug) return;
+    registerAgentCompactRoute(slug.replace(/\/run$/, "/compact"));
+  });
+  if (isLiteLLMEnabled() && providers.length > 0) {
+    registerAgentCompactRoute("/agents/litellm/compact");
   }
 
   // Follow-up message suggestions. Stateless: no session is loaded or written.

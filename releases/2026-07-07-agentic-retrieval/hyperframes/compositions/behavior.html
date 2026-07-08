@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agentic retrieval — behavior step</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 22px; font-size: 100px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+      #hook .sub { font-size: 36px; color: #525252; font-weight: 500; }
+
+      #app { display: grid; place-items: center; }
+      #sheet {
+        position: relative; width: 1120px; height: 920px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        padding: 40px 46px 32px; display: flex; flex-direction: column; overflow: hidden;
+      }
+      #sheet-title { font-size: 31px; font-weight: 600; }
+      #sheet-desc { margin-top: 8px; font-size: 21px; color: #525252; }
+      #step-pills { display: flex; gap: 8px; margin-top: 18px; padding-bottom: 24px; border-bottom: 1px solid #e7e7ee; }
+      .step-pill {
+        padding: 8px 17px; border-radius: 999px; font-size: 18.5px; font-weight: 500;
+        background: #f0f0f3; color: #8a8a93; white-space: nowrap; letter-spacing: -0.01em;
+      }
+      .step-pill.done { color: #1a1a1a; }
+      .step-pill.active { background: #7033ff; color: #fff; }
+      #sheet-body { flex: 1; padding-top: 26px; }
+
+      .field-label { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+      .hint { margin-top: 8px; font-size: 18.5px; color: #525252; line-height: 1.45; max-width: 960px; }
+      .select-box {
+        display: flex; align-items: center; justify-content: space-between;
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        padding: 13px 16px; font-size: 20px; width: 520px; height: 54px;
+        font-family: "JetBrains Mono", monospace; letter-spacing: 0;
+      }
+      .select-box .chev { color: #8a8a93; font-family: "Inter", sans-serif; }
+      .num-box {
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        padding: 13px 16px; font-size: 20px; width: 130px; height: 54px; text-align: center;
+        font-weight: 600;
+      }
+      .row2 { display: flex; gap: 60px; }
+      .mt30 { margin-top: 30px; }
+
+      /* slider */
+      #slider-block { margin-top: 30px; }
+      #slider-rail-wrap { position: relative; width: 640px; height: 44px; margin-top: 10px; }
+      #slider-track {
+        position: absolute; left: 0; top: 16px; width: 640px; height: 12px;
+        border-radius: 999px; background: #e7e7ee;
+      }
+      #slider-fill {
+        position: absolute; left: 0; top: 16px; width: 640px; height: 12px;
+        border-radius: 999px; background: #7033ff;
+        transform-origin: left center;
+      }
+      #slider-handle {
+        position: absolute; left: -16px; top: 6px; width: 32px; height: 32px;
+        border-radius: 50%; background: #fff; border: 2.5px solid #7033ff;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18);
+      }
+
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="behavior" data-start="0" data-width="1920" data-height="1080" data-duration="9.8">
+      <div id="bg" class="clip" data-start="0" data-duration="9.8" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Behavior</span>
+          <h1>Tune retrieval <em>like a pro</em></h1>
+          <div class="sub">Reranker, top-K, backup trigger.</div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="2.0" data-duration="7.8" data-track-index="3" data-layout-allow-occlusion>
+        <div id="sheet">
+          <div id="sheet-title">Configure knowledge search</div>
+          <div id="sheet-desc">Tune how results are ranked and how many are returned.</div>
+          <div id="step-pills">
+            <span class="step-pill done">Sources</span>
+            <span class="step-pill done">Routing</span>
+            <span class="step-pill done">Vocabulary</span>
+            <span class="step-pill done">Memory</span>
+            <span class="step-pill active">Behavior</span>
+            <span class="step-pill">Review</span>
+          </div>
+          <div id="sheet-body">
+            <div class="row2">
+              <div>
+                <div class="field-label">Reranker</div>
+                <div class="select-box">
+                  <span>cohere/rerank-v3.5</span>
+                  <span class="chev">▾</span>
+                </div>
+              </div>
+              <div>
+                <div class="field-label">Results to hand the assistant</div>
+                <div class="num-box">5</div>
+              </div>
+            </div>
+            <div class="hint">A reranker re-scores search results for relevance. Strongly recommended — without one, results are ordered by raw search score.</div>
+
+            <div id="slider-block">
+              <div class="field-label">Backup-source trigger: <span id="pct" style="color: #7033ff">85</span>%</div>
+              <div id="slider-rail-wrap">
+                <div id="slider-track"></div>
+                <div id="slider-fill"></div>
+                <div id="slider-handle"></div>
+              </div>
+              <div class="hint">When the best first-search result scores below this, backup sources are also checked. Higher = backups used more often.</div>
+            </div>
+
+            <div class="mt30">
+              <div class="field-label" style="color: #8a8a93">Advanced tuning ▸</div>
+              <div class="hint" style="margin-top: 2px">Score boosts, page window, query variations, utility model, access gates, debug logging.</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cursor">
+          <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+            <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4"/>
+          </svg>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2.6" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">Production-grade tuning</span>
+          <span class="b"> — no code.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.95);
+
+      tl.from("#sheet", { y: 30, opacity: 0, duration: 0.5, ease: "power2.out" }, 2.05);
+
+      /* slider starts at 85%: fill scaleX .85, handle x = 640*0.85 = 544.
+         Sheet left = (1920-1120)/2 = 400. Handle canvas pos verified via snapshot. */
+      tl.set("#slider-fill", { scaleX: 0.85 }, 2.0);
+      tl.set("#slider-handle", { x: 544 }, 2.0);
+
+      /* cursor grabs the handle and drags 85% → 95% */
+      tl.set("#cursor", { x: 1250, y: 880 }, 3.3);
+      tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power1.out" }, 3.4);
+      tl.to("#cursor", { x: 950, y: 509, duration: 0.7, ease: "power2.inOut" }, 3.5);
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.12, ease: "power1.in" }, 4.3);
+
+      const drag = { v: 85 };
+      tl.to("#slider-fill", { scaleX: 0.95, duration: 0.8, ease: "power2.inOut" }, 4.45);
+      tl.to("#slider-handle", { x: 608, duration: 0.8, ease: "power2.inOut" }, 4.45);
+      tl.to("#cursor", { x: 1014, duration: 0.8, ease: "power2.inOut" }, 4.45);
+      tl.to(drag, {
+        v: 95, duration: 0.8, ease: "power2.inOut",
+        onUpdate() { document.getElementById("pct").textContent = String(Math.round(drag.v)); },
+      }, 4.45);
+
+      tl.to("#cursor svg", { scale: 1, duration: 0.15, ease: "power1.out" }, 5.35);
+      tl.to("#cursor", { opacity: 0, duration: 0.3 }, 5.7);
+
+      /* breath 5.6 → 7.25 */
+
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 7.25);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 7.35);
+
+      window.__timelines["behavior"] = tl;
+    </script>
+  </body>
+</html>
