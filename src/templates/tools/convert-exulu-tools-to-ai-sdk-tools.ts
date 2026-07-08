@@ -29,6 +29,15 @@ import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
 import { createSessionFileReadTool } from "./session-file-read-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
+
+/**
+ * Tools whose outputs are consumed inline by the model and must NOT be
+ * offloaded to session files. Agentic retrieval chunks feed the answer and
+ * its citations directly; capping them just forces read_session_file
+ * round-trips (2026-07-08 decision, amends context-window spec §2's
+ * "every tool" rule).
+ */
+const OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS = new Set(["agentic_context_search"]);
 const generateS3Key = (filename) => `${randomUUID()}-${filename}`;
 
 
@@ -577,6 +586,7 @@ export const convertExuluToolsToAiSdkTools = async (
               user,
               exuluConfig,
             };
+            const offloadExempt = OUTPUT_OFFLOAD_EXEMPT_TOOL_IDS.has(cur.id);
 
             // Check if response is an async generator
             if (response && typeof response === "object" && Symbol.asyncIterator in response) {
@@ -586,6 +596,7 @@ export const convertExuluToolsToAiSdkTools = async (
                 yield value;
                 lastValue = value;
               }
+              if (offloadExempt) return lastValue;
               // Cap + offload the FINAL value — that is what becomes the
               // persisted tool result and what every later turn re-sends.
               const guarded = await guardToolOutput(lastValue, guardCtx);
@@ -594,7 +605,9 @@ export const convertExuluToolsToAiSdkTools = async (
               }
               return guarded;
             } else {
-              const guarded = await guardToolOutput(response, guardCtx);
+              const guarded = offloadExempt
+                ? response
+                : await guardToolOutput(response, guardCtx);
               yield guarded;
               return guarded;
             }

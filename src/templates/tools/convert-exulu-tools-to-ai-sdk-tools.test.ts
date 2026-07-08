@@ -114,3 +114,46 @@ describe("project → agentic retrieval wiring", () => {
     expect(factory.mock.calls[0][0].preselected).toEqual(["docs/i1"]);
   });
 });
+
+describe("tool-output offload exemption (agentic retrieval)", () => {
+  const guardMock = jest.requireMock("@SRC/exulu/tool-output-offload")
+    .guardToolOutput as jest.Mock;
+
+  const emailEntry = {
+    id: "email",
+    name: "Email",
+    description: "d",
+    type: "utility",
+    category: "utilities",
+    config: [],
+    tool: { execute: jest.fn(async () => "ok") },
+  } as never;
+
+  const drain = async (gen: AsyncGenerator<unknown>) => {
+    const out: unknown[] = [];
+    for await (const v of gen) out.push(v);
+    return out;
+  };
+
+  beforeEach(() => {
+    guardMock.mockClear();
+  });
+
+  it("agentic_context_search output is NOT routed through guardToolOutput", async () => {
+    const tools = await call([agenticEntry]);
+    await drain(
+      (tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>)
+        .Context_Search.execute({}, {}),
+    );
+    expect(guardMock).not.toHaveBeenCalled();
+  });
+
+  it("other tools still pass through guardToolOutput", async () => {
+    const tools = await call([emailEntry]);
+    await drain(
+      (tools as Record<string, { execute: (i: unknown, o: unknown) => AsyncGenerator<unknown> }>)
+        .Email.execute({}, {}),
+    );
+    expect(guardMock).toHaveBeenCalledTimes(1);
+  });
+});
