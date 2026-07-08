@@ -4014,6 +4014,29 @@ Mood: friendly and intelligent.
   }
 
   /**
+   * Auth + RBAC for the session-files routes. Loads the session (404 if
+   * missing), checks read/write access via RBAC (403; includes the
+   * super-admin bypass), and builds the S3 prefixes from the session
+   * OWNER's id — not the caller's. Files are written under the owner's
+   * prefix (upload-sign for the owner, sandbox mirroring, tool-output
+   * offload), so building the prefix from the caller's id makes the list
+   * come up empty for admins/shared users viewing someone else's session.
+   */
+  const loadSessionFilesAuth = async (
+    req: Request,
+    res: Response,
+    sessionId: string,
+    rights: "read" | "write",
+  ) => {
+    const authed = await loadAuthedSession(req, res, sessionId, rights);
+    if (!authed) return null;
+    // Legacy sessions may lack a user column value; fall back to the caller
+    // (which is what every write path used before the owner-prefix fix).
+    const ownerId = authed.session.user ?? authed.user.id;
+    return { ...authed, ownerId, ...buildSessionPrefixes(ownerId, sessionId) };
+  };
+
+  /**
    * Sanitize a user-supplied filename. Reject anything that escapes the
    * intended directory; mostly defensive — Uppy normally posts to the
    * presigned URL whose key we already control, so the filename arrives
@@ -4031,16 +4054,13 @@ Mood: friendly and intelligent.
 
   /**
    * GET /sessions/:sessionId/files
-   * Lists all files under the calling user's session prefix. Returns
-   * presigned download URLs inline so the frontend can render previews
-   * (image, PDF) without a second round trip per file.
+   * Lists all files under the session owner's prefix. Access is RBAC-checked
+   * against the session (read), so admins and shared users see the same
+   * files the owner does. Returns presigned download URLs inline so the
+   * frontend can render previews (image, PDF) without a second round trip
+   * per file.
    */
   app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
-    const authResult = await requestValidators.authenticate(req);
-    if (!authResult.user?.id) {
-      res.status(authResult.code ?? 401).json({ detail: authResult.message });
-      return;
-    }
     const sessionId = req.params.sessionId;
     if (!sessionId) {
       res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4051,10 +4071,9 @@ Mood: friendly and intelligent.
       return;
     }
 
-    const { userSessionPrefix } = buildSessionPrefixes(
-      authResult.user.id,
-      sessionId,
-    );
+    const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+    if (!authed) return;
+    const { userSessionPrefix } = authed;
 
     let objects: S3FileObject[];
     try {
@@ -4102,11 +4121,6 @@ Mood: friendly and intelligent.
   app.post(
     "/sessions/:sessionId/files/upload-sign",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4116,6 +4130,8 @@ Mood: friendly and intelligent.
         res.status(500).json({ detail: "File uploads are not configured." });
         return;
       }
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
 
       const { filename, contentType } = req.body ?? {};
       if (!filename || typeof filename !== "string") {
@@ -4134,11 +4150,7 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { userSessionPrefix, fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      const fullKey = `${fullSessionPrefix}${safeName}`;
+      const fullKey = `${authed.fullSessionPrefix}${safeName}`;
       const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
 
       // The frontend round-trips `key` back to the sync-to-sandbox and delete
@@ -4157,11 +4169,6 @@ Mood: friendly and intelligent.
   app.post(
     "/sessions/:sessionId/files/sync-to-sandbox",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4173,11 +4180,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
@@ -4185,7 +4190,7 @@ Mood: friendly and intelligent.
       try {
         const result = await downloadKeyIntoSandbox({
           sessionId,
-          userId: authResult.user.id,
+          userId: authed.ownerId,
           fullS3Key: key,
           config,
         });
@@ -4206,11 +4211,6 @@ Mood: friendly and intelligent.
   app.delete(
     "/sessions/:sessionId/files",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4225,11 +4225,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
@@ -4256,15 +4254,10 @@ Mood: friendly and intelligent.
       // <iframe src=...> can't set Authorization: Bearer. Accept the token
       // via ?auth= query param as a fallback so the iframe can fetch the
       // PDF directly. Token still ends up in server logs / browser history —
-      // acceptable for a same-user preview that's also auth-checked via the
-      // session-prefix rule below.
+      // acceptable for a preview that's also RBAC-checked against the
+      // session plus the prefix rule below.
       if (!req.headers.authorization && typeof req.query.auth === "string") {
         req.headers.authorization = `Bearer ${req.query.auth}`;
-      }
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
       }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
@@ -4280,11 +4273,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
