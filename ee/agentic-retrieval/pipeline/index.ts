@@ -140,7 +140,7 @@ export function createAgenticRetrievalTool(opts: {
       },
       {
         name: "max_steps",
-        description: "Maximum reasoning/tool steps the CALLING agent may take on a message while this tool is enabled (bounds retry loops and token cost). 0 = platform default (5, or 10 with skills).",
+        description: "Maximum knowledge searches the agent may run for one message. Once spent, the search tool is disabled for the rest of the turn. 0 = no search-specific cap (the agent's overall tool-step budget still applies).",
         type: "number",
         default: 0,
       },

@@ -25,7 +25,8 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import type { ExuluConfig } from "./app/index.ts";
 import type { ExuluProvider } from "./provider.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
-import { finalAnswerGuard, DEFAULT_MAX_STEPS } from "./resolve-max-steps.ts";
+import { finalAnswerGuard, resolveRetrievalCallBudget, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps.ts";
+import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { resolveContextWindow } from "./resolve-context-window.ts";
 import { deriveContextBudget, estimateTokens } from "./context-budget.ts";
 import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
@@ -461,6 +462,15 @@ export const registerOpenAIGatewayRoutes = async (
           disabledTools,
         );
 
+        const gatewayAgenticEntry = enabledTools?.find((t) => t.id === "agentic_context_search");
+        const gatewayAgenticKey = gatewayAgenticEntry ? sanitizeToolName(gatewayAgenticEntry.name) : undefined;
+        const gatewayRetrievalGuard = retrievalBudgetGuard(
+          resolveRetrievalCallBudget(agent.tools),
+          gatewayAgenticKey,
+          Object.keys(convertedTools),
+        );
+        const turnBudget = resolveTurnStepBudget(undefined, agent);
+
         // Client-provided tools (e.g. from Continue.dev) take priority — they are
         // executed client-side, so we pass them without execute functions.
         const clientTools: OpenAITool[] = Array.isArray(req.body.tools) ? req.body.tools : [];
@@ -535,8 +545,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(DEFAULT_MAX_STEPS)),
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
             },
@@ -577,8 +587,8 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), finalAnswerGuard(DEFAULT_MAX_STEPS)),
-            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(DEFAULT_MAX_STEPS)],
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
           });
 
           res.json(transformCompletion(text, usage.inputTokens ?? 0, usage.outputTokens ?? 0, ctx));
