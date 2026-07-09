@@ -13,6 +13,7 @@ Users work with skills in agent environments (Claude Code, OpenCode, claude.ai) 
 3. Use the library as a "plugin repo": tell an agent "install skill X" or "fetch the latest version" and have it pull from Exulu.
 4. Publish from the agent back to Exulu: upload a new skill or push an updated version of an existing one without going through the UI.
 5. Work against any client's instance: instances are per-client (e.g. `https://ai.open.de`) with a separate backend host (e.g. `https://backend.ai.open.de`), so the agent must take the base URL from the user and resolve the backend URL from it.
+6. Install into whichever coding agents the user runs: skills live in per-client dirs (`.<client>/skills/`, plus the cross-agent `.agents/skills/`), so install/download must let the user pick target clients (multi-select) and optionally share one copy across them via symlinks.
 
 ## Background facts (verified)
 
@@ -76,31 +77,48 @@ Exulu instances are per-client and split across two hosts: a **frontend base URL
 - **Base-URL normalization:** strip a trailing slash before appending `/api/config` (`cleanBaseUrl = baseUrl.replace(/\/+$/, "")`), default the scheme to `https://` if the user omits it, and reject anything that doesn't resolve to a JSON body containing `backend`.
 - **Installer** (`GET <baseUrl>/api/skills/install.sh`, a new frontend Next.js route alongside `/api/config`): serves the shell script with the caller's base URL baked in. Because it lives on the frontend, the one-liner naturally points at the client's own instance and the script can resolve the backend URL via `/api/config` at run time.
 
+### Agent client targets & layout
+
+Skills are read from a per-client directory. Coding agents converge on `.<client>/skills/<skill-name>/` under the project root (and the same under `$HOME` for a global install), with `.agents/skills/` as the emerging **cross-agent standard** directory. The bootstrap skill and the install script share one **client manifest** — a `client-id → relative skill dir` table — derived from the reference layout in `test-skills/` (mirrors `vercel-labs/agent-skills`). Notable entries:
+
+- Standard `.<client>/skills/`: `agents` (the shared standard), `claude`, `windsurf`, `continue`, `roo`, `kilocode`, `crush`, `goose`, `qwen`, `iflow`, `junie`, `kiro`, `trae`, `augment`, `factory`, `devin`, `openhands`, `pi`, `cortex`, `zencoder`, `codebuddy`, `codestudio`, `commandcode`, `codemaker`, `codeartsdoer`, `lingma`, `qoder`, `rovodev`, `moxby`, `mux`, `neovate`, `ona`, `pochi`, `reasonix`, `terramind`, `tinycloud`, `vibe`, `adal`, `aider-desk`, `autohand`, `bob`, `hermes`, `inferencesh`, `jazz`, `kode`, `mcpjam`.
+- Exception: `tabnine` → `.tabnine/agent/skills/`.
+
+The manifest is data, not code branches, so new clients are one-line additions. The full list is generated from the `test-skills/` directory names (excluding the `data/` and bare `skills/` source folders).
+
+**Client selection (multi-select).** When installing or downloading any skill (including the bootstrap skill itself), the user picks one or more target clients. The list shows all manifest clients, but **pre-selects only those whose directory already exists** in the project or `$HOME`. If none is detected, the default selection is `.agents/skills/` (the cross-agent standard). Scope (project vs. global `$HOME`) is asked once, default project.
+
+**Layout: copy (default) vs. symlink (opt-in).**
+
+- **Copy** (default): unpack real files into each selected client directory. Robust everywhere (incl. Windows without symlink privilege); every copy carries its own `.exulu-skill.json` marker.
+- **Symlink** (opt-in): unpack real files once into the canonical store `.agents/skills/<name>/` (holding the marker), then create a symlink `<other-client>/skills/<name>` → the canonical store for every other selected client. One update location; updates re-download into the canonical store and existing symlinks stay valid. If a target can't be symlinked (e.g. Windows without privilege), the skill falls back to a copy for that target and warns.
+
+The chosen clients + layout mode are remembered in config (`clients`, `link_mode`) so later installs/updates don't re-ask; the user can override per run.
+
 ### Bootstrap skill `exulu-skills`
 
-Lives as a static asset in the backend repo (e.g. `src/skills/bootstrap/exulu-skills/SKILL.md`), served by `/skills/agent/bootstrap`.
+Lives as a static asset in the backend repo (e.g. `src/skills/bootstrap/exulu-skills/SKILL.md`), served by `/skills/agent/bootstrap`. It ships the client manifest (as a data file, e.g. `references/clients.json`).
 
 Its `SKILL.md` teaches the agent:
 
-- **Config:** read `~/.config/exulu/skills.json` → `{ "base_url": "<frontend-url>", "backend": "<api-url>", "api_key": "<key>" }`. `base_url` is what the user supplied; `backend` is the resolved API root (see "URL resolution"). If `backend` is missing but `base_url` is present, the skill re-resolves it via `GET <base_url>/api/config` and caches it back. If no config exists at all, the skill asks the user for their Exulu base URL and API key, resolves the backend, and offers to run the installer.
+- **Config:** read `~/.config/exulu/skills.json` → `{ "base_url": "<frontend-url>", "backend": "<api-url>", "api_key": "<key>", "clients": ["claude", …], "link_mode": "copy" | "symlink" }`. `base_url` is what the user supplied; `backend` is the resolved API root (see "URL resolution"). `clients`/`link_mode` are the remembered target selection (see "Agent client targets & layout"). If `backend` is missing but `base_url` is present, the skill re-resolves it via `GET <base_url>/api/config` and caches it back. If no config exists at all, the skill asks the user for their Exulu base URL and API key, resolves the backend, and offers to run the installer.
 - **List/search:** `GET <backend>/skills/registry` with the API key.
-- **Install ("installier mal X"):** download `GET /skills/registry/<name>/download`, unzip into `.claude/skills/<name>/` (project) or `~/.claude/skills/<name>/` (global — ask the user which, default project), then write a marker file `.exulu-skill.json` → `{ "name", "version", "source" }` into the installed folder.
-- **Update ("hol die aktuellste Version"):** for each installed skill with an `.exulu-skill.json`, compare `version` against `current_version` from the registry; re-download when newer. Never overwrite a folder without a marker file (it wasn't installed from Exulu).
-- **Publish ("lad den Skill nach Exulu hoch"):** zip the local skill folder (excluding the `.exulu-skill.json` marker and OS junk) and `POST /skills/registry/<name>` with the zip body. New name → new skill; existing name with write access → new version. On success, write/refresh the marker file with the returned version. Before publishing over an existing skill, fetch its metadata and confirm with the user that a new version of *that* skill is intended.
-- **OpenCode & others:** same flow, target the harness's skill directory instead of `.claude/skills/`.
+- **Install ("installier mal X"):** download `GET <backend>/skills/registry/<name>/download`, then place it into the selected client directories using the chosen layout (see "Agent client targets & layout" — multi-select clients, copy vs. symlink, project vs. global). Write the marker file `.exulu-skill.json` → `{ "name", "version", "source" }` into the canonical copy (symlink mode) or each copy (copy mode).
+- **Update ("hol die aktuellste Version"):** for each installed skill with an `.exulu-skill.json`, compare `version` against `current_version` from the registry; re-download when newer. In symlink mode, one re-download into the canonical store updates all linked clients; in copy mode, refresh every copy. Never overwrite a folder without a marker file (it wasn't installed from Exulu).
+- **Publish ("lad den Skill nach Exulu hoch"):** zip the local skill folder (excluding the `.exulu-skill.json` marker and OS junk; resolve symlinks to real files first) and `POST <backend>/skills/registry/<name>` with the zip body. New name → new skill; existing name with write access → new version. On success, write/refresh the marker file with the returned version. Before publishing over an existing skill, fetch its metadata and confirm with the user that a new version of *that* skill is intended.
 
 ### Install script (frontend route `/api/skills/install.sh`)
 
 - Served by the frontend with the caller's **base URL** baked in (the frontend knows its own origin). The one-liner therefore always targets the client's own instance.
 - **Resolves the backend URL first:** `cleanBaseUrl=<baseUrl without trailing slash>; backend=$(curl -fsSL "$cleanBaseUrl/api/config" | <extract .backend>)`. Aborts with a clear message if `/api/config` is unreachable or has no `backend` field.
-- Downloads the bootstrap skill from `<backend>/skills/agent/bootstrap` and unpacks it into `~/.claude/skills/exulu-skills/` (creates the directory if needed). If an OpenCode skill directory exists (`~/.config/opencode/skills/` or `~/.opencode/skills/`), installs a copy there as well.
-- Prompts interactively for the API key (never passed on the command line → nothing sensitive in shell history) and writes `~/.config/exulu/skills.json` (`{ base_url, backend, api_key }`) with `chmod 600`. Because the script runs as `curl … | sh` (stdin is the pipe), the prompt reads from `/dev/tty`; when no TTY is available it skips the prompt and prints instructions for creating the config manually.
-- Idempotent: re-running re-resolves the backend, updates the bootstrap skill in place, and keeps existing config unless the user re-enters a key.
+- Downloads the bootstrap skill from `<backend>/skills/agent/bootstrap` and installs it into the selected client directories (same client manifest + selection logic as "Agent client targets & layout"): detects existing client dirs, pre-selects them, defaults to `.agents/skills/` when none is found, and honors copy vs. symlink. The bootstrap skill's own `exulu-skills/` folder is placed the same way library skills are.
+- Prompts interactively for the API key (never passed on the command line → nothing sensitive in shell history) and writes `~/.config/exulu/skills.json` (`{ base_url, backend, api_key, clients, link_mode }`) with `chmod 600`. Because the script runs as `curl … | sh` (stdin is the pipe), the prompts read from `/dev/tty`; when no TTY is available it uses the defaults (detected clients, copy mode), skips the key prompt, and prints instructions for creating the config manually.
+- Idempotent: re-running re-resolves the backend, updates the bootstrap skill in place, and keeps existing config (incl. `clients`/`link_mode`) unless the user re-enters values.
 
 ### Frontend
 
 - **"Connect your agent" dialog** on the skills page: shows the one-liner pointing at the current instance's base URL — `curl -fsSL <baseUrl>/api/skills/install.sh | sh` (the frontend fills in its own origin) — plus a short explanation and a link to API-key management. Because the URL is baked in, the user never has to type the base URL when installing from the UI; the manual/agent path (no config yet) is where the skill prompts for it.
-- **Per-skill install hint:** copy button on the skill detail panel producing the agent prompt, e.g. `Install the Exulu skill "<name>"`.
+- **Per-skill install hint:** copy button on the skill detail panel producing the agent prompt, e.g. `Install the Exulu skill "<name>"`. Client selection and copy/symlink choice happen in the agent at install time (the bootstrap skill drives the multi-select), so the dialog only needs to mention that the agent will ask which clients to install into.
 
 ## Error handling
 
@@ -109,13 +127,15 @@ Its `SKILL.md` teaches the agent:
 - Registry: 404 unknown name, 403 RBAC denial, 400 invalid version. Download of a version that has no files → 404 with explicit message.
 - Publish: 400 on validation failure (missing SKILL.md, size/entry limits, name in path not matching a creatable/writable skill), 403 when the name exists but the caller lacks write access, 409 when the name exists but is owned by another user the caller cannot even see (avoids leaking existence: respond 409 "name unavailable"). Payload size enforced before buffering completes (request size limit on the route).
 - Install script: fails loudly (set -e) with actionable messages; never leaves a partial skill folder (unpack to temp, then move).
+- Client placement: symlink creation failure on a target (e.g. Windows without privilege) falls back to a copy for that target with a warning; an existing non-Exulu folder at a target path (no marker) is left untouched and reported, never overwritten.
 
 ## Testing
 
 - **Backend unit tests:** upload-sign extension acceptance (`.skill` ok, others rejected); `format=skill` download produces wrapped zip with correct filename; registry list respects RBAC (visible vs. denied user); by-name lookup 404/403/version resolution; publish creates v1 for a new name, bumps version for an owned name, 403/409 for foreign names, 400 for invalid bundles; bootstrap endpoint serves the skill zip.
 - **Frontend:** unit tests for folder collection → zip assembly (junk filtering, SKILL.md validation, limits) and frontmatter prefill parsing; `install.sh` route bakes in the correct base URL; `/api/config` returns `backend`; manual UAT for picker, drag-and-drop, and `.skill` upload with the real `skill-auditor.skill`.
 - **URL resolution:** unit test for base-URL normalization (trailing slash, missing scheme) and backend extraction from `/api/config`; failure path when `backend` is absent.
-- **End-to-end (manual):** run the one-liner locally, then in a Claude Code session: "installier mal skill-auditor" and "hol die aktuellste Version" against a local instance (verifying base URL → backend resolution).
+- **Client targets & layout:** manifest covers every client dir in `test-skills/` (incl. the `.tabnine/agent/skills/` exception and `.agents/skills/`); detection pre-selects existing dirs and defaults to `.agents/skills/` when none exist; copy mode writes a marker per copy; symlink mode writes one canonical copy + valid symlinks and resolves symlinks before publish; symlink-failure falls back to copy.
+- **End-to-end (manual):** run the one-liner locally, then in a Claude Code session: "installier mal skill-auditor" (choosing multiple clients + symlink mode) and "hol die aktuellste Version" against a local instance (verifying base URL → backend resolution and that all linked clients see the update).
 
 ## Out of scope
 
