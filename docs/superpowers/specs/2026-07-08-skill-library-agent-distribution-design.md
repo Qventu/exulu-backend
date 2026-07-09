@@ -12,6 +12,7 @@ Users work with skills in agent environments (Claude Code, OpenCode, claude.ai) 
 2. Upload a full skill folder — today the file picker descends into the directory instead of accepting it.
 3. Use the library as a "plugin repo": tell an agent "install skill X" or "fetch the latest version" and have it pull from Exulu.
 4. Publish from the agent back to Exulu: upload a new skill or push an updated version of an existing one without going through the UI.
+5. Work against any client's instance: instances are per-client (e.g. `https://ai.open.de`) with a separate backend host (e.g. `https://backend.ai.open.de`), so the agent must take the base URL from the user and resolve the backend URL from it.
 
 ## Background facts (verified)
 
@@ -63,10 +64,17 @@ All authenticated with the existing mechanisms (`Authorization` bearer / `exulu-
 | `/skills/registry/:name` | GET | Single skill metadata incl. version history. 404 if unknown, 403 if RBAC denies. |
 | `/skills/registry/:name/download` | GET | Zip stream of the skill bundle. `?version=latest` (default) or `?version=<N>`. Reuses the existing bundler used by `/skills/:skillId/download`, with lookup by name. |
 | `/skills/registry/:name` | POST | **Publish**: raw zip body (`Content-Type: application/zip`, `.skill` payloads are identical). If no skill with this name exists → create the skill (private to the caller, description/tags from SKILL.md frontmatter) and extract to `v1`. If it exists and the caller has write access → extract into the next version slot, update `current_version` + `history`. Same validation as the UI path (`bundle-extractor.ts`: SKILL.md at root, 50 MB, 500 entries). |
-| `/skills/agent/install.sh` | GET | **Public** (no auth): shell script for the bootstrap one-liner. |
-| `/skills/agent/bootstrap` | GET | **Public**: zip of the `exulu-skills` bootstrap skill, fetched by the install script. |
+| `/skills/agent/bootstrap` | GET | **Public** (no auth): zip of the `exulu-skills` bootstrap skill, fetched by the install script. |
 
-The public endpoints expose only the generic bootstrap skill and installer — no library content.
+The public endpoint exposes only the generic bootstrap skill — no library content. The installer itself is served by the **frontend** (see "URL resolution" below), because the URL the user knows is the frontend base URL.
+
+### URL resolution (base URL → backend URL)
+
+Exulu instances are per-client and split across two hosts: a **frontend base URL** the user knows (e.g. `https://ai.open.de`) and a **backend/API URL** that differs (e.g. `https://backend.ai.open.de`). The user only ever supplies the base URL; the backend URL is resolved from it.
+
+- **Contract:** `GET <baseUrl>/api/config` (an existing unauthenticated Next.js route, `frontend/app/api/config/route.ts`) returns `{ "backend": "<backend-url>", … }`. The `backend` field is the API root for all `/skills/registry/*` and `/skills/agent/*` calls. This is the same mechanism the Claude Code CLI already uses; the route's own comment documents this purpose.
+- **Base-URL normalization:** strip a trailing slash before appending `/api/config` (`cleanBaseUrl = baseUrl.replace(/\/+$/, "")`), default the scheme to `https://` if the user omits it, and reject anything that doesn't resolve to a JSON body containing `backend`.
+- **Installer** (`GET <baseUrl>/api/skills/install.sh`, a new frontend Next.js route alongside `/api/config`): serves the shell script with the caller's base URL baked in. Because it lives on the frontend, the one-liner naturally points at the client's own instance and the script can resolve the backend URL via `/api/config` at run time.
 
 ### Bootstrap skill `exulu-skills`
 
@@ -74,22 +82,24 @@ Lives as a static asset in the backend repo (e.g. `src/skills/bootstrap/exulu-sk
 
 Its `SKILL.md` teaches the agent:
 
-- **Config:** read `~/.config/exulu/skills.json` → `{ "backend": "<url>", "api_key": "<key>" }`.
-- **List/search:** `GET /skills/registry` with the API key.
+- **Config:** read `~/.config/exulu/skills.json` → `{ "base_url": "<frontend-url>", "backend": "<api-url>", "api_key": "<key>" }`. `base_url` is what the user supplied; `backend` is the resolved API root (see "URL resolution"). If `backend` is missing but `base_url` is present, the skill re-resolves it via `GET <base_url>/api/config` and caches it back. If no config exists at all, the skill asks the user for their Exulu base URL and API key, resolves the backend, and offers to run the installer.
+- **List/search:** `GET <backend>/skills/registry` with the API key.
 - **Install ("installier mal X"):** download `GET /skills/registry/<name>/download`, unzip into `.claude/skills/<name>/` (project) or `~/.claude/skills/<name>/` (global — ask the user which, default project), then write a marker file `.exulu-skill.json` → `{ "name", "version", "source" }` into the installed folder.
 - **Update ("hol die aktuellste Version"):** for each installed skill with an `.exulu-skill.json`, compare `version` against `current_version` from the registry; re-download when newer. Never overwrite a folder without a marker file (it wasn't installed from Exulu).
 - **Publish ("lad den Skill nach Exulu hoch"):** zip the local skill folder (excluding the `.exulu-skill.json` marker and OS junk) and `POST /skills/registry/<name>` with the zip body. New name → new skill; existing name with write access → new version. On success, write/refresh the marker file with the returned version. Before publishing over an existing skill, fetch its metadata and confirm with the user that a new version of *that* skill is intended.
 - **OpenCode & others:** same flow, target the harness's skill directory instead of `.claude/skills/`.
 
-### Install script (`/skills/agent/install.sh`)
+### Install script (frontend route `/api/skills/install.sh`)
 
-- Downloads and unpacks the bootstrap skill into `~/.claude/skills/exulu-skills/` (creates the directory if needed). If an OpenCode skill directory exists (`~/.config/opencode/skills/` or `~/.opencode/skills/`), installs a copy there as well.
-- Prompts interactively for the API key (never passed on the command line → nothing sensitive in shell history) and writes `~/.config/exulu/skills.json` with `chmod 600`. Because the script runs as `curl … | sh` (stdin is the pipe), the prompt reads from `/dev/tty`; when no TTY is available it skips the prompt and prints instructions for creating the config manually. Backend URL is baked into the script at serve time from `process.env.BACKEND`.
-- Idempotent: re-running updates the bootstrap skill in place and keeps existing config unless the user re-enters a key.
+- Served by the frontend with the caller's **base URL** baked in (the frontend knows its own origin). The one-liner therefore always targets the client's own instance.
+- **Resolves the backend URL first:** `cleanBaseUrl=<baseUrl without trailing slash>; backend=$(curl -fsSL "$cleanBaseUrl/api/config" | <extract .backend>)`. Aborts with a clear message if `/api/config` is unreachable or has no `backend` field.
+- Downloads the bootstrap skill from `<backend>/skills/agent/bootstrap` and unpacks it into `~/.claude/skills/exulu-skills/` (creates the directory if needed). If an OpenCode skill directory exists (`~/.config/opencode/skills/` or `~/.opencode/skills/`), installs a copy there as well.
+- Prompts interactively for the API key (never passed on the command line → nothing sensitive in shell history) and writes `~/.config/exulu/skills.json` (`{ base_url, backend, api_key }`) with `chmod 600`. Because the script runs as `curl … | sh` (stdin is the pipe), the prompt reads from `/dev/tty`; when no TTY is available it skips the prompt and prints instructions for creating the config manually.
+- Idempotent: re-running re-resolves the backend, updates the bootstrap skill in place, and keeps existing config unless the user re-enters a key.
 
 ### Frontend
 
-- **"Connect your agent" dialog** on the skills page: shows the one-liner (`curl -fsSL $BACKEND/api/skills/agent/install.sh | sh`), short explanation, link to API-key management.
+- **"Connect your agent" dialog** on the skills page: shows the one-liner pointing at the current instance's base URL — `curl -fsSL <baseUrl>/api/skills/install.sh | sh` (the frontend fills in its own origin) — plus a short explanation and a link to API-key management. Because the URL is baked in, the user never has to type the base URL when installing from the UI; the manual/agent path (no config yet) is where the skill prompts for it.
 - **Per-skill install hint:** copy button on the skill detail panel producing the agent prompt, e.g. `Install the Exulu skill "<name>"`.
 
 ## Error handling
@@ -102,9 +112,10 @@ Its `SKILL.md` teaches the agent:
 
 ## Testing
 
-- **Backend unit tests:** upload-sign extension acceptance (`.skill` ok, others rejected); `format=skill` download produces wrapped zip with correct filename; registry list respects RBAC (visible vs. denied user); by-name lookup 404/403/version resolution; publish creates v1 for a new name, bumps version for an owned name, 403/409 for foreign names, 400 for invalid bundles; install.sh endpoint serves script with correct backend URL.
-- **Frontend:** unit tests for folder collection → zip assembly (junk filtering, SKILL.md validation, limits) and frontmatter prefill parsing; manual UAT for picker, drag-and-drop, and `.skill` upload with the real `skill-auditor.skill`.
-- **End-to-end (manual):** run the one-liner locally, then in a Claude Code session: "installier mal skill-auditor" and "hol die aktuellste Version" against a local backend.
+- **Backend unit tests:** upload-sign extension acceptance (`.skill` ok, others rejected); `format=skill` download produces wrapped zip with correct filename; registry list respects RBAC (visible vs. denied user); by-name lookup 404/403/version resolution; publish creates v1 for a new name, bumps version for an owned name, 403/409 for foreign names, 400 for invalid bundles; bootstrap endpoint serves the skill zip.
+- **Frontend:** unit tests for folder collection → zip assembly (junk filtering, SKILL.md validation, limits) and frontmatter prefill parsing; `install.sh` route bakes in the correct base URL; `/api/config` returns `backend`; manual UAT for picker, drag-and-drop, and `.skill` upload with the real `skill-auditor.skill`.
+- **URL resolution:** unit test for base-URL normalization (trailing slash, missing scheme) and backend extraction from `/api/config`; failure path when `backend` is absent.
+- **End-to-end (manual):** run the one-liner locally, then in a Claude Code session: "installier mal skill-auditor" and "hol die aktuellste Version" against a local instance (verifying base URL → backend resolution).
 
 ## Out of scope
 
