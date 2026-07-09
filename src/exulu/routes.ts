@@ -25,7 +25,8 @@ import {
   getPresignedUrl,
   type S3FileObject,
 } from "../uppy/index.ts";
-import { extractBundleToS3, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { extractBundleToS3, extractBundleToVersion, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { parseSkillFrontmatter } from "../skills/frontmatter.ts";
 import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
 import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
@@ -209,6 +210,9 @@ export const createExpressRoutes = async (
     }
     next();
   });
+
+  // Route-level raw body parser for zip/skill publish payloads.
+  const rawZip = express.raw({ type: ["application/zip", "application/octet-stream"], limit: "50mb" });
 
   console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -3342,6 +3346,102 @@ Mood: friendly and intelligent.
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}.skill"`);
     res.send(buffer);
+  });
+
+  /**
+   * POST /skills/registry/:name   (body: raw zip / .skill bytes)
+   * Publish from an agent. New name -> create a private skill at v1. Existing
+   * name the caller can write -> append a new version. 403 when the name
+   * exists but the caller lacks write; 409 when it exists but the caller can't
+   * even read it (don't leak existence details).
+   */
+  app.post("/skills/registry/:name", rawZip, async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const name = req.params.name as string;
+    const bytes = req.body as Buffer;
+    if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+      res.status(400).json({ detail: "Empty body. Send the skill as a zip/.skill payload." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const existing = await resolveSkillByName(db, name);
+
+    if (existing) {
+      const canRead = await canAccessSkill(db, existing, "read", authResult.user);
+      const canWrite = await canAccessSkill(db, existing, "write", authResult.user);
+      if (!canRead) {
+        res.status(409).json({ detail: "That name is unavailable." });
+        return;
+      }
+      if (!canWrite) {
+        res.status(403).json({ detail: "You don't have write access to this skill." });
+        return;
+      }
+      const nextVersion = (existing.current_version ?? 1) + 1;
+      try {
+        await extractBundleToVersion({ bytes, skillId: existing.id, version: nextVersion, config });
+      } catch (err: any) {
+        if (err instanceof BundleValidationError) {
+          res.status(400).json({ detail: err.message });
+          return;
+        }
+        console.error("[SKILLS] publish (new version) failed", err);
+        res.status(500).json({ detail: "Failed to publish new version." });
+        return;
+      }
+      const history = Array.isArray(existing.history) ? existing.history : [];
+      await db("skills").where({ id: existing.id }).update({
+        current_version: nextVersion,
+        history: JSON.stringify([
+          ...history,
+          { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
+        ]),
+      });
+      res.json({ name, version: nextVersion, created: false });
+      return;
+    }
+
+    // New skill.
+    const meta = await parseSkillFrontmatter(bytes);
+    const skillId = randomUUID();
+    try {
+      await extractBundleToVersion({ bytes, skillId, version: 1, config });
+    } catch (err: any) {
+      if (err instanceof BundleValidationError) {
+        res.status(400).json({ detail: err.message });
+        return;
+      }
+      console.error("[SKILLS] publish (create) failed", err);
+      res.status(500).json({ detail: "Failed to publish skill." });
+      return;
+    }
+    try {
+      await db("skills").insert({
+        id: skillId,
+        name,
+        description: meta.description ?? "",
+        s3folder: `skills/${skillId}`,
+        tags: JSON.stringify([]),
+        usage_count: 0,
+        favorite_count: 0,
+        current_version: 1,
+        history: JSON.stringify([
+          { version: 1, created_at: new Date().toISOString(), label: "Published from agent" },
+        ]),
+        rights_mode: "private",
+        created_by: authResult.user.id,
+      });
+    } catch (err: any) {
+      // Unique-name race: someone created it between our lookup and insert.
+      res.status(409).json({ detail: "That name is unavailable." });
+      return;
+    }
+    res.json({ name, version: 1, created: true });
   });
 
   /**

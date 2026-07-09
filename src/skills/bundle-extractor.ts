@@ -29,6 +29,13 @@ export interface ExtractBundleResult {
   filesCount: number;
 }
 
+export interface ExtractBundleToVersionOptions {
+  bytes: Buffer;
+  skillId: string;
+  version: number;
+  config: ExuluConfig;
+}
+
 /**
  * Thrown when an uploaded bundle violates a validation rule (missing SKILL.md,
  * unsafe path, size cap, etc.). The route handler maps these to HTTP 400.
@@ -69,36 +76,18 @@ function isOsJunkPath(path: string): boolean {
 }
 
 /**
- * Extract a skill bundle (zip or single SKILL.md) and upload its contents to
- * `skills/<skillId>/v1/...` in S3. Returns the number of files written.
- *
- * The route handler calls this after fetching the staging payload from S3 and
- * is the single place where path safety and size/count caps are enforced. The
- * function performs no DB writes — the caller is responsible for updating the
- * skill row's s3folder/current_version/history once extraction succeeds.
+ * Private helper: extract and validate a zip buffer, writing all files to
+ * `<prefix><relPath>` in S3. All validation (SKILL.md-at-root, 50 MB, 500
+ * entries, unsafe-path, junk filtering, wrapper unwrap) is enforced here.
  *
  * Throws BundleValidationError for any validation failure. Throws other errors
  * for S3 upload or zip parsing infrastructure failures.
  */
-export async function extractBundleToS3(
-  opts: ExtractBundleOptions,
+async function extractZipToPrefix(
+  bytes: Buffer,
+  prefix: string,
+  config: ExuluConfig,
 ): Promise<ExtractBundleResult> {
-  const { bytes, skillId, isZip, config } = opts;
-
-  // Single SKILL.md case — straight upload at the canonical path.
-  if (!isZip) {
-    await uploadFile(
-      bytes,
-      `skills/${skillId}/v1/SKILL.md`,
-      config,
-      { contentType: "text/markdown" },
-      undefined,
-      undefined,
-      true, // global=true so the key isn't user-prefixed (skill files are shared)
-    );
-    return { filesCount: 1 };
-  }
-
   // Zip case.
   let zip: JSZip;
   try {
@@ -194,7 +183,7 @@ export async function extractBundleToS3(
   // parallelism isn't worth the extra failure-handling complexity.
   let filesCount = 0;
   for (const { relPath, content } of prepared) {
-    const s3Key = `skills/${skillId}/v1/${relPath}`;
+    const s3Key = `${prefix}${relPath}`;
     await uploadFile(
       content,
       s3Key,
@@ -202,10 +191,56 @@ export async function extractBundleToS3(
       {},
       undefined,
       undefined,
-      true, // global=true — see SKILL.md case above
+      true, // global=true — skill files are shared across users
     );
     filesCount += 1;
   }
 
   return { filesCount };
+}
+
+/**
+ * Extract a skill bundle (zip or single SKILL.md) and upload its contents to
+ * `skills/<skillId>/v1/...` in S3. Returns the number of files written.
+ *
+ * The route handler calls this after fetching the staging payload from S3 and
+ * is the single place where path safety and size/count caps are enforced. The
+ * function performs no DB writes — the caller is responsible for updating the
+ * skill row's s3folder/current_version/history once extraction succeeds.
+ *
+ * Throws BundleValidationError for any validation failure. Throws other errors
+ * for S3 upload or zip parsing infrastructure failures.
+ */
+export async function extractBundleToS3(
+  opts: ExtractBundleOptions,
+): Promise<ExtractBundleResult> {
+  const { bytes, skillId, isZip, config } = opts;
+
+  // Single SKILL.md case — straight upload at the canonical path.
+  if (!isZip) {
+    await uploadFile(
+      bytes,
+      `skills/${skillId}/v1/SKILL.md`,
+      config,
+      { contentType: "text/markdown" },
+      undefined,
+      undefined,
+      true, // global=true so the key isn't user-prefixed (skill files are shared)
+    );
+    return { filesCount: 1 };
+  }
+
+  // Zip case — delegate to the shared extractor with the v1 prefix.
+  return extractZipToPrefix(bytes, `skills/${skillId}/v1/`, config);
+}
+
+/**
+ * Same validation as extractBundleToS3, writing to v<version> and always
+ * treating the payload as a zip (publish always sends a zip/.skill).
+ */
+export async function extractBundleToVersion(
+  opts: ExtractBundleToVersionOptions,
+): Promise<ExtractBundleResult> {
+  const { bytes, skillId, version, config } = opts;
+  return extractZipToPrefix(bytes, `skills/${skillId}/v${version}/`, config);
 }
