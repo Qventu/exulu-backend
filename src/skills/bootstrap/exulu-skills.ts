@@ -32,13 +32,17 @@ When installing or downloading, use the remembered \`clients\` + \`link_mode\` f
 - copy mode: write the skill's real files into each selected client dir; each copy gets a \`.exulu-skill.json\` marker.
 - symlink mode: write the real files once into \`.agents/skills/<name>/\` (with the marker), then symlink \`<other-client>/skills/<name>\` -> the canonical store. If a symlink can't be created, copy instead and warn.
 
+## Auth
+
+All registry calls authenticate with the Exulu API key sent in the \`exulu-api-key\` header (NOT \`Authorization: Bearer\` — that header is reserved for user JWTs and an API key sent there is rejected). Example: \`-H "exulu-api-key: <api_key>"\`.
+
 ## List / search
 
-\`GET <backend>/skills/registry\` with header \`Authorization: Bearer <api_key>\` -> \`{ skills: [{ name, description, tags, current_version, updated_at }] }\`. Filter/search client-side.
+\`GET <backend>/skills/registry\` with header \`exulu-api-key: <api_key>\` -> \`{ skills: [{ name, description, tags, current_version, updated_at }] }\`. Filter/search client-side.
 
 ## Install ("install skill X")
 
-1. \`GET <backend>/skills/registry/<name>/download\` (Authorization: Bearer). It streams a \`.skill\` zip with a single \`<name>/\` wrapper folder.
+1. \`GET <backend>/skills/registry/<name>/download\` (header \`exulu-api-key: <api_key>\`). It streams a \`.skill\` zip with a single \`<name>/\` wrapper folder.
 2. Unzip and place per the layout above (copy or symlink into the selected clients; project dir unless the user asked for global \`$HOME\`).
 3. Write \`.exulu-skill.json\` into the installed folder: \`{ "name": "<name>", "version": <current_version>, "source": "<backend>" }\`.
 
@@ -49,7 +53,7 @@ For each installed skill that has an \`.exulu-skill.json\`: read its \`version\`
 ## Publish ("publish skill X to Exulu")
 
 1. Zip the local skill folder (exclude the \`.exulu-skill.json\` marker and OS junk; resolve any symlinks to real files first). Root the zip at a single \`<name>/\` folder.
-2. \`POST <backend>/skills/registry/<name>\` with header \`Authorization: Bearer <api_key>\` and \`Content-Type: application/zip\`, raw zip as the body.
+2. \`POST <backend>/skills/registry/<name>\` with headers \`exulu-api-key: <api_key>\` and \`Content-Type: application/zip\`, raw zip as the body.
    - New name -> creates a private skill at v1.
    - Existing name you can write -> appends a new version.
    - \`403\` = the skill exists and you can see it but lack write access; \`409\` = the name is unavailable (taken by a skill you cannot access).
