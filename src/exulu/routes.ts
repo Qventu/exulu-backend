@@ -3532,6 +3532,12 @@ Mood: friendly and intelligent.
     const versionPrefix = `skills/${skillId}/v${version}/`;
     const files = await listS3ObjectsByPrefix(versionPrefix, config);
 
+    const asSkill = req.query.format === "skill";
+    const safeName =
+      String(skill.name ?? "skill")
+        .replace(/[^a-zA-Z0-9-_]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "skill";
+
     const zip = new JSZip();
     let fileCount = 0;
     for (const file of files) {
@@ -3548,13 +3554,14 @@ Mood: friendly and intelligent.
 
       // Binary-safe — skill bundles can ship images, fonts, and other assets.
       const bytes = await getS3ObjectBytes(file.key, config);
-      zip.file(relativePath, bytes);
+      const archivePath = asSkill ? `${safeName}/${relativePath}` : relativePath;
+      zip.file(archivePath, bytes);
       fileCount += 1;
     }
 
     const exportedAt = new Date().toISOString();
     zip.file(
-      "version.txt",
+      asSkill ? `${safeName}/version.txt` : "version.txt",
       [
         `Skill: ${skill.name ?? skillId}`,
         `Skill id: ${skillId}`,
@@ -3566,16 +3573,9 @@ Mood: friendly and intelligent.
     );
 
     const buffer = await zip.generateAsync({ type: "nodebuffer" });
-    const safeName =
-      String(skill.name ?? "skill")
-        .replace(/[^a-zA-Z0-9-_]+/g, "-")
-        .replace(/^-+|-+$/g, "") || "skill";
-    const filename = `${safeName}-v${version}.zip`;
+    const filename = asSkill ? `${safeName}.skill` : `${safeName}-v${version}.zip`;
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
   });
 
