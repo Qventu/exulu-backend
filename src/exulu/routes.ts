@@ -3289,9 +3289,64 @@ Mood: friendly and intelligent.
   });
 
   /**
+   * GET /skills/registry/:name/download?version=latest|<N>
+   * Streams a skill version as a .skill zip with a single wrapper folder
+   * (<name>/) so it round-trips cleanly through the uploader.
+   * NOTE: This route MUST remain BEFORE /skills/registry/:name so Express
+   * matches the literal segment "download" instead of capturing it as :name.
+   */
+  app.get("/skills/registry/:name/download", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const skill = await resolveSkillByName(db, req.params.name as string);
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+    if (!(await canAccessSkill(db, skill, "read", authResult.user))) {
+      res.status(403).json({ detail: "You don't have access to this skill." });
+      return;
+    }
+
+    const vQuery = req.query.version;
+    const version =
+      !vQuery || vQuery === "latest" ? (skill.current_version ?? 1) : Number(vQuery);
+    if (!Number.isFinite(version) || version < 1) {
+      res.status(400).json({ detail: "Invalid version." });
+      return;
+    }
+
+    const safeName =
+      String(skill.name ?? "skill").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") ||
+      "skill";
+    const versionPrefix = `skills/${skill.id}/v${version}/`;
+    const files = await listS3ObjectsByPrefix(versionPrefix, config);
+    if (files.length === 0) {
+      res.status(404).json({ detail: `Version v${version} has no files.` });
+      return;
+    }
+
+    const zip = new JSZip();
+    for (const file of files) {
+      const idx = file.key.indexOf(versionPrefix);
+      const rel = idx >= 0 ? file.key.slice(idx + versionPrefix.length) : file.key;
+      if (!rel) continue;
+      const bytes = await getS3ObjectBytes(file.key, config);
+      zip.file(`${safeName}/${rel}`, bytes); // wrapper folder → unpacks to <name>/
+    }
+    const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.skill"`);
+    res.send(buffer);
+  });
+
+  /**
    * GET /skills/registry/:name
    * Metadata for a single skill by name. RBAC-checked.
-   * NOTE: /skills/registry/:name/download will be inserted here in Task 9.
    */
   app.get("/skills/registry/:name", async (req: Request, res: Response) => {
     const authResult = await requestValidators.authenticate(req);
