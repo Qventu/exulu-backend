@@ -212,7 +212,7 @@ export const createExpressRoutes = async (
   });
 
   // Route-level raw body parser for zip/skill publish payloads.
-  const rawZip = express.raw({ type: ["application/zip", "application/octet-stream"], limit: "50mb" });
+  const rawZip = express.raw({ type: ["application/zip", "application/octet-stream", "application/x-zip-compressed", "application/x-zip"], limit: "50mb" });
 
   console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -3372,38 +3372,39 @@ Mood: friendly and intelligent.
     const existing = await resolveSkillByName(db, name);
 
     if (existing) {
-      const canRead = await canAccessSkill(db, existing, "read", authResult.user);
       const canWrite = await canAccessSkill(db, existing, "write", authResult.user);
-      if (!canRead) {
-        res.status(409).json({ detail: "That name is unavailable." });
+      if (canWrite) {
+        const nextVersion = (existing.current_version ?? 1) + 1;
+        try {
+          await extractBundleToVersion({ bytes, skillId: existing.id, version: nextVersion, config });
+        } catch (err: any) {
+          if (err instanceof BundleValidationError) {
+            res.status(400).json({ detail: err.message });
+            return;
+          }
+          console.error("[SKILLS] publish (new version) failed", err);
+          res.status(500).json({ detail: "Failed to publish new version." });
+          return;
+        }
+        const history = Array.isArray(existing.history) ? existing.history : [];
+        await db("skills").where({ id: existing.id }).update({
+          current_version: nextVersion,
+          history: JSON.stringify([
+            ...history,
+            { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
+          ]),
+        });
+        res.json({ name, version: nextVersion, created: false });
         return;
-      }
-      if (!canWrite) {
+      } else {
+        const canRead = await canAccessSkill(db, existing, "read", authResult.user);
+        if (!canRead) {
+          res.status(409).json({ detail: "That name is unavailable." });
+          return;
+        }
         res.status(403).json({ detail: "You don't have write access to this skill." });
         return;
       }
-      const nextVersion = (existing.current_version ?? 1) + 1;
-      try {
-        await extractBundleToVersion({ bytes, skillId: existing.id, version: nextVersion, config });
-      } catch (err: any) {
-        if (err instanceof BundleValidationError) {
-          res.status(400).json({ detail: err.message });
-          return;
-        }
-        console.error("[SKILLS] publish (new version) failed", err);
-        res.status(500).json({ detail: "Failed to publish new version." });
-        return;
-      }
-      const history = Array.isArray(existing.history) ? existing.history : [];
-      await db("skills").where({ id: existing.id }).update({
-        current_version: nextVersion,
-        history: JSON.stringify([
-          ...history,
-          { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
-        ]),
-      });
-      res.json({ name, version: nextVersion, created: false });
-      return;
     }
 
     // New skill.
