@@ -112,6 +112,11 @@ import {
   deriveFilename,
   contentHeadersFor,
 } from "./shared-artifacts.ts";
+import {
+  resolveSkillByName,
+  canAccessSkill,
+  filterReadableSkills,
+} from "../skills/skill-access.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -3249,6 +3254,39 @@ Mood: friendly and intelligent.
 
     return root;
   }
+
+  /**
+   * GET /skills/registry?tag=<tag>
+   * Agent-facing catalog of skills the caller may read. Addresses skills by
+   * name (unique). RBAC-filtered via canAccessSkill.
+   * NOTE: This literal path must remain BEFORE any /skills/registry/:name param
+   * routes (added in later tasks) to prevent param capture.
+   */
+  app.get("/skills/registry", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
+    const all = await db("skills").select("*");
+    const readable = await filterReadableSkills(db, all, authResult.user);
+    const skills = readable
+      .filter((s) => {
+        if (!tag) return true;
+        const tags = Array.isArray(s.tags) ? s.tags : [];
+        return tags.includes(tag);
+      })
+      .map((s) => ({
+        name: s.name,
+        description: s.description ?? "",
+        tags: Array.isArray(s.tags) ? s.tags : [],
+        current_version: s.current_version ?? 1,
+        updated_at: s.updatedAt ?? s.updated_at ?? null,
+      }));
+    res.json({ skills });
+  });
 
   /**
    * POST /skills/:skillId/init
