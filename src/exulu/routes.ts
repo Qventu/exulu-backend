@@ -118,6 +118,7 @@ import {
   canAccessSkill,
   filterReadableSkills,
 } from "../skills/skill-access.ts";
+import { BOOTSTRAP_SKILL_MD, BOOTSTRAP_CLIENTS_JSON } from "../skills/bootstrap/exulu-skills.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -3258,6 +3259,28 @@ Mood: friendly and intelligent.
 
     return root;
   }
+
+  /**
+   * GET /skills/agent/bootstrap — PUBLIC (no auth)
+   * Returns a zip containing the generic exulu-skills bootstrap skill so any
+   * agent client can self-install it without a logged-in session. The content
+   * is embedded as TypeScript string constants (no loose files in dist).
+   * NOTE: This literal path must remain BEFORE /skills/registry to avoid param capture.
+   */
+  app.get("/skills/agent/bootstrap", async (_req: Request, res: Response) => {
+    try {
+      const zip = new JSZip();
+      zip.file("exulu-skills/SKILL.md", BOOTSTRAP_SKILL_MD);
+      zip.file("exulu-skills/references/clients.json", BOOTSTRAP_CLIENTS_JSON);
+      const buffer = await zip.generateAsync({ type: "nodebuffer" });
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", 'attachment; filename="exulu-skills.zip"');
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("[SKILLS] Failed to build bootstrap zip", err);
+      res.status(500).json({ detail: "Failed to build bootstrap skill." });
+    }
+  });
 
   /**
    * GET /skills/registry?tag=<tag>
