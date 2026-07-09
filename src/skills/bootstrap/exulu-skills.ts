@@ -52,7 +52,7 @@ For each installed skill that has an \`.exulu-skill.json\`: read its \`version\`
 2. \`POST <backend>/skills/registry/<name>\` with header \`Authorization: Bearer <api_key>\` and \`Content-Type: application/zip\`, raw zip as the body.
    - New name -> creates a private skill at v1.
    - Existing name you can write -> appends a new version.
-   - \`403\` = you lack write access; \`409\` = the name is taken by someone else.
+   - \`403\` = the skill exists and you can see it but lack write access; \`409\` = the name is unavailable (taken by a skill you cannot access).
 3. Before overwriting an existing skill, fetch \`GET <backend>/skills/registry/<name>\` and confirm with the user that a new version of *that* skill is intended. On success, refresh the marker's \`version\`.
 
 ## Other agents (OpenCode etc.)
