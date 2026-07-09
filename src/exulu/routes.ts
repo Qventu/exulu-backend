@@ -3321,8 +3321,8 @@ Mood: friendly and intelligent.
     const { skillId } = req.params;
     const { extension, contentType } = req.body ?? {};
 
-    if (extension !== ".zip" && extension !== ".md") {
-      res.status(400).json({ detail: 'extension must be ".zip" or ".md".' });
+    if (extension !== ".zip" && extension !== ".md" && extension !== ".skill") {
+      res.status(400).json({ detail: 'extension must be ".zip", ".md", or ".skill".' });
       return;
     }
     if (!contentType || typeof contentType !== "string") {
