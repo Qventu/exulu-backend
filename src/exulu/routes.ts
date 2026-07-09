@@ -118,7 +118,11 @@ import {
   canAccessSkill,
   filterReadableSkills,
 } from "../skills/skill-access.ts";
-import { BOOTSTRAP_SKILL_MD, BOOTSTRAP_CLIENTS_JSON } from "../skills/bootstrap/exulu-skills.ts";
+import {
+  BOOTSTRAP_SKILL_MD,
+  BOOTSTRAP_CLIENTS_JSON,
+  BOOTSTRAP_EXULU_SH,
+} from "../skills/bootstrap/exulu-skills.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -3272,7 +3276,15 @@ Mood: friendly and intelligent.
       const zip = new JSZip();
       zip.file("exulu-skills/SKILL.md", BOOTSTRAP_SKILL_MD);
       zip.file("exulu-skills/references/clients.json", BOOTSTRAP_CLIENTS_JSON);
-      const buffer = await zip.generateAsync({ type: "nodebuffer" });
+      // The helper script the agent invokes (unix-executable bit set so a
+      // direct `./scripts/exulu` also works; the skill documents `sh <path>`).
+      zip.file("exulu-skills/scripts/exulu", BOOTSTRAP_EXULU_SH, {
+        unixPermissions: 0o755,
+      });
+      const buffer = await zip.generateAsync({
+        type: "nodebuffer",
+        platform: "UNIX",
+      });
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", 'attachment; filename="exulu-skills.zip"');
       res.send(buffer);
