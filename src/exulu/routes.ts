@@ -3289,6 +3289,36 @@ Mood: friendly and intelligent.
   });
 
   /**
+   * GET /skills/registry/:name
+   * Metadata for a single skill by name. RBAC-checked.
+   * NOTE: /skills/registry/:name/download will be inserted here in Task 9.
+   */
+  app.get("/skills/registry/:name", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const skill = await resolveSkillByName(db, req.params.name as string);
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+    if (!(await canAccessSkill(db, skill, "read", authResult.user))) {
+      res.status(403).json({ detail: "You don't have access to this skill." });
+      return;
+    }
+    res.json({
+      name: skill.name,
+      description: skill.description ?? "",
+      tags: Array.isArray(skill.tags) ? skill.tags : [],
+      current_version: skill.current_version ?? 1,
+      history: Array.isArray(skill.history) ? skill.history : [],
+    });
+  });
+
+  /**
    * POST /skills/:skillId/init
    * Called immediately after skillsCreateOne. Creates SKILL.md in S3 and
    * initialises the skill's s3folder, current_version, and history fields.
