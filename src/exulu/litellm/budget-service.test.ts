@@ -35,9 +35,21 @@ describe("upsertBudget reset date", () => {
     expect(budgetUpdate).not.toHaveBeenCalled();
   });
 
+  it("warns but does not throw when budget_id is absent after write", async () => {
+    asMock(tagInfo)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ "team_id_5": {} }); // no budget_id
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(upsertBudget("team_id_5", 100, "30d", "2026-08-01T00:00:00.000Z")).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no budget_id"));
+    expect(budgetUpdate).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("parseResetAt validates ISO dates", () => {
     expect(parseResetAt(undefined)).toEqual({ valid: true, value: undefined });
     expect(parseResetAt(null)).toEqual({ valid: true, value: undefined });
+    expect(parseResetAt("")).toEqual({ valid: true, value: undefined });
     expect(parseResetAt("2026-08-01T00:00:00.000Z")).toEqual({ valid: true, value: "2026-08-01T00:00:00.000Z" });
     expect(parseResetAt("not-a-date")).toEqual({ valid: false });
     expect(parseResetAt(12345)).toEqual({ valid: false });
