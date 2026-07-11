@@ -65,6 +65,9 @@ export async function tagNew(input: TagBudgetInput): Promise<void> {
 }
 
 /** Update an existing tag's budget. */
+// Note: budget_reset_at is intentionally NOT sent here — LiteLLM's /tag/* endpoints
+// silently strip it (not in LiteLLM_BudgetTable.model_fields). It is applied separately
+// via budgetUpdate() which calls /budget/update directly.
 export async function tagUpdate(input: TagBudgetInput): Promise<void> {
   await call("/tag/update", {
     name: input.name,
