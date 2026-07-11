@@ -2491,7 +2491,7 @@ Mood: friendly and intelligent.
       }
       const body = parseBudgetBody(req.body);
       if (!body) {
-        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration, budget_reset_at)." });
         return;
       }
       const entityIds: unknown[] = Array.isArray(req.body?.entityIds)
@@ -2536,7 +2536,7 @@ Mood: friendly and intelligent.
       }
       const body = parseBudgetBody(req.body);
       if (!body) {
-        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration, budget_reset_at)." });
         return;
       }
       const tag = budgetTagFor(entityType, req.params.entityId ?? "");
