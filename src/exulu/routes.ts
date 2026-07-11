@@ -85,6 +85,7 @@ import {
   getBudgetSettings,
   setBudgetSettings,
   upsertBudget,
+  parseResetAt,
   invalidateBudgetCaches,
   type BudgetSettings,
 } from "./litellm/budget-service.ts";
@@ -2388,12 +2389,14 @@ Mood: friendly and intelligent.
 
   const parseBudgetBody = (
     body: any,
-  ): { max_budget: number; budget_duration: BudgetDuration } | null => {
+  ): { max_budget: number; budget_duration: BudgetDuration; budget_reset_at?: string } | null => {
     const max_budget = Number(body?.max_budget);
     const budget_duration = String(body?.budget_duration ?? "") as BudgetDuration;
     if (!Number.isFinite(max_budget) || max_budget <= 0) return null;
     if (!BUDGET_ALLOWED_DURATIONS.has(budget_duration)) return null;
-    return { max_budget, budget_duration };
+    const reset = parseResetAt(body?.budget_reset_at);
+    if (!reset.valid) return null;
+    return { max_budget, budget_duration, budget_reset_at: reset.value };
   };
 
   const parseBudgetSettingsBody = (body: any): BudgetSettings | null => {
@@ -2502,7 +2505,7 @@ Mood: friendly and intelligent.
       for (const id of entityIds) {
         const tag = budgetTagFor(entityType, id as string | number);
         try {
-          await upsertBudget(tag, body.max_budget, body.budget_duration);
+          await upsertBudget(tag, body.max_budget, body.budget_duration, body.budget_reset_at);
           results.push({ entityId: String(id), ok: true });
         } catch (err) {
           results.push({
@@ -2538,7 +2541,7 @@ Mood: friendly and intelligent.
       }
       const tag = budgetTagFor(entityType, req.params.entityId ?? "");
       try {
-        await upsertBudget(tag, body.max_budget, body.budget_duration);
+        await upsertBudget(tag, body.max_budget, body.budget_duration, body.budget_reset_at);
         const info = await tagInfo([tag]);
         res.status(200).json({ budget: info[tag] ?? null });
       } catch (err) {
