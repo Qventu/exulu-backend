@@ -70,7 +70,7 @@ it("renders a PDF page, stashes it, and returns a marker", async () => {
     attached: true,
     filename: "report.pdf",
     page: 2,
-    note: "The rendered image follows this tool result as an attached user message — analyze it there.",
+    note: "The rendered image follows this tool result as an attached user message — analyze it there. If no image message follows, the attachment has expired; call this tool again to re-render it.",
   });
   expect(renderPdfPageToPng).toHaveBeenCalledWith(expect.any(Buffer), 2, 1568);
   const injected = await injectedFor("call_pdf");

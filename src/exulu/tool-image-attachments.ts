@@ -15,6 +15,8 @@ type StashedImage = { data: string; mediaType: string; label: string; stashedAt:
 const stash = new Map<string, StashedImage>();
 const MAX_ENTRIES = 100;
 const TTL_MS = 30 * 60 * 1000;
+const MAX_TOTAL_BYTES = 100_000_000;
+const STASH_TOOL_NAME = "view_document_page";
 
 function sweep(): void {
   const cutoff = Date.now() - TTL_MS;
@@ -24,6 +26,14 @@ function sweep(): void {
   while (stash.size > MAX_ENTRIES) {
     const oldest = stash.keys().next().value;
     if (oldest === undefined) break;
+    stash.delete(oldest);
+  }
+  let totalBytes = 0;
+  for (const entry of stash.values()) totalBytes += entry.data.length;
+  while (totalBytes > MAX_TOTAL_BYTES) {
+    const oldest = stash.keys().next().value;
+    if (oldest === undefined) break;
+    totalBytes -= stash.get(oldest)!.data.length;
     stash.delete(oldest);
   }
 }
@@ -41,12 +51,18 @@ export function clearImageStash(): void {
 }
 
 type MessageLike = { role?: string; content?: unknown };
-type ToolResultPartLike = { type?: string; toolCallId?: string };
+type ToolResultPartLike = { type?: string; toolCallId?: string; toolName?: string };
 
 function stashedIdsInMessage(message: MessageLike): string[] {
   if (message?.role !== "tool" || !Array.isArray(message.content)) return [];
   return (message.content as ToolResultPartLike[])
-    .filter((p) => p?.type === "tool-result" && typeof p.toolCallId === "string" && stash.has(p.toolCallId))
+    .filter(
+      (p) =>
+        p?.type === "tool-result" &&
+        typeof p.toolCallId === "string" &&
+        p.toolName === STASH_TOOL_NAME &&
+        stash.has(p.toolCallId),
+    )
     .map((p) => p.toolCallId as string);
 }
 
@@ -60,11 +76,6 @@ function firstTextPart(message: MessageLike | undefined): string | undefined {
   return first?.type === "text" ? first.text : undefined;
 }
 
-function isInjectedImageMessage(message: MessageLike | undefined): boolean {
-  const text = firstTextPart(message);
-  return typeof text === "string" && text.startsWith(INJECTED_IMAGE_PREFIX);
-}
-
 /**
  * prepareStep guard: after any tool message whose tool-result toolCallId has a
  * stashed image, insert a user message carrying that image. Idempotent —
@@ -73,6 +84,7 @@ function isInjectedImageMessage(message: MessageLike | undefined): boolean {
  */
 export function imageAttachmentGuard(): PrepareStepFn {
   return ({ messages }) => {
+    sweep(); // purge expired / oversized entries on every read, not just on writes
     if (!Array.isArray(messages) || messages.length === 0 || stash.size === 0) return undefined;
     let changed = false;
     const next: unknown[] = [];
@@ -84,6 +96,8 @@ export function imageAttachmentGuard(): PrepareStepFn {
       // Collect the injected block already following this tool message so
       // idempotency is judged per toolCallId, not per position — a tool
       // message can carry several tool-result parts.
+      // Deliberately scans the ORIGINAL `messages` array: new injections land
+      // in `next`; only pre-existing injected blocks matter for idempotency.
       const alreadyInjected: string[] = [];
       for (let j = i + 1; j < messages.length; j++) {
         const text = firstTextPart(messages[j] as MessageLike);

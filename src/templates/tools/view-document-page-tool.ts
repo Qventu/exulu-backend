@@ -133,7 +133,7 @@ export const createViewDocumentPageTool = ({
         attached: true,
         filename: safeName,
         page: pageNumber,
-        note: "The rendered image follows this tool result as an attached user message — analyze it there.",
+        note: "The rendered image follows this tool result as an attached user message — analyze it there. If no image message follows, the attachment has expired; call this tool again to re-render it.",
       };
     } catch (err) {
       return { error: `Failed to render "${safeName}": ${err instanceof Error ? err.message : "unknown error"}` };

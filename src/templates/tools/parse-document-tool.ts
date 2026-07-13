@@ -91,6 +91,12 @@ export const createParseDocumentTool = ({
           const m = pagesPattern.exec(pages.trim());
           if (!m) return { error: `Invalid pages "${pages}" — use "3" or "2-5".` };
           range = [Number(m[1]), Number(m[2] ?? m[1])];
+          if (range[0] < 1 || range[0] > range[1]) {
+            return { error: `Invalid pages "${pages}" — start must be at least 1 and not greater than the end.` };
+          }
+          if (range[0] > totalPages) {
+            return { error: `Page range starts at ${range[0]} but "${safeName}" has only ${totalPages} page${totalPages === 1 ? "" : "s"}.` };
+          }
         }
         fullText = pageTexts
           .map((text, i) => ({ page: i + 1, text }))
