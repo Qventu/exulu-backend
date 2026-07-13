@@ -123,3 +123,12 @@ it("surfaces fetch failures as error objects, not throws", async () => {
   const result = await runTool({ filename: "missing.pdf" });
   expect(result.error).toMatch(/404/);
 });
+
+it("rejects degenerate page ranges", async () => {
+  pdfToText.mockResolvedValue(
+    "page one full body of searchable text\fpage two full body of searchable text\fpage three full body of searchable text\fpage four full body of searchable text",
+  );
+  expect((await runTool({ filename: "report.pdf", pages: "0-5" })).error).toMatch(/start must be at least 1/);
+  expect((await runTool({ filename: "report.pdf", pages: "3-1" })).error).toMatch(/not greater than the end/);
+  expect((await runTool({ filename: "report.pdf", pages: "9-12" })).error).toMatch(/only 4 pages/);
+});

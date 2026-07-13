@@ -108,3 +108,13 @@ it("evicts oldest entries beyond the stash cap", async () => {
   const newest = await guard({ stepNumber: 1, messages: [toolMessage("call_104")] });
   expect(newest).toBeDefined();
 });
+
+it("ignores stashed ids on tool-results from other tools", async () => {
+  stashToolImage("call_1", { data: PNG_B64, mediaType: "image/png", label: "x" });
+  const guard = imageAttachmentGuard();
+  const foreign = {
+    role: "tool",
+    content: [{ type: "tool-result", toolCallId: "call_1", toolName: "some_other_tool", output: {} }],
+  };
+  expect(await guard({ stepNumber: 1, messages: [foreign] })).toBeUndefined();
+});
