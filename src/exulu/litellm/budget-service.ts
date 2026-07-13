@@ -21,6 +21,7 @@ import {
   tagInfo,
   tagNew,
   tagUpdate,
+  budgetUpdate,
   type BudgetDuration,
   type TagInfo,
 } from "./admin-client";
@@ -270,6 +271,22 @@ export async function setBudgetSettings(
 // ───────────────────────── upsert ─────────────────────────
 
 /**
+ * Validate an optional budget_reset_at from an untrusted request body. Absent
+ * (undefined/null) is valid and means "leave the reset date to LiteLLM". A
+ * parseable date string is normalised to an ISO string. Anything else is
+ * invalid so the route can 400 before touching LiteLLM.
+ */
+export function parseResetAt(raw: unknown): { valid: boolean; value?: string } {
+  if (raw === undefined || raw === null || raw === "") {
+    return { valid: true, value: undefined };
+  }
+  if (typeof raw !== "string") return { valid: false };
+  const t = Date.parse(raw);
+  if (Number.isNaN(t)) return { valid: false };
+  return { valid: true, value: new Date(t).toISOString() };
+}
+
+/**
  * Create-or-update a tag budget. Uses tagInfo to decide, with a fallback so a
  * race (tag created between the read and the write) still resolves. Invalidates
  * the in-memory caches for this tag.
@@ -278,6 +295,7 @@ export async function upsertBudget(
   tag: string,
   max_budget: number,
   budget_duration: BudgetDuration | string,
+  budget_reset_at?: string,
 ): Promise<void> {
   const info = await tagInfo([tag]);
   try {
@@ -294,6 +312,21 @@ export async function upsertBudget(
       await tagUpdate({ name: tag, max_budget, budget_duration });
     }
   }
+
+  // The /tag/* endpoints strip budget_reset_at, so apply it directly on the
+  // budget row via /budget/update. Re-read the tag to get the (possibly newly
+  // created) budget_id. A failure here surfaces to the caller so the admin
+  // retries rather than silently keeping a stale reset date.
+  if (budget_reset_at) {
+    const after = await tagInfo([tag]);
+    const budgetId = after[tag]?.budget_id ?? null;
+    if (budgetId) {
+      await budgetUpdate(budgetId, { budget_reset_at });
+    } else {
+      console.warn(`[EXULU] upsertBudget: no budget_id for ${tag}; reset date not applied`);
+    }
+  }
+
   invalidateBudgetCaches(tag);
 }
 

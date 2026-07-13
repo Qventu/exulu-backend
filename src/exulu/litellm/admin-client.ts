@@ -25,12 +25,14 @@ export type TagInfo = {
   max_budget: number | null;
   budget_duration: string | null;
   budget_reset_at: string | null;
+  budget_id: string | null;
 };
 
 export type TagBudgetInput = {
   name: string;
   max_budget: number;
   budget_duration: BudgetDuration | string;
+  budget_reset_at?: string;
 };
 
 async function call<T>(path: string, body: unknown): Promise<T> {
@@ -63,12 +65,28 @@ export async function tagNew(input: TagBudgetInput): Promise<void> {
 }
 
 /** Update an existing tag's budget. */
+// Note: budget_reset_at is intentionally NOT sent here — LiteLLM's /tag/* endpoints
+// silently strip it (not in LiteLLM_BudgetTable.model_fields). It is applied separately
+// via budgetUpdate() which calls /budget/update directly.
 export async function tagUpdate(input: TagBudgetInput): Promise<void> {
   await call("/tag/update", {
     name: input.name,
     max_budget: input.max_budget,
     budget_duration: input.budget_duration,
   });
+}
+
+/**
+ * Set fields on a budget row directly via LiteLLM's /budget/update. Used for
+ * budget_reset_at, which the /tag/* endpoints silently strip (they filter to
+ * LiteLLM_BudgetTable.model_fields, which omits budget_reset_at). Requires the
+ * budget_id — read it from tagInfo(...).budget_id.
+ */
+export async function budgetUpdate(
+  budget_id: string,
+  patch: { budget_reset_at?: string },
+): Promise<void> {
+  await call("/budget/update", { budget_id, ...patch });
 }
 
 /** Delete a tag (and its budget). */
@@ -85,19 +103,21 @@ function extractBudget(raw: any): {
   max_budget: number | null;
   budget_duration: string | null;
   budget_reset_at: string | null;
+  budget_id: string | null;
   spend: number;
 } {
   const bt = raw?.litellm_budget_table ?? {};
   const max_budget = bt.max_budget ?? raw?.max_budget ?? null;
   const budget_duration = bt.budget_duration ?? raw?.budget_duration ?? null;
   const budget_reset_at = bt.budget_reset_at ?? raw?.budget_reset_at ?? null;
+  const budget_id = bt.budget_id ?? raw?.budget_id ?? null;
   const spend =
     typeof raw?.spend === "number"
       ? raw.spend
       : typeof bt.spend === "number"
         ? bt.spend
         : 0;
-  return { max_budget, budget_duration, budget_reset_at, spend };
+  return { max_budget, budget_duration, budget_reset_at, budget_id, spend };
 }
 
 /** All tags LiteLLM knows about (normalises the array / dict response shapes). */
@@ -140,6 +160,7 @@ export async function listTagBudgets(): Promise<Record<string, TagInfo>> {
       max_budget: b.max_budget,
       budget_duration: b.budget_duration,
       budget_reset_at: b.budget_reset_at,
+      budget_id: b.budget_id,
     };
   }
 
@@ -199,6 +220,7 @@ export async function tagInfo(
       max_budget: b.max_budget,
       budget_duration: b.budget_duration,
       budget_reset_at: b.budget_reset_at,
+      budget_id: b.budget_id,
     };
   }
   return out;

@@ -25,7 +25,8 @@ import {
   getPresignedUrl,
   type S3FileObject,
 } from "../uppy/index.ts";
-import { extractBundleToS3, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { extractBundleToS3, extractBundleToVersion, BundleValidationError } from "../skills/bundle-extractor.ts";
+import { parseSkillFrontmatter } from "../skills/frontmatter.ts";
 import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
 import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
@@ -84,6 +85,7 @@ import {
   getBudgetSettings,
   setBudgetSettings,
   upsertBudget,
+  parseResetAt,
   invalidateBudgetCaches,
   type BudgetSettings,
 } from "./litellm/budget-service.ts";
@@ -112,6 +114,16 @@ import {
   deriveFilename,
   contentHeadersFor,
 } from "./shared-artifacts.ts";
+import {
+  resolveSkillByName,
+  canAccessSkill,
+  filterReadableSkills,
+} from "../skills/skill-access.ts";
+import {
+  BOOTSTRAP_SKILL_MD,
+  BOOTSTRAP_CLIENTS_JSON,
+  BOOTSTRAP_EXULU_SH,
+} from "../skills/bootstrap/exulu-skills.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -204,6 +216,9 @@ export const createExpressRoutes = async (
     }
     next();
   });
+
+  // Route-level raw body parser for zip/skill publish payloads.
+  const rawZip = express.raw({ type: ["application/zip", "application/octet-stream", "application/x-zip-compressed", "application/x-zip"], limit: "50mb" });
 
   console.log(`
     ███████╗██╗  ██╗██╗   ██╗██╗      ██╗   ██╗
@@ -2374,12 +2389,14 @@ Mood: friendly and intelligent.
 
   const parseBudgetBody = (
     body: any,
-  ): { max_budget: number; budget_duration: BudgetDuration } | null => {
+  ): { max_budget: number; budget_duration: BudgetDuration; budget_reset_at?: string } | null => {
     const max_budget = Number(body?.max_budget);
     const budget_duration = String(body?.budget_duration ?? "") as BudgetDuration;
     if (!Number.isFinite(max_budget) || max_budget <= 0) return null;
     if (!BUDGET_ALLOWED_DURATIONS.has(budget_duration)) return null;
-    return { max_budget, budget_duration };
+    const reset = parseResetAt(body?.budget_reset_at);
+    if (!reset.valid) return null;
+    return { max_budget, budget_duration, budget_reset_at: reset.value };
   };
 
   const parseBudgetSettingsBody = (body: any): BudgetSettings | null => {
@@ -2474,7 +2491,7 @@ Mood: friendly and intelligent.
       }
       const body = parseBudgetBody(req.body);
       if (!body) {
-        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration, budget_reset_at)." });
         return;
       }
       const entityIds: unknown[] = Array.isArray(req.body?.entityIds)
@@ -2488,7 +2505,7 @@ Mood: friendly and intelligent.
       for (const id of entityIds) {
         const tag = budgetTagFor(entityType, id as string | number);
         try {
-          await upsertBudget(tag, body.max_budget, body.budget_duration);
+          await upsertBudget(tag, body.max_budget, body.budget_duration, body.budget_reset_at);
           results.push({ entityId: String(id), ok: true });
         } catch (err) {
           results.push({
@@ -2519,12 +2536,12 @@ Mood: friendly and intelligent.
       }
       const body = parseBudgetBody(req.body);
       if (!body) {
-        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration)." });
+        res.status(400).json({ detail: "Invalid budget (max_budget, budget_duration, budget_reset_at)." });
         return;
       }
       const tag = budgetTagFor(entityType, req.params.entityId ?? "");
       try {
-        await upsertBudget(tag, body.max_budget, body.budget_duration);
+        await upsertBudget(tag, body.max_budget, body.budget_duration, body.budget_reset_at);
         const info = await tagInfo([tag]);
         res.status(200).json({ budget: info[tag] ?? null });
       } catch (err) {
@@ -3251,6 +3268,251 @@ Mood: friendly and intelligent.
   }
 
   /**
+   * GET /skills/agent/bootstrap — PUBLIC (no auth)
+   * Returns a zip containing the generic exulu-skills bootstrap skill so any
+   * agent client can self-install it without a logged-in session. The content
+   * is embedded as TypeScript string constants (no loose files in dist).
+   * NOTE: This literal path must remain BEFORE /skills/registry to avoid param capture.
+   */
+  app.get("/skills/agent/bootstrap", async (_req: Request, res: Response) => {
+    try {
+      const zip = new JSZip();
+      zip.file("exulu-skills/SKILL.md", BOOTSTRAP_SKILL_MD);
+      zip.file("exulu-skills/references/clients.json", BOOTSTRAP_CLIENTS_JSON);
+      // The helper script the agent invokes (unix-executable bit set so a
+      // direct `./scripts/exulu` also works; the skill documents `sh <path>`).
+      zip.file("exulu-skills/scripts/exulu", BOOTSTRAP_EXULU_SH, {
+        unixPermissions: 0o755,
+      });
+      const buffer = await zip.generateAsync({
+        type: "nodebuffer",
+        platform: "UNIX",
+      });
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", 'attachment; filename="exulu-skills.zip"');
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("[SKILLS] Failed to build bootstrap zip", err);
+      res.status(500).json({ detail: "Failed to build bootstrap skill." });
+    }
+  });
+
+  /**
+   * GET /skills/registry?tag=<tag>
+   * Agent-facing catalog of skills the caller may read. Addresses skills by
+   * name (unique). RBAC-filtered via canAccessSkill.
+   * NOTE: This literal path must remain BEFORE any /skills/registry/:name param
+   * routes (added in later tasks) to prevent param capture.
+   */
+  app.get("/skills/registry", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const tag = typeof req.query.tag === "string" ? req.query.tag : undefined;
+    const all = await db("skills").select("*");
+    const readable = await filterReadableSkills(db, all, authResult.user);
+    const skills = readable
+      .filter((s) => {
+        if (!tag) return true;
+        const tags = Array.isArray(s.tags) ? s.tags : [];
+        return tags.includes(tag);
+      })
+      .map((s) => ({
+        name: s.name,
+        description: s.description ?? "",
+        tags: Array.isArray(s.tags) ? s.tags : [],
+        current_version: s.current_version ?? 1,
+        updated_at: s.updatedAt ?? s.updated_at ?? null,
+      }));
+    res.json({ skills });
+  });
+
+  /**
+   * GET /skills/registry/:name/download?version=latest|<N>
+   * Streams a skill version as a .skill zip with a single wrapper folder
+   * (<name>/) so it round-trips cleanly through the uploader.
+   * NOTE: This route MUST remain BEFORE /skills/registry/:name so Express
+   * matches the literal segment "download" instead of capturing it as :name.
+   */
+  app.get("/skills/registry/:name/download", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const skill = await resolveSkillByName(db, req.params.name as string);
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+    if (!(await canAccessSkill(db, skill, "read", authResult.user))) {
+      res.status(403).json({ detail: "You don't have access to this skill." });
+      return;
+    }
+
+    const vQuery = req.query.version;
+    const version =
+      !vQuery || vQuery === "latest" ? (skill.current_version ?? 1) : Number(vQuery);
+    if (!Number.isFinite(version) || version < 1) {
+      res.status(400).json({ detail: "Invalid version." });
+      return;
+    }
+
+    const safeName =
+      String(skill.name ?? "skill").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") ||
+      "skill";
+    const versionPrefix = `skills/${skill.id}/v${version}/`;
+    const files = await listS3ObjectsByPrefix(versionPrefix, config);
+    if (files.length === 0) {
+      res.status(404).json({ detail: `Version v${version} has no files.` });
+      return;
+    }
+
+    const zip = new JSZip();
+    for (const file of files) {
+      const idx = file.key.indexOf(versionPrefix);
+      const rel = idx >= 0 ? file.key.slice(idx + versionPrefix.length) : file.key;
+      if (!rel) continue;
+      const bytes = await getS3ObjectBytes(file.key, config);
+      zip.file(`${safeName}/${rel}`, bytes); // wrapper folder → unpacks to <name>/
+    }
+    const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.skill"`);
+    res.send(buffer);
+  });
+
+  /**
+   * POST /skills/registry/:name   (body: raw zip / .skill bytes)
+   * Publish from an agent. New name -> create a private skill at v1. Existing
+   * name the caller can write -> append a new version. 403 when the name
+   * exists but the caller lacks write; 409 when it exists but the caller can't
+   * even read it (don't leak existence details).
+   */
+  app.post("/skills/registry/:name", rawZip, async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const name = req.params.name as string;
+    const bytes = req.body as Buffer;
+    if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+      res.status(400).json({ detail: "Empty body. Send the skill as a zip/.skill payload." });
+      return;
+    }
+
+    const { db } = await postgresClient();
+    const existing = await resolveSkillByName(db, name);
+
+    if (existing) {
+      const canWrite = await canAccessSkill(db, existing, "write", authResult.user);
+      if (canWrite) {
+        const nextVersion = (existing.current_version ?? 1) + 1;
+        try {
+          await extractBundleToVersion({ bytes, skillId: existing.id, version: nextVersion, config });
+        } catch (err: any) {
+          if (err instanceof BundleValidationError) {
+            res.status(400).json({ detail: err.message });
+            return;
+          }
+          console.error("[SKILLS] publish (new version) failed", err);
+          res.status(500).json({ detail: "Failed to publish new version." });
+          return;
+        }
+        const history = Array.isArray(existing.history) ? existing.history : [];
+        await db("skills").where({ id: existing.id }).update({
+          current_version: nextVersion,
+          history: JSON.stringify([
+            ...history,
+            { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
+          ]),
+        });
+        res.json({ name, version: nextVersion, created: false });
+        return;
+      } else {
+        const canRead = await canAccessSkill(db, existing, "read", authResult.user);
+        if (!canRead) {
+          res.status(409).json({ detail: "That name is unavailable." });
+          return;
+        }
+        res.status(403).json({ detail: "You don't have write access to this skill." });
+        return;
+      }
+    }
+
+    // New skill.
+    const meta = await parseSkillFrontmatter(bytes);
+    const skillId = randomUUID();
+    try {
+      await extractBundleToVersion({ bytes, skillId, version: 1, config });
+    } catch (err: any) {
+      if (err instanceof BundleValidationError) {
+        res.status(400).json({ detail: err.message });
+        return;
+      }
+      console.error("[SKILLS] publish (create) failed", err);
+      res.status(500).json({ detail: "Failed to publish skill." });
+      return;
+    }
+    try {
+      await db("skills").insert({
+        id: skillId,
+        name,
+        description: meta.description ?? "",
+        s3folder: `skills/${skillId}`,
+        tags: JSON.stringify([]),
+        usage_count: 0,
+        favorite_count: 0,
+        current_version: 1,
+        history: JSON.stringify([
+          { version: 1, created_at: new Date().toISOString(), label: "Published from agent" },
+        ]),
+        rights_mode: "private",
+        created_by: authResult.user.id,
+      });
+    } catch (err: any) {
+      // Unique-name race: someone created it between our lookup and insert.
+      res.status(409).json({ detail: "That name is unavailable." });
+      return;
+    }
+    res.json({ name, version: 1, created: true });
+  });
+
+  /**
+   * GET /skills/registry/:name
+   * Metadata for a single skill by name. RBAC-checked.
+   */
+  app.get("/skills/registry/:name", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    const { db } = await postgresClient();
+    const skill = await resolveSkillByName(db, req.params.name as string);
+    if (!skill) {
+      res.status(404).json({ detail: "Skill not found." });
+      return;
+    }
+    if (!(await canAccessSkill(db, skill, "read", authResult.user))) {
+      res.status(403).json({ detail: "You don't have access to this skill." });
+      return;
+    }
+    res.json({
+      name: skill.name,
+      description: skill.description ?? "",
+      tags: Array.isArray(skill.tags) ? skill.tags : [],
+      current_version: skill.current_version ?? 1,
+      history: Array.isArray(skill.history) ? skill.history : [],
+    });
+  });
+
+  /**
    * POST /skills/:skillId/init
    * Called immediately after skillsCreateOne. Creates SKILL.md in S3 and
    * initialises the skill's s3folder, current_version, and history fields.
@@ -3321,8 +3583,8 @@ Mood: friendly and intelligent.
     const { skillId } = req.params;
     const { extension, contentType } = req.body ?? {};
 
-    if (extension !== ".zip" && extension !== ".md") {
-      res.status(400).json({ detail: 'extension must be ".zip" or ".md".' });
+    if (extension !== ".zip" && extension !== ".md" && extension !== ".skill") {
+      res.status(400).json({ detail: 'extension must be ".zip", ".md", or ".skill".' });
       return;
     }
     if (!contentType || typeof contentType !== "string") {
@@ -3532,6 +3794,12 @@ Mood: friendly and intelligent.
     const versionPrefix = `skills/${skillId}/v${version}/`;
     const files = await listS3ObjectsByPrefix(versionPrefix, config);
 
+    const asSkill = req.query.format === "skill";
+    const safeName =
+      String(skill.name ?? "skill")
+        .replace(/[^a-zA-Z0-9-_]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "skill";
+
     const zip = new JSZip();
     let fileCount = 0;
     for (const file of files) {
@@ -3548,13 +3816,14 @@ Mood: friendly and intelligent.
 
       // Binary-safe — skill bundles can ship images, fonts, and other assets.
       const bytes = await getS3ObjectBytes(file.key, config);
-      zip.file(relativePath, bytes);
+      const archivePath = asSkill ? `${safeName}/${relativePath}` : relativePath;
+      zip.file(archivePath, bytes);
       fileCount += 1;
     }
 
     const exportedAt = new Date().toISOString();
     zip.file(
-      "version.txt",
+      asSkill ? `${safeName}/version.txt` : "version.txt",
       [
         `Skill: ${skill.name ?? skillId}`,
         `Skill id: ${skillId}`,
@@ -3566,16 +3835,9 @@ Mood: friendly and intelligent.
     );
 
     const buffer = await zip.generateAsync({ type: "nodebuffer" });
-    const safeName =
-      String(skill.name ?? "skill")
-        .replace(/[^a-zA-Z0-9-_]+/g, "-")
-        .replace(/^-+|-+$/g, "") || "skill";
-    const filename = `${safeName}-v${version}.zip`;
+    const filename = asSkill ? `${safeName}.skill` : `${safeName}-v${version}.zip`;
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
   });
 
@@ -4014,6 +4276,29 @@ Mood: friendly and intelligent.
   }
 
   /**
+   * Auth + RBAC for the session-files routes. Loads the session (404 if
+   * missing), checks read/write access via RBAC (403; includes the
+   * super-admin bypass), and builds the S3 prefixes from the session
+   * OWNER's id — not the caller's. Files are written under the owner's
+   * prefix (upload-sign for the owner, sandbox mirroring, tool-output
+   * offload), so building the prefix from the caller's id makes the list
+   * come up empty for admins/shared users viewing someone else's session.
+   */
+  const loadSessionFilesAuth = async (
+    req: Request,
+    res: Response,
+    sessionId: string,
+    rights: "read" | "write",
+  ) => {
+    const authed = await loadAuthedSession(req, res, sessionId, rights);
+    if (!authed) return null;
+    // Legacy sessions may lack a user column value; fall back to the caller
+    // (which is what every write path used before the owner-prefix fix).
+    const ownerId = authed.session.user ?? authed.user.id;
+    return { ...authed, ownerId, ...buildSessionPrefixes(ownerId, sessionId) };
+  };
+
+  /**
    * Sanitize a user-supplied filename. Reject anything that escapes the
    * intended directory; mostly defensive — Uppy normally posts to the
    * presigned URL whose key we already control, so the filename arrives
@@ -4031,16 +4316,13 @@ Mood: friendly and intelligent.
 
   /**
    * GET /sessions/:sessionId/files
-   * Lists all files under the calling user's session prefix. Returns
-   * presigned download URLs inline so the frontend can render previews
-   * (image, PDF) without a second round trip per file.
+   * Lists all files under the session owner's prefix. Access is RBAC-checked
+   * against the session (read), so admins and shared users see the same
+   * files the owner does. Returns presigned download URLs inline so the
+   * frontend can render previews (image, PDF) without a second round trip
+   * per file.
    */
   app.get("/sessions/:sessionId/files", async (req: Request, res: Response) => {
-    const authResult = await requestValidators.authenticate(req);
-    if (!authResult.user?.id) {
-      res.status(authResult.code ?? 401).json({ detail: authResult.message });
-      return;
-    }
     const sessionId = req.params.sessionId;
     if (!sessionId) {
       res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4051,10 +4333,9 @@ Mood: friendly and intelligent.
       return;
     }
 
-    const { userSessionPrefix } = buildSessionPrefixes(
-      authResult.user.id,
-      sessionId,
-    );
+    const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+    if (!authed) return;
+    const { userSessionPrefix } = authed;
 
     let objects: S3FileObject[];
     try {
@@ -4102,11 +4383,6 @@ Mood: friendly and intelligent.
   app.post(
     "/sessions/:sessionId/files/upload-sign",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4116,6 +4392,8 @@ Mood: friendly and intelligent.
         res.status(500).json({ detail: "File uploads are not configured." });
         return;
       }
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
 
       const { filename, contentType } = req.body ?? {};
       if (!filename || typeof filename !== "string") {
@@ -4134,11 +4412,7 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { userSessionPrefix, fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      const fullKey = `${fullSessionPrefix}${safeName}`;
+      const fullKey = `${authed.fullSessionPrefix}${safeName}`;
       const uploadUrl = await getS3SignedUploadUrl(fullKey, contentType, config);
 
       // The frontend round-trips `key` back to the sync-to-sandbox and delete
@@ -4157,11 +4431,6 @@ Mood: friendly and intelligent.
   app.post(
     "/sessions/:sessionId/files/sync-to-sandbox",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4173,11 +4442,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
@@ -4185,7 +4452,7 @@ Mood: friendly and intelligent.
       try {
         const result = await downloadKeyIntoSandbox({
           sessionId,
-          userId: authResult.user.id,
+          userId: authed.ownerId,
           fullS3Key: key,
           config,
         });
@@ -4206,11 +4473,6 @@ Mood: friendly and intelligent.
   app.delete(
     "/sessions/:sessionId/files",
     async (req: Request, res: Response) => {
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
-      }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
         res.status(400).json({ detail: "Missing sessionId in path." });
@@ -4225,11 +4487,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "write");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
@@ -4256,15 +4516,10 @@ Mood: friendly and intelligent.
       // <iframe src=...> can't set Authorization: Bearer. Accept the token
       // via ?auth= query param as a fallback so the iframe can fetch the
       // PDF directly. Token still ends up in server logs / browser history —
-      // acceptable for a same-user preview that's also auth-checked via the
-      // session-prefix rule below.
+      // acceptable for a preview that's also RBAC-checked against the
+      // session plus the prefix rule below.
       if (!req.headers.authorization && typeof req.query.auth === "string") {
         req.headers.authorization = `Bearer ${req.query.auth}`;
-      }
-      const authResult = await requestValidators.authenticate(req);
-      if (!authResult.user?.id) {
-        res.status(authResult.code ?? 401).json({ detail: authResult.message });
-        return;
       }
       const sessionId = req.params.sessionId;
       if (!sessionId) {
@@ -4280,11 +4535,9 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const { fullSessionPrefix } = buildSessionPrefixes(
-        authResult.user.id,
-        sessionId,
-      );
-      if (!key.startsWith(fullSessionPrefix)) {
+      const authed = await loadSessionFilesAuth(req, res, sessionId, "read");
+      if (!authed) return;
+      if (!key.startsWith(authed.fullSessionPrefix)) {
         res.status(403).json({ detail: "Key does not belong to this session." });
         return;
       }
