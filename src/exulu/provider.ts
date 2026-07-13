@@ -1208,7 +1208,7 @@ ${skillsList}
         );
       },
       // todo allow configuring the step budget per skill
-      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()) as never,
       stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
     });
 
