@@ -38,18 +38,22 @@ Purpose: let the agent actually see a page or image.
 - **PDF:** render page N to PNG via `pdftoppm` at ~150 DPI, capped at 1568px on the long edge (Anthropic's recommended vision size) and ~4MB encoded; downscale rather than reject when over cap.
 - **Office formats:** convert to PDF first by reusing the existing LibreOffice preview path (`getPdfPreviewBytes` in `src/sessions/pdf-preview-cache.ts`, ETag-cached), then render the requested page.
 - **Image files (png/jpg/jpeg/gif/webp):** return the image directly. This also fixes the agent's blindness to plain screenshots in the sandbox.
-- **Delivery:** the tool result carries the image as an image content block via AI SDK v5 `toModelOutput` (media part, base64 + mediaType), so the model sees the pixels within the same agentic loop.
+- **Delivery:** via `prepareStep` message injection (see next section): the tool result is a small marker JSON; a prepareStep guard inserts the rendered image as a user-message image part immediately after the tool-result message, so the model sees the pixels within the same agentic loop.
 - **Vision gating:** if the session model lacks `supports_vision` (LiteLLM catalog flag, `src/exulu/litellm/catalog.ts`), the tool returns a text error stating vision is unavailable on this model. Deterministic refusal, no silent failure.
 
 ### Agent flow for the originating scenario
 
 "What's the image on page 2 of test.pdf?" → `parse_document` (orient: confirm page 2, read caption/context) → `view_document_page { filename: "test.pdf", page: 2 }` → model sees the page render → answers.
 
-## Key risk: image pass-through via LiteLLM
+## Delivery mechanism (amended 2026-07-13 after implementation research)
 
-Anthropic's API accepts images inside `tool_result` blocks; the OpenAI chat-completions format LiteLLM speaks does not guarantee this for every provider. **First implementation step:** a tsx repro script against local LiteLLM verifying an image tool-result reaches (a) a Claude model and (b) one non-Anthropic vision model.
+The originally planned primary path — AI SDK `toModelOutput` emitting an image content block in the tool result — is confirmed dead through LiteLLM: `@ai-sdk/openai-compatible@latest` serializes `content`-type tool outputs with `JSON.stringify`, so the model would receive base64 as text, never pixels. The originally designed fallback is therefore the primary mechanism:
 
-Fallback if pass-through fails for some providers: AI SDK `prepareStep` injects the rendered image as a synthetic user-message part between loop steps — same effect (image lands in the messages array), different plumbing. The tool's text portion then says "image attached below".
+- `view_document_page` stashes the rendered PNG in an in-process map keyed by `toolCallId` and returns only a small marker JSON as its tool result.
+- A new `imageAttachmentGuard` prepareStep (composed into the existing `composePrepareSteps` chains in `src/exulu/provider.ts` and `src/exulu/openai-gateway.ts`) walks the step messages and inserts a user message with an image part directly after any tool-result message whose `toolCallId` is stashed. User-message image parts are serialized by the openai-compatible provider as standard `image_url` data URLs — supported by every vision model LiteLLM routes to.
+- The stash is bounded (LRU + TTL); images are never persisted to chat history, so later turns see only the marker text. The agent can re-call the tool if it needs to look again.
+
+A tsx repro script against local LiteLLM verifies an injected user-message image reaches (a) a Claude model and (b) one non-Anthropic vision model.
 
 ## Error handling
 
