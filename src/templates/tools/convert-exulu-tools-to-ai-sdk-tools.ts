@@ -28,6 +28,8 @@ import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
 import { createSessionFileReadTool } from "./session-file-read-tool";
+import { createParseDocumentTool } from "./parse-document-tool";
+import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
 
 /**
@@ -281,6 +283,16 @@ export const convertExuluToolsToAiSdkTools = async (
   const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
+  }
+
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig });
+  if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
+    currentTools.push(parseDocumentTool);
+  }
+
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig });
+  if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
+    currentTools.push(viewDocumentPageTool);
   }
 
   console.log("[EXULU] Creating agentic search tool", contexts?.length, model);

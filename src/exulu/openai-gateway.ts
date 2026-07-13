@@ -31,6 +31,7 @@ import { resolveContextWindow } from "./resolve-context-window.ts";
 import { deriveContextBudget, estimateTokens } from "./context-budget.ts";
 import { isLiteLLMEnabled } from "./litellm/supervisor.ts";
 import { contextGuard, composePrepareSteps } from "./context-guard.ts";
+import { imageAttachmentGuard } from "./tool-image-attachments.ts";
 import type { ExuluTool } from "./tool.ts";
 import type { ExuluContext } from "./context.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -545,7 +546,7 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()),
             stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
             onError: (error) => {
               console.error("[OPENAI GATEWAY] stream error:", error);
@@ -587,7 +588,7 @@ export const registerOpenAIGatewayRoutes = async (
             messages: coreMessages,
             tools: hasTools ? activeTools : undefined,
             maxRetries: 2,
-            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget)),
+            prepareStep: clientTools.length > 0 ? undefined : composePrepareSteps(contextGuard(contextWindow), gatewayRetrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()),
             stopWhen: clientTools.length > 0 ? undefined : [stepCountIs(turnBudget)],
           });
 
