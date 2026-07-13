@@ -1,6 +1,6 @@
 import type { PrepareStepFn } from "./context-guard";
 
-export const INJECTED_IMAGE_PREFIX = "[Image attached from tool call: ";
+export const INJECTED_IMAGE_PREFIX = "[Image attached from tool call ";
 
 type StashedImage = { data: string; mediaType: string; label: string; stashedAt: number };
 
@@ -50,10 +50,19 @@ function stashedIdsInMessage(message: MessageLike): string[] {
     .map((p) => p.toolCallId as string);
 }
 
-function isInjectedImageMessage(message: MessageLike | undefined): boolean {
-  if (message?.role !== "user" || !Array.isArray(message.content)) return false;
+function injectedTextFor(id: string, label: string): string {
+  return `${INJECTED_IMAGE_PREFIX}${id}: ${label}]`;
+}
+
+function firstTextPart(message: MessageLike | undefined): string | undefined {
+  if (message?.role !== "user" || !Array.isArray(message.content)) return undefined;
   const first = (message.content as Array<{ type?: string; text?: string }>)[0];
-  return first?.type === "text" && typeof first.text === "string" && first.text.startsWith(INJECTED_IMAGE_PREFIX);
+  return first?.type === "text" ? first.text : undefined;
+}
+
+function isInjectedImageMessage(message: MessageLike | undefined): boolean {
+  const text = firstTextPart(message);
+  return typeof text === "string" && text.startsWith(INJECTED_IMAGE_PREFIX);
 }
 
 /**
@@ -71,14 +80,24 @@ export function imageAttachmentGuard(): PrepareStepFn {
       const message = messages[i] as MessageLike;
       next.push(message);
       const ids = stashedIdsInMessage(message);
-      if (ids.length === 0 || isInjectedImageMessage(messages[i + 1] as MessageLike)) continue;
+      if (ids.length === 0) continue;
+      // Collect the injected block already following this tool message so
+      // idempotency is judged per toolCallId, not per position — a tool
+      // message can carry several tool-result parts.
+      const alreadyInjected: string[] = [];
+      for (let j = i + 1; j < messages.length; j++) {
+        const text = firstTextPart(messages[j] as MessageLike);
+        if (text === undefined || !text.startsWith(INJECTED_IMAGE_PREFIX)) break;
+        alreadyInjected.push(text);
+      }
       for (const id of ids) {
+        if (alreadyInjected.some((text) => text.startsWith(`${INJECTED_IMAGE_PREFIX}${id}:`))) continue;
         const image = stash.get(id)!;
         changed = true;
         next.push({
           role: "user",
           content: [
-            { type: "text", text: `${INJECTED_IMAGE_PREFIX}${image.label}` },
+            { type: "text", text: injectedTextFor(id, image.label) },
             { type: "image", image: image.data, mediaType: image.mediaType },
           ],
         });
