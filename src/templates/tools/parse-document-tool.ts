@@ -56,6 +56,10 @@ export const createParseDocumentTool = ({
       };
     }
 
+    if (pages && ext !== ".pdf") {
+      return { error: `The pages option is only supported for PDF files — "${ext}" documents are extracted whole.` };
+    }
+
     const uploads = exuluConfig.fileUploads!;
     const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
     const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
@@ -135,7 +139,7 @@ export const createParseDocumentTool = ({
       "use view_document_page.",
     inputSchema: z.object({
       filename: z.string().describe('Exact session file name, e.g. "report.pdf"'),
-      pages: z.string().optional().describe('PDF page or range to extract, e.g. "2" or "1-5" (default: all pages)'),
+      pages: z.string().optional().describe('PDF page or range to extract, e.g. "2" or "1-5" (default: all pages) (PDF only)'),
       offset: z.number().int().min(1).optional().describe("1-based first output line to read (default 1)"),
       limit: z.number().int().min(1).max(1000).optional().describe(`Number of lines to read (default ${DEFAULT_LIMIT})`),
     }),

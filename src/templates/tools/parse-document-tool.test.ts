@@ -98,6 +98,11 @@ it("extracts office documents via officeparser (no page markers)", async () => {
   expect(result.totalPages).toBeUndefined();
 });
 
+it("rejects the pages option for non-PDF formats", async () => {
+  const result = await runTool({ filename: "notes.docx", pages: "2" });
+  expect(result.error).toMatch(/only supported for PDF/);
+});
+
 it("rejects unsupported extensions with a pointer to read_session_file", async () => {
   const result = await runTool({ filename: "data.csv" });
   expect(result.error).toMatch(/read_session_file/);
@@ -110,6 +115,7 @@ it("pages long output with offset/limit and caps at 16k chars", async () => {
   expect(result.content).toBe("line 9\nline 10\nline 11");
   expect(result.offset).toBe(10);
   expect(result.linesReturned).toBe(3);
+  expect(result.totalLines).toBe(501);
 });
 
 it("surfaces fetch failures as error objects, not throws", async () => {
