@@ -39,6 +39,11 @@ function getS3Client(config: ExuluConfig) {
       accessKeyId: config.fileUploads.s3key,
       secretAccessKey: config.fileUploads.s3secret,
     },
+    // AWS SDK >= 3.729 injects x-amz-checksum-crc32 (of an empty body) into
+    // presigned PUT URLs, which S3-compatible stores like MinIO reject on
+    // upload with a checksum mismatch. WHEN_REQUIRED disables that default.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
   });
   return s3Client;
 }
