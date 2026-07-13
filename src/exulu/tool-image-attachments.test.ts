@@ -39,7 +39,7 @@ it("injects a user image message directly after the matching tool message", asyn
   expect(result.messages).toHaveLength(4);
   const injected = result.messages[3] as { role: string; content: Array<Record<string, unknown>> };
   expect(injected.role).toBe("user");
-  expect((injected.content[0] as { text: string }).text).toBe(`${INJECTED_IMAGE_PREFIX}report.pdf page 2`);
+  expect((injected.content[0] as { text: string }).text).toBe(`${INJECTED_IMAGE_PREFIX}call_1: report.pdf page 2]`);
   expect(injected.content[1]).toEqual({ type: "image", image: PNG_B64, mediaType: "image/png" });
 });
 
@@ -63,6 +63,28 @@ it("does not double-inject when an injected message already follows", async () =
   const once = (await guard({ stepNumber: 1, messages: [toolMessage("call_1")] })) as { messages: unknown[] };
   const twice = await guard({ stepNumber: 2, messages: once.messages });
   expect(twice).toBeUndefined();
+});
+
+it("injects only missing images when one tool message has multiple tool-results", async () => {
+  stashToolImage("call_1", { data: PNG_B64, mediaType: "image/png", label: "a" });
+  const guard = imageAttachmentGuard();
+  const multiToolMessage = {
+    role: "tool",
+    content: [
+      { type: "tool-result", toolCallId: "call_1", toolName: "view_document_page", output: {} },
+      { type: "tool-result", toolCallId: "call_2", toolName: "view_document_page", output: {} },
+    ],
+  };
+  const once = (await guard({ stepNumber: 1, messages: [multiToolMessage] })) as { messages: unknown[] };
+  expect(once.messages).toHaveLength(2); // call_2 not stashed yet
+  stashToolImage("call_2", { data: PNG_B64, mediaType: "image/png", label: "b" });
+  const twice = (await guard({ stepNumber: 2, messages: once.messages })) as { messages: unknown[] };
+  expect(twice.messages).toHaveLength(3); // only call_2's image added, call_1 not duplicated
+  const texts = (twice.messages.slice(1) as Array<{ content: Array<{ text?: string }> }>).map(
+    (m) => m.content[0].text ?? "",
+  );
+  expect(texts.some((t) => t.includes("call_1"))).toBe(true);
+  expect(texts.some((t) => t.includes("call_2"))).toBe(true);
 });
 
 it("injects multiple stashed images for multiple tool calls", async () => {
