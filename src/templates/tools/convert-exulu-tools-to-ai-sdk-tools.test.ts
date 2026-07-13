@@ -15,6 +15,8 @@ jest.mock("@EE/agentic-retrieval/pipeline/index", () => ({
   })),
 }));
 jest.mock("./session-file-read-tool", () => ({ createSessionFileReadTool: jest.fn(() => undefined) }));
+jest.mock("./parse-document-tool", () => ({ createParseDocumentTool: jest.fn().mockReturnValue(undefined) }));
+jest.mock("./view-document-page-tool", () => ({ createViewDocumentPageTool: jest.fn().mockReturnValue(undefined) }));
 jest.mock("@SRC/postgres/client", () => ({ postgresClient: jest.fn() }));
 
 // Additional mocks to prevent import-time failures from heavy side-effect modules
@@ -155,5 +157,33 @@ describe("tool-output offload exemption (agentic retrieval)", () => {
         .Email.execute({}, {}),
     );
     expect(guardMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("document tool registration", () => {
+  it("registers parse_document and view_document_page factories with session context", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createParseDocumentTool } = require("./parse-document-tool") as { createParseDocumentTool: jest.Mock };
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createViewDocumentPageTool } = require("./view-document-page-tool") as { createViewDocumentPageTool: jest.Mock };
+    createParseDocumentTool.mockClear();
+    createViewDocumentPageTool.mockClear();
+    await convertExuluToolsToAiSdkTools(
+      [], [], [], [], [], undefined,
+      undefined,
+      { id: 7 } as never,           // user
+      { fileUploads: { s3Bucket: "b" } } as never, // exuluConfig
+      "session-1",                  // sessionID
+    );
+    expect(createParseDocumentTool).toHaveBeenCalledWith({
+      sessionID: "session-1",
+      user: { id: 7 },
+      exuluConfig: { fileUploads: { s3Bucket: "b" } },
+    });
+    expect(createViewDocumentPageTool).toHaveBeenCalledWith({
+      sessionID: "session-1",
+      user: { id: 7 },
+      exuluConfig: { fileUploads: { s3Bucket: "b" } },
+    });
   });
 });
