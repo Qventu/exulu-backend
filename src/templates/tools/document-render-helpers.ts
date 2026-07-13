@@ -32,7 +32,8 @@ export async function pdfToText(pdf: Buffer): Promise<string> {
  * Render one PDF page to PNG via poppler's pdftoppm.
  * -scale-to bounds the long edge, so no separate image library is needed.
  * Returns null when the requested page is beyond the document's last page
- * (pdftoppm simply produces no output file in that case).
+ * (pdftoppm exits with code 99 for out-of-range pages; a missing output file
+ * is kept as a secondary safety net for poppler builds that exit 0 without output).
  */
 export async function renderPdfPageToPng(
   pdf: Buffer,
@@ -49,13 +50,16 @@ export async function renderPdfPageToPng(
         ["-png", "-f", String(page), "-l", String(page), "-scale-to", String(scaleTo), inputPath, join(dir, "page")],
         { timeout: 60_000, maxBuffer: MAX_STDOUT_BYTES },
       );
-    } catch (err) {
-      // pdftoppm exits with code 99 when page range is invalid (page > total pages)
-      return null;
+    } catch (err: unknown) {
+      // pdftoppm exits 99 when the requested page is beyond the last page —
+      // that is the only failure that means "page not found".
+      if ((err as { code?: unknown })?.code === 99) return null;
+      throw err;
     }
     // pdftoppm names output page-<N>.png with zero-padding that depends on
     // the document's total page count — glob instead of guessing.
     const produced = (await readdir(dir)).find((f) => f.startsWith("page") && f.endsWith(".png"));
+    // Safety net for poppler builds that exit 0 without producing output
     if (!produced) return null;
     return await readFile(join(dir, produced));
   } finally {
