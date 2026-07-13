@@ -339,8 +339,9 @@ const MAX_CONTENT_CHARS = 16_000;
  * (knowledge base with a processor) or view_document_page is the way in. */
 const MIN_CHARS_PER_PAGE = 20;
 
+// No .csv here — CSV is plain text; read_session_file already covers it.
 const OFFICE_EXTENSIONS = new Set([
-  ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf", ".csv",
+  ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
 ]);
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
