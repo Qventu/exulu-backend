@@ -60,6 +60,9 @@ export const createViewDocumentPageTool = ({
     // proxy is unreachable) the lookup fails and we attempt optimistically —
     // a non-vision provider then errors visibly rather than silently.
     const modelId = typeof model === "string" ? model : (model as { modelId?: string } | undefined)?.modelId;
+    if (!modelId) {
+      console.warn("[EXULU] view_document_page: no model id available for vision gating — proceeding optimistically.");
+    }
     if (modelId) {
       try {
         const entry = await findLiteLLMModel(modelId);
@@ -106,13 +109,13 @@ export const createViewDocumentPageTool = ({
           pdfBytes = await getPdfPreviewBytes({ sourceKey: key, etag, config: exuluConfig });
         }
         let rendered = await renderPdfPageToPng(pdfBytes, pageNumber, SCALE_PRIMARY);
-        if (rendered && rendered.length > MAX_IMAGE_BYTES) {
-          rendered = await renderPdfPageToPng(pdfBytes, pageNumber, SCALE_FALLBACK);
-        }
         if (!rendered) {
           return { error: `Could not render page ${pageNumber} of "${safeName}" — the document may have fewer pages.` };
         }
         if (rendered.length > MAX_IMAGE_BYTES) {
+          rendered = await renderPdfPageToPng(pdfBytes, pageNumber, SCALE_FALLBACK);
+        }
+        if (!rendered || rendered.length > MAX_IMAGE_BYTES) {
           return { error: `Page ${pageNumber} of "${safeName}" is too complex to attach within the image size limit.` };
         }
         imageBytes = rendered;

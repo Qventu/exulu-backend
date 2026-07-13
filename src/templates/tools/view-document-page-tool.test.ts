@@ -26,6 +26,14 @@ const { renderPdfPageToPng } = require("./document-render-helpers") as { renderP
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { findLiteLLMModel } = require("@SRC/exulu/litellm/catalog") as { findLiteLLMModel: jest.Mock };
 
+beforeAll(() => {
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+afterAll(() => {
+  (console.warn as jest.Mock).mockRestore();
+});
+
 const exuluConfig = {
   fileUploads: { s3Bucket: "bucket", s3prefix: "exulu" },
 } as unknown as ExuluConfig;
@@ -106,6 +114,16 @@ it("re-renders at 1024px when the 1568px render exceeds the byte cap", async () 
   const result = await runTool({ filename: "huge.pdf", page: 1, model: {} });
   expect(result.attached).toBe(true);
   expect(renderPdfPageToPng).toHaveBeenNthCalledWith(2, expect.any(Buffer), 1, 1024);
+});
+
+it("reports a size failure (not missing page) when the fallback render returns null", async () => {
+  getS3ObjectBytes.mockResolvedValue(Buffer.from("%PDF"));
+  renderPdfPageToPng
+    .mockResolvedValueOnce(Buffer.alloc(4_000_000))
+    .mockResolvedValueOnce(null);
+  const result = await runTool({ filename: "huge.pdf", page: 1, model: {} });
+  expect(result.error).toMatch(/size limit/i);
+  expect(result.error).not.toMatch(/fewer pages/i);
 });
 
 it("rejects oversized source images (no downscale path without an image library)", async () => {
