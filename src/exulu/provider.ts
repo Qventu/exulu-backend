@@ -1,6 +1,7 @@
 import type { ExuluProviderConfig } from "@EXULU_TYPES/provider-config.ts";
 import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps";
 import { contextGuard, composePrepareSteps } from "./context-guard";
+import { imageAttachmentGuard } from "./tool-image-attachments";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import type { imageTypes } from "@EXULU_TYPES/models/agent";
@@ -584,7 +585,7 @@ export class ExuluProvider {
         // Stop after the image_generation tool fires — the widget IS the
         // assistant's response, no follow-up text turn is wanted (same
         // reasoning as question_ask: the UI artifact is the message).
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()) as never,
         stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")]
       });
       console.log("[EXULU] Output: " + JSON.stringify(output, null, 2));
@@ -652,7 +653,7 @@ export class ExuluProvider {
         }),
         maxRetries: 2,
         tools: tools,
-        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+        prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()) as never,
         stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
       });
 
@@ -1207,7 +1208,7 @@ ${skillsList}
         );
       },
       // todo allow configuring the step budget per skill
-      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget)) as never,
+      prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()) as never,
       stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],
     });
 
