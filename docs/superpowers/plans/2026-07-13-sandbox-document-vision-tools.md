@@ -256,10 +256,14 @@ it("rejects path traversal in filename", async () => {
 });
 
 it("extracts PDF text with page markers from form-feed separators", async () => {
-  pdfToText.mockResolvedValue("page one text\fpage two text\fpage three text");
+  // Page bodies must clear MIN_CHARS_PER_PAGE (20 non-whitespace chars/page
+  // average) or the scanned-document detector rejects them.
+  pdfToText.mockResolvedValue(
+    "first page body with plenty of extractable text\fsecond page body with plenty of extractable text\fthird page body with plenty of extractable text",
+  );
   const result = await runTool({ filename: "report.pdf" });
   expect(result.content).toBe(
-    "--- page 1 ---\npage one text\n--- page 2 ---\npage two text\n--- page 3 ---\npage three text",
+    "--- page 1 ---\nfirst page body with plenty of extractable text\n--- page 2 ---\nsecond page body with plenty of extractable text\n--- page 3 ---\nthird page body with plenty of extractable text",
   );
   expect(result.totalPages).toBe(3);
   expect(getPresignedUrl).toHaveBeenCalledWith(
@@ -270,9 +274,13 @@ it("extracts PDF text with page markers from form-feed separators", async () => 
 });
 
 it("filters to a requested page range", async () => {
-  pdfToText.mockResolvedValue("one\ftwo\fthree\ffour");
+  pdfToText.mockResolvedValue(
+    "page one full body of searchable text\fpage two full body of searchable text\fpage three full body of searchable text\fpage four full body of searchable text",
+  );
   const result = await runTool({ filename: "report.pdf", pages: "2-3" });
-  expect(result.content).toBe("--- page 2 ---\ntwo\n--- page 3 ---\nthree");
+  expect(result.content).toBe(
+    "--- page 2 ---\npage two full body of searchable text\n--- page 3 ---\npage three full body of searchable text",
+  );
   expect(result.totalPages).toBe(4);
 });
 
@@ -299,7 +307,7 @@ it("pages long output with offset/limit and caps at 16k chars", async () => {
   const longPage = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join("\n");
   pdfToText.mockResolvedValue(longPage);
   const result = await runTool({ filename: "long.pdf", offset: 10, limit: 3 });
-  expect(result.content).toBe("line 8\nline 9\nline 10");
+  expect(result.content).toBe("line 9\nline 10\nline 11");
   expect(result.offset).toBe(10);
   expect(result.linesReturned).toBe(3);
 });
@@ -311,7 +319,7 @@ it("surfaces fetch failures as error objects, not throws", async () => {
 });
 ```
 
-Note on the offset test: line 1 of the tool's output is the `--- page 1 ---` marker, so `offset: 10` addresses the 10th output line, which is `line 8` of the raw text. This asserts paging operates on the marked-up output the model actually sees.
+Note on the offset test: line 1 of the tool's output is the `--- page 1 ---` marker, so output line N is raw line N−1 — `offset: 10` addresses the 10th output line, which is `line 9` of the raw text. This asserts paging operates on the marked-up output the model actually sees.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -339,8 +347,9 @@ const MAX_CONTENT_CHARS = 16_000;
  * (knowledge base with a processor) or view_document_page is the way in. */
 const MIN_CHARS_PER_PAGE = 20;
 
+// No .csv here — CSV is plain text; read_session_file already covers it.
 const OFFICE_EXTENSIONS = new Set([
-  ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf", ".csv",
+  ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
 ]);
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;

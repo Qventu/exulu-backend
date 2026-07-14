@@ -70,6 +70,15 @@ export const REQUIRED_SYSTEM_DEPENDENCIES: SystemDependency[] = [
     },
   },
   {
+    check: { kind: "binary", binary: "pdftotext" },
+    displayName: "Poppler (pdftotext)",
+    purpose: "parse_document tool: extracting page-marked text from PDFs",
+    installHints: {
+      debian: "apt-get install -y poppler-utils",
+      macos: "brew install poppler",
+    },
+  },
+  {
     check: { kind: "npm-global", packageName: "docx" },
     displayName: "docx (npm global)",
     purpose: "docx skill: programmatically constructing new .docx documents",
