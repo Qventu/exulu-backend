@@ -1,0 +1,76 @@
+---
+title: "Context compaction"
+description: "What the context-usage chip shows, when the compaction banner appears, and how to compact a long conversation."
+icon: "archive"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Every AI model has a context window — a limit on how much text it can hold in memory at once. IMP tracks how full that window is and surfaces a compaction option before the conversation gets stuck.
+
+## The context-usage chip
+
+The chat header always shows a quiet usage chip — for example **9% · 12k**. The percentage is the share of the model's context window that the current conversation occupies; the number is the total tokens used so far in this session. Click the chip to open a full Usage breakdown showing input tokens, output tokens, cached tokens, and reasoning tokens.
+
+The chip's aria label reads "Context usage `{percent}`% — view details", so screen readers describe it fully even when the numbers are compact.
+
+## Approaching the context limit
+
+When the conversation fills 80% or more of the context window, a warning banner appears above the composer:
+
+**Approaching the context limit**
+
+"This conversation uses `{percent}`% of the model's context window. Compact it to keep the agent fast and accurate."
+
+You can dismiss this banner; it reappears if the conversation grows by another five percentage points.
+
+## Blocked at the context limit
+
+When the conversation reaches 95% of the context window, the banner becomes non-dismissible and the composer is disabled:
+
+**Context limit reached**
+
+"This conversation no longer fits the model's context window. Compact it to continue."
+
+The message input shows "Compact the conversation to continue…". You must compact before you can send another message.
+
+<Note>
+If compaction itself cannot reduce the conversation far enough, IMP shows: "This conversation can't be compacted further — please start a new chat." In that case, start a fresh conversation and paste in any key context you need to carry over.
+</Note>
+
+## Compact the conversation
+
+<Steps>
+  <Step title="Click Compact conversation">
+    Press the **Compact conversation** button in the banner. A small optional input appears: "Anything to preserve in detail?" Type any specific figures, names, or conclusions you want the summary to include verbatim.
+  </Step>
+  <Step title="Wait for the summary">
+    The button changes to "Summarizing conversation…" while IMP processes the history. Do not navigate away.
+  </Step>
+  <Step title="Continue chatting">
+    Once complete, the banner disappears and the composer re-enables. The conversation shows a checkpoint marker in the history where compaction happened.
+  </Step>
+</Steps>
+
+## What compaction keeps and drops
+
+Compaction replaces the earlier part of the conversation with a compact summary. The summary preserves the key conclusions, facts, and decisions from that part of the exchange. Fine-grained detail — long tool outputs, intermediate reasoning steps, raw document text — is condensed or omitted to free up space.
+
+The original messages are never deleted. The full history is still visible in the conversation and remains in the database. Only the model's working context is summarized; you can always scroll back to read earlier turns.
+
+<Tip>
+Use the "Anything to preserve in detail?" field when there are specific numbers, names, or commitments in earlier messages that the agent must keep using exactly. For example: "keep the exact figures from the service reports".
+</Tip>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Model override and usage" icon="cpu" href="/user-guide/chat/model-override-and-usage">
+    Inspect per-turn token counts in the Usage panel.
+  </Card>
+  <Card title="Budgets in chat" icon="circle-dollar-sign" href="/user-guide/chat/budgets-in-chat">
+    Understand how spending budgets relate to usage.
+  </Card>
+</Columns>

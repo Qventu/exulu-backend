@@ -1,0 +1,33 @@
+<article class="chapter" id="r-oauth-tools" data-release="2026-06-10-summer-release" aria-labelledby="r-oauth-tools-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">11</span>
+      <span class="pill">June 10, 2026</span>
+      <span class="ch-name">The Summer Drop</span>
+    </div>
+    <h1 class="ch-title" id="r-oauth-tools-h">OAuth 2.0 for tools</h1>
+    <p class="ch-lede">Connect your tools to Google, Slack, HubSpot — any OAuth provider — with one config property.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <figure class="demo"><video data-vid="2026-06-10-summer-release__oauth-tools.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Give any tool access to Google, Slack, HubSpot — any OAuth provider — by adding one <code>oauth</code> block to its config: endpoints, client credentials, scopes. When someone runs the tool without a connected account, the agent replies with a connect link; once they authorize, the tool runs with a valid access token in <code>inputs.oauth.accessToken</code>.</p>
+          <p>Tokens are scoped per tool and per user, stored encrypted, and refreshed automatically. PKCE is on by default, and one platform <code>/oauth/callback</code> route completes the flow for every tool — no routes or token storage for you to build.</p>
+
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>new ExuluTool({
+  id: "hubspot_crm",
+  name: "HubSpot CRM",
+  type: "function",
+  oauth: {
+    authorizationUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    clientId: process.env.HUBSPOT_CLIENT_ID,
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+    scopes: ["crm.objects.contacts.read"],
+  },
+  execute: async (inputs) =&gt; {
+    const token = inputs.oauth.accessToken; // always valid here
+  },
+});</code></pre>
+        </div></section>
+</article>

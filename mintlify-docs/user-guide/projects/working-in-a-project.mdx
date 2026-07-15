@@ -1,0 +1,111 @@
+---
+title: "Working in a project"
+description: "Start sessions, pin knowledge files, and configure a project's details, access, and custom instructions."
+icon: "layout-panel-top"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+## The project workspace
+
+Open a project from **Projects** to reach the project workspace. The header shows the project name, description, a visibility badge, a star toggle, an overflow menu (⋯), and a **New session** button.
+
+If the project has custom instructions, a quiet line reads **Instructions active · View** below the header. Click it to jump to the project's Settings tab.
+
+The workspace has three URL-backed tabs — switching tabs pushes a history entry, so the browser back button steps between them.
+
+## Sessions tab
+
+The Sessions tab is the default view. It lists all conversations that belong to this project.
+
+- **New session** — click the button in the header or the empty state to open the **Start a new session** dialog ("Choose an agent for the conversation. Sessions started in a project can be viewed by project members."). Pick an agent and confirm.
+- **Open a session** — click any session row to open it in the chat view.
+- **Remove a session from the project** — open the session row's ⋯ menu and choose **Remove from project**. The session is detached but not deleted; an undo toast lets you reverse it immediately.
+- **Delete a session** — open the session row's ⋯ menu and choose **Delete session…** (confirm at "Delete session?"). This is permanent.
+
+<Note>
+Sessions that belong to a project are visible to all project members, regardless of who started them.
+</Note>
+
+## Files tab
+
+The Files tab holds up to 15 knowledge items pinned to the project. Every session in the project can access these items without you having to add them manually each time.
+
+The counter in the tab label shows the current count, for example `3/15`. At the limit, the **Add files** button becomes disabled and IMP shows "This project has reached the limit of 15 files. Remove one to add another."
+
+### Add files
+
+<Steps>
+  <Step title="Open the file picker">
+    Click **Add files** in the Files tab.
+  </Step>
+  <Step title="Choose items">
+    Select one or more items from your knowledge contexts. You can also apply a preset or select an entire context.
+  </Step>
+  <Step title="Confirm">
+    The items appear as cards in the tab. IMP shows how many were added, for example "2 files added to the project." If you try to add items that are already pinned, IMP reports "Already in this project — nothing new was added."
+  </Step>
+</Steps>
+
+### Remove a file
+
+Open the item card's menu and choose **Remove from project**. This frees a slot but does not delete the knowledge item itself.
+
+## Settings tab
+
+The Settings tab has three sections: **Details**, **Access**, and **Danger zone**.
+
+### Details
+
+Details shows the project name, description, and custom instructions. Click **Edit** to enter edit mode.
+
+In edit mode:
+- **Name** — required. The project cannot be saved without a name.
+- **Description** — optional summary shown in the project list and header.
+- **Custom instructions** — text added to the system prompt of every chat session in this project. Useful for standing context ("Respond in French", "This project covers our compliance review").
+
+Click **Save changes** to apply. Click **Cancel** to discard and return to the read view.
+
+### Access
+
+The Access section controls who can see and work in this project.
+
+| Mode | Who has access |
+| --- | --- |
+| **Private** | Only you. |
+| **Shared with users** | Specific users you choose. |
+| **Shared with roles** | All members of specific roles. |
+
+After choosing a mode and (where applicable) selecting users or roles, click **Save access rights** to apply.
+
+<Tip>
+The visibility badge in the project header (showing **Private**, **Shared**, or a count of users / roles) links directly to this section.
+</Tip>
+
+### Danger zone
+
+The Danger zone holds one action: **Delete project**. Clicking it opens a confirmation dialog.
+
+The dialog ("Delete project?") shows the project name and warns that deletion is permanent. You can optionally check:
+
+- **Also delete all files** — permanently deletes the pinned knowledge items.
+- **Also delete all sessions** — permanently deletes all sessions that belong to the project.
+
+If you do not check these options, sessions and files are kept and detached from the project. IMP shows a contextual warning counting how many items and/or sessions would be deleted before you confirm.
+
+<Warning>
+Deleting a project cannot be undone. Sessions you don't delete with it are kept but are no longer associated with any project.
+</Warning>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="All projects" icon="folder-open" href="/user-guide/projects/overview">
+    Create projects and manage your favorites.
+  </Card>
+  <Card title="Attach files in chat" icon="folder-open" href="/user-guide/chat/attachments-and-session-files">
+    Upload files for a single session rather than the whole project.
+  </Card>
+</Columns>

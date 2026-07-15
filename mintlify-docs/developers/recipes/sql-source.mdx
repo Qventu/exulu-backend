@@ -1,0 +1,228 @@
+---
+title: "SQL source"
+description: "A source that reads rows from an external SQL database using connection pooling, maps them to ExuluItem[], and syncs incrementally via an updated_at watermark."
+icon: "database"
+---
+
+**Problem:** you have an external PostgreSQL (or other SQL) database and want to sync its rows into a context, fetching only records changed since the last run.
+
+**Prerequisite:** read [Data sources and sync](/developers/tutorials/data-sources-and-sync) first — this recipe assumes you know the `ExuluContextSource` shape and `ExuluItem` fields.
+
+## Complete source listing
+
+This example uses [knex](https://knexjs.org/) with the `pg` driver, which is already a dependency of `@exulu/backend`. Create the pool once at module scope so it is reused across source runs.
+
+```typescript src/integrations/product-catalog/source.ts
+import { type ExuluContextSource, type ExuluItem, ExuluQueues } from "@exulu/backend";
+import knex, { type Knex }  from "knex";
+import { createHash } from "crypto";
+
+// ── Connection pool ───────────────────────────────────────────────────────────
+// Create the pool at module scope so it is shared across all source executions
+// within the same worker process. knex manages idle connections internally.
+
+const externalDb: Knex = knex({
+  client: "pg",
+  connection: {
+    host:     process.env.PRODUCT_DB_HOST,
+    port:     Number(process.env.PRODUCT_DB_PORT ?? 5432),
+    database: process.env.PRODUCT_DB_NAME,
+    user:     process.env.PRODUCT_DB_USER,
+    password: process.env.PRODUCT_DB_PASSWORD,
+    ssl:      process.env.PRODUCT_DB_SSL === "true" ? { rejectUnauthorized: false } : false,
+  },
+  pool: { min: 1, max: 4 },  // keep a small pool; source runs are sequential
+});
+
+// ── Row type from the external database ──────────────────────────────────────
+
+type ProductRow = {
+  id:          string;
+  sku:         string;
+  name:        string;
+  description: string | null;
+  category:    string | null;
+  price_cents: number;
+  active:      boolean;
+  updated_at:  Date;
+};
+
+// ── Item mapping ──────────────────────────────────────────────────────────────
+
+function toExuluItem(row: ProductRow): ExuluItem {
+  const content_hash = createHash("sha256")
+    .update(row.name + (row.description ?? "") + String(row.price_cents) + row.category)
+    .digest("hex");
+
+  return {
+    external_id:  row.id,
+    name:         `${row.sku} — ${row.name}`,
+    body:         row.description ?? "",
+    category:     row.category ?? "uncategorised",
+    price_cents:  row.price_cents,
+    active:       row.active,
+    content_hash,
+    rights_mode:  "users",
+  };
+}
+
+// ── Queue ─────────────────────────────────────────────────────────────────────
+
+export const productSyncQueue = ExuluQueues.register(
+  "product_catalog_sync",
+  { worker: 1, queue: 1 },
+  1,
+  60 * 15,  // 15-minute timeout
+);
+
+// ── Source ────────────────────────────────────────────────────────────────────
+
+export const productCatalogSqlSource: ExuluContextSource = {
+  id:          "product_catalog_sql_source",
+  name:        "Product catalog SQL source",
+  description: "Reads products updated since the last sync from the external product database.",
+
+  config: {
+    schedule: "0 4 * * *",   // daily at 04:00 UTC
+    queue:    productSyncQueue.use(),
+    retries:  3,
+    backoff:  { type: "exponential", delay: 2_000 },
+    params: [
+      {
+        name:        "updated_since",
+        description: "ISO datetime — fetch rows with updated_at after this value. Defaults to 25 hours ago.",
+      },
+      {
+        name:        "full_sync",
+        description: "Set to 'true' to fetch all rows regardless of updated_at.",
+        default:     "false",
+      },
+    ],
+  },
+
+  execute: async ({ updated_since: inputUpdatedSince, full_sync: inputFullSync }) => {
+    const fullSync     = inputFullSync === "true";
+    const updatedSince = fullSync
+      ? undefined
+      : (inputUpdatedSince ?? new Date(Date.now() - 25 * 60 * 60 * 1_000).toISOString());
+
+    console.log("[product_catalog_sql_source] Starting sync", { updatedSince, fullSync });
+
+    // ── Query external DB ─────────────────────────────────────────────────────
+    let query = externalDb<ProductRow>("products")
+      .select([
+        "id",
+        "sku",
+        "name",
+        "description",
+        "category",
+        "price_cents",
+        "active",
+        "updated_at",
+      ])
+      .orderBy("updated_at", "asc");
+
+    if (updatedSince) {
+      query = query.where("updated_at", ">", new Date(updatedSince));
+    }
+
+    const rows = await query;
+    console.log(`[product_catalog_sql_source] Fetched ${rows.length} rows`);
+
+    // ── Map rows to ExuluItem[] with partial-failure logging ──────────────────
+    const items: ExuluItem[] = [];
+    for (const row of rows) {
+      try {
+        items.push(toExuluItem(row));
+      } catch (err) {
+        console.error(`[product_catalog_sql_source] Failed to map row ${row.id}:`, err);
+      }
+    }
+
+    console.log(`[product_catalog_sql_source] Returning ${items.length} items`);
+    return items;
+  },
+};
+```
+
+Attach the source to a context:
+
+```typescript src/contexts/index.ts
+import { ExuluContext, ExuluQueues } from "@exulu/backend";
+import { productCatalogSqlSource } from "../integrations/product-catalog/source";
+
+const embeddingsQueue = ExuluQueues.register(
+  "product_catalog_embeddings",
+  { worker: 5, queue: 10 },
+  20,
+  300,
+);
+
+export const productCatalogContext = new ExuluContext({
+  id: "product_catalog_context",
+  name: "Product catalog",
+  description: "Products from the external catalog. Use when the user asks about products, SKUs, or pricing.",
+  active: true,
+
+  fields: [
+    { name: "body",         type: "longText" },
+    { name: "category",     type: "shortText", index: true },
+    { name: "price_cents",  type: "integer" },
+    { name: "active",       type: "boolean", index: true },
+    { name: "content_hash", type: "shortText", calculated: true },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(),
+  },
+
+  sources: [productCatalogSqlSource],
+
+  configuration: {
+    calculateVectors: "always",
+    maxRetrievalResults: 10,
+    defaultRightsMode: "users",
+    languages: ["english"],
+  },
+});
+```
+
+## Key points
+
+| Concern | Approach |
+|---|---|
+| Connection pooling | `knex` pool created at module scope, shared across source runs; `pool.max: 4` avoids overwhelming the external DB |
+| Watermark | `updated_at > :updatedSince` filters rows server-side — no full-table scan on incremental runs |
+| `full_sync` | Pass `full_sync=true` in the admin dialog to fetch all rows for a rebuild |
+| Upsert key | `external_id` set to the row's `id`; IMP uses `onConflict("external_id").merge()` |
+| Partial failures | `try/catch` in the mapping loop — one bad row is logged and skipped without aborting the sync |
+| Pool teardown | The pool stays open for the lifetime of the worker process. Call `externalDb.destroy()` in a shutdown hook if your deployment requires clean teardown. |
+
+## Connection string alternative
+
+If you prefer a connection string over individual options, knex accepts one:
+
+```typescript
+const externalDb = knex({
+  client:     "pg",
+  connection: process.env.PRODUCT_DB_URL, // e.g. postgres://user:pass@host:5432/dbname
+  pool:       { min: 1, max: 4 },
+});
+```
+
+Store the connection string in an IMP [variable](/administration/variables) and read it from `process.env`.
+
+## Related recipes
+
+<CardGroup cols={2}>
+  <Card title="Incremental sync deep dive" icon="refresh-cw" href="/developers/recipes/incremental-sync">
+    Upsert matching, hash checks, and deletion semantics explained.
+  </Card>
+  <Card title="API sync — ticketing" icon="ticket" href="/developers/recipes/api-sync-ticketing">
+    Paginated REST source with rate-limit handling.
+  </Card>
+  <Card title="Data sources and sync tutorial" icon="refresh-cw" href="/developers/tutorials/data-sources-and-sync">
+    The full tutorial introducing sources and the ExuluContextSource shape.
+  </Card>
+</CardGroup>

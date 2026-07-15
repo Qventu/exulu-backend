@@ -1,0 +1,128 @@
+---
+title: "Runs"
+description: "Configure eval runs, read the results matrix, and manage the eval job queue."
+icon: "play"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="evals (read)" />
+
+## How runs work
+
+A run config defines which agent, test cases, and eval functions to use when executing an eval. When you start a run, IMP schedules one job per test case in the `eval_runs` queue. Each job replays the test case conversation through the agent, collects the response, and scores it with the configured eval functions. Results appear in the matrix as jobs complete.
+
+<Note>
+Runs require background workers (Redis-backed job queue). If the warning banner "Background workers are not configured" is visible, runs cannot execute until Redis is configured.
+See [Operations](/self-hosting/operations) in the self-hosting section for worker setup.
+</Note>
+
+## The results matrix
+
+Open any eval set and select the **Results** tab. The matrix is a grid where:
+
+- **Rows** are the test cases that belong to the set.
+- **Columns** are run configs (sorted oldest to newest).
+- The **Average** row pinned at the top of the data area shows the mean score across completed results for that run, colored against the pass threshold.
+
+By default the last three runs are shown. A **Show older runs** button (left-arrow chevron) in a narrow rail column reveals five more at a time.
+
+### Score cells
+
+Each cell shows the result for one test case in one run:
+
+| Cell appearance | Meaning |
+| --- | --- |
+| **Green number** | Completed; score ≥ pass threshold |
+| **Orange number** | Completed; score within 20 points below the threshold |
+| **Red number** | Completed; score below threshold − 20 |
+| Clock + "Not started" | The job has not been scheduled yet |
+| Spinner + "Running" | Job is active |
+| Clock + "Waiting" | Job is queued, not yet picked up |
+| "Failed" | Job errored |
+| Striped "—" | Test case is not included in this run config |
+
+Click a completed (green/orange/red) cell to open the **result detail sheet** for that job.
+
+### Result detail sheet
+
+The sheet has four tabs:
+
+- **Overview** — score, duration, status badge, job ID, error details (if any), and token usage (input / output / total).
+- **Messages** — the full conversation as rendered messages, read-only.
+- **Functions** — per-eval-function score and configuration.
+- **Raw** — the raw metadata JSON for debugging.
+
+## Run a new eval
+
+Click **Run eval** in the page header (or **New run config** in the overflow menu). The **New run config** dialog opens:
+
+<Frame caption="Creating an eval run config: select test cases, choose eval functions (LLM-as-judge, exact match, response length), and click Create run config.">
+  <video autoPlay muted loop playsInline src="/videos/run-eval.mp4" />
+</Frame>
+
+**Essentials:**
+- **Name** (required) — a label for this run, e.g. "GPT-4o baseline".
+- **Agent** (required) — which agent to run the cases through.
+- **Test cases** (required) — which cases to include (multi-select from the set's cases).
+- **Eval functions** (required) — the functions that score each result (multi-select).
+
+**Advanced** (collapsible; summary shown as e.g. "average · pass ≥ 70 · 300s"):
+- **Scoring method** — Average, Median, or Sum.
+- **Pass threshold** (0–100) — scores at or above this value are colored green.
+- **Timeout** (seconds) — per-job timeout before the worker marks the job failed.
+
+Click **Create run config**. The new column appears in the matrix. To execute it, click **Start run** from the column's overflow menu (⋯).
+
+## Column overflow menu
+
+Each run column has a **⋯** menu (write access only for mutating actions):
+
+| Action | Effect |
+| --- | --- |
+| **Refresh results** | Re-polls job results for this column (visible to all) |
+| **Start run** | Schedules jobs for this run config in the `eval_runs` queue |
+| **Copy run** | Opens a pre-filled dialog with this run's settings; saves a new copy |
+| **Edit run** | Opens the run config dialog to update name, agent, cases, or scoring |
+| **Delete run** | Permanently deletes the run config and all its results |
+
+Deleting a run shows a warning: "Already-scheduled queue jobs are not removed. Check the queue panel to manage them."
+
+## Queue management
+
+A **Queue** chip appears above the matrix (right-aligned) when there are jobs in any state. The chip shows "Queue: N active · M failed". Click it to open the **Queue** sheet.
+
+The queue sheet shows:
+
+- **Status** — Active / Paused / Maxed.
+- **Concurrency** — max queue and worker concurrency, job timeout, rate limit.
+- **Status tabs** — Active, Waiting, Failed, Completed. Each tab shows a count badge.
+- **Jobs table** — name, ID, attempts, created/processed/finished timestamps, inputs, outputs, per-row actions.
+
+Write-access actions in the queue panel:
+
+| Action | Effect |
+| --- | --- |
+| **Pause queue** | Stops processing new jobs; active jobs finish |
+| **Resume queue** | Resumes a paused queue |
+| **Drain queue** | Removes all waiting and delayed jobs; active, completed, and failed jobs are unaffected |
+| **Retry** (per row) | Creates a new job with the same inputs as the failed job |
+| **Delete** (per row) | Permanently removes the job record |
+| **Bulk retry / bulk delete** | Select multiple jobs with the checkbox column, then use the toolbar buttons |
+
+The retry dialog includes an optional "Delete the original job(s) after retrying" checkbox.
+
+<Note>
+"Only the last 5,000 successful and failed jobs are kept." — retained jobs beyond this limit are automatically pruned.
+</Note>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Test cases" icon="list-checks" href="/building/evals/test-cases">
+    Manage the cases that feed your run configs.
+  </Card>
+  <Card title="Evals overview" icon="book-check" href="/building/evals/overview">
+    Back to the eval sets list.
+  </Card>
+</Columns>

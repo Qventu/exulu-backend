@@ -1,0 +1,78 @@
+---
+title: "Transcripts overview"
+description: "Upload audio or record a meeting to get a speaker-labeled transcript you can save and use in chats."
+icon: "mic"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="Transcripts (a transcription backend or meeting bots must be configured)" />
+
+## What transcripts do
+
+The Transcripts page ("Turn audio into speaker-labeled transcripts you can use in chats and projects.") lets you create diarized transcripts in two ways:
+
+- **Upload audio** — upload an mp3, wav, m4a, mp4, or mpeg file and run it through a WhisperX transcription pipeline with pyannote speaker diarization.
+- **Record a meeting** — send a bot to a Zoom, Google Meet, or Teams URL, record the session, and receive an async transcript when the meeting ends.
+
+Each transcript goes through a review step where you name the speakers and confirm the text before saving it to Knowledge.
+
+<Note>
+Both flows are feature-gated. **Upload audio** requires a Whisper transcription backend configured by your administrator. **Record a meeting** requires a meeting bot integration. If only one is configured, you see only that flow. If neither is configured, the Transcripts page is not available.
+</Note>
+
+## The transcripts page
+
+Open **Transcripts** from the app sidebar. The page is organized into three groups:
+
+| Group | What it shows |
+| --- | --- |
+| **Needs review** | Transcripts that finished processing and are waiting for you to name speakers and save. |
+| **Processing** | Jobs currently queued or transcribing. If any failed, the heading reads "Processing & failed". |
+| **Saved** | Transcripts you have already reviewed and saved to Knowledge. |
+
+Use the **Search transcripts…** field to filter across all three groups by title.
+
+## Upload audio
+
+<Steps>
+  <Step title="Open the composer">
+    Click **New transcription** on the Transcripts page. If both audio upload and meeting recording are enabled, select **Upload audio** from the mode toggle.
+  </Step>
+  <Step title="Choose your file">
+    Drag a file onto the drop zone or click to browse. Accepted formats: mp3, wav, m4a, mp4, mpeg.
+  </Step>
+  <Step title="Set options">
+    - **Title** — give the transcript a name (defaults to the filename).
+    - **Language** — choose a language or leave on **Auto-detect language**.
+    - **Speakers** — enter the number of speakers or leave on **Auto-detect speakers**.
+    - **Project** — optionally attach the transcript to a project.
+    - **Sharing** — set who can see the saved transcript (Private, shared with specific users, or shared with roles).
+  </Step>
+  <Step title="Start">
+    Click **Start**. The status row appears in the **Processing** group ("Uploading…" then "Transcribing `{length}` of audio…"). When processing finishes, the row moves to **Needs review**.
+  </Step>
+</Steps>
+
+## WhisperX diarization
+
+The transcription pipeline uses WhisperX with pyannote speaker diarization. The output is a set of time-stamped segments, each labelled with an auto-generated speaker label such as `SPEAKER_00` or `SPEAKER_01`. You rename these labels in the review step.
+
+## Monthly recording usage
+
+When a meeting bot integration is configured and a monthly recording-time cap is set, IMP shows a usage bar: **Recording time this month** with the format "`{used}` of `{limit}` used (`{percent}`%)". When the cap is reached, the bar shows "Monthly recording limit reached — new meeting recordings are blocked until next month." Whisper audio uploads are not counted against this cap.
+
+## Transcript library
+
+Saved transcripts also appear in the transcript library at **Data → Transcriptions** (`/data/transcriptions`). The **Transcript library** link in the Saved group header takes you there directly. Re-opening a saved transcript from the Transcripts page lets you rename speakers; saving updates the existing library item.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Record a meeting" icon="video" href="/user-guide/transcripts/recording-meetings">
+    Send a bot to join and record a live meeting.
+  </Card>
+  <Card title="Review and save" icon="check-square" href="/user-guide/transcripts/reviewing-and-saving">
+    Name speakers, follow the audio timeline, and save to Knowledge.
+  </Card>
+</Columns>

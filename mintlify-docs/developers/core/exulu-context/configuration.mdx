@@ -1,0 +1,569 @@
+---
+title: "Configuration"
+description: "Every ExuluContext constructor option: fields, embedder, chunker, sources, processor, retrieval configuration, and the entity layer."
+icon: "settings"
+---
+
+The `ExuluContext` constructor takes a single options object. This page documents every option, verified against the current `@exulu/backend` source.
+
+```typescript
+import { ExuluContext } from "@exulu/backend";
+
+const context = new ExuluContext({
+  id,              // string — required
+  name,            // string — required
+  description,     // string — required
+  active,          // boolean — required
+  fields,          // ExuluContextFieldDefinition[] — required
+  sources,         // ExuluContextSource[] — required (pass [] if none)
+  embedder,        // ExuluContextEmbedder
+  chunker,         // ChunkerOperation
+  processor,       // ExuluContextProcessor
+  queryRewriter,   // (query: string) => Promise<string>
+  resultReranker,  // (results) => Promise<results>
+  configuration,   // retrieval configuration
+  entities,        // ExuluEntitiesConfig
+});
+```
+
+## Identity
+
+<ParamField path="id" type="string" required>
+  Unique identifier. Lowercased with spaces replaced by underscores, it becomes the Postgres table prefix: `<id>_items`, `<id>_chunks`, and (with the entity layer) `<id>_entities`. Must start with a letter or underscore, contain only letters, digits, and underscores, and be at most 80 characters — treat 5 as the practical minimum.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable name shown in the platform UI and logs.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  What this context contains. Surfaced to users and agents choosing where to search.
+</ParamField>
+
+<ParamField path="active" type="boolean" required>
+  Whether the context is active and available.
+</ParamField>
+
+<Warning>
+Never change `id` after the context has data — the tables are named after it, so a renamed context points at new, empty tables.
+</Warning>
+
+## Fields
+
+<ParamField path="fields" type="ExuluContextFieldDefinition[]" required>
+  The custom schema for items, on top of the built-in columns (`id`, `name`, `description`, `tags`, `archived`, `external_id`, `created_by`, `ttl`, `rights_mode`, `embeddings_updated_at`, `last_processed_at`, `textlength`, `source`, `chunks_count`, `createdAt`, `updatedAt`).
+</ParamField>
+
+```typescript
+type ExuluContextFieldDefinition = {
+  name: string;
+  type: ExuluFieldTypes;
+  editable?: boolean;
+  unique?: boolean;
+  required?: boolean;
+  default?: any;
+  calculated?: boolean;
+  index?: boolean;
+  enumValues?: string[];
+  allowedFileTypes?: allFileTypes[];
+};
+```
+
+<ParamField path="fields[].name" type="string" required>
+  Column name. Sanitized to lowercase with underscores. For `file` fields, the actual column is `<name>_s3key`.
+</ParamField>
+
+<ParamField path="fields[].type" type="ExuluFieldTypes" required>
+  One of `text`, `longText`, `shortText`, `number`, `boolean`, `code`, `json`, `enum`, `markdown`, `file`, `date`, `uuid`. See the type table below for the Postgres column each maps to.
+</ParamField>
+
+<ParamField path="fields[].editable" type="boolean">
+  Whether the field can be edited in the platform UI after creation.
+</ParamField>
+
+<ParamField path="fields[].unique" type="boolean">
+  Adds a unique constraint on the column.
+</ParamField>
+
+<ParamField path="fields[].required" type="boolean">
+  Whether a value is required when creating items through the platform API.
+</ParamField>
+
+<ParamField path="fields[].default" type="any">
+  Default value declared for the field. Surfaced through the context's table definition (API and admin UI); the Postgres column itself is created without a database-level default.
+</ParamField>
+
+<ParamField path="fields[].calculated" type="boolean">
+  Marks the field as computed (for example, filled by a processor) rather than user-provided.
+</ParamField>
+
+<ParamField path="fields[].index" type="boolean">
+  Whether to index the field for faster filtering.
+</ParamField>
+
+<ParamField path="fields[].enumValues" type="string[]">
+  For `enum` fields: the allowed values.
+</ParamField>
+
+<ParamField path="fields[].allowedFileTypes" type="allFileTypes[]">
+  For `file` fields: the accepted file types (for example `["pdf", "docx"]`).
+</ParamField>
+
+```typescript
+fields: [
+  { name: "content", type: "longText", required: true },
+  { name: "category", type: "enum", enumValues: ["guide", "reference"], index: true },
+  { name: "priority", type: "number", default: 0 },
+  { name: "metadata", type: "json" },
+  { name: "document", type: "file", allowedFileTypes: ["pdf", "docx"] },
+  { name: "published_at", type: "date" },
+]
+```
+
+### Field type reference
+
+| Type | Postgres column |
+|---|---|
+| `text`, `longText`, `code`, `markdown`, `enum` | `TEXT` |
+| `shortText` | `VARCHAR(100)` |
+| `number` | `FLOAT` |
+| `boolean` | `BOOLEAN` (defaults to `false`) |
+| `json` | `JSONB` |
+| `date` | `TIMESTAMP` |
+| `uuid` | `UUID` |
+| `file` | `TEXT` — stored as `<name>_s3key` holding the S3 object key |
+
+## Embedder
+
+<ParamField path="embedder" type="ExuluContextEmbedder">
+  A reference to a LiteLLM embedding model, plus an optional queue. Without an embedder, vector and hybrid search are unavailable — the context still works for structured storage and full-text search.
+</ParamField>
+
+```typescript
+type ExuluContextEmbedder = {
+  model: string;                       // model_name from config.litellm.yaml
+  queue?: Promise<ExuluQueueConfig>;   // run embedding jobs in the background
+};
+```
+
+<ParamField path="embedder.model" type="string" required>
+  The `model_name` of an embedding model declared in `config.litellm.yaml`. The model's `model_info` must declare its dimensionality — the chunks table's `vector(n)` column is sized from it, and table creation throws if it is missing.
+</ParamField>
+
+<ParamField path="embedder.queue" type="Promise<ExuluQueueConfig>">
+  When set, embedding generation is scheduled as a BullMQ job on this queue instead of running inline. Required in practice for bulk generation: without a queue, `embeddings.generate.all()` refuses to process more than 2,000 items.
+</ParamField>
+
+```typescript
+import { ExuluContext, ExuluQueues } from "@exulu/backend";
+
+const context = new ExuluContext({
+  id: "product_docs",
+  name: "Product documentation",
+  description: "Guides and references.",
+  active: true,
+  fields: [{ name: "content", type: "longText", required: true }],
+  sources: [],
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: ExuluQueues.register("embeddings", { worker: 5, queue: 5 }).use(),
+  },
+});
+```
+
+<Note>
+`ExuluQueues.register(name, concurrency, ratelimit?, timeoutInSeconds?)` registers a BullMQ queue and returns `{ use }`; calling `.use()` yields the `Promise<ExuluQueueConfig>` the embedder, processor, and sources expect. Registering queues requires an Enterprise Edition license.
+</Note>
+
+## Chunker
+
+<ParamField path="chunker" type="ChunkerOperation" default="defaultChunker">
+  Splits an item into embeddable chunks before the embedder runs. When omitted, the built-in `defaultChunker` (a sentence chunker) runs over the item's `content` field — falling back to `description` — combined with `name`. Contexts with structured or file-backed content should supply their own.
+</ParamField>
+
+```typescript
+type ChunkerOperation = (
+  item: Item & { id: string },
+  maxChunkSize: number,
+  utils: { storage: ExuluStorage },
+) => Promise<{
+  item: Item & { id: string };
+  chunks: {
+    content: string;
+    index: number;
+    metadata?: Record<string, unknown>;
+  }[];
+}>;
+```
+
+`maxChunkSize` is the per-chunk token budget, derived from the embedding model. `utils.storage` gives file-backed chunkers access to object storage. Chunk `metadata` lands in the chunks table's JSONB column, so any JSON-serializable value (for example a page number) is allowed.
+
+```typescript
+const chunker: ChunkerOperation = async (item, maxChunkSize, { storage }) => {
+  const sections = String(item.content ?? "").split("\n## ");
+  return {
+    item,
+    chunks: sections.map((content, index) => ({
+      content,
+      index,
+      metadata: { section: index },
+    })),
+  };
+};
+```
+
+<Info>
+`@exulu/backend` also exports ready-made chunkers under `ExuluChunkers` (`sentence`, `markdown`, `recursive`) and the `defaultChunker` itself.
+</Info>
+
+## Sources
+
+<ParamField path="sources" type="ExuluContextSource[]" required>
+  Data sources that ingest items from external systems. Pass an empty array if the context has none.
+</ParamField>
+
+```typescript
+type ExuluContextSource = {
+  id: string;
+  name: string;
+  description: string;
+  config?: {
+    schedule?: string;                  // cron expression
+    queue?: Promise<ExuluQueueConfig>;
+    retries?: number;                   // default 3
+    backoff?: {
+      type: "exponential" | "linear";
+      delay: number;                    // milliseconds, default 2000 exponential
+    };
+    params?: {
+      name: string;
+      description: string;
+      default?: string;
+    }[];
+  };
+  execute: (inputs: { exuluConfig: ExuluConfig; [key: string]: any }) => Promise<Item[]>;
+};
+```
+
+<ParamField path="sources[].id" type="string" required>
+  Unique source ID — also used as the BullMQ job scheduler key.
+</ParamField>
+
+<ParamField path="sources[].name" type="string" required>
+  Human-readable name.
+</ParamField>
+
+<ParamField path="sources[].description" type="string" required>
+  What the source ingests.
+</ParamField>
+
+<ParamField path="sources[].config.schedule" type="string">
+  Cron expression, for example `"0 */6 * * *"` for every six hours. When the worker process starts (`app.bullmq.workers.create()`), it upserts a BullMQ job scheduler per source that has both a `schedule` and a `queue`. Sources without a queue log a warning and are skipped.
+</ParamField>
+
+<ParamField path="sources[].config.queue" type="Promise<ExuluQueueConfig>">
+  The queue the source job runs on.
+</ParamField>
+
+<ParamField path="sources[].config.retries" type="number" default="3">
+  BullMQ retry attempts for a failed run.
+</ParamField>
+
+<ParamField path="sources[].config.backoff" type="object" default='{ type: "exponential", delay: 2000 }'>
+  Retry backoff strategy.
+</ParamField>
+
+<ParamField path="sources[].config.params" type="object[]">
+  Declared input parameters (`name`, `description`, optional `default`) for manual runs — surfaced in the platform UI when triggering the source by hand. Values arrive in `execute`'s `inputs`.
+</ParamField>
+
+<ParamField path="sources[].execute" type="function" required>
+  Async function that fetches external data and returns an array of items (`ExuluItem`). Each returned item is written with `createItem`: items carrying an `external_id` (or `id`) are **upserted** — existing rows with the same `external_id` are updated — while items without one are inserted fresh. Processor and embedding triggers apply as configured.
+</ParamField>
+
+```typescript
+import { ExuluQueues, type ExuluItem } from "@exulu/backend";
+
+sources: [
+  {
+    id: "github_issues",
+    name: "GitHub issues",
+    description: "Syncs open issues from the tracker repository.",
+    config: {
+      schedule: "0 */6 * * *",
+      queue: ExuluQueues.register("github_sync", { worker: 2, queue: 2 }).use(),
+      retries: 3,
+      backoff: { type: "exponential", delay: 2000 },
+      params: [
+        { name: "since", description: "Only fetch issues updated after this ISO date." },
+      ],
+    },
+    execute: async ({ exuluConfig, since }) => {
+      const issues = await fetchIssues({ since });
+      return issues.map((issue): ExuluItem => ({
+        external_id: String(issue.id),
+        name: issue.title,
+        content: issue.body,
+      }));
+    },
+  },
+]
+```
+
+## Processor
+
+<ParamField path="processor" type="ExuluContextProcessor">
+  Transforms items after they are written — extract text from an uploaded file, enrich a record, compute derived fields. The result is written back to the items table and can trigger embedding generation.
+</ParamField>
+
+```typescript
+type ExuluContextProcessor = {
+  name: string;
+  description: string;
+  filter?: (args: {
+    item: Item;
+    user?: number;
+    role?: string;
+    utils: { storage: ExuluStorage };
+    exuluConfig: ExuluConfig;
+  }) => Promise<Item | undefined | null>;
+  execute: (args: {
+    item: Item;
+    user?: number;
+    role?: string;
+    utils: { storage: ExuluStorage };
+    exuluConfig: ExuluConfig;
+  }) => Promise<Item>;
+  config?: {
+    queue?: Promise<ExuluQueueConfig>;
+    timeoutInSeconds?: number;          // default 600 in queue mode
+    trigger: "manual" | "onUpdate" | "onInsert" | "always";
+    generateEmbeddings?: boolean;
+  };
+};
+```
+
+<ParamField path="processor.name" type="string" required>
+  Processor name, used in job labels.
+</ParamField>
+
+<ParamField path="processor.description" type="string" required>
+  What the processor does.
+</ParamField>
+
+<ParamField path="processor.filter" type="function">
+  Optional predicate. Return a falsy value to skip processing for an item — for example, when no file is attached yet.
+</ParamField>
+
+<ParamField path="processor.execute" type="function" required>
+  The transformation. Receives the item and `utils.storage` for reading files from object storage; must return the updated item, which is persisted with `last_processed_at` set.
+</ParamField>
+
+<ParamField path="processor.config.trigger" type="string" required>
+  When the processor runs: `manual` (only explicit `processField()` calls), or automatically on writes. Both `createItem()` and `updateItem()` run the processor when the trigger is `onInsert`, `onUpdate`, or `always` — currently the three non-manual values behave identically on both write paths.
+</ParamField>
+
+<ParamField path="processor.config.queue" type="Promise<ExuluQueueConfig>">
+  Run processing as a background job instead of inline.
+</ParamField>
+
+<ParamField path="processor.config.timeoutInSeconds" type="number" default="600">
+  Job timeout in queue mode.
+</ParamField>
+
+<ParamField path="processor.config.generateEmbeddings" type="boolean">
+  When `true`, embedding generation is triggered automatically after the processor finishes.
+</ParamField>
+
+```typescript
+processor: {
+  name: "pdf_text_extractor",
+  description: "Extracts text from uploaded PDF files into the content field.",
+  config: {
+    trigger: "onInsert",
+    generateEmbeddings: true,
+    queue: ExuluQueues.register("doc_processing", { worker: 2, queue: 2 }).use(),
+  },
+  filter: async ({ item }) => (item.document_s3key ? item : undefined),
+  execute: async ({ item, utils }) => {
+    const url = await utils.storage.getPresignedUrl(item.document_s3key);
+    const text = await extractPdfText(url);
+    return { ...item, content: text, textlength: text.length };
+  },
+}
+```
+
+## Retrieval hooks
+
+<ParamField path="queryRewriter" type="(query: string) => Promise<string>">
+  Rewrites the natural-language query before retrieval — for example, expanding it with an LLM. Applied inside the search pipeline whenever a `query` is present.
+</ParamField>
+
+```typescript
+queryRewriter: async (query) => {
+  return await expandQueryWithSynonyms(query);
+},
+```
+
+<ParamField path="resultReranker" type="(results: chunk[]) => Promise<chunk[]>">
+  Declared hook for reordering retrieved chunks after search. Each chunk carries `chunk_content`, `chunk_index`, `chunk_id`, `chunk_source`, `chunk_metadata`, `chunk_created_at`, `chunk_updated_at`, `item_id`, `item_external_id`, and `item_name`.
+</ParamField>
+
+<Warning>
+`resultReranker` is accepted and stored on the context, but the current search pipeline does **not** invoke it — the call site is disabled in the source. Don't rely on it running until a release notes otherwise.
+</Warning>
+
+## Retrieval configuration
+
+<ParamField path="configuration" type="object">
+  Retrieval and write behavior. When you omit the **entire** object, the defaults below apply. When you pass a partial object, only your keys are set — the per-key defaults are **not** merged in, so pass everything you rely on.
+</ParamField>
+
+```typescript
+configuration: {
+  calculateVectors: "manual",
+  languages: ["english"],
+  defaultRightsMode: "private",
+  maxRetrievalResults: 10,
+  expand: { before: 0, after: 0 },
+  cutoffs: { cosineDistance: 0.5, tsvector: 0.5, hybrid: 0.5 },
+}
+```
+
+<ParamField path="configuration.calculateVectors" type='"manual" | "onUpdate" | "onInsert" | "always"' default="manual">
+  When embeddings are generated automatically: never (`manual`), when items are created (`onInsert`), updated (`onUpdate`), or both (`always`). With `manual`, call `embeddings.generate.one()` / `.all()` yourself or pass the `generateEmbeddingsOverwrite` flag on writes.
+</ParamField>
+
+<ParamField path="configuration.maxRetrievalResults" type="number" default="10">
+  Fallback result limit used when a `search()` call passes no `limit`.
+</ParamField>
+
+<ParamField path="configuration.defaultRightsMode" type='"private" | "users" | "roles" | "teams" | "public"' default="private">
+  Default `rights_mode` for new items — the items table column defaults to this value.
+</ParamField>
+
+<ParamField path="configuration.cutoffs" type="object" default="{ cosineDistance: 0.5, tsvector: 0.5, hybrid: 0.5 }">
+  Minimum relevance scores per search method. Results scoring below the cutoff are dropped. Can be overridden per `search()` call.
+</ParamField>
+
+<ParamField path="configuration.expand" type="object" default="{ before: 0, after: 0 }">
+  Number of neighboring chunks to include around each matched chunk, giving agents more surrounding context. Can be overridden per `search()` call.
+</ParamField>
+
+<ParamField path="configuration.languages" type='("german" | "english")[]' default='["english"]'>
+  Languages for the generated full-text search columns. Each language adds a `to_tsvector` expression to the items and chunks tables, affecting stemming and stop words. Set before the tables are created — the columns are generated at table-creation time.
+</ParamField>
+
+## Entity layer
+
+<ParamField path="entities" type="ExuluEntitiesConfig">
+  Opt-in entity extraction over chunks. When present (or when an admin has configured entity types for the context in the UI), IMP extracts typed entities from embedded content into `<id>_entities`, enabling entity filters and insights in `search()`. Absent → behavior is unchanged.
+</ParamField>
+
+```typescript
+type ExuluEntitiesConfig = {
+  types?: { name: string; description: string }[];
+  model?: string;                 // extraction model; falls back to a platform default
+  boostWeight?: number;           // shared-entity ranking boost, default 0.3
+  confidenceThreshold?: number;   // drop mentions below this (0..1), default 0.5
+  canonicalLanguage?: string;     // language for canonical names, default "english"
+};
+```
+
+<ParamField path="entities.types" type="object[]">
+  Entity types declared in code, for example `{ name: "Person", description: "A natural person mentioned in the document." }`. Merged (union) with types an admin declares in the UI.
+</ParamField>
+
+<ParamField path="entities.model" type="string">
+  Model ID used for extraction. Falls back to a platform default when omitted.
+</ParamField>
+
+<ParamField path="entities.boostWeight" type="number" default="0.3">
+  Weight of the shared-entity boost term in retrieval ranking.
+</ParamField>
+
+<ParamField path="entities.confidenceThreshold" type="number" default="0.5">
+  Mentions below this extractor confidence are dropped.
+</ParamField>
+
+<ParamField path="entities.canonicalLanguage" type="string" default="english">
+  Target language for canonical entity names.
+</ParamField>
+
+See [Entities](/building/knowledge/entities) for the admin-side view of the entity layer.
+
+## Complete example
+
+```typescript
+import { ExuluContext, ExuluQueues, type ExuluItem } from "@exulu/backend";
+
+export const productDocsContext = new ExuluContext({
+  id: "product_docs",
+  name: "Product documentation",
+  description: "Guides, API references, and tutorials for the product.",
+  active: true,
+
+  fields: [
+    { name: "content", type: "longText", required: true },
+    { name: "category", type: "enum", enumValues: ["guide", "api", "tutorial"], index: true },
+    { name: "url", type: "text", unique: true },
+    { name: "attachment", type: "file", allowedFileTypes: ["pdf"] },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: ExuluQueues.register("embeddings", { worker: 5, queue: 5 }).use(),
+  },
+
+  sources: [
+    {
+      id: "docs_repo_sync",
+      name: "Docs repository sync",
+      description: "Imports markdown pages from the documentation repository.",
+      config: {
+        schedule: "0 */4 * * *",
+        queue: ExuluQueues.register("docs_sync", { worker: 1, queue: 1 }).use(),
+        retries: 3,
+        backoff: { type: "exponential", delay: 2000 },
+      },
+      execute: async ({ exuluConfig }) => {
+        const pages = await fetchDocPages();
+        return pages.map((page): ExuluItem => ({
+          external_id: page.path,
+          name: page.title,
+          content: page.markdown,
+          category: page.category,
+          url: page.url,
+        }));
+      },
+    },
+  ],
+
+  configuration: {
+    calculateVectors: "onInsert",
+    maxRetrievalResults: 15,
+    defaultRightsMode: "public",
+    cutoffs: { cosineDistance: 0.5, tsvector: 0.5, hybrid: 0.5 },
+    expand: { before: 1, after: 2 },
+    languages: ["english"],
+  },
+
+  entities: {
+    types: [
+      { name: "Feature", description: "A named product feature." },
+      { name: "Company", description: "An organization mentioned in the docs." },
+    ],
+  },
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-context/api-reference">
+    Search, item CRUD, embeddings, entity layer, and table methods.
+  </Card>
+  <Card title="ExuluApp" icon="layers" href="/developers/core/exulu-app/introduction">
+    Register the context on the app.
+  </Card>
+</CardGroup>

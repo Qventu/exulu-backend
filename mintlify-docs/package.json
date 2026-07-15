@@ -1,0 +1,22 @@
+{
+  "name": "exulu-docs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "changelog": "node scripts/build-changelog.mjs",
+    "sdl": "node scripts/emit-graphql-sdl.mjs",
+    "tokens": "node scripts/check-tokens.mjs",
+    "sync-kit": "node scripts/sync-kit.mjs",
+    "sync-kit:check": "node scripts/sync-kit.mjs --check",
+    "mockups": "node scripts/render-mockups.mjs",
+    "verify-sdl": "node scripts/verify-sdl-blocks.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "graphql": "^17.0.2"
+  }
+}

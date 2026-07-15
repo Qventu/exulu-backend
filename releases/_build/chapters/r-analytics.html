@@ -1,0 +1,69 @@
+<article class="chapter" id="r-analytics" data-release="2026-07-08-analytics" aria-labelledby="r-analytics-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">32</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Analytics & Leaderboards</span>
+    </div>
+    <h1 class="ch-title" id="r-analytics-h">Know where every dollar <em>goes</em>.</h1>
+    <p class="ch-lede">Cost and usage analytics you can actually act on: a ranked spend leaderboard by agent, team, user or project; a daily trend you can read at a glance; and a URL-driven lens so any cost view is one link away.</p>
+  </header>
+  <section class="feature" id="r-analytics--spend-leaderboard"><h2>Spend leaderboard</h2>
+        <p class="one-liner">Who is burning the budget? Now you can see.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-analytics__spend-leaderboard.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>See exactly who — or what — is spending. The <strong>Breakdown</strong> card ranks the top 10 by the active measure, and one <strong>"Split by:"</strong> picker in the page header re-scopes it across Agents, Users, Projects, Teams, Roles and Routines. Switch from Agents to Teams and the ranking rebuilds — new names, new magnitudes, new bars.</p>
+          <p>Spend shows as USD, tokens and requests as plain counts, and the top three ranks stand out at a glance. Rows show the real names from your workspace wherever one exists, falling back to the raw id only when it doesn't.</p>
+          <div class="snippet-label">GraphQL — resolving tag ids to team names:</div>
+          <pre><code>query GetTeamsByIds {
+  teamsPagination(page: 1, limit: 200) {
+    items {
+      id
+      name
+    }
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-analytics--trend-chart"><h2>Trend chart</h2>
+        <p class="one-liner">Every dollar, every day, at a glance.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-analytics__trend-chart.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>The <strong>Trend</strong> card plots the selected measure per day across your chosen window. Flip between Spend, Tokens and Requests with a single control — the chart redraws instantly, with no reload, and the y-axis follows the measure: currency for spend, plain counts for the rest.</p>
+          <p>The measure lives in the URL (<code>?measure=tokens</code>), so any view is deep-linkable and drives the breakdown card beside it too. Empty windows say so plainly, failed loads offer a Retry, and animation respects your reduced-motion setting.</p>
+        </div></section>
+<section class="feature" id="r-analytics--date-range-lens"><h2>Date-range lens</h2>
+        <p class="one-liner">Bookmark the exact cost view. Send it to anyone.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-analytics__date-range-lens.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Every analytics view is a URL. Pick a preset — 24h, 7d, 14d or 30d, with <strong>14d</strong> as the default — or set a custom window from the calendar, and the whole page recomputes: KPIs, trend and breakdown all follow the same window.</p>
+          <p>The range, measure, dimension and view all travel in the link, so a shared URL reproduces exactly what you see. Custom ranges cap at 30 days — longer selections are blocked with a clear message, and an over-long deep link resets to the last 14 days. Legacy <code>?type=AGENT_RUN</code> links still resolve to the new filters.</p>
+        </div></section>
+<section class="feature" id="r-analytics--csv-export"><h2>Every breakdown, one spreadsheet away</h2>
+        <p class="one-liner">Export exactly the slice on screen as an entity-by-day pivot.</p>
+        <div class="slice">
+          <p><strong>"Export CSV"</strong> downloads exactly the slice on screen as an entity-by-day pivot: the top 10 entities as rows, one column per day in the window, and a trailing Total — the header reads <code>Entity, 2026-07-01, 2026-07-02, …, Total</code>. Empty days are zero-filled, not skipped.</p>
+          <p>Rows carry real names, not tag ids. Spend cells keep six decimals while token and request cells stay integers, and the file opens cleanly in Excel (UTF-8 with BOM). Downloads are named <code>analytics-{dimension}-{measure}-{start}-{end}.csv</code>, so every file stays self-describing.</p>
+        </div></section>
+<section class="feature" id="r-analytics--share-view"><h2>See the split, not just the ranking</h2>
+        <p class="one-liner">The same top-10 slice, either as a leaderboard or a proportional ring.</p>
+        <div class="slice">
+          <p>A toggle in the Breakdown card's header flips the same top-10 slice between a ranked <strong>List</strong> and a <strong>Share</strong> donut. The donut pairs each slice with a color-keyed legend showing the entity's name, value and share of the total as a whole-number percent; slices under 5% drop their inline label to stay legible.</p>
+          <p>Your view choice is part of the URL, so a shared link opens on the same list or ring you were looking at.</p>
+        </div></section>
+<section class="feature" id="r-analytics--name-hydration"><h2>LiteLLM tags carry ids; you see names</h2>
+        <p class="one-liner">Every breakdown row is reconciled against Postgres names before you ever see it.</p>
+        <div class="slice">
+          <p>Analytics is powered by LiteLLM usage tags, which carry only stable ids. Before anything reaches your screen, those ids are resolved to real names from your workspace — a user resolves to their name, then first and last name, then email, and only falls back to the raw id when no name exists.</p>
+          <p>The ranked list and the CSV export read from the same resolved names, so what you see on screen matches what lands in the file. The Spend / Tokens / Requests KPI strip now sits above a fully hydrated, exportable breakdown.</p>
+          <div class="snippet-label">GraphQL — the id-to-name lookup behind each breakdown:</div>
+          <pre><code>query GetUsersByIds($ids: [ID!]!) {
+  userByIds(ids: $ids) {
+    id
+    name
+    firstname
+    lastname
+    email
+  }
+}</code></pre>
+        </div></section>
+</article>

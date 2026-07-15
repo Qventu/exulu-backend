@@ -1,0 +1,67 @@
+---
+title: "Workflow templates"
+description: "The workflow_template type defines a multi-step automated routine that an agent executes sequentially."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Workflow templates require an Enterprise Edition license (`template-conversations` entitlement).
+
+A `workflow_template` is a reusable automation script: an ordered list of agent-executed steps stored as JSON. Workflows can be triggered manually, via the API, or on a cron schedule. See [Routines overview](/building/routines/overview).
+
+```graphql
+type workflow_template {
+  name: String!
+  description: String
+  agent: String
+  steps_json: JSON!
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  variables: [String]
+  budget: JSON
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `agent` | ID string of the default `agent` executing each step; individual steps may override this. |
+| `steps_json` | JSON array of step definitions. Each step specifies a prompt, optional tools, and per-step agent or model overrides. |
+| `variables` | Computed string array of `{{variable}}` placeholder names extracted from `steps_json`; populated at read time. |
+| `rights_mode` | `"public"` or `"private"`; private templates are scoped via `RBAC`. |
+| `created_by` | Numeric ID of the creating user. |
+| `budget` | JSON budget envelope for cost limits on this workflow's runs. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  workflow_templatesPagination(
+    limit: 10
+    filters: [{ rights_mode: { eq: "public" } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      agent
+      variables
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

@@ -122,8 +122,8 @@ import {
 import {
   BOOTSTRAP_SKILL_MD,
   BOOTSTRAP_CLIENTS_JSON,
-  BOOTSTRAP_EXULU_SH,
-} from "../skills/bootstrap/exulu-skills.ts";
+  BOOTSTRAP_IMP_SH,
+} from "../skills/bootstrap/imp-skills.ts";
 
 const getExuluVersionNumber = async () => {
   try {
@@ -3269,7 +3269,7 @@ Mood: friendly and intelligent.
 
   /**
    * GET /skills/agent/bootstrap — PUBLIC (no auth)
-   * Returns a zip containing the generic exulu-skills bootstrap skill so any
+   * Returns a zip containing the generic imp-skills bootstrap skill so any
    * agent client can self-install it without a logged-in session. The content
    * is embedded as TypeScript string constants (no loose files in dist).
    * NOTE: This literal path must remain BEFORE /skills/registry to avoid param capture.
@@ -3277,11 +3277,11 @@ Mood: friendly and intelligent.
   app.get("/skills/agent/bootstrap", async (_req: Request, res: Response) => {
     try {
       const zip = new JSZip();
-      zip.file("exulu-skills/SKILL.md", BOOTSTRAP_SKILL_MD);
-      zip.file("exulu-skills/references/clients.json", BOOTSTRAP_CLIENTS_JSON);
+      zip.file("imp-skills/SKILL.md", BOOTSTRAP_SKILL_MD);
+      zip.file("imp-skills/references/clients.json", BOOTSTRAP_CLIENTS_JSON);
       // The helper script the agent invokes (unix-executable bit set so a
-      // direct `./scripts/exulu` also works; the skill documents `sh <path>`).
-      zip.file("exulu-skills/scripts/exulu", BOOTSTRAP_EXULU_SH, {
+      // direct `./scripts/imp` also works; the skill documents `sh <path>`).
+      zip.file("imp-skills/scripts/imp", BOOTSTRAP_IMP_SH, {
         unixPermissions: 0o755,
       });
       const buffer = await zip.generateAsync({
@@ -3289,7 +3289,7 @@ Mood: friendly and intelligent.
         platform: "UNIX",
       });
       res.setHeader("Content-Type", "application/zip");
-      res.setHeader("Content-Disposition", 'attachment; filename="exulu-skills.zip"');
+      res.setHeader("Content-Disposition", 'attachment; filename="imp-skills.zip"');
       res.send(buffer);
     } catch (err: any) {
       console.error("[SKILLS] Failed to build bootstrap zip", err);
@@ -3387,11 +3387,13 @@ Mood: friendly and intelligent.
   });
 
   /**
-   * POST /skills/registry/:name   (body: raw zip / .skill bytes)
-   * Publish from an agent. New name -> create a private skill at v1. Existing
-   * name the caller can write -> append a new version. 403 when the name
-   * exists but the caller lacks write; 409 when it exists but the caller can't
-   * even read it (don't leak existence details).
+   * POST /skills/registry/:name?visibility=public|private   (body: raw zip / .skill bytes)
+   * Publish from an agent. New name -> create a skill at v1; `visibility` is
+   * REQUIRED so the agent has to ask the user (it maps to rights_mode).
+   * Existing name the caller can write -> append a new version (visibility is
+   * ignored; manage access from the UI). 403 when the name exists but the
+   * caller lacks write; 409 when it exists but the caller can't even read it
+   * (don't leak existence details).
    */
   app.post("/skills/registry/:name", rawZip, async (req: Request, res: Response) => {
     const authResult = await requestValidators.authenticate(req);
@@ -3445,7 +3447,16 @@ Mood: friendly and intelligent.
       }
     }
 
-    // New skill.
+    // New skill: the caller must state the visibility explicitly so the
+    // publishing agent is forced to ask the user instead of assuming one.
+    const visibility = req.query.visibility;
+    if (visibility !== "public" && visibility !== "private") {
+      res.status(400).json({
+        detail:
+          "Missing or invalid 'visibility'. New skills require ?visibility=public or ?visibility=private — ask the user which they want.",
+      });
+      return;
+    }
     const meta = await parseSkillFrontmatter(bytes);
     const skillId = randomUUID();
     try {
@@ -3472,7 +3483,7 @@ Mood: friendly and intelligent.
         history: JSON.stringify([
           { version: 1, created_at: new Date().toISOString(), label: "Published from agent" },
         ]),
-        rights_mode: "private",
+        rights_mode: visibility,
         created_by: authResult.user.id,
       });
     } catch (err: any) {

@@ -1,0 +1,93 @@
+---
+title: "Postgres"
+description: "How IMP uses Postgres with pgvector: database auto-creation, connection pool, vector index settings, and per-context schema."
+icon: "database"
+---
+
+IMP stores all application data — agents, users, sessions, knowledge items, chunks, and vector embeddings — in a single Postgres database. The `pgvector` extension is required; if it cannot be created, the extension-creation error is caught and logged, but knowledge ingestion and retrieval will fail at runtime.
+
+## Image and port
+
+| Property | Value |
+|---|---|
+| Recommended image | `pgvector/pgvector:pg17` |
+| Port | `5432` |
+
+## What IMP does on first connection
+
+The backend auto-creates the target database if it does not exist, then enables the `vector` extension and sets a per-connection HNSW search parameter on every new connection.
+
+**Auto-create database.** On startup the backend connects to the system `postgres` database with the configured credentials and runs `CREATE DATABASE <name>` if the target does not already exist. If the user lacks the `CREATEDB` privilege the step fails with a warning logged to stdout and IMP continues, assuming the database already exists.
+
+**Enable pgvector.** After connecting to the application database, IMP runs:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+If the user lacks superuser rights the extension may already exist (added by an admin at provision time), in which case the error is logged and ignored.
+
+**Per-connection parameters.** Every connection opened from the pool runs the following before being handed to the application:
+
+```sql
+SET statement_timeout = 1800000;
+SET hnsw.ef_search = 20;
+```
+
+`hnsw.ef_search = 20` is the recall/speed trade-off for approximate nearest-neighbour queries. Increase it if knowledge retrieval misses relevant chunks; decrease it if ANN queries are too slow.
+
+## Connection pool
+
+The application-level pool (Knex + `node-postgres`) is configured with:
+
+| Setting | Value |
+|---|---|
+| Pool min | 10 |
+| Pool max | 300 |
+| Acquire timeout | 120 s |
+| Idle timeout | 30 s |
+| Statement timeout | 1800 s (30 min) |
+| TCP keepalive delay | 10 s |
+
+A 300-connection ceiling means Postgres's `max_connections` must be at least `300` (plus a margin for the frontend's own pool and the LiteLLM database). The default `max_connections = 100` in vanilla Postgres is not enough for production IMP deployments.
+
+## Vector tables
+
+IMP creates per-context item and chunk tables that include a `vector(N)` column, where `N` comes from the `dimensionality` field in the LiteLLM model registry entry for the configured embedding model. Changing the embedding model after initial setup requires migrating or recreating these tables, because `pgvector` column dimensionality is fixed at creation time.
+
+## Configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_DB_HOST` | — | Hostname or IP of the Postgres server |
+| `POSTGRES_DB_PORT` | `5432` | Port |
+| `POSTGRES_DB_USER` | — | Postgres user |
+| `POSTGRES_DB_PASSWORD` | — | Password |
+| `POSTGRES_DB_NAME` | `exulu` | Name of the application database. Created automatically if absent. |
+| `POSTGRES_DB_SSL` | `false` | Set to `true` to enable SSL (`rejectUnauthorized: false`). |
+
+## Compose excerpt
+
+```yaml
+exulu-pgvector:
+  image: pgvector/pgvector:pg17
+  restart: unless-stopped
+  environment:
+    POSTGRES_PASSWORD: "${POSTGRES_DB_PASSWORD}"
+    POSTGRES_USER: "${POSTGRES_DB_USER}"
+  ports:
+    - "5432:5432"
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_DB_USER}"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+## Operational notes
+
+**Separate LiteLLM database.** The LiteLLM proxy requires its own dedicated Postgres database (set via `LITELLM_DATABASE_URL`). It must not share the same database as IMP. Pointing both at the same database causes the LiteLLM schema sync to drop IMP tables. See [LiteLLM service](/self-hosting/services/litellm) for details.
+
+**initdb runs on every boot.** The database initialisation routine (`initdb`) runs on every backend startup and is fully idempotent — existing tables are not touched. New columns are added with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
+
+**Backup before schema changes.** IMP does not run destructive migrations. However, adding a new embedding model with a different dimensionality and re-indexing knowledge will write new data into the database. Back up before changing the embedding model in production.

@@ -1,256 +1,266 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
-  "name": "Exulu IMP",
-  "banner": {
-    "content": "🚀 1.47.0 is live! [Learn more](/changelog#1-47-0)"
-  },
+  "name": "IMP Docs",
+  "description": "Documentation for IMP — the Intelligence Management Platform.",
   "colors": {
-    "primary": "#8B5CF6",
-    "light": "#A78BFA",
-    "dark": "#7C3AED"
+    "primary": "#6f9a37",
+    "light": "#cef79e",
+    "dark": "#557a26"
   },
-  "icons": {
-    "library": "lucide"
-  },
-  "favicon": "/favicon.svg",
-  "customCss": [
-    "/styles.css"
-  ],
-  "navigation": {
-    "tabs": [
-      {
-        "tab": "Home",
-        "icon": "house",
-        "pages": [
-          "index",
-          "community-edition",
-          "enterprise-edition",
-          "partners"
-        ]
-      },
-      {
-        "tab": "Documentation",
-        "icon": "book",
-        "groups": [
-          {
-            "group": "Getting started",
-            "pages": [
-              "backend/introduction",
-              {
-                "group": "Guides",
-                "pages": [
-                  "getting-started",
-                  "guides/first-agent",
-                  "guides/custom-agent"
-                ]
-              }
-            ]
-          },
-          {
-            "group": "Core classes",
-            "pages": [
-              {
-                "group": "ExuluApp",
-                "pages": [
-                  "core/exulu-app/introduction",
-                  "core/exulu-app/configuration",
-                  "core/exulu-app/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluProvider",
-                "pages": [
-                  "core/exulu-agent/introduction",
-                  "core/exulu-agent/configuration",
-                  "core/exulu-agent/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluContext",
-                "pages": [
-                  "core/exulu-context/introduction",
-                  "core/exulu-context/configuration",
-                  "core/exulu-context/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluTool",
-                "pages": [
-                  "core/exulu-tool/introduction",
-                  "core/exulu-tool/configuration",
-                  "core/exulu-tool/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluReranker",
-                "pages": [
-                  "core/exulu-reranker/introduction",
-                  "core/exulu-reranker/configuration",
-                  "core/exulu-reranker/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluQueues",
-                "pages": [
-                  "core/exulu-queues/introduction",
-                  "core/exulu-queues/configuration",
-                  "core/exulu-queues/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluChunkers",
-                "pages": [
-                  "core/exulu-chunkers/introduction",
-                  "core/exulu-chunkers/configuration",
-                  "core/exulu-chunkers/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluVariables",
-                "pages": [
-                  "core/exulu-variables/introduction",
-                  "core/exulu-variables/configuration",
-                  "core/exulu-variables/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluEval",
-                "pages": [
-                  "core/exulu-eval/introduction",
-                  "core/exulu-eval/configuration",
-                  "core/exulu-eval/api-reference"
-                ]
-              },
-              {
-                "group": "ExuluPython",
-                "pages": [
-                  "core/exulu-python/introduction",
-                  "core/exulu-python/configuration",
-                  "core/exulu-python/api-reference"
-                ]
-              },
-              "core/exulu-default-agents",
-              "core/exulu-otel",
-              "core/exulu-logging",
-              "core/exulu-authentication",
-              "core/exulu-database"
-            ]
-          },
-          {
-            "group": "Frontend",
-            "pages": [
-              "frontend/introduction"
-            ]
-          },
-          {
-            "group": "GraphQL API",
-            "pages": [
-              "api-reference/introduction",
-              "api-reference/queries",
-              "api-reference/mutations"
-            ]
-          },
-          {
-            "group": "Core Types",
-            "pages": [
-              "api-reference/core-types/overview",
-              "api-reference/dynamic-types",
-              "api-reference/core-types/agent-types",
-              "api-reference/core-types/session-types",
-              "api-reference/core-types/user-management",
-              "api-reference/core-types/evaluation-types",
-              "api-reference/core-types/workflow-types",
-              "api-reference/core-types/configuration-types",
-              "api-reference/core-types/prompt-types",
-              "api-reference/core-types/analytics-types",
-              "api-reference/core-types/job-types",
-              "api-reference/core-types/rbac-types"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Changelog",
-        "icon": "list-check",
-        "pages": [
-          "changelog"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Exulu Backend",
-          "href": "https://github.com/Qventu/exulu-backend",
-          "icon": "github"
-        },
-        {
-          "anchor": "Npm Backend",
-          "href": "https://www.npmjs.com/package/@exulu/backend",
-          "icon": "npm"
-        },
-        {
-          "anchor": "Exulu Frontend",
-          "href": "https://github.com/Qventu/exulu-frontend",
-          "icon": "github"
-        },
-        {
-          "anchor": "Npm Frontend",
-          "href": "https://www.npmjs.com/package/@exulu/frontend",
-          "icon": "npm"
-        },
-        {
-          "anchor": "Example Project",
-          "href": "https://github.com/Qventu/exulu-example",
-          "icon": "github"
-        },
-        {
-          "anchor": "Npm CLI",
-          "href": "https://www.npmjs.com/package/@exulu/cli",
-          "icon": "npm"
-        },
-        {
-          "anchor": "Exulu CLI",
-          "href": "https://github.com/Qventu/exulu-cli",
-          "icon": "github"
-        },
-        {
-          "anchor": "Exulu Website",
-          "href": "https://exulu.com",
-          "icon": "globe"
-        }
-      ]
-    }
+  "background": {
+    "color": { "light": "#f8f6f1", "dark": "#1b1714" }
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/logo/exulu-wordmark-light.svg",
+    "dark": "/logo/exulu-wordmark-dark.svg"
   },
-  "navbar": {
-    "links": [
-      {
-        "label": "GitHub",
-        "href": "https://github.com/Qventu/exulu-backend"
-      }
-    ]
-  },
+  "favicon": "/logo/exulu-icon-light.svg",
+  "icons": { "library": "lucide" },
   "contextual": {
-    "display": "toc",
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+  },
+  "navigation": {
+    "tabs": [
+      { "tab": "Get Started", "icon": "rocket", "groups": [
+        { "group": "Welcome", "pages": ["index", "get-started/what-is-imp", "get-started/where-do-i-start"] },
+        { "group": "Platform", "pages": ["get-started/concepts", "get-started/editions"] }
+      ] },
+      { "tab": "User Guide", "icon": "message-square", "groups": [
+        { "group": "Chat", "pages": [
+          "user-guide/chat/overview",
+          "user-guide/chat/conversations",
+          "user-guide/chat/attachments-and-session-files",
+          "user-guide/chat/dictation",
+          "user-guide/chat/prompts-in-chat",
+          "user-guide/chat/pinned-knowledge-and-presets",
+          "user-guide/chat/tool-approvals",
+          "user-guide/chat/budgets-in-chat",
+          "user-guide/chat/context-compaction",
+          "user-guide/chat/image-generation",
+          "user-guide/chat/artifacts-and-sharing",
+          "user-guide/chat/model-override-and-usage"
+        ] },
+        { "group": "Projects", "pages": [
+          "user-guide/projects/overview",
+          "user-guide/projects/working-in-a-project"
+        ] },
+        { "group": "Transcripts", "pages": [
+          "user-guide/transcripts/overview",
+          "user-guide/transcripts/recording-meetings",
+          "user-guide/transcripts/reviewing-and-saving"
+        ] },
+        { "group": "Personal", "pages": [
+          "user-guide/settings"
+        ] }
+      ] },
+      { "tab": "Building", "icon": "hammer", "groups": [
+        { "group": "Agents", "pages": [
+          "building/agents/overview",
+          "building/agents/workbench",
+          "building/agents/tools-and-skills",
+          "building/agents/access-and-safety"
+        ] },
+        { "group": "Knowledge", "pages": [
+          "building/knowledge/overview",
+          "building/knowledge/items",
+          "building/knowledge/pipeline",
+          "building/knowledge/entities"
+        ] },
+        { "group": "Prompts & Skills", "pages": [
+          "building/prompts",
+          "building/skills/overview",
+          "building/skills/editing-and-versions",
+          "building/skills/connect-your-agent"
+        ] },
+        { "group": "Routines", "pages": [
+          "building/routines/overview",
+          "building/routines/runs-and-schedules"
+        ] },
+        { "group": "Evals", "pages": [
+          "building/evals/overview",
+          "building/evals/test-cases",
+          "building/evals/runs"
+        ] },
+        { "group": "More", "pages": [
+          "building/feedback"
+        ] }
+      ] },
+      { "tab": "Administration", "icon": "shield", "groups": [
+        { "group": "Users & access", "pages": [
+          "administration/users-access/overview",
+          "administration/users-access/roles",
+          "administration/users-access/teams"
+        ] },
+        { "group": "Platform", "pages": [
+          "administration/models",
+          "administration/budgets",
+          "administration/analytics"
+        ] },
+        { "group": "Governance", "pages": [
+          "administration/variables",
+          "administration/theme",
+          "administration/api-keys"
+        ] }
+      ] },
+      { "tab": "Self-Hosting", "icon": "server", "groups": [
+        { "group": "Deploy", "pages": [
+          "self-hosting/architecture",
+          "self-hosting/requirements",
+          "self-hosting/quickstart"
+        ] },
+        { "group": "Services", "pages": [
+          "self-hosting/services/postgres",
+          "self-hosting/services/redis",
+          "self-hosting/services/s3-storage",
+          "self-hosting/services/litellm",
+          "self-hosting/services/whisper",
+          "self-hosting/services/smtp-and-auth",
+          "self-hosting/services/observability"
+        ] },
+        { "group": "Operate", "pages": [
+          "self-hosting/containers",
+          "self-hosting/environment-variables",
+          "self-hosting/database",
+          "self-hosting/operations",
+          "self-hosting/troubleshooting"
+        ] }
+      ] },
+      { "tab": "Developers", "icon": "code", "groups": [
+        { "group": "Start", "pages": [
+          "developers/setup",
+          "developers/getting-started"
+        ] },
+        { "group": "Tutorials", "pages": [
+          "developers/tutorials/first-app",
+          "developers/tutorials/defining-contexts",
+          "developers/tutorials/data-sources-and-sync",
+          "developers/tutorials/custom-processors",
+          "developers/tutorials/queues-and-workers",
+          "developers/tutorials/custom-tools",
+          "developers/tutorials/oauth-tools",
+          "developers/tutorials/running-evals",
+          "developers/tutorials/mcp"
+        ] },
+        { "group": "Recipes", "pages": [
+          "developers/recipes/s3-backed-context",
+          "developers/recipes/api-sync-ticketing",
+          "developers/recipes/sql-source",
+          "developers/recipes/incremental-sync"
+        ] },
+        { "group": "Core classes", "pages": [
+          { "group": "ExuluApp", "pages": [
+            "developers/core/exulu-app/introduction",
+            "developers/core/exulu-app/configuration",
+            "developers/core/exulu-app/api-reference"
+          ] },
+          { "group": "ExuluContext", "pages": [
+            "developers/core/exulu-context/introduction",
+            "developers/core/exulu-context/configuration",
+            "developers/core/exulu-context/api-reference"
+          ] },
+          { "group": "ExuluTool", "pages": [
+            "developers/core/exulu-tool/introduction",
+            "developers/core/exulu-tool/configuration",
+            "developers/core/exulu-tool/api-reference"
+          ] },
+          { "group": "ExuluProvider", "pages": [
+            "developers/core/exulu-provider/introduction",
+            "developers/core/exulu-provider/configuration",
+            "developers/core/exulu-provider/api-reference"
+          ] },
+          { "group": "ExuluEval", "pages": [
+            "developers/core/exulu-eval/introduction",
+            "developers/core/exulu-eval/configuration",
+            "developers/core/exulu-eval/api-reference"
+          ] },
+          { "group": "ExuluQueues", "pages": [
+            "developers/core/exulu-queues/introduction",
+            "developers/core/exulu-queues/configuration",
+            "developers/core/exulu-queues/api-reference"
+          ] },
+          { "group": "ExuluChunkers", "pages": [
+            "developers/core/exulu-chunkers/introduction",
+            "developers/core/exulu-chunkers/configuration",
+            "developers/core/exulu-chunkers/api-reference"
+          ] },
+          { "group": "ExuluDatabase", "pages": [
+            "developers/core/exulu-database/introduction",
+            "developers/core/exulu-database/configuration",
+            "developers/core/exulu-database/api-reference"
+          ] }
+        ] },
+        { "group": "Reference", "pages": [
+          "developers/reference/exulu-jobs",
+          "developers/reference/exulu-default-tools",
+          "developers/reference/exulu-default-providers",
+          "developers/reference/exulu-variables",
+          "developers/reference/exulu-authentication",
+          "developers/reference/exulu-document-processor",
+          "developers/reference/exulu-reranker",
+          "developers/reference/exulu-otel",
+          "developers/reference/exulu-python",
+          "developers/reference/exulu-read-api",
+          "developers/reference/exulu-storage",
+          "developers/reference/exulu-mcp",
+          "developers/reference/exulu-tokenizer",
+          "developers/reference/functions-and-types"
+        ] }
+      ] },
+      { "tab": "API Reference", "icon": "braces", "groups": [
+        { "group": "REST", "openapi": "/openapi/openapi.json", "pages": [
+          "api-reference/rest/introduction",
+          "api-reference/rest/gateways-litellm",
+          "api-reference/rest/mcp",
+          "api-reference/rest/gdpr"
+        ] },
+        { "group": "GraphQL", "pages": [
+          "api-reference/graphql/introduction",
+          "api-reference/graphql/conventions",
+          "api-reference/graphql/dynamic-types",
+          "api-reference/graphql/vector-search"
+        ] },
+        { "group": "Core types", "expanded": false, "pages": [
+          "api-reference/graphql/core-types/agents",
+          "api-reference/graphql/core-types/agent-messages",
+          "api-reference/graphql/core-types/agent-sessions",
+          "api-reference/graphql/core-types/context-presets",
+          "api-reference/graphql/core-types/entity-type-settings",
+          "api-reference/graphql/core-types/eval-runs",
+          "api-reference/graphql/core-types/eval-sets",
+          "api-reference/graphql/core-types/feedback",
+          "api-reference/graphql/core-types/job-results",
+          "api-reference/graphql/core-types/models",
+          "api-reference/graphql/core-types/platform-configurations",
+          "api-reference/graphql/core-types/projects",
+          "api-reference/graphql/core-types/prompt-favorites",
+          "api-reference/graphql/core-types/prompt-library",
+          "api-reference/graphql/core-types/roles",
+          "api-reference/graphql/core-types/skills",
+          "api-reference/graphql/core-types/teams",
+          "api-reference/graphql/core-types/test-cases",
+          "api-reference/graphql/core-types/tracking",
+          "api-reference/graphql/core-types/transcription-jobs",
+          "api-reference/graphql/core-types/users",
+          "api-reference/graphql/core-types/variables",
+          "api-reference/graphql/core-types/workflow-templates"
+        ] }
+      ] },
+      { "tab": "Changelog", "icon": "history", "groups": [
+        { "group": "Changelog", "pages": ["changelog/index"] }
+      ] }
     ]
   },
   "footer": {
-    "socials": {
-      "linkedin": "https://www.linkedin.com/company/exulu"
-    }
+    "socials": { "github": "https://github.com/Qventu" },
+    "links": [
+      {
+        "header": "Company",
+        "items": [
+          { "label": "Exulu — exulu.com", "href": "https://exulu.com" },
+          { "label": "Imprint", "href": "https://exulu.com/impressum" }
+        ]
+      }
+    ]
   }
 }

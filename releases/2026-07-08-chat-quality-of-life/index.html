@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Chat quality-of-life</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .receipt-list {
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      margin: 24px 0;
+      background: hsl(var(--card));
+    }
+    .receipt-row { padding: 16px 20px; }
+    .receipt-row + .receipt-row { border-top: 1px solid hsl(var(--border)); }
+    .receipt-row .r-where {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 6px;
+    }
+    .receipt-row .r-line {
+      margin: 0;
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      font-variant-numeric: tabular-nums;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · July 8, 2026</span>
+      <h1 class="hero">The chat got <em>faster, clearer, tidier</em>.</h1>
+      <p class="lede">A quality-of-life roundup for the surface you use most. The composer is faster to drive — every tool, skill, and session file is one keystroke away. Answers are more transparent about what they did and what it cost. And context presets and saved transcriptions finally got the housekeeping tools they were missing.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="composer-autocomplete">
+        <h2>Type / — every tool, one keystroke away</h2>
+        <p class="one-liner">The composer now autocompletes your agent's tools and skills inline — no toolbar hunting, no leaving the keyboard.</p>
+        <div class="slice">
+          <video src="./shorts/composer-slash-autocomplete.mp4" poster="./shorts/composer-slash-autocomplete-poster.png" autoplay loop muted playsinline></video>
+          <p>Type <strong>/</strong> at the start of a word and a menu pops up over the composer with everything this agent can actually do — its tools and its skills, each with a one-line description. Keep typing to filter, hit Enter, and the real tool name lands in your message as plain text with a subtle purple highlight: <em>"Check the rollout doc /internet_search"</em>. The agent reads the intent straight from your words — mid-sentence, exactly where you meant it.</p>
+          <p>There's a second flavor for files: on agents with a file sandbox, typing <strong>@</strong> lists the files in this session, so you can point the agent at an uploaded report without breaking your sentence to find the attachment panel.</p>
+          <p>It's deliberately just text — no hidden commands, no side effects. Edit a highlighted token and it gracefully stops being one; fractions like 3/4 and email addresses never trigger the menu; and tools that are currently switched off stay visible (greyed, with a small "off" badge) so you can still reference them.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="context-presets">
+        <h2>Context presets, full lifecycle</h2>
+        <p class="one-liner">Apply a preset, tweak it live, save it back — without leaving the chat.</p>
+        <div class="slice">
+          <video src="./shorts/context-preset-update.mp4" poster="./shorts/context-preset-update-poster.png" autoplay loop muted playsinline></video>
+          <p>Applying a preset now keeps its identity: a purple bookmark chip with the preset's name leads the pinned-context row, and applying replaces the pinned set cleanly instead of piling on top of what was there. Pin an extra source or drop one mid-conversation and the chip notices — an italic <em>modified</em> tag appears, along with an <strong>Update preset</strong> button that saves your current set back to the preset in one click.</p>
+          <p>The preset browser grew the other half of the lifecycle: every preset you can write to now has <strong>edit</strong> (name, description, tags, sharing) and <strong>delete</strong>. Deleting uses a two-step inline confirm right on the row — "This cannot be undone." with Cancel beside it — never a second dialog stacked on top of the modal.</p>
+          <p>Everything is permission-gated the way you'd expect: admins, the preset's creator, and anyone with write access via RBAC. And the chip is per-chat — deselecting it clears your pinned items for this conversation without touching the preset itself.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="trajectory-feedback">
+        <h2>A thumbs-up teaches your agent</h2>
+        <p class="one-liner">Rate an answer and the retrieval approach behind it gets remembered — and reused on similar questions.</p>
+        <div class="slice">
+          <video src="./shorts/trajectory-reuse-feedback.mp4" poster="./shorts/trajectory-reuse-feedback-poster.png" autoplay loop muted playsinline></video>
+          <p>The thumbs on assistant messages now close a learning loop. A thumbs-up marks the retrieval approach behind that answer as proven, making it eligible for instant replay when a similar question comes in — no extra latency, no model call. A thumbs-down with a comment goes further: it's routed to a feedback agent that prunes or rewrites the strategy so the same miss doesn't repeat.</p>
+          <p>When an answer <em>did</em> reuse a proven approach, it says so — a quiet badge reads <em>"Answered like a similar earlier request."</em> No jargon, and the tooltip nudges you toward the fix if it got it wrong: give it a thumbs-down below.</p>
+          <p>Your feedback also lands on the right target, even deep into a conversation: the rating walks back through the history, and on a replayed answer it credits (or corrects) the original proven approach rather than the copy. Positive ratings are a safe fast-path by design — they can never delete or rewrite anything.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="token-transparency">
+        <h2>Every answer shows its receipt</h2>
+        <p class="one-liner">Retrieval cost and per-message token split, inline — nothing to configure, nothing new to learn.</p>
+        <div class="slice">
+          <div class="receipt-list">
+            <div class="receipt-row">
+              <p class="r-where">Under every knowledge-search result</p>
+              <p class="r-line">↳ retrieval · 2,412 in / 486 out tokens · 3.2 s</p>
+            </div>
+            <div class="receipt-row">
+              <p class="r-where">In every message footer</p>
+              <p class="r-line">1,412 tokens · 1,120 in / 292 out</p>
+            </div>
+          </div>
+          <p>Retrieval used to be a black box: you saw the sources, not the cost. Now every knowledge search prints its receipt right under the result — input and output tokens plus wall-clock time — so a heavy query is visible the moment it happens, not at the end of the month in an analytics view.</p>
+          <p>The message footer follows suit: instead of one opaque total, each assistant reply shows its input/output split. Input-heavy turns (big context, long history) look different from output-heavy ones (long generations) — and that difference is exactly what you tune with presets, compaction, and retrieval budgets.</p>
+          <p>Both lines are quiet, muted-text adornments. They appear whenever the metrics exist and stay out of the way when they don't. You can see both live in the thumbs-up video in the previous section — the receipt under the search card, the split in the actions row.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="transcription-delete">
+        <h2>Saved transcriptions, now deletable</h2>
+        <p class="one-liner">Remove the entry, keep the transcript — or cascade the delete into the knowledge base. Your call, per delete.</p>
+        <div class="slice">
+          <video src="./shorts/transcription-delete-cascade.mp4" poster="./shorts/transcription-delete-cascade-poster.png" autoplay loop muted playsinline></video>
+          <p>Saved rows on the Transcriptions page finally have a delete. A trash icon on every saved row opens a confirm dialog with one clear choice: remove just the entry from this page, or also tick a checkbox to delete the saved transcript from the knowledge base. The checkbox only appears when a linked knowledge item actually exists — and it starts unchecked, so the safe option is the default.</p>
+          <p>The cascade is ordered to be safe, too: the knowledge item goes first, and if that fails the dialog stays open with an error so you can retry — or fall back to deleting just the entry. On success, a toast confirms it and the row leaves the Saved group.</p>
+          <p>It's deliberately row-level only — no bulk delete, no delete buried inside the review sheet. Data deletion should be a considered, one-at-a-time action, and the UI treats it that way.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

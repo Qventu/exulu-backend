@@ -1,0 +1,88 @@
+---
+title: "Variables"
+description: "Store secrets and configuration values server-side; agents, models, and integrations reference them by name."
+icon: "variable"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="variables (read)" />
+
+## What variables are
+
+Variables are named values stored on the IMP server that agents, models, and skill integrations can reference at runtime. They serve two distinct purposes:
+
+- **Secrets** — API keys, tokens, and passwords that must not appear in prompts or version history. Secrets are encrypted at rest; their values are never included in API responses by default.
+- **Plain text** — non-sensitive configuration values like base URLs, identifiers, or feature flags. These are stored as plain text without encryption.
+
+The Variables page (`/variables`) lists all variables for the organization, with type, usage count, and last-updated date.
+
+## Types
+
+| Type | Storage | When to use |
+| --- | --- | --- |
+| **Secret** | Encrypted at rest | API keys, passwords, bearer tokens — anything sensitive. |
+| **Plain text** | Stored as-is | Base URLs, identifiers, non-sensitive config. A yellow warning note appears in the form: "Stored without encryption. Use only for non-sensitive values." |
+
+You choose the type at creation and can change it when editing (with a confirmation if switching from Secret to Plain — consumers that decrypt it may break).
+
+## The variables list
+
+The toolbar provides:
+
+- **Search variables…** — filter by name.
+- **Type** filter — All / Secrets / Plain text.
+
+The table columns are **Name**, **Type**, **Used by**, and **Updated**.
+
+**Used by** shows how many resources (agents, routines, users) reference each variable. A count like "3 resources" links to the usage detail view for that variable. Variables with no references show "—".
+
+## Reveal-on-demand
+
+Secret values are masked in the UI. In the variable detail panel, click **Reveal** to load the current value for inspection. Click **Hide** to mask it again. Revealing requires the `variables (write)` right.
+
+<Note>
+Revealing a secret value loads it from the server for display only. It is not logged or cached by the browser.
+</Note>
+
+## Create a variable
+
+Click **Add variable** in the page header. The form asks for:
+
+| Field | What to enter |
+| --- | --- |
+| **Name** | A unique identifier. Convention: `UPPERCASE_WITH_UNDERSCORES` (e.g., `ANTHROPIC_API_KEY`). |
+| **Type** | Secret or Plain text. |
+| **Value** | The value to store. |
+
+Click **Create variable** to save. The name must be unique across the organization.
+
+## Edit a variable
+
+Click any row to open the detail panel. Click **Edit** to enter edit mode.
+
+When editing:
+- The **value field** shows "Leave empty to keep the current value; type a new value to replace it." — leaving it blank preserves the existing value.
+- **Renaming** a variable that is referenced by resources triggers a confirmation warning: renaming may break those references.
+- **Switching from Secret to Plain** triggers a confirmation warning.
+
+Click **Save changes** to commit.
+
+## Delete a variable
+
+In the variable detail panel, click **Delete**. If the variable is referenced by resources, the confirmation dialog names the count and warns that those references will break. If it has no references, the dialog states it is safe to delete.
+
+## Usage detail
+
+Click the "N resources" count in the **Used by** column to open the variable usage panel. It lists every resource referencing the variable, with resource type (Agent, Routine, User), name, and an ID copy button. Use this view to audit impact before renaming or deleting.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Agents — tools and skills" icon="wrench" href="/building/agents/tools-and-skills">
+    Reference variables in tool configurations and skill parameters.
+  </Card>
+  <Card title="API keys" icon="key" href="/administration/api-keys">
+    Org-level API keys for programmatic access — distinct from variable secrets.
+  </Card>
+</Columns>

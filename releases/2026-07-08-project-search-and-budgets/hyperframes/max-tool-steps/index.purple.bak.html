@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Step budgets — max tool steps per message</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 0; font-size: 104px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* --------------------- Chat experience section card --------------------- */
+      #app { display: grid; place-items: center; }
+      #card {
+        position: relative; width: 1120px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        padding: 40px 46px 34px;
+      }
+      #section-title { font-size: 30px; font-weight: 600; }
+      #section-desc { margin-top: 8px; font-size: 21px; color: #525252; }
+      #rows { margin-top: 26px; display: flex; flex-direction: column; gap: 18px; }
+      .setting-row {
+        display: flex; align-items: flex-start; justify-content: space-between; gap: 40px;
+        border: 1px solid #e7e7ee; border-radius: 10px; background: #fff; padding: 24px 26px;
+      }
+      .row-label { font-size: 22px; font-weight: 600; line-height: 1.2; }
+      .row-desc { margin-top: 6px; font-size: 19px; color: #525252; line-height: 1.45; max-width: 760px; }
+      .row-control { flex: none; padding-top: 2px; }
+
+      /* switch (shadcn) */
+      .switch { width: 62px; height: 34px; border-radius: 999px; background: #7033ff; position: relative; flex: none; display: block; }
+      .switch::after {
+        content: ""; position: absolute; top: 4px; right: 4px;
+        width: 26px; height: 26px; border-radius: 50%; background: #fff;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+      }
+      .switch.off { background: #e7e7ee; }
+      .switch.off::after { right: auto; left: 4px; }
+
+      /* number input (shadcn Input, w-24) */
+      #steps-input {
+        position: relative; width: 140px; height: 56px;
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        font-size: 22px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      #focus-ring {
+        position: absolute; inset: -4px; border: 3px solid #7033ff; border-radius: 11px;
+        opacity: 0; pointer-events: none;
+      }
+      .val { position: absolute; left: 15px; top: 13px; line-height: 28px; color: #1a1a1a; }
+      #v1, #v16 { opacity: 0; }
+      #caret { position: absolute; left: 15px; top: 14px; width: 2px; height: 27px; background: #1a1a1a; opacity: 0; }
+
+      /* highlight wash over the description span */
+      #hl {
+        border-radius: 4px; padding: 1px 3px; margin: -1px -3px;
+        -webkit-box-decoration-break: clone; box-decoration-break: clone;
+      }
+
+      /* ------------------------------ cursor ---------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+      #click-ripple {
+        position: absolute; left: -26px; top: -22px; width: 72px; height: 72px;
+        border-radius: 50%; background: rgba(112, 51, 255, 0.25); transform: scale(0);
+      }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.5"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.1" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Agentic Retrieval — part 2</span>
+          <h1>Two budgets, <em>decoupled</em>.</h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="1.55" data-duration="7.95" data-track-index="3" data-layout-allow-occlusion>
+        <div id="card">
+          <div id="section-title">Chat experience</div>
+          <div id="section-desc">How the agent shows up inside chat.</div>
+          <div id="rows">
+            <div class="setting-row">
+              <div>
+                <div class="row-label">Follow-up suggestions</div>
+                <div class="row-desc">After each reply, suggest up to 3 messages the user might send next. Uses the agent’s model; tokens count toward limits.</div>
+              </div>
+              <div class="row-control"><span class="switch"></span></div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="row-label">Feedback collection</div>
+                <div class="row-desc">Allow users to send feedback during chat.</div>
+              </div>
+              <div class="row-control"><span class="switch"></span></div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="row-label">Set as default agent</div>
+                <div class="row-desc">Loads this agent by default on the chat page.</div>
+              </div>
+              <div class="row-control"><span class="switch off"></span></div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="row-label">File sandbox</div>
+                <div class="row-desc">Give this agent a file sandbox with readFile/writeFile/bash tools — needed for skills and file generation. Off by default for knowledge agents.</div>
+              </div>
+              <div class="row-control"><span class="switch"></span></div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="row-label">Max tool steps per message</div>
+                <div class="row-desc">Caps how many tool/reasoning steps this agent may take on one message — <span id="hl">applies to every tool (bash, files, knowledge search, integrations)</span>. 0 = platform default (10).</div>
+              </div>
+              <div class="row-control">
+                <div id="steps-input">
+                  <div id="focus-ring"></div>
+                  <span class="val" id="v10">10</span>
+                  <span class="val" id="v1">1</span>
+                  <span class="val" id="v16">16</span>
+                  <span id="caret"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cursor">
+          <div id="click-ripple"></div>
+          <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+            <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4"/>
+          </svg>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2.3" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">Knowledge searches</span>
+          <span class="b">no longer eat the turn budget.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook: enter 0.05–0.45, hold to 1.55 (≥1.0s for the 3-word phrase) */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.4, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.55);
+
+      /* Chat experience card fades in (crossfade with hook) */
+      tl.from("#card", { y: 30, opacity: 0, duration: 0.45, ease: "power2.out" }, 1.6);
+
+      /* cursor glides to the number input */
+      tl.set("#cursor", { x: 1180, y: 1010 }, 2.0);
+      tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power1.out" }, 2.0);
+      tl.to("#cursor", { x: 1372, y: 848, duration: 0.6, ease: "power2.inOut" }, 2.1);
+
+      /* click → focus ring */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.09, ease: "power1.in" }, 2.78);
+      tl.to("#cursor svg", { scale: 1, duration: 0.12, ease: "power1.out" }, 2.87);
+      tl.fromTo("#click-ripple", { scale: 0, opacity: 0.8 }, { scale: 1.5, opacity: 0, duration: 0.4, ease: "power2.out" }, 2.79);
+      tl.to("#focus-ring", { opacity: 1, duration: 0.12, ease: "power1.out" }, 2.82);
+      tl.to("#caret", { opacity: 1, duration: 0.06 }, 2.9);
+
+      /* value types: 10 clears, then 1, then 16 (two quick keystrokes) */
+      tl.to("#v10", { opacity: 0, duration: 0.08 }, 2.96);
+      tl.set("#caret", { x: 0 }, 2.96);
+      tl.set("#v1", { opacity: 1 }, 3.12);
+      tl.set("#caret", { x: 13 }, 3.12);
+      tl.set("#v1", { opacity: 0 }, 3.32);
+      tl.set("#v16", { opacity: 1 }, 3.32);
+      tl.set("#caret", { x: 27 }, 3.32);
+
+      /* cursor drifts off and fades; typed state holds still 3.35 → 4.15 */
+      tl.to("#cursor", { x: 1440, y: 960, duration: 0.35, ease: "power2.inOut" }, 3.4);
+      tl.to("#cursor", { opacity: 0, duration: 0.25 }, 3.5);
+
+      /* highlight wash over the real product copy (4.15 enter, hold ≥1.8s) */
+      tl.to("#hl", { backgroundColor: "#e2ebff", duration: 0.4, ease: "power1.out" }, 4.15);
+      tl.to("#hl", { backgroundColor: "rgba(226, 235, 255, 0)", duration: 0.3, ease: "power1.in" }, 6.35);
+
+      /* breath 6.65 → 7.25, then payoff */
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.4, ease: "power1.out" }, 7.25);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 7.28);
+      /* payoff still 7.68 → 9.5 (1.82s; last 600ms = resting loop frame) */
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

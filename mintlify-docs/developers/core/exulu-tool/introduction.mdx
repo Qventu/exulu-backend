@@ -1,0 +1,167 @@
+---
+title: "Introduction"
+description: "ExuluTool is the code-level class for agent tools — a typed, AI-SDK-backed function that agents call to query data, hit APIs, or run any business logic you write."
+icon: "wrench"
+---
+
+`ExuluTool` wraps a single callable function with a Zod input schema, an admin-configurable config array, and an optional OAuth 2.0 flow. Tools you register on [ExuluApp](/developers/core/exulu-app/introduction) appear in the agent workbench UI, where administrators can enable them per agent and configure their runtime parameters. See [Tools and Skills](/building/agents/tools-and-skills) for the UI side.
+
+## What a tool gives you
+
+<CardGroup cols={2}>
+  <Card title="Typed inputs" icon="shield-check">
+    Zod schema validation on every call — the schema is also sent to the model so it knows what each parameter means.
+  </Card>
+  <Card title="Admin-configurable params" icon="sliders">
+    A `config` array of `boolean | string | number | variable | json` params that admins set in the platform UI without touching code.
+  </Card>
+  <Card title="Streaming support" icon="activity">
+    Return a `Promise` or an `AsyncGenerator` from `execute` — the framework handles both.
+  </Card>
+  <Card title="OAuth 2.0 flows" icon="lock">
+    Declare an `oauth` config and IMP handles the authorization-code + PKCE dance; the access token arrives in `inputs.oauth`.
+  </Card>
+  <Card title="Approval gates" icon="check-circle">
+    `needsApproval: true` (the default) makes the platform prompt the user before the tool runs.
+  </Card>
+  <Card title="Direct execution" icon="bolt">
+    Call `tool.execute({ agent, config, user, inputs })` from your own code outside of a chat session.
+  </Card>
+</CardGroup>
+
+## Tool types
+
+The `type` field is a categorization hint — it affects how the platform UI labels and filters the tool, not how the tool's `id` is resolved or how `execute` is called.
+
+| Type | When to use |
+|---|---|
+| `"function"` | Custom integration, database query, API call, business logic — the default for most tools. |
+| `"web_search"` | A tool that fetches real-time web results. |
+| `"skill"` | A tool that delegates to a named skill. |
+| `"context"` | Reserved for context-retrieval tools (see note below). |
+
+<Note>
+The `"agent"` and `"context"` types are managed internally by IMP. The public constructor only accepts `"function"`, `"web_search"`, `"skill"`, and `"context"`. Attempting to pass `"agent"` throws immediately with a descriptive error. To create framework-managed tools, use the static [`ExuluTool.internal()`](/developers/core/exulu-tool/api-reference#exulutool-internal) factory — it is not part of the public API.
+</Note>
+
+## Minimal example
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const priceLookupTool = new ExuluTool({
+  id: "price_lookup",
+  name: "Price lookup",
+  description: "Returns the current price of a product by SKU.",
+  type: "function",
+  category: "catalog",
+  inputSchema: z.object({
+    sku: z.string().describe("The product SKU, e.g. PROD-001."),
+    currency: z.enum(["EUR", "USD"]).optional().describe("Currency code — defaults to EUR."),
+  }),
+  config: [
+    {
+      name: "catalog_api_endpoint",
+      description: "Base URL of the internal catalog API.",
+      type: "string",
+      default: "https://catalog.internal/api",
+    },
+    {
+      name: "catalog_api_key",
+      description: "API key for the catalog service.",
+      type: "variable",
+    },
+  ],
+  needsApproval: false,
+  execute: async ({ sku, currency = "EUR" }) => {
+    const response = await fetch(`https://catalog.internal/api/prices/${sku}?currency=${currency}`);
+    const data = await response.json();
+    return { result: JSON.stringify(data) };
+  },
+});
+```
+
+Register it on the app:
+
+```typescript
+await app.create({
+  tools: [priceLookupTool],
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+  },
+});
+```
+
+## OAuth-protected tools
+
+When a tool needs to act on behalf of the user (for example, reading a user's calendar), declare an `oauth` config:
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const calendarTool = new ExuluTool({
+  id: "calendar_events",
+  name: "Calendar events",
+  description: "Lists upcoming calendar events for the authenticated user.",
+  type: "function",
+  inputSchema: z.object({
+    days: z.number().int().min(1).max(30).describe("How many days ahead to look."),
+  }),
+  config: [],
+  oauth: {
+    provider: "google",
+    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    clientId: process.env.GOOGLE_CLIENT_ID!,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
+    pkce: true,
+    extraAuthParams: { access_type: "offline", prompt: "consent" },
+  },
+  execute: async ({ days, oauth }) => {
+    // oauth.accessToken is injected by the framework when a valid token exists.
+    const events = await fetchCalendarEvents(oauth.accessToken, days);
+    return { result: JSON.stringify(events) };
+  },
+});
+```
+
+When no valid token exists for the calling user, IMP short-circuits `execute` and returns an authorization URL the agent shows the user. After the user completes the OAuth flow via the platform's `/oauth/callback` route, IMP retries the tool with the fresh token.
+
+## Streaming tools
+
+Return an `AsyncGenerator` for long-running operations that yield progress:
+
+```typescript
+export const batchIndexTool = new ExuluTool({
+  id: "batch_index_docs",
+  name: "Batch index documents",
+  description: "Indexes a list of document URLs into a knowledge context.",
+  type: "function",
+  inputSchema: z.object({
+    urls: z.array(z.string().url()).describe("Document URLs to index."),
+    contextId: z.string().describe("Target context ID."),
+  }),
+  config: [],
+  execute: async function* ({ urls, contextId }) {
+    for (const url of urls) {
+      const result = await indexDocument(url, contextId);
+      yield { result: JSON.stringify({ url, status: result.status }) };
+    }
+  },
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-tool/configuration">
+    Every constructor option: id, type, inputSchema, config, oauth, needsApproval.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-tool/api-reference">
+    Public properties, the execute() method, and ExuluTool.internal().
+  </Card>
+</CardGroup>

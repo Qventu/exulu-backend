@@ -1,0 +1,66 @@
+---
+title: "Tracking"
+description: "The tracking type stores aggregated usage statistics for platform operations such as agent runs, tool calls, and knowledge retrievals."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+`tracking` records are the raw statistics events written by the platform during normal operation. Each record captures a named operation type, its total cost or count, and the user, role, and project that generated it. The administration analytics view is built on top of this type. See [Administration](/administration/analytics).
+
+```graphql
+type tracking {
+  name: String
+  label: String
+  type: typeEnum
+  total: Float
+  user: Float
+  role: String
+  project: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `type` | Operation type enum. Values: `CONTEXT_RETRIEVE`, `SOURCE_UPDATE`, `EMBEDDER_UPSERT`, `EMBEDDER_GENERATE`, `EMBEDDER_DELETE`, `WORKFLOW_RUN`, `CONTEXT_UPSERT`, `TOOL_CALL`, `AGENT_RUN`. |
+| `name` | Human-readable operation name (e.g. the agent name for `AGENT_RUN` events). |
+| `label` | Secondary label (e.g. model name for `AGENT_RUN`, tool ID for `TOOL_CALL`). |
+| `total` | Numeric measure of the operation: token count for `AGENT_RUN`, item count for `SOURCE_UPDATE`, etc. |
+| `user` | Numeric ID of the user who triggered this operation; `null` for system-initiated operations. |
+| `role` | Role ID string of the user at the time of the operation. |
+| `project` | Project ID string the operation was scoped to, if any. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  trackingPagination(
+    limit: 100
+    filters: [{ type: { eq: AGENT_RUN } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      type
+      name
+      label
+      total
+      user
+      project
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

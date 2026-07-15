@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — users table</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* page layout */
+      #root .page-header { display: flex; align-items: center; justify-content: space-between; padding: 24px 28px 12px; border-bottom: 1px solid var(--hair); }
+      #root .page-title { font-size: 20px; font-weight: 600; color: var(--tx-hi); }
+      #root .page-desc { font-size: 13px; color: var(--tx-lo); margin-top: 3px; }
+
+      /* tabs */
+      #root .tab-row { display: flex; gap: 0; padding: 0 28px; border-bottom: 1px solid var(--hair); }
+      #root .tab { padding: 10px 16px; font-size: 13px; color: var(--tx-lo); cursor: default; position: relative; }
+      #root .tab.active { color: var(--tx-hi); font-weight: 500; }
+      #root .tab.active::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--ink); }
+
+      /* content area */
+      #root .content { padding: 20px 28px; display: flex; flex-direction: column; gap: 12px; }
+
+      /* toolbar */
+      #root .toolbar { display: flex; align-items: center; gap: 8px; }
+      #root .search-field { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; width: 280px; }
+      #root .search-icon { color: var(--tx-faint); }
+      #root .search-icon svg { width: 14px; height: 14px; stroke-width: 1.5; }
+      #root .search-text { font-size: 13px; color: var(--tx-faint); font-family: var(--font-sans); }
+      #root .filter-select { display: flex; align-items: center; gap: 6px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; font-size: 13px; color: var(--tx-mid); }
+      #root .select-arrow { color: var(--tx-faint); font-size: 10px; margin-left: 4px; }
+      #root .toolbar-sep { flex: 1; }
+      #root .view-btn { display: flex; align-items: center; gap: 6px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; font-size: 12px; color: var(--tx-mid); }
+      #root .view-btn svg { width: 14px; height: 14px; stroke-width: 1.5; }
+
+      /* table overrides: 5-col users layout */
+      #root .users-table { --imp-cols: 2.4fr 1fr 1fr 1fr 80px; }
+
+      /* verified / pending dots */
+      #root .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--tx-lo); }
+      #root .status-dot-verified { width: 7px; height: 7px; background: #6f9a37; flex: none; }
+      #root .status-dot-pending { width: 7px; height: 7px; background: #c98f2c; flex: none; }
+
+      /* role / team chips */
+      #root .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--hair); padding: 2px 8px; font-size: 11.5px; color: var(--tx-mid); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .chip-dot { width: 6px; height: 6px; background: var(--accent); flex: none; }
+      #root .chip.team { background: var(--chip-soft); border-color: var(--chip); color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="users-table"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+              Chat
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+              Projects
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+              Agents
+            </div>
+            <div class="imp-sidebar-group">Administration</div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Users
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+              Budgets
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+              Analytics
+            </div>
+          </aside>
+
+          <!-- main content -->
+          <div class="imp-main">
+            <div class="imp-topbar">
+              <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Users &amp; access</span>
+              <span class="imp-btn imp-btn-ink" style="display:flex;align-items:center;gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                Add user
+              </span>
+            </div>
+
+            <div class="imp-content" style="padding:0;display:flex;flex-direction:column;flex:1;min-height:0;">
+              <!-- tabs -->
+              <div class="tab-row">
+                <div class="tab active">Users</div>
+                <div class="tab">Roles</div>
+                <div class="tab">Teams</div>
+              </div>
+
+              <!-- toolbar + table -->
+              <div class="content">
+                <div class="toolbar">
+                  <div class="search-field">
+                    <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
+                    <span class="search-text">Search by email…</span>
+                  </div>
+                  <div class="filter-select">All roles<span class="select-arrow">▾</span></div>
+                  <div class="filter-select">All teams<span class="select-arrow">▾</span></div>
+                  <div class="toolbar-sep"></div>
+                  <div class="view-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
+                    View
+                  </div>
+                </div>
+
+                <div class="imp-table users-table">
+                  <div class="imp-table-head">
+                    <span></span><!-- checkbox col -->
+                    <span>User</span>
+                    <span>Role</span>
+                    <span>Team</span>
+                    <span>Updated</span>
+                    <span></span>
+                  </div>
+
+                  <!-- Row 1 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar lime">MV</span>
+                      <span>
+                        <span class="imp-user-name">maren.vogel@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-verified"></span>Verified</span></span>
+                      </span>
+                    </span>
+                    <span><span class="chip"><span class="chip-dot"></span>Admin</span></span>
+                    <span><span class="chip team">Product</span></span>
+                    <span class="imp-cell-faint">3 h ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+
+                  <!-- Row 2 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">TS</span>
+                      <span>
+                        <span class="imp-user-name">tobias.schreiber@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-verified"></span>Verified</span></span>
+                      </span>
+                    </span>
+                    <span><span class="chip"><span class="chip-dot"></span>Editor</span></span>
+                    <span><span class="chip team">Engineering</span></span>
+                    <span class="imp-cell-faint">1 d ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+
+                  <!-- Row 3 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">LB</span>
+                      <span>
+                        <span class="imp-user-name">lena.bach@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-pending"></span>Pending</span></span>
+                      </span>
+                    </span>
+                    <span><span class="chip"><span class="chip-dot"></span>Viewer</span></span>
+                    <span style="color:var(--tx-faint);font-size:12px;">No team</span>
+                    <span class="imp-cell-faint">2 d ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+
+                  <!-- Row 4 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar lime">AK</span>
+                      <span>
+                        <span class="imp-user-name">anna.krause@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-verified"></span>Verified</span></span>
+                      </span>
+                    </span>
+                    <span><span class="chip"><span class="chip-dot"></span>Editor</span></span>
+                    <span><span class="chip team">Engineering</span></span>
+                    <span class="imp-cell-faint">4 d ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+
+                  <!-- Row 5 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">FW</span>
+                      <span>
+                        <span class="imp-user-name">felix.wenger@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-verified"></span>Verified</span></span>
+                      </span>
+                    </span>
+                    <span style="color:var(--tx-faint);font-size:12px;">No role</span>
+                    <span><span class="chip team">Product</span></span>
+                    <span class="imp-cell-faint">1 w ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+
+                  <!-- Row 6 -->
+                  <div class="imp-row">
+                    <span style="display:flex;align-items:center;padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">DR</span>
+                      <span>
+                        <span class="imp-user-name">diana.richter@example.com</span>
+                        <span class="imp-user-mail"><span class="status-pill"><span class="status-dot-pending"></span>Pending</span></span>
+                      </span>
+                    </span>
+                    <span><span class="chip"><span class="chip-dot"></span>Viewer</span></span>
+                    <span style="color:var(--tx-faint);font-size:12px;">No team</span>
+                    <span class="imp-cell-faint">1 w ago</span>
+                    <span class="imp-cell-end" style="color:var(--tx-faint);font-size:18px;">⋯</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["users-table"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

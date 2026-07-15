@@ -1,0 +1,197 @@
+---
+title: "Running evals"
+description: "Define an ExuluEval with LLM-as-judge scoring, register it on the app, and understand the eval_runs queue and Redis requirement."
+icon: "chart-bar"
+---
+
+Evals measure how well an agent responds — they score a completed conversation against a test case and return a number from 0 to 100. This tutorial builds an LLM-as-judge eval that scores agent responses for accuracy and completeness, registers it on the app, and connects it to a BullMQ queue for background execution.
+
+## Prerequisites
+
+- Completed [Your first app](/developers/tutorials/first-app) — you have a working project with `src/exulu.ts`.
+- Completed [Queues and workers](/developers/tutorials/queues-and-workers) — you understand queue registration.
+- Redis running and reachable — evals require Redis. Without it, `app.create()` skips eval registration entirely.
+- Read [ExuluEval — introduction](/developers/core/exulu-eval/introduction) and [ExuluEval — configuration](/developers/core/exulu-eval/configuration).
+
+<Note>
+`ExuluQueues` and eval registration both require an Enterprise Edition license. Without a valid `EXULU_ENTERPRISE_LICENSE`, `app.create()` throws when it detects registered queues.
+</Note>
+
+## What you will build
+
+A `response_quality` eval that uses an LLM to judge whether an agent's response matches the expected output on three criteria: accuracy, completeness, and clarity.
+
+<Steps>
+
+<Step title="Register the eval queue">
+
+Evals run as background jobs on the `eval_runs` queue. Register it in `src/evals/index.ts`:
+
+```typescript src/evals/index.ts
+import { ExuluEval, ExuluQueues } from "@exulu/backend";
+
+const evalQueue = ExuluQueues.register(
+  "eval_runs",
+  { worker: 2, queue: 10 }, // 2 parallel per process, 10 global max
+  5,                         // 5 eval runs per second
+  60 * 10,                   // 10-minute timeout per eval run
+);
+```
+
+The queue name `"eval_runs"` is conventional — you can name it anything. The platform's built-in eval engine uses the same queue name, so using the same name consolidates eval jobs in one place.
+
+</Step>
+
+<Step title="Define the eval">
+
+An LLM-as-judge eval calls `provider.generateSync()` to score the response. Set `llm: true` to signal the platform that this eval incurs model cost:
+
+```typescript src/evals/index.ts (continued)
+export const responseQualityEval = new ExuluEval({
+  id: "response_quality",
+  name: "Response quality",
+  description: "Scores the agent's response for accuracy, completeness, and clarity using an LLM judge. Returns 0–100.",
+  llm: true,
+
+  execute: async ({ provider, messages, testCase, config }) => {
+    const response = messages[messages.length - 1]?.content ?? "";
+
+    if (!response.trim()) return 0;
+
+    const judgePrompt = `
+You are an expert evaluator for an AI assistant.
+
+Rate the following agent response on a scale from 0 to 100.
+
+Test case: ${testCase.name}
+Expected output: ${testCase.expected_output}
+Actual response: ${response}
+
+Scoring criteria:
+- Accuracy (40 points): Is the information in the response factually correct and does it match the expected output?
+- Completeness (30 points): Does the response address all aspects of the expected output?
+- Clarity (30 points): Is the response well-structured, concise, and easy to understand?
+
+Respond with ONLY a single integer from 0 to 100. No explanation.
+    `.trim();
+
+    const text = await provider.generateSync({
+      prompt: judgePrompt,
+      languageModel: config?.judge_model,
+    });
+
+    const score = parseInt(String(text).trim(), 10);
+    if (isNaN(score)) return 0;
+    return Math.max(0, Math.min(100, score)); // clamp to valid range
+  },
+
+  config: [
+    {
+      name: "judge_model",
+      description: "Model to use as the LLM judge (e.g. claude-sonnet-4-5). When empty, uses the agent's own model.",
+    },
+  ],
+
+  queue: evalQueue.use(),
+});
+
+export const evals = [responseQualityEval];
+```
+
+A few things to note:
+
+| Decision | Reason |
+|---|---|
+| `llm: true` | The eval calls `provider.generateSync()` — the platform warns admins about cost. |
+| `Math.max(0, Math.min(100, score))` | Always clamp the score — `run()` throws if the value is outside `[0, 100]`. |
+| `config.judge_model` | An admin can override the judge model per agent without changing code. When absent, `provider.generateSync` uses the agent's configured model. |
+
+</Step>
+
+<Step title="Register the eval on the app">
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+import { tools }    from "./tools/index";
+import { evals }    from "./evals/index";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region:   process.env.COMPANION_S3_REGION!,
+      s3key:      process.env.COMPANION_S3_KEY!,
+      s3secret:   process.env.COMPANION_S3_SECRET!,
+      s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    workers: { enabled: true },
+    MCP:     { enabled: false },
+  },
+  contexts,
+  tools,
+  evals,
+});
+```
+
+`evals` is an optional array on `app.create()`. Built-in evals are merged with yours — they coexist in the evals workbench.
+
+</Step>
+
+<Step title="Create test cases and run evals">
+
+After the server starts, go to **Build → Evals** in the admin interface. You will see `response_quality` listed alongside the platform's built-in LLM-as-judge eval.
+
+1. Open **Test cases** and click **New test case**. Provide an input message and an expected output — for example, a question and the correct factual answer.
+2. Go to **Runs** and click **New run**. Select the agent, the test case(s), and enable `response_quality`. Set `judge_model` in the config section if you want a specific model.
+3. Click **Run evals**. The eval jobs are enqueued on `eval_runs` and processed by your worker. Results appear in the **Runs** tab with the 0–100 score and the full conversation.
+
+For the UI side of evals, see [Evals](/building/evals/overview).
+
+</Step>
+
+<Step title="Call run() programmatically">
+
+You can invoke the eval directly from your own code — useful for CI pipelines or local debugging:
+
+```typescript
+import { responseQualityEval } from "./evals/index";
+
+const score = await responseQualityEval.run(
+  agentRecord,     // ExuluAgent from app.agent(agentId)
+  provider,        // ExuluProvider instance
+  testCase,        // TestCase from the platform's test-case table
+  messages,        // UIMessage[] — the full conversation
+  { judge_model: "claude-sonnet-4-5" }, // optional runtime config
+);
+
+console.log(`Quality score: ${score}/100`);
+```
+
+`run()` validates that the returned score is in `[0, 100]` and throws a descriptive error if it is not. Any score that reaches the caller is always valid.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- `response_quality` — an LLM-as-judge `ExuluEval` that scores on accuracy, completeness, and clarity.
+- A dedicated `eval_runs` queue with background execution.
+- Registration via `app.create({ evals })`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Evals — overview" icon="chart-bar" href="/building/evals/overview">
+    Create test cases, run evaluations, and interpret scores in the platform UI.
+  </Card>
+  <Card title="ExuluEval — configuration" icon="settings" href="/developers/core/exulu-eval/configuration">
+    Every constructor option: llm, execute, config, queue, and scoring patterns.
+  </Card>
+  <Card title="Queues and workers" icon="layers" href="/developers/tutorials/queues-and-workers">
+    Size eval queues and scope worker processes.
+  </Card>
+</CardGroup>

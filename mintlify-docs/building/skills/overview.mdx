@@ -1,0 +1,110 @@
+---
+title: "Skills overview"
+description: "Skills are SKILL.md packages your agents load at runtime — browse the library, preview a skill, and create or upload one."
+icon: "sparkles"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+## What skills are
+
+A skill is a versioned file package — anchored by a `SKILL.md` manifest — that defines a reusable instruction set or capability for an agent to load. When an agent has a skill enabled, it reads the package's files and follows the instructions inside them.
+
+Skills are not code plugins. They are documents: Markdown files that describe behavior, constraints, output formats, and examples. An agent interprets and applies the instructions from a skill just as it would from a system prompt, but skills are managed independently and can be reused across many agents.
+
+<Tip>
+You can think of a skill as a focused, portable addition to an agent's behavior — one that can be versioned, shared, and connected to a coding agent's local toolchain via the install command.
+</Tip>
+
+## The skills list
+
+Open **Skills** from the sidebar under the Build group. The list shows every skill your account has access to.
+
+The toolbar has two controls:
+
+- **Search** — type into "Search skills" to filter by name in real time.
+- **Tags** — click a tag in the filter panel to narrow to skills with that label.
+
+Each row shows the skill name, description, access badge (Private / Public / Shared), version count, and a row overflow menu. Click any row to open the **skill detail panel** on the right.
+
+The detail panel shows:
+
+- **SKILL.md preview** — the manifest content, collapsed by default with a "Show more lines" link.
+- **Tags** — editable from the panel.
+- **Uses** — how many times the skill has been loaded by an agent.
+- **Versions** — the current version number and a "View all & compare" link.
+- **Access control** — current sharing setting.
+- **Export as .skill** and **Download as .zip** — download the package.
+- **Copy install prompt** — copies a prompt you can paste into a coding agent to install this skill locally.
+- **Open editor** — enters the file-tree editor for this skill.
+
+<Note>
+"Select a skill to preview" appears when no skill is selected. Click any row to open the detail panel.
+</Note>
+
+## Preview a skill
+
+Click any row to select it. The detail panel loads immediately. You can toggle between a collapsed preview (first few lines of SKILL.md) and the full content using "Show more lines" / "Show less".
+
+## Create a skill
+
+Click **New skill** in the top-right. The **New skill** dialog opens with two modes:
+
+**Create blank**
+
+Creates an empty skill package. Fill in:
+
+- **Name** (required)
+- **Description** — what the skill does and when an agent should use it.
+- **Tags** — comma-separated, e.g. "analysis, python, data".
+- **Access** — Private, Public, or a specific sharing scope.
+
+Click **Create & open**. IMP creates the skill and opens the [file-tree editor](/building/skills/editing-and-versions) so you can add files immediately.
+
+**Create from upload**
+
+Upload an existing skill package:
+
+- **Drag & drop or click to choose** — accepts a `.zip` file (a full skill folder) or a single `.md` file. The `.zip` must contain a `SKILL.md` at its root.
+- Or **drop a skill folder** — the folder must contain a `SKILL.md` at its root.
+
+Unsupported file types (anything other than `.zip` or `.md`) are rejected with "Only .zip and .md files are supported".
+
+Click **Create & open**. IMP uploads the package, extracts it into a versioned skill, and opens the editor.
+
+<Tip>
+To start quickly: create blank, write a `SKILL.md` that describes the behavior you want, and save. You can add more files later via the editor.
+</Tip>
+
+## Access control
+
+Each skill has an access setting:
+
+| Setting | Who can see it |
+| --- | --- |
+| **Private** | Only you |
+| **Public** | Everyone in the organization |
+| **Shared with roles** | Specific roles |
+| **Shared with teams** | Specific teams |
+| **Shared with users** | Specific users |
+
+You can update access from the detail panel or from inside the editor.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Editing and versions" icon="file-code" href="/building/skills/editing-and-versions">
+    Use the file-tree editor, manage files, and snapshot versions.
+  </Card>
+  <Card title="Connect your agent" icon="terminal" href="/building/skills/connect-your-agent">
+    Install skills into a local coding agent with one command.
+  </Card>
+  <Card title="Tools and skills (agent)" icon="wrench" href="/building/agents/tools-and-skills">
+    Enable skills on a specific agent from the workbench.
+  </Card>
+  <Card title="Prompts" icon="clipboard-type" href="/building/prompts">
+    Manage the organization's reusable prompt templates.
+  </Card>
+</Columns>

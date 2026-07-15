@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Theme Studio — live-preview platform theming</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin: 30px auto 0; max-width: 1280px;
+        font-size: 88px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.08;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* --------------------------- theme studio card --------------------------- */
+      #app { display: grid; justify-items: center; align-items: start; padding-top: 210px; }
+      #studio-card {
+        position: relative; width: 1136px; height: 612px;
+        background: #fdfdfd; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0px 2px 3px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+        padding: 24px 24px 0;
+      }
+
+      /* Page header */
+      #page-header { display: flex; align-items: flex-start; justify-content: space-between; }
+      #page-header h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.03em; }
+      #page-header .page-desc { margin-top: 4px; font-size: 14px; line-height: 20px; color: #525252; }
+      #header-actions { display: flex; align-items: center; gap: 12px; }
+      #unsaved-hint { display: flex; align-items: center; gap: 6px; opacity: 0; }
+      #unsaved-hint .dot { width: 6px; height: 6px; border-radius: 999px; background: #7033ff; }
+      #unsaved-hint .txt { font-size: 12px; line-height: 16px; color: #525252; }
+      #btn-more {
+        display: grid; place-items: center; width: 32px; height: 32px;
+        border-radius: 6px; color: #525252;
+      }
+      #btn-publish {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 36px; padding: 0 16px; border-radius: 6px;
+        background: #7033ff; color: #fff; font-size: 14px; font-weight: 500;
+        opacity: 0.5;
+      }
+
+      /* Two-column grid */
+      #studio-grid {
+        margin-top: 24px;
+        display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px;
+        height: 508px;
+      }
+
+      /* ------------------------------ left: editor ----------------------------- */
+      #editor { display: flex; flex-direction: column; min-width: 0; }
+      #mode-tabs {
+        display: inline-flex; align-items: center; align-self: flex-start;
+        height: 40px; padding: 4px; border-radius: 6px; background: #f5f5f5; gap: 2px;
+      }
+      .tab-trigger {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        height: 32px; padding: 0 12px; border-radius: 5px;
+        font-size: 14px; font-weight: 500; color: #525252;
+      }
+      .tab-trigger.active { background: #fdfdfd; color: #000; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+      #tab-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 16px; padding: 0 6px; border-radius: 4px;
+        background: #edf1f5; color: #000;
+        font-family: "JetBrains Mono", monospace; font-size: 10px; line-height: 1; letter-spacing: 0;
+        opacity: 0;
+      }
+
+      #filter-row { margin-top: 16px; display: flex; align-items: center; gap: 12px; }
+      #filter-input {
+        display: flex; align-items: center;
+        height: 36px; width: 320px; padding: 0 12px;
+        border: 1px solid #e7e7ee; border-radius: 6px; background: #fdfdfd;
+        font-size: 14px; color: #525252;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      #switch-wrap { display: flex; align-items: center; gap: 8px; }
+      #switch-track {
+        position: relative; width: 36px; height: 20px; border-radius: 999px; background: #e7e7ee;
+      }
+      #switch-thumb {
+        position: absolute; left: 2px; top: 2px; width: 16px; height: 16px;
+        border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+      }
+      #switch-wrap .switch-label { font-size: 14px; font-weight: 400; }
+
+      /* token list, cropped at the card bottom */
+      #token-viewport { position: relative; margin-top: 20px; flex: 1; overflow: hidden; min-height: 0; }
+      #token-scroll { position: absolute; left: 0; right: 0; top: -18px; }
+
+      .group-h { margin-top: 56px; font-size: 14px; line-height: 20px; font-weight: 500; color: #525252; }
+      .group-h + .t-row { margin-top: 10px; }
+      .t-row + .t-row { margin-top: 4px; }
+      .t-row {
+        display: grid; grid-template-columns: 16px 220px minmax(0, 1fr) 32px;
+        align-items: center; column-gap: 8px;
+        border-radius: 6px; padding: 4px;
+      }
+      .swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(0, 0, 0, 0.12); }
+      .t-name {
+        display: flex; align-items: center;
+        font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0; color: #000;
+      }
+      .mod-dot {
+        width: 6px; height: 6px; margin-left: 8px; border-radius: 999px; background: #7033ff;
+        opacity: 0;
+      }
+      .t-value {
+        position: relative; display: flex; align-items: center;
+        height: 32px; padding: 0 10px;
+        border: 1px solid #e7e7ee; border-radius: 6px; background: #fdfdfd;
+        font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0; color: #000;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      .reset-slot { display: grid; place-items: center; width: 32px; height: 32px; }
+      #reset-primary { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; color: #525252; opacity: 0; }
+
+      /* the --primary value input: stacked keystroke states */
+      #input-primary .val { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); white-space: pre; }
+      #input-primary .val.hidden-state { opacity: 0; }
+      .hue-wrap { position: relative; display: inline-block; }
+      .hue-wrap .hue { position: relative; z-index: 1; }
+      #sel-wash {
+        position: absolute; left: -1px; right: -1px; top: -2px; bottom: -2px;
+        background: #b4d7ff; transform: scaleX(0); transform-origin: left center;
+      }
+      .caret { display: inline-block; width: 1.5px; height: 14px; background: #000; vertical-align: middle; }
+
+      /* ----------------------------- right: preview ---------------------------- */
+      #preview-card {
+        width: 360px; align-self: start;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 8px;
+        box-shadow: 0px 2px 3px rgba(0, 0, 0, 0.16);
+        padding: 16px;
+      }
+      #preview-head { display: flex; align-items: center; justify-content: space-between; }
+      #preview-head .preview-title { font-size: 18px; line-height: 28px; font-weight: 600; }
+      #mode-toggle {
+        display: inline-flex; align-items: center; gap: 2px;
+        padding: 2px; border-radius: 6px; background: #f5f5f5;
+      }
+      .toggle-item { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 5px; color: #525252; }
+      .toggle-item.active { background: #fdfdfd; color: #000; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+      .toggle-item svg { width: 16px; height: 16px; }
+
+      #sampler {
+        margin-top: 12px; border: 1px solid #e7e7ee; border-radius: 8px; background: #fdfdfd;
+        padding: 16px; display: flex; flex-direction: column; gap: 16px;
+      }
+      #btn-row { display: flex; align-items: center; gap: 6px; }
+      .s-btn {
+        display: inline-flex; align-items: center; justify-content: center; flex: none;
+        height: 32px; padding: 0 10px; border-radius: 6px;
+        font-size: 13px; font-weight: 500;
+      }
+      #btn-primary { background: #7033ff; color: #fff; }
+      .s-btn.secondary { background: #edf1f5; color: #000; }
+      .s-btn.outline { background: #fdfdfd; border: 1px solid #e7e7ee; color: #000; }
+      .s-btn.destructive { background: #e54b50; color: #fff; }
+
+      #mini-card { border: 1px solid #e7e7ee; border-radius: 6px; background: #fcfcfc; padding: 12px; }
+      #mini-card .mc-title { font-size: 14px; line-height: 20px; font-weight: 500; }
+      #mini-card .mc-desc { margin-top: 2px; font-size: 12px; line-height: 16px; color: #525252; }
+      #badge-row { margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+      .s-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        height: 20px; padding: 0 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 500;
+      }
+      #badge-active { background: #7033ff; color: #fff; }
+      .s-badge.secondary { background: #edf1f5; color: #000; }
+      .s-badge.outline { border: 1px solid #e7e7ee; color: #000; background: transparent; }
+
+      #sampler-input {
+        display: flex; align-items: center;
+        height: 36px; padding: 0 12px;
+        border: 1px solid #e7e7ee; border-radius: 6px; background: #fdfdfd;
+        font-size: 14px; color: #525252;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+
+      #mini-chat { display: flex; flex-direction: column; gap: 8px; }
+      .chat-bubble {
+        max-width: 85%; padding: 8px 12px; border-radius: 8px;
+        font-size: 13px; line-height: 18px;
+      }
+      #bubble-user { margin-left: auto; background: #7033ff; color: #fff; }
+      #bubble-agent { margin-right: auto; background: #f5f5f5; color: #000; }
+
+      #chart-block .chart-label { font-size: 12px; line-height: 16px; color: #525252; }
+      #chart-ramp { margin-top: 6px; display: flex; gap: 4px; }
+      #chart-ramp .bar { flex: 1; height: 24px; border-radius: 3px; }
+
+      /* ------------------------------ cursor ---------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-line {
+        margin-bottom: 92px; font-size: 31px; font-weight: 600; color: #1a1a1a; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="8.2"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="8.2" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- crossfades out over the incoming studio card (1.9-2.4s) — intentional overlap -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2" data-layout-allow-occlusion data-layout-allow-overlap>
+        <div id="hook-inner">
+          <span class="pill">Admin &amp; Theming</span>
+          <h1>Your platform, your brand — <em>previewed live</em>.</h1>
+        </div>
+      </div>
+
+      <div id="app" class="clip" data-start="1.9" data-duration="6.3" data-track-index="3">
+        <div id="studio-card">
+          <div id="page-header">
+            <div>
+              <h1>Theme</h1>
+              <div class="page-desc">White-label IMP for your organization — changes apply to every user.</div>
+            </div>
+            <div id="header-actions">
+              <div id="unsaved-hint">
+                <span class="dot"></span>
+                <span class="txt">Unsaved changes</span>
+              </div>
+              <div id="btn-more">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+              </div>
+              <span id="btn-publish">Publish theme</span>
+            </div>
+          </div>
+
+          <div id="studio-grid">
+            <div id="editor">
+              <div id="mode-tabs">
+                <span class="tab-trigger active">Light <span id="tab-badge">1</span></span>
+                <span class="tab-trigger">Dark</span>
+              </div>
+
+              <div id="filter-row">
+                <div id="filter-input">Filter variables…</div>
+                <div id="switch-wrap">
+                  <div id="switch-track"><div id="switch-thumb"></div></div>
+                  <span class="switch-label">Modified only</span>
+                </div>
+              </div>
+
+              <div id="token-viewport" data-layout-allow-overflow>
+                <div id="token-scroll">
+                  <div class="t-row">
+                    <div class="swatch" style="background: hsl(231 15% 18%)"></div>
+                    <div class="t-name">--code-surface</div>
+                    <div class="t-value">231 15% 18%</div>
+                    <div class="reset-slot"></div>
+                  </div>
+                  <div class="t-row">
+                    <div class="swatch" style="background: hsl(60 30% 96%)"></div>
+                    <div class="t-name">--code-surface-foreground</div>
+                    <div class="t-value">60 30% 96%</div>
+                    <div class="reset-slot"></div>
+                  </div>
+
+                  <div class="group-h">Brand</div>
+                  <div class="t-row" id="row-primary">
+                    <div class="swatch recolor" id="swatch-primary" style="background: #7033ff"></div>
+                    <div class="t-name">--primary<span class="mod-dot" id="dot-primary"></span></div>
+                    <div class="t-value" id="input-primary">
+                      <span class="val" id="val-0"><span class="hue-wrap"><span id="sel-wash"></span><span class="hue">257.9412</span></span> 100% 60%</span>
+                      <span class="val hidden-state" id="val-1">2<span class="caret"></span> 100% 60%</span>
+                      <span class="val hidden-state" id="val-2">21<span class="caret"></span> 100% 60%</span>
+                      <span class="val hidden-state" id="val-3">210<span class="caret"></span> 100% 60%</span>
+                    </div>
+                    <div class="reset-slot">
+                      <div id="reset-primary">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="t-row">
+                    <div class="swatch" style="background: #ffffff"></div>
+                    <div class="t-name">--primary-foreground</div>
+                    <div class="t-value">0 0% 100%</div>
+                    <div class="reset-slot"></div>
+                  </div>
+                  <div class="t-row">
+                    <div class="swatch" style="background: #000000"></div>
+                    <div class="t-name">--ring</div>
+                    <div class="t-value">0 0% 0%</div>
+                    <div class="reset-slot"></div>
+                  </div>
+
+                  <div class="group-h">Semantic</div>
+                  <div class="t-row">
+                    <div class="swatch" style="background: hsl(358.4416 74.7573% 59.6078%)"></div>
+                    <div class="t-name">--destructive</div>
+                    <div class="t-value">358.4416 74.7573% 59.6078%</div>
+                    <div class="reset-slot"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="preview-card">
+              <div id="preview-head">
+                <span class="preview-title">Preview</span>
+                <div id="mode-toggle">
+                  <span class="toggle-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                  </span>
+                  <span class="toggle-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                  </span>
+                </div>
+              </div>
+
+              <div id="sampler">
+                <div id="btn-row">
+                  <span class="s-btn recolor" id="btn-primary">Primary</span>
+                  <span class="s-btn secondary">Secondary</span>
+                  <span class="s-btn outline">Outline</span>
+                  <span class="s-btn destructive">Delete</span>
+                </div>
+
+                <div id="mini-card">
+                  <div class="mc-title">Card title</div>
+                  <div class="mc-desc">A short supporting description.</div>
+                  <div id="badge-row">
+                    <span class="s-badge recolor" id="badge-active">Active</span>
+                    <span class="s-badge secondary">Secondary</span>
+                    <span class="s-badge outline">Outline</span>
+                  </div>
+                </div>
+
+                <div id="sampler-input">Search</div>
+
+                <div id="mini-chat">
+                  <div class="chat-bubble recolor" id="bubble-user">Summarize this document for me.</div>
+                  <div class="chat-bubble" id="bubble-agent">Here's a summary of the key points…</div>
+                </div>
+
+                <div id="chart-block">
+                  <div class="chart-label">Chart colors</div>
+                  <div id="chart-ramp">
+                    <div class="bar" style="background: hsl(148.0952 53.3898% 53.7255%)"></div>
+                    <div class="bar" style="background: hsl(257.9412 100% 60%)"></div>
+                    <div class="bar" style="background: hsl(24.8571 98.1308% 58.0392%)"></div>
+                    <div class="bar" style="background: hsl(217.0787 76.7241% 54.5098%)"></div>
+                    <div class="bar" style="background: hsl(0 0% 45.4902%)"></div>
+                    <div class="bar" style="background: hsl(173 80% 40%)"></div>
+                    <div class="bar" style="background: hsl(330 81% 60%)"></div>
+                    <div class="bar" style="background: hsl(45 93% 47%)"></div>
+                    <div class="bar" style="background: hsl(292 84% 61%)"></div>
+                    <div class="bar" style="background: hsl(84 81% 44%)"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="cursor">
+          <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+            <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4"/>
+          </svg>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="5.5" data-duration="2.7" data-track-index="4">
+        <div id="payoff-line">Every keystroke re-renders the preview. Publish when it's right.</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---- hook: enter 0.10-0.40, hold static to 1.90 ---- */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.3, ease: "power2.out" }, 0.1);
+
+      /* ---- pivot 1.90-2.40: hook crossfades out, studio card fades in ---- */
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.4, ease: "power2.in" }, 1.9);
+      tl.from("#studio-card", { y: 30, opacity: 0, duration: 0.45, ease: "power2.out" }, 1.9);
+
+      /* ---- approach 2.40-3.10: cursor glides to the --primary value input ---- */
+      tl.set("#cursor", { x: 1150, y: 900 }, 2.4);
+      tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power1.out" }, 2.4);
+      tl.to("#cursor", { x: 672, y: 591, duration: 0.65, ease: "power2.inOut" }, 2.45);
+
+      /* ---- the grab 3.10-3.50: click, focus ring, drag-select the hue ---- */
+      tl.to("#cursor svg", { scale: 0.88, duration: 0.09, ease: "power1.in" }, 3.1);
+      tl.to("#cursor svg", { scale: 1, duration: 0.12, ease: "power1.out" }, 3.19);
+      tl.set("#input-primary", { boxShadow: "0 0 0 2px #fdfdfd, 0 0 0 4px #000000" }, 3.1);
+      tl.to("#cursor", { x: 730, y: 593, duration: 0.34, ease: "power1.inOut" }, 3.12);
+      tl.fromTo("#sel-wash", { scaleX: 0 }, { scaleX: 1, duration: 0.34, ease: "power1.inOut" }, 3.12);
+
+      /* ---- keystroke 1 at 3.50: "2" -> red, and the four modified reactions ---- */
+      tl.set("#val-0", { opacity: 0 }, 3.5);
+      tl.set("#val-1", { opacity: 1 }, 3.5);
+      tl.to(".recolor", { backgroundColor: "#FF3A33", duration: 0.15, ease: "power1.out" }, 3.5);
+      tl.to("#reset-primary", { opacity: 1, duration: 0.15, ease: "power1.out" }, 3.5);
+      tl.fromTo("#dot-primary", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.15, ease: "power2.out" }, 3.5);
+      tl.fromTo("#tab-badge", { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.15, ease: "power2.out" }, 3.5);
+      tl.fromTo("#unsaved-hint", { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.15, ease: "power2.out" }, 3.5);
+      tl.to("#btn-publish", { opacity: 1, duration: 0.15, ease: "power1.out" }, 3.5);
+
+      /* cursor drifts to idle just below the input while typing continues */
+      tl.to("#cursor", { x: 750, y: 644, duration: 0.38, ease: "power2.inOut" }, 3.52);
+
+      /* ---- keystroke 2 at 3.80: "1" -> orange ---- */
+      tl.set("#val-1", { opacity: 0 }, 3.8);
+      tl.set("#val-2", { opacity: 1 }, 3.8);
+      tl.to(".recolor", { backgroundColor: "#FF7A33", duration: 0.15, ease: "power1.out" }, 3.8);
+
+      /* ---- keystroke 3 at 4.10: "0" -> settle on blue #3399FF ---- */
+      tl.set("#val-2", { opacity: 0 }, 4.1);
+      tl.set("#val-3", { opacity: 1 }, 4.1);
+      tl.to(".recolor", { backgroundColor: "#3399FF", duration: 0.15, ease: "power1.out" }, 4.1);
+
+      /* ---- 4.40-5.50: hold, everything still ---- */
+
+      /* ---- payoff 5.50-5.85 enter, then still through 8.20 (last 600ms = loop rest) ---- */
+      tl.fromTo("#payoff-line", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: "power2.out" }, 5.5);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

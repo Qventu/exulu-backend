@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — projects overview</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* page shell */
+      #root .page-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .page-scroll { flex: 1; overflow: hidden; padding: 32px 40px; }
+      #root .page-col { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+
+      /* page header */
+      #root .page-hd { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+      #root .page-hd-left { display: flex; flex-direction: column; gap: 4px; }
+      #root .page-title { font-size: 22px; font-weight: 600; color: var(--tx-hi); letter-spacing: -0.01em; }
+      #root .page-desc { font-size: 13px; color: var(--tx-lo); }
+
+      /* toolbar */
+      #root .toolbar { display: flex; align-items: center; gap: 10px; }
+      #root .toolbar-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 8px 12px; font-size: 13px; color: var(--tx-faint); flex: 0 0 260px; }
+      #root .toolbar-search svg { width: 13px; height: 13px; stroke-width: 1.5; flex: none; }
+
+      /* group label */
+      #root .group-label { font-size: 11.5px; font-weight: 500; color: var(--tx-faint); padding: 0 12px 6px; }
+
+      /* project rows */
+      #root .proj-list { display: flex; flex-direction: column; gap: 2px; }
+      #root .proj-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--bg); border: 1px solid transparent; }
+      #root .proj-row.active { background: var(--surface-2); border-color: var(--hair); }
+      #root .proj-avatar { width: 32px; height: 32px; flex: none; display: grid; place-items: center; background: var(--chip-soft); font-size: 12px; font-weight: 600; color: var(--tx-hi); font-family: var(--font-mono); }
+      #root .proj-name { font-size: 13.5px; font-weight: 500; color: var(--tx-hi); flex: 1; min-width: 0; }
+      #root .proj-time { font-size: 12px; color: var(--tx-faint); white-space: nowrap; }
+      #root .proj-star { width: 28px; height: 28px; display: grid; place-items: center; color: var(--tx-faint); }
+      #root .proj-star.filled { color: var(--ink); }
+      #root .proj-star svg { width: 15px; height: 15px; stroke-width: 1.5; }
+
+      /* groups */
+      #root .section { display: flex; flex-direction: column; gap: 4px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="projects-overview"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span style="font-size:13.5px;font-weight:500;color:var(--tx-hi);">Projects</span>
+              <span class="imp-btn imp-btn-ink">+ New project</span>
+            </div>
+
+            <!-- page content -->
+            <div class="page-content">
+              <div class="page-scroll">
+                <div class="page-col">
+                  <!-- page header -->
+                  <div class="page-hd">
+                    <div class="page-hd-left">
+                      <div class="page-title">Projects</div>
+                      <div class="page-desc">Workspaces that group your conversations and shared context.</div>
+                    </div>
+                    <span class="imp-btn imp-btn-ink">+ New project</span>
+                  </div>
+
+                  <!-- toolbar -->
+                  <div class="toolbar">
+                    <div class="toolbar-search">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+                      Search projects...
+                    </div>
+                  </div>
+
+                  <!-- favorites section -->
+                  <div class="section">
+                    <div class="group-label">Favorites</div>
+                    <div class="proj-list">
+                      <div class="proj-row">
+                        <div class="proj-avatar">Q3</div>
+                        <span class="proj-name">Q3 Roadmap Review</span>
+                        <span class="proj-time">Updated 1 h ago</span>
+                        <span class="proj-star filled">
+                          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">OM</div>
+                        <span class="proj-name">Onboarding Materials</span>
+                        <span class="proj-time">Updated 3 h ago</span>
+                        <span class="proj-star filled">
+                          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- all projects section -->
+                  <div class="section">
+                    <div class="group-label">All projects</div>
+                    <div class="proj-list">
+                      <div class="proj-row active">
+                        <div class="proj-avatar">Q3</div>
+                        <span class="proj-name">Q3 Roadmap Review</span>
+                        <span class="proj-time">Updated 1 h ago</span>
+                        <span class="proj-star filled">
+                          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">OM</div>
+                        <span class="proj-name">Onboarding Materials</span>
+                        <span class="proj-time">Updated 3 h ago</span>
+                        <span class="proj-star filled">
+                          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">CR</div>
+                        <span class="proj-name">Compliance Review 2026</span>
+                        <span class="proj-time">Updated yesterday</span>
+                        <span class="proj-star">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">CS</div>
+                        <span class="proj-name">Customer Support Scripts</span>
+                        <span class="proj-time">Updated 2 days ago</span>
+                        <span class="proj-star">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">HA</div>
+                        <span class="proj-name">Hamburg Office Analysis</span>
+                        <span class="proj-time">Updated last week</span>
+                        <span class="proj-star">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                      <div class="proj-row">
+                        <div class="proj-avatar">PL</div>
+                        <span class="proj-name">Product Launch Prep</span>
+                        <span class="proj-time">Updated 2 weeks ago</span>
+                        <span class="proj-star">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["projects-overview"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

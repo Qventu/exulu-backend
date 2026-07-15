@@ -1,0 +1,104 @@
+<article class="chapter" id="r-routines" data-release="2026-07-08-routines" aria-labelledby="r-routines-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">21</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Routines</span>
+    </div>
+    <h1 class="ch-title" id="r-routines-h">From conversation to <em>automation</em>.</h1>
+    <p class="ch-lede">Any working chat can become a routine: save it, give it a schedule, and let it run on its own — with a live run list, parameterized re-runs, and full error forensics when something breaks.</p>
+  </header>
+  <section class="feature" id="r-routines--chat-to-routine"><h2>Save a chat as a routine</h2>
+        <p class="one-liner">From conversation to automation in two clicks.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-routines__chat-to-routine.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Any chat can become a routine. Once the agent has replied, choose <strong>"Save as Routine"</strong> from the chat's ⋯ menu (or press ⌘./Ctrl+.). The dialog opens pre-filled with the session title, and <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{variable_name}</code> syntax in your messages turns them into reusable variables.</p>
+          <p>Your messages are kept verbatim and stay editable; every assistant reply becomes a placeholder the agent regenerates fresh on each run — a routine never replays a stale answer. Chat is the only place routines are created; the Routines page is where you manage them.</p>
+          <div class="snippet-label">GraphQL — script the same creation path:</div>
+          <pre><code>mutation CreateWorkflowTemplate(
+  $name: String!
+  $rights_mode: String!
+  $agent: String!
+  $steps_json: JSON!
+) {
+  workflow_templatesCreateOne(
+    input: { name: $name, rights_mode: $rights_mode, agent: $agent, steps_json: $steps_json }
+  ) {
+    item { id name variables }
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-routines--cron-schedule"><h2>Cron scheduling with presets</h2>
+        <p class="one-liner">Agents that work while you sleep.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-routines__cron-schedule.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Give any routine a schedule without knowing cron. Pick one of seven presets — choose <strong>"Weekdays at 09:00"</strong> and <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">0 9 * * 1-5</code> appears beneath it — and a server-computed <strong>Next run</strong> line ("in 7 hours") confirms what you saved.</p>
+          <p>Prefer to write it yourself? The Custom CRON tab validates as you type and includes a format cheat sheet. A saved schedule reopens exactly as you built it, and removing one removes only the schedule — the routine stays.</p>
+          <div class="snippet-label">GraphQL — one mutation sets a schedule; one query returns the server-computed next run:</div>
+          <pre><code>mutation UpsertWorkflowSchedule($workflow: ID!, $schedule: String!) {
+  upsertWorkflowSchedule(workflow: $workflow, schedule: $schedule) {
+    status
+  }
+}
+
+query GetWorkflowSchedule($workflow: ID!) {
+  workflowSchedule(workflow: $workflow) {
+    schedule
+    next
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-routines--run-forensics"><h2>Run history with error forensics</h2>
+        <p class="one-liner">See exactly why a run failed.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-routines__run-forensics.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>The <strong>Runs</strong> section lists a routine's last 50 executions. Each row shows a status dot, state, and relative time; click it and it expands in place with the full timestamp, the complete error message, and a table of the run's inputs — re-opening a row is instant.</p>
+          <p><strong>"Show raw payload"</strong> gives you a copyable JSON of the whole record, and "Retry with edits" reopens the Run dialog pre-filled with that run's inputs, so you fix only what broke.</p>
+          <div class="snippet-label">GraphQL — pull any run's error and inputs programmatically:</div>
+          <pre><code>query GetJobResultById($id: ID!) {
+  job_resultById(id: $id) {
+    id
+    state
+    error
+    result
+    metadata
+    createdAt
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-routines--routines-index"><h2>One list, every routine's pulse</h2>
+        <p class="one-liner">Name, last run, next run — the whole automation estate in one table.</p>
+        <div class="slice">
+          <p>The Routines page shows your whole automation estate in one table: name, last run, schedule, and an inline <strong>Run</strong> button, with search and a live count. Status is a colored dot — green for completed, red for failed, a gently pulsing blue while a run is active — and the list refreshes every 30 seconds.</p>
+          <p>Scheduled routines show their cron expression with the next run in a tooltip; shared routines carry a visibility chip, while private stays unmarked. When a routine can't run, the button's tooltip says why. Routines are created from chat, so there is no create button here.</p>
+        </div></section>
+<section class="feature" id="r-routines--run-dialog"><h2>Run it now, or queue it — the dialog tells you which</h2>
+        <p class="one-liner">One form, honest about what happens when you press the button.</p>
+        <div class="slice">
+          <p>Pressing Run opens one dialog that tells you exactly what will happen: <strong>"Runs immediately"</strong> when the agent has no queue, or <strong>"Queued on {queue}"</strong> when the run will be enqueued — and the button and success toast match, so nothing claims completion before a queued run has started.</p>
+          <p>Every <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{variable}</code> in the routine's steps becomes a labelled form field with inline validation. The same dialog powers recovery: "Retry with edits" on any failed run reopens it pre-filled with that run's inputs.</p>
+          <div class="snippet-label">GraphQL — one mutation runs a routine, immediately or queued</div>
+          <pre><code>mutation RunWorkflow($id: ID!, $variables: JSON!) {
+  runWorkflow(id: $id, variables: $variables) { result job metadata }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-routines--workbench"><h2>The routine workbench: one page, seven rungs</h2>
+        <p class="one-liner">Everything about a routine — settings, steps, schedule, history, queue — on a single scrollable page.</p>
+        <div class="slice">
+          <p>Clicking a routine opens its workbench: basics, access, steps, schedule, run history, queue, and a danger zone on one scrollable page, with a sticky section nav and a Run button in the header. Unsaved edits ride a save bar and are guarded against accidental navigation.</p>
+          <p>Scheduling and forensics are built in — the last 50 runs expand in place with full error details and retry. The <strong>Danger zone</strong> appears only for users who can actually delete, and deleting requires typing the routine's name to confirm.</p>
+        </div></section>
+<section class="feature" id="r-routines--steps-editor"><h2>Edit steps like the conversation they are</h2>
+        <p class="one-liner">A routine's steps are chat messages — so the editor is a chat.</p>
+        <div class="slice">
+          <p><strong>"Edit steps"</strong> opens a side panel where your messages are editable bubbles and each assistant turn is a clearly marked placeholder the agent fills in at run time. Removing a message removes its paired placeholder automatically, and closing with unsaved edits asks before discarding.</p>
+          <p>The composer works like chat: Enter to add, Shift+Enter for a new line, and up to 10 file attachments per message — images, PDFs, Office documents, CSVs, audio, and video.</p>
+          <p class="fineprint">Make sure the routine's agent supports the file types you attach.</p>
+        </div></section>
+<section class="feature" id="r-routines--queue"><h2>The queue, without leaving the routine</h2>
+        <p class="one-liner">Pause, inspect, and retry queued runs from a sheet on the routine itself.</p>
+        <div class="slice">
+          <p>When a routine's agent runs on a queue, <strong>"Manage queue"</strong> opens that queue right on the routine — the same queue panel used across Exulu, scoped to this agent. Jobs are grouped by state (active, waiting, completed, failed, delayed, paused), with queue-level pause and resume and per-job retry.</p>
+          <p>Retry is routine-aware: a failed scheduled run is re-executed with its original recorded inputs. If a job has lost its routine reference, the panel says so instead of guessing.</p>
+        </div></section>
+</article>

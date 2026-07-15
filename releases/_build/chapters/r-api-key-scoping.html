@@ -1,0 +1,27 @@
+<article class="chapter" id="r-api-key-scoping" data-release="2026-07-08-platform-roundup" aria-labelledby="r-api-key-scoping-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">19</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-api-key-scoping-h">API-key agent scoping (enterprise)</h1>
+    <p class="ch-lede">Mint a key that can talk to one agent — and nothing else.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>Any key you ship client-side leaks eventually — and until now a leaked key could reach every agent and every mutation on the platform. API keys now declare a scope mode: <code>admin</code> keeps today's broad behavior (every existing key migrates unchanged), while <code>agents</code> carries a whitelist of agent IDs and can call only the run route for those agents — no mutations, no other agents, no admin surface. Usage and budget caps still apply, so scoped keys inherit their spend limits automatically.</p>
+          <div class="snippet-label">GraphQL — minting a scoped key</div>
+          <pre><code>mutation CreateUser(
+  $type: String, $apikey: String,
+  $scope_mode: String, $agent_ids: JSON
+) {
+  usersCreateOne(input: {
+    type: $type, apikey: $apikey,
+    scope_mode: $scope_mode,  # "admin" | "agents"
+    agent_ids: $agent_ids     # whitelist when scope_mode = "agents"
+  }) {
+    item { id }
+  }
+}</code></pre>
+        </div></section>
+</article>

@@ -1,0 +1,72 @@
+---
+title: "Job results"
+description: "The job_result type stores the persisted outcome of a background queue job such as an eval run or workflow execution."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Job results require an Enterprise Edition license (`queues` entitlement).
+
+`job_result` records are written when a BullMQ job completes. They capture the job's final state, result payload, and any error information for audit and debugging purposes. See [Evals overview](/building/evals/overview) and [Routines](/building/routines/overview) for product context.
+
+```graphql
+type job_result {
+  job_id: String
+  state: String
+  error: JSON
+  label: String
+  tries: Float
+  result: JSON
+  metadata: JSON
+  item: String
+  context: String
+  type: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `job_id` | BullMQ job ID; correlates with the `jobs` query on a specific queue. |
+| `state` | Final state string (e.g. `"completed"`, `"failed"`). |
+| `error` | JSON error payload if the job failed; `null` on success. |
+| `result` | JSON result payload returned by the job worker. |
+| `metadata` | Supplementary key-value data recorded alongside the result (e.g. token counts, agent name). |
+| `item` | ID string of the primary entity this job operated on (e.g. an eval_run ID). |
+| `context` | Context slug or ID when the job was scoped to a specific knowledge context. |
+| `type` | Job type discriminator (e.g. `"eval_run"`, `"workflow_execution"`). |
+| `tries` | Number of execution attempts before the job reached its final state. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  job_resultsPagination(
+    limit: 20
+    filters: [{ type: { eq: "eval_run" }, state: { eq: "completed" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      job_id
+      type
+      state
+      result
+      item
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

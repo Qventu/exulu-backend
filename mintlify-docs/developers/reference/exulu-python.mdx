@@ -1,0 +1,132 @@
+---
+title: "ExuluPython"
+description: "Manage the Python virtual environment required by document processors and other Python-backed features."
+---
+
+`ExuluPython` provides functions for setting up, checking, and validating the Python virtual environment that IMP's document processing and ML features depend on. The environment is created inside the installed `@exulu/backend` package at `ee/python/.venv`.
+
+You do not need to call these functions in normal production use — the document processor calls `setup` and `validate` automatically. Use `ExuluPython` directly when you want to pre-warm the environment at deploy time, build a health check, or display setup instructions to end-users.
+
+## API surface
+
+### ExuluPython.setup
+
+```typescript
+ExuluPython.setup(options?: {
+  packageRoot?: string;
+  force?: boolean;
+  verbose?: boolean;
+  timeout?: number;
+}): Promise<{
+  success: boolean;
+  message: string;
+  alreadyExists: boolean;
+  pythonVersion?: string;
+  output?: string;
+}>
+```
+
+Runs the bundled `ee/python/setup.sh` script to create and populate the virtual environment. Skips when the environment already exists, unless `force: true`.
+
+<ParamField path="packageRoot" type="string">
+  Path to the installed `@exulu/backend` package. Auto-detected by walking the directory tree when omitted.
+</ParamField>
+
+<ParamField path="force" type="boolean" default="false">
+  Re-run setup even when the virtual environment already exists (useful when packages are missing or corrupted).
+</ParamField>
+
+<ParamField path="verbose" type="boolean" default="false">
+  Print setup script output to the console during execution.
+</ParamField>
+
+<ParamField path="timeout" type="number" default="600000">
+  Setup timeout in milliseconds. The default (10 minutes) accommodates slow network downloads on first install.
+</ParamField>
+
+---
+
+### ExuluPython.check
+
+```typescript
+ExuluPython.check(packageRoot?: string): boolean
+```
+
+Synchronous check. Returns `true` when `ee/python/.venv/bin/python` exists. Does not verify that packages are installed — use `validate` for a thorough check.
+
+---
+
+### ExuluPython.validate
+
+```typescript
+ExuluPython.validate(
+  packageRoot?: string,
+  checkPackages?: boolean,
+): Promise<{ valid: boolean; message: string }>
+```
+
+Verifies that the virtual environment exists, that the Python executable works, and (when `checkPackages` is `true`) that the critical packages `docling` and `transformers` can be imported.
+
+<ParamField path="checkPackages" type="boolean" default="true">
+  Whether to import-check `docling` and `transformers` in addition to checking the executable.
+</ParamField>
+
+---
+
+### ExuluPython.instructions
+
+```typescript
+ExuluPython.instructions(): string
+```
+
+Returns a multi-line string with step-by-step setup instructions for the user, covering automatic (`setupPythonEnvironment()`), CLI (`npx @exulu/backend setup-python`), and manual paths. Includes platform-specific package manager commands.
+
+## Example
+
+```typescript
+import { ExuluPython } from "@exulu/backend";
+
+// At container startup: set up if not already done
+if (!ExuluPython.check()) {
+  console.log("Setting up Python environment…");
+  const result = await ExuluPython.setup({ verbose: true });
+  if (!result.success) {
+    console.error("Python setup failed:", result.message);
+    process.exit(1);
+  }
+  console.log("Python ready:", result.pythonVersion);
+}
+
+// Validate before processing documents
+const { valid, message } = await ExuluPython.validate();
+if (!valid) {
+  console.error(ExuluPython.instructions());
+  throw new Error("Python environment not valid: " + message);
+}
+```
+
+## System requirements
+
+| Requirement | Details |
+|---|---|
+| Python version | 3.10 or higher |
+| pip | Must be available |
+| venv | `python3-venv` or equivalent |
+| Disk | ~2 GB for `docling` + `transformers` models on first run |
+
+Install Python on common platforms:
+
+```bash
+# macOS
+brew install python@3.12
+
+# Ubuntu / Debian
+sudo apt-get install python3.12 python3-pip python3-venv
+
+# Alpine (Docker)
+apk add python3 py3-pip python3-dev
+```
+
+## Related
+
+- [ExuluDocumentProcessor](/developers/reference/exulu-document-processor): the main consumer of the Python environment.

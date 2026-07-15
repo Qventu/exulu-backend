@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — budgets overview</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* content */
+      #root .content { padding: 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+      /* entity type tabs */
+      #root .entity-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--hair); }
+      #root .et { padding: 9px 16px; font-size: 12.5px; color: var(--tx-lo); cursor: default; position: relative; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .et.active { color: var(--tx-hi); font-weight: 600; }
+      #root .et.active::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--ink); }
+
+      /* at-risk strip */
+      #root .at-risk { border: 1px solid #c9522c; background: #fdf3ef; padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+      #root .at-risk-label { font-size: 12px; font-weight: 600; color: #c9522c; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .at-risk-sep { width: 1px; height: 16px; background: #e0b4a4; }
+      #root .at-risk-items { display: flex; gap: 16px; flex: 1; flex-wrap: wrap; }
+      #root .at-risk-item { font-size: 12px; color: #8b3216; }
+      #root .at-risk-item.warn { color: #8b6216; }
+
+      /* toolbar */
+      #root .toolbar { display: flex; align-items: center; gap: 8px; }
+      #root .search-field { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; width: 280px; }
+      #root .search-icon svg { width: 14px; height: 14px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .search-text { font-size: 13px; color: var(--tx-faint); }
+      #root .toolbar-sep { flex: 1; }
+      #root .policy-link { font-size: 12px; color: var(--tx-mid); border: 1px solid var(--hair); padding: 6px 12px; background: var(--bg); }
+      #root .bulk-btn { font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--tx-lo); border: 1px solid var(--hair); padding: 6px 12px; background: var(--bg); }
+
+      /* budget table */
+      #root .budget-table { --imp-cols: 2.2fr 1.8fr 1fr 0.8fr 100px; }
+
+      /* budget bar */
+      #root .budget-bar { display: flex; flex-direction: column; gap: 3px; }
+      #root .budget-bar-track { height: 6px; background: var(--surface-2); border: 1px solid var(--hair); position: relative; }
+      #root .budget-bar-fill { position: absolute; top: 0; left: 0; height: 100%; background: var(--accent); }
+      #root .budget-bar-fill.warn { background: #c98f2c; }
+      #root .budget-bar-fill.over { background: #c9522c; }
+      #root .budget-meta { font-size: 11px; color: var(--tx-lo); }
+      #root .budget-meta-over { font-size: 11px; color: #c9522c; font-weight: 500; }
+
+      /* action buttons in rows */
+      #root .row-edit { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--hair); padding: 4px 10px; color: var(--tx-mid); background: var(--bg); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="budgets-overview"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+              Chat
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>
+              Agents
+            </div>
+            <div class="imp-sidebar-group">Administration</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              Users
+            </div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+              Budgets
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+              Analytics
+            </div>
+          </aside>
+
+          <!-- main -->
+          <div class="imp-main">
+            <div class="imp-topbar">
+              <div>
+                <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Budgets</span>
+                <span style="font-size:12px;color:var(--tx-lo);margin-left:12px;">Per user: $20.00 / Monthly</span>
+                <span style="font-size:12px;color:var(--tx-lo);margin-left:4px;">· shown in chat</span>
+                <span style="font-size:12px;color:var(--accent);margin-left:8px;cursor:default;">Edit</span>
+              </div>
+            </div>
+
+            <div class="imp-content" style="padding:0;flex:1;min-height:0;display:flex;flex-direction:column;">
+              <!-- entity type tabs -->
+              <div class="entity-tabs" style="padding: 0 28px;">
+                <div class="et active">Users</div>
+                <div class="et">Roles</div>
+                <div class="et">Teams</div>
+                <div class="et">Projects</div>
+                <div class="et">Agents</div>
+                <div class="et">Routines</div>
+              </div>
+
+              <div class="content">
+                <!-- at-risk strip -->
+                <div class="at-risk">
+                  <span class="at-risk-label">Budgets at risk</span>
+                  <span class="at-risk-sep"></span>
+                  <div class="at-risk-items">
+                    <span class="at-risk-item">User · maren.vogel@example.com is over budget (104%)</span>
+                    <span class="at-risk-item warn">User · tobias.schreiber@example.com is at risk (88%)</span>
+                  </div>
+                  <span style="font-size:12px;color:#8b3216;">2 over · 1 at risk</span>
+                </div>
+
+                <!-- toolbar -->
+                <div class="toolbar">
+                  <div class="search-field">
+                    <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
+                    <span class="search-text">Search users by email…</span>
+                  </div>
+                  <div class="toolbar-sep"></div>
+                  <span class="bulk-btn">Set budget for 0 users</span>
+                </div>
+
+                <!-- table -->
+                <div class="imp-table budget-table">
+                  <div class="imp-table-head">
+                    <span></span>
+                    <span>User</span>
+                    <span>Budget</span>
+                    <span>Resets</span>
+                    <span class="imp-cell-end">Actions</span>
+                  </div>
+
+                  <!-- Row 1: over budget -->
+                  <div class="imp-row">
+                    <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar lime">MV</span>
+                      <span><span class="imp-user-name">maren.vogel@example.com</span></span>
+                    </span>
+                    <span>
+                      <div class="budget-bar">
+                        <div class="budget-bar-track"><div class="budget-bar-fill over" style="width:100%;"></div></div>
+                        <span class="budget-meta-over">$20.80 of $20.00 · 104%</span>
+                      </div>
+                    </span>
+                    <span class="imp-cell-faint">Jul 31</span>
+                    <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                  </div>
+
+                  <!-- Row 2: at risk -->
+                  <div class="imp-row">
+                    <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">TS</span>
+                      <span><span class="imp-user-name">tobias.schreiber@example.com</span></span>
+                    </span>
+                    <span>
+                      <div class="budget-bar">
+                        <div class="budget-bar-track"><div class="budget-bar-fill warn" style="width:88%;"></div></div>
+                        <span class="budget-meta">$17.60 of $20.00 · 88%</span>
+                      </div>
+                    </span>
+                    <span class="imp-cell-faint">Jul 31</span>
+                    <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                  </div>
+
+                  <!-- Row 3: healthy -->
+                  <div class="imp-row">
+                    <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">AK</span>
+                      <span><span class="imp-user-name">anna.krause@example.com</span></span>
+                    </span>
+                    <span>
+                      <div class="budget-bar">
+                        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:42%;"></div></div>
+                        <span class="budget-meta">$8.40 of $20.00 · 42%</span>
+                      </div>
+                    </span>
+                    <span class="imp-cell-faint">Jul 31</span>
+                    <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                  </div>
+
+                  <!-- Row 4: no budget -->
+                  <div class="imp-row">
+                    <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">LB</span>
+                      <span><span class="imp-user-name">lena.bach@example.com</span></span>
+                    </span>
+                    <span style="color:var(--tx-faint);font-size:12px;">No budget set</span>
+                    <span class="imp-cell-faint">—</span>
+                    <span class="imp-cell-end"><span class="row-edit">Set</span></span>
+                  </div>
+
+                  <!-- Row 5: healthy -->
+                  <div class="imp-row">
+                    <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);cursor:default;" /></span>
+                    <span class="imp-cell-user">
+                      <span class="imp-avatar soft">FW</span>
+                      <span><span class="imp-user-name">felix.wenger@example.com</span></span>
+                    </span>
+                    <span>
+                      <div class="budget-bar">
+                        <div class="budget-bar-track"><div class="budget-bar-fill" style="width:18%;"></div></div>
+                        <span class="budget-meta">$3.60 of $20.00 · 18%</span>
+                      </div>
+                    </span>
+                    <span class="imp-cell-faint">Jul 31</span>
+                    <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["budgets-overview"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

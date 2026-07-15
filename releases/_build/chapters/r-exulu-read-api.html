@@ -1,0 +1,29 @@
+<article class="chapter" id="r-exulu-read-api" data-release="2026-07-08-platform-roundup" aria-labelledby="r-exulu-read-api-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">24</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-exulu-read-api-h">ExuluReadApi: RBAC-safe reads for retrieval clients</h1>
+    <p class="ch-lede">Build retrieval on authorized rows — not on raw tables.</p>
+  </header>
+  <section class="feature"><p class="kicker">Developer platform</p>
+        <div class="slice">
+          <p>Custom retrieval pipelines need reads that <code>context.search()</code> can't express — exact chunk ranges of a known file, or whether a context has an entity layer. That surface is now supported SDK. <code>authorizedRead</code> applies access control inside the SQL query, so a user can never receive a chunk from an item they aren't allowed to see — and it refuses unconstrained reads outright. <code>embedQuery</code> embeds with the context's own embedder, and <code>entitiesAvailable</code> checks for an entity layer before you wire tools against it. It's the exact surface Exulu's own agentic retrieval pipeline runs on.</p>
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>import { ExuluReadApi } from "@exulu/backend";
+
+// RBAC-safe chunk read for a known file — access control applied in SQL.
+const chunks = await ExuluReadApi.authorizedRead(context, user, roleId, {
+  externalIds: ["handbook.pdf"],
+  chunkIndexRange: { from: 0, to: 20 },
+});
+
+// Embed with the context's own embedder, resolved per caller.
+const vector = await ExuluReadApi.embedQuery(context, "notice period");
+
+// Probe the entity layer before wiring entity tools.
+const hasEntities = await ExuluReadApi.entitiesAvailable(context);</code></pre>
+        </div></section>
+</article>

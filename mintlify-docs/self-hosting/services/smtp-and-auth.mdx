@@ -1,0 +1,114 @@
+---
+title: "SMTP and authentication"
+description: "Login modes, SMTP configuration for OTP emails, Google OAuth, and NEXTAUTH_SECRET symmetry between frontend and backend."
+icon: "lock"
+---
+
+IMP supports two login modes, optional Google OAuth, and optional OTP sign-in via email. Authentication state is shared between the frontend (Next.js / NextAuth) and the backend via a common `NEXTAUTH_SECRET`.
+
+## Login modes
+
+Set `AUTH_MODE` on the **frontend** to control how users log in:
+
+| Value | Behaviour |
+|---|---|
+| `password` | Standard email + password login. No SMTP required. Default. |
+| `otp` | Users receive a six-digit one-time code by email. Requires SMTP configuration. |
+
+The frontend reads `AUTH_MODE` and adapts the login page accordingly. The backend reads `AUTH_MODE` from its own environment and exposes it via the `/config` endpoint so the frontend knows which login flow to render.
+
+Set this variable in both the frontend and backend environments with the same value.
+
+## SMTP (required for OTP mode)
+
+There are two separate SMTP variable namespaces:
+
+### Frontend variables (`EMAIL_SERVER_*`)
+
+The frontend's NextAuth email provider uses these variables for sending OTP sign-in codes:
+
+| Variable | Description |
+|---|---|
+| `EMAIL_SERVER_HOST` | SMTP server hostname |
+| `EMAIL_SERVER_PORT` | SMTP port (e.g. `587`) |
+| `EMAIL_SERVER_USER` | SMTP username |
+| `EMAIL_SERVER_PASSWORD` | SMTP password |
+| `EMAIL_FROM` | Sender address shown in the email |
+
+<Note>
+The `EMAIL_SERVER_*` variables in the frontend's `NextAuth` email provider are **different** from the `SMTP_*` variables used by the backend's email tool. The example repo's `.env.example` (which is shared with the backend container) lists `SMTP_*` variables — those are for the backend's agent email tool, not for login.
+</Note>
+
+### Backend variables (`SMTP_*`)
+
+The backend exposes an email tool that agents can call to send emails on behalf of users. It reads from these variables (as code reads them in `src/templates/tools/email.ts`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMTP_HOST` | — | SMTP server hostname |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_SECURE` | — | Set to `true` for port 465 (implicit TLS); omit or `false` for STARTTLS |
+| `SMTP_USER` | — | SMTP username |
+| `SMTP_PASSWORD` | — | SMTP password |
+| `SMTP_FROM` | — | Default sender address for agent-sent emails |
+
+<Warning>
+**Variable name discrepancy.** The shared `.env.example` in the example repo lists `SMTP_USERNAME` and `SMTP_SENDER_EMAIL` and `SMTP_TLS`. The backend code reads `SMTP_USER`, `SMTP_FROM`, and `SMTP_SECURE`. Use the code-level names (`SMTP_USER`, `SMTP_FROM`, `SMTP_SECURE`) when configuring the backend container — the `.env.example` names for these three variables do not match what the backend reads.
+</Warning>
+
+## NEXTAUTH_SECRET symmetry
+
+`NEXTAUTH_SECRET` must be identical in the frontend and backend environments.
+
+- **Frontend** — NextAuth uses it to sign and verify session JWTs.
+- **Backend** — Uses it to verify JWTs from the frontend, encrypt/decrypt stored OAuth tokens, and encrypt agent variable values.
+
+If the values differ, the backend will reject all authenticated requests from the frontend with a 401.
+
+Generate a strong value:
+
+```bash
+openssl rand -base64 32
+```
+
+## Google OAuth (optional)
+
+To enable "Sign in with Google", set the following on the **frontend**:
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 client ID from [console.cloud.google.com](https://console.cloud.google.com) |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret |
+
+When both variables are set, the Google sign-in button appears on the login page. Google OAuth creates IMP user accounts automatically on first sign-in (matching the default role), as long as the email passes any domain restrictions.
+
+**Optional domain restriction.** Set `ALLOWED_EMAIL_DOMAINS` (comma-separated) to restrict sign-in to specific email domains:
+
+```ini
+ALLOWED_EMAIL_DOMAINS=example.com,contractor.example.com
+```
+
+The domains `exulu.com` and `qventu.com` are always allowed.
+
+## Full variable reference
+
+| Variable | Where | Description |
+|---|---|---|
+| `AUTH_MODE` | Frontend + Backend | `password` or `otp` |
+| `NEXTAUTH_SECRET` | Frontend + Backend | **Must match.** Secret for JWT signing and token encryption. |
+| `NEXTAUTH_URL` | Frontend | Canonical public URL (same as `FRONTEND`). |
+| `NEXTAUTH_URL_INTERNAL` | Frontend | Backend URL reachable from the frontend container (e.g. `http://exulu-backend:9001`). |
+| `EMAIL_SERVER_HOST` | Frontend | SMTP host for OTP emails. |
+| `EMAIL_SERVER_PORT` | Frontend | SMTP port for OTP emails. |
+| `EMAIL_SERVER_USER` | Frontend | SMTP username for OTP emails. |
+| `EMAIL_SERVER_PASSWORD` | Frontend | SMTP password for OTP emails. |
+| `EMAIL_FROM` | Frontend | Sender address for OTP emails. |
+| `SMTP_HOST` | Backend | SMTP host for the agent email tool. |
+| `SMTP_PORT` | Backend | SMTP port for the agent email tool. Default: `587`. |
+| `SMTP_SECURE` | Backend | `true` for implicit TLS (port 465). |
+| `SMTP_USER` | Backend | SMTP username for the agent email tool. |
+| `SMTP_PASSWORD` | Backend | SMTP password for the agent email tool. |
+| `SMTP_FROM` | Backend | Default sender address for agent-sent emails. |
+| `GOOGLE_CLIENT_ID` | Frontend | Google OAuth client ID. |
+| `GOOGLE_CLIENT_SECRET` | Frontend | Google OAuth client secret. |
+| `ALLOWED_EMAIL_DOMAINS` | Frontend | Comma-separated list of permitted email domains. |

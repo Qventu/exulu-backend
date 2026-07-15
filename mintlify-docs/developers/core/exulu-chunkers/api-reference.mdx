@@ -1,0 +1,376 @@
+---
+title: "API reference"
+description: "Complete method signatures for SentenceChunker, RecursiveChunker, MarkdownChunker, and the ChunkerOperation/ChunkerResponse contract."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For option details, see [Configuration](/developers/core/exulu-chunkers/configuration).
+
+## Namespace import
+
+```typescript
+import { ExuluChunkers, defaultChunker } from "@exulu/backend";
+import type { ChunkerOperation, ChunkerResponse } from "@exulu/backend";
+
+ExuluChunkers.sentence            // SentenceChunker class
+ExuluChunkers.markdown            // MarkdownChunker class (Enterprise Edition)
+ExuluChunkers.recursive.function  // RecursiveChunker class
+ExuluChunkers.recursive.rules     // RecursiveRules class
+```
+
+## SentenceChunker
+
+### SentenceChunker.create()
+
+Static async factory. The constructor is private.
+
+```typescript
+SentenceChunker.create(options?: SentenceChunkerOptions): Promise<CallableSentenceChunker>
+```
+
+Returns a `CallableSentenceChunker` — an object that is both callable and has class properties/methods.
+
+```typescript
+interface SentenceChunkerOptions {
+  tokenizer?: TokenizerModelName;         // default "gpt-3.5-turbo"
+  chunkSize?: number;                     // default 512
+  chunkOverlap?: number;                  // default 0; must be < chunkSize
+  minSentencesPerChunk?: number;          // default 1
+  minCharactersPerSentence?: number;      // default 12
+  approximate?: boolean;                  // deprecated; no effect
+  delim?: string[];                       // default [". ", "! ", "? ", "\n"]
+  includeDelim?: "prev" | "next" | null;  // default "prev"
+}
+```
+
+### Calling the chunker
+
+```typescript
+// Single text
+const chunks: SentenceChunk[] = await chunker(text: string, showProgress?: boolean);
+
+// Batch
+const batchChunks: SentenceChunk[][] = await chunker(texts: string[], showProgress?: boolean);
+```
+
+### SentenceChunk properties
+
+```typescript
+type SentenceChunk = {
+  text: string;
+  startIndex: number;  // Byte offset in the original text
+  endIndex: number;
+  tokenCount: number;  // Accurate token count via ExuluTokenizer
+  sentences: Sentence[]; // Individual sentences in this chunk
+};
+```
+
+### chunk()
+
+Chunk a single text string. Called internally when the chunker is invoked as a function.
+
+```typescript
+chunker.chunk(text: string): Promise<SentenceChunk[]>
+```
+
+### Properties
+
+After `create()`, these are available on the instance:
+
+| Property | Type | Notes |
+|---|---|---|
+| `chunkSize` | `number` | Effective max tokens per chunk |
+| `chunkOverlap` | `number` | Token overlap between consecutive chunks |
+| `minSentencesPerChunk` | `number` | Minimum sentences guaranteed per chunk |
+| `minCharactersPerSentence` | `number` | Minimum sentence length before merging |
+| `delim` | `string[]` | Active sentence delimiters |
+| `includeDelim` | `"prev" \| "next" \| null` | Delimiter placement |
+| `tokenizer` | `ExuluTokenizer` | The tokenizer instance |
+
+---
+
+## RecursiveChunker
+
+### RecursiveChunker.create()
+
+Static async factory. The constructor is private.
+
+```typescript
+RecursiveChunker.create(options?: RecursiveChunkerOptions): Promise<CallableRecursiveChunker>
+```
+
+```typescript
+interface RecursiveChunkerOptions {
+  tokenizer?: TokenizerModelName;        // default "gpt-3.5-turbo"
+  chunkSize?: number;                    // default 512
+  rules?: RecursiveRules;               // default new RecursiveRules()
+  minCharactersPerChunk?: number;        // default 24
+  prefix?: string;                       // prepended to every chunk
+  retainHeaders?: boolean;               // default false
+}
+```
+
+### Calling the chunker
+
+```typescript
+// Single text
+const chunks: RecursiveChunk[] = await chunker(text: string, showProgress?: boolean);
+
+// Batch
+const batchChunks: RecursiveChunk[][] = await chunker(texts: string[], showProgress?: boolean);
+```
+
+### RecursiveChunk properties
+
+```typescript
+type RecursiveChunk = {
+  text: string;       // Chunk text (prefix prepended if set)
+  startIndex: number;
+  endIndex: number;
+  tokenCount: number;
+  level: number;      // Recursion level where the split occurred; 0 = top level
+};
+```
+
+### chunk()
+
+```typescript
+chunker.chunk(text: string): Promise<RecursiveChunk[]>
+```
+
+### Properties
+
+| Property | Type | Notes |
+|---|---|---|
+| `chunkSize` | `number` | Effective max per chunk (adjusted for prefix) |
+| `minCharactersPerChunk` | `number` | Minimum character count per chunk |
+| `rules` | `RecursiveRules` | Active rule set |
+| `prefix` | `string \| undefined` | Prefix prepended to each chunk |
+| `prefixTokenCount` | `number` | Token count of the prefix (0 if none) |
+| `retainHeaders` | `boolean` | Whether header context is prepended |
+
+---
+
+## RecursiveRules
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const rules = new ExuluChunkers.recursive.rules({ levels? });
+```
+
+```typescript
+interface RecursiveLevelData {
+  delimiters?: string | string[];
+  whitespace?: boolean;
+  includeDelim?: "prev" | "next";  // default "prev"
+}
+```
+
+### Constructor
+
+<ParamField path="levels" type="RecursiveLevelData[]">
+  Array of level definitions. When omitted, the five built-in levels are used (paragraphs → sentences → punctuation → words → tokens).
+</ParamField>
+
+`whitespace` and `delimiters` are mutually exclusive on a single level — passing both throws.
+
+### Properties and methods
+
+| Member | Type | Notes |
+|---|---|---|
+| `levels` | `RecursiveLevel[]` | Ordered array of level objects |
+| `length` | `number` | Number of levels |
+| `getLevel(index)` | `RecursiveLevel \| undefined` | Level at the given index |
+| `RecursiveRules.fromDict(data)` | `RecursiveRules` | Static factory from a plain object |
+
+---
+
+## MarkdownChunker
+
+Enterprise Edition class. Instantiate directly:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const mdChunker = new ExuluChunkers.markdown();
+```
+
+### chunk()
+
+```typescript
+mdChunker.chunk(
+  text: string,
+  chunkSize: number,
+  prefix?: string,
+  config?: { pageBreakTags?: boolean },
+): Promise<{ text: string; page: number }[]>
+```
+
+<ParamField path="text" type="string" required>
+  The markdown text. Tables are converted to numbered-list format; `<page_break page=N>` tags are tracked for page numbering.
+</ParamField>
+
+<ParamField path="chunkSize" type="number" required>
+  Target max tokens per chunk (effective budget is reduced by prefix and active header context tokens).
+</ParamField>
+
+<ParamField path="prefix" type="string">
+  Optional string prepended to every chunk. Token count subtracted from the effective budget.
+</ParamField>
+
+<ParamField path="config.pageBreakTags" type="boolean" default="false">
+  Prepend `<!-- Current page: N -->` to each chunk.
+</ParamField>
+
+<ResponseField name="text" type="string">
+  Full chunk content: optional page comment + header context (for non-current headers) + optional prefix + slice of the document.
+</ResponseField>
+
+<ResponseField name="page" type="number">
+  Page number (1-based) in effect at the chunk boundary. Always 1 when no `<page_break>` tags are present.
+</ResponseField>
+
+### convertTablesToText()
+
+Converts markdown tables in a string to numbered-list format and returns the result. Called automatically by `chunk()`.
+
+```typescript
+mdChunker.convertTablesToText(text: string): string
+```
+
+Useful for pre-processing content before passing it to another chunker.
+
+---
+
+## ChunkerOperation and ChunkerResponse
+
+These are the types that connect chunkers to ExuluContext.
+
+```typescript
+import type { ChunkerOperation, ChunkerResponse } from "@exulu/backend";
+
+type ChunkerOperation = (
+  item: Item & { id: string },
+  maxChunkSize: number,
+  utils: { storage: ExuluStorage },
+) => Promise<ChunkerResponse>;
+
+type ChunkerResponse = {
+  item: Item & { id: string };
+  chunks: {
+    content: string;
+    index: number;
+    metadata?: Record<string, unknown>;
+  }[];
+};
+```
+
+### ChunkerOperation parameters
+
+<ParamField path="item" type="Item & { id: string }" required>
+  The fully hydrated item record. Includes `id`, `name`, `content`, `description`, and all custom fields defined in the context schema.
+</ParamField>
+
+<ParamField path="maxChunkSize" type="number" required>
+  The token budget per chunk, derived from the embedder model's `max_chunk_size` as reported by LiteLLM. Pass this directly to the underlying chunker's `chunkSize` option.
+</ParamField>
+
+<ParamField path="utils.storage" type="ExuluStorage" required>
+  S3-backed storage accessor. Use `utils.storage.read(s3key)` to retrieve file content for file-backed contexts. For text-only items, this is not needed.
+</ParamField>
+
+### ChunkerResponse
+
+<ResponseField name="item" type="Item & { id: string }">
+  The original item, returned unchanged. Required.
+</ResponseField>
+
+<ResponseField name="chunks[].content" type="string">
+  The text content of this chunk. This is the text that will be embedded.
+</ResponseField>
+
+<ResponseField name="chunks[].index" type="number">
+  Zero-based position of this chunk. Must be contiguous (0, 1, 2, …) after filtering empty chunks — re-index with `.map((c, i) => ({ ...c, index: i }))` after any filtering step.
+</ResponseField>
+
+<ResponseField name="chunks[].metadata" type="Record<string, unknown> | undefined">
+  Arbitrary JSON-serializable metadata stored in the `metadata` JSONB column of the chunks table. Common uses: `{ page: 3 }`, `{ section: "Introduction" }`, `{ source_url: "https://..." }`. Null bytes in string values are stripped automatically.
+</ResponseField>
+
+## defaultChunker
+
+```typescript
+import { defaultChunker } from "@exulu/backend";
+import type { ChunkerOperation } from "@exulu/backend";
+
+const defaultChunker: ChunkerOperation
+```
+
+The built-in `ChunkerOperation` used by ExuluContext when no `chunker` is configured. Concatenates `item.name` and `item.content` (falling back to `item.description`), runs `SentenceChunker.create({ chunkSize: maxChunkSize })`, and returns the results as a `ChunkerResponse`. Items with no usable text return `{ item, chunks: [] }`.
+
+## Writing a custom chunker
+
+Implement `ChunkerOperation` to handle file-backed, multi-source, or domain-specific chunking:
+
+```typescript
+import type { ChunkerOperation } from "@exulu/backend";
+import { ExuluChunkers } from "@exulu/backend";
+
+export const myChunker: ChunkerOperation = async (item, maxChunkSize, utils) => {
+  // For file-backed items:
+  let text = "";
+  if (item.document_s3key) {
+    const buffer = await utils.storage.read(String(item.document_s3key));
+    text = buffer.toString("utf-8");
+  } else {
+    text = [item.name, item.content].filter(Boolean).join("\n\n");
+  }
+
+  if (!text.trim()) return { item, chunks: [] };
+
+  const chunker = await ExuluChunkers.sentence.create({
+    chunkSize: maxChunkSize,
+    chunkOverlap: Math.floor(maxChunkSize * 0.1),
+  });
+  const pieces = await chunker(text);
+
+  return {
+    item,
+    chunks: pieces
+      .map((c, index) => ({ content: c.text.trim(), index }))
+      .filter((c) => c.content.length > 0)
+      .map((c, index) => ({ ...c, index })),
+  };
+};
+```
+
+Assign it to the context:
+
+```typescript
+import { ExuluContext } from "@exulu/backend";
+import { myChunker } from "./my-chunker";
+
+const docsContext = new ExuluContext({
+  id: "docs",
+  embedder: { model: "text-embedding-3-small" },
+  chunker: myChunker,
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "document", type: "file", allowedFileTypes: [".pdf", ".txt"] },
+    { name: "content", type: "longtext" },
+  ],
+  sources: [],
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-chunkers/configuration">
+    Every option for all three chunkers and chunk-size guidance.
+  </Card>
+  <Card title="ExuluContext" icon="layers" href="/developers/core/exulu-context/introduction">
+    Assign a ChunkerOperation to a context.
+  </Card>
+</CardGroup>

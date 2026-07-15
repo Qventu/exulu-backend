@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Analytics — spend leaderboard (breakdown by dimension)</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin: 30px auto 0; max-width: 1120px;
+        font-size: 92px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.08;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* --------------------------------- surface ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #surface { width: 1120px; }
+
+      /* page-header row (Split by: + Select) */
+      #header-row {
+        display: flex; align-items: center; gap: 12px;
+        margin-bottom: 20px; position: relative;
+      }
+      .split-label { font-size: 20px; color: #525252; }
+      .select-trigger {
+        position: relative; width: 200px; height: 46px;
+        border: 1px solid #e7e7ee; border-radius: 6px;
+        background: #fcfcfc; display: flex; align-items: center; justify-content: space-between;
+        padding: 0 14px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      .st-value-wrap { position: relative; height: 26px; flex: 1; }
+      .select-trigger .st-value {
+        position: absolute; left: 0; top: 0;
+        font-size: 19px; font-weight: 500; color: #000; line-height: 26px;
+      }
+      .select-trigger .st-chev { color: #8a8a93; display: block; flex: none; }
+
+      /* Select popover */
+      #popover {
+        position: absolute; top: 52px; left: 92px; width: 220px;
+        background: #ffffff; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 8px 22px -6px rgba(0, 0, 0, 0.22), 0 2px 6px rgba(0, 0, 0, 0.10);
+        padding: 5px; z-index: 30; opacity: 0;
+      }
+      .sel-item {
+        position: relative; height: 40px; border-radius: 5px;
+        display: flex; align-items: center; padding: 0 12px 0 34px;
+        font-size: 18px; color: #000;
+      }
+      .sel-item .sel-check {
+        position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+        color: #000;
+      }
+      .sel-item .item-hl {
+        position: absolute; inset: 3px; border-radius: 5px;
+        background: rgba(226, 235, 255, 0.6); opacity: 0; z-index: 0;
+      }
+      .sel-item .item-label { position: relative; z-index: 1; }
+
+      /* Breakdown card */
+      #card {
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+      }
+      #card-header {
+        display: flex; align-items: flex-start; justify-content: space-between;
+        padding: 22px 24px;
+      }
+      .ch-title { font-size: 28px; font-weight: 600; color: #000; line-height: 1.15; }
+      .ch-desc {
+        position: relative; margin-top: 5px; height: 26px;
+        font-size: 20px; color: #525252;
+      }
+      .ch-desc .desc-txt { position: absolute; left: 0; top: 0; white-space: nowrap; }
+      .ch-tools { display: flex; align-items: center; gap: 12px; }
+      .csv-btn {
+        display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px;
+        border: 1px solid #e7e7ee; border-radius: 6px; background: #fcfcfc;
+        font-size: 17px; color: #000;
+      }
+      .csv-btn svg { color: #525252; }
+      .toggle-group {
+        display: flex; border: 1px solid #e7e7ee; border-radius: 6px; overflow: hidden;
+        background: #fcfcfc;
+      }
+      .tg-seg {
+        width: 46px; height: 40px; display: grid; place-items: center; color: #525252;
+      }
+      .tg-seg.active { background: #edf1f5; color: #000; box-shadow: inset 0 0 0 1px #e2e2ea; }
+
+      #card-content { padding: 0 24px 22px; }
+      #rank-list { display: flex; flex-direction: column; gap: 10px; }
+      .row {
+        position: relative; border: 1px solid #e7e7ee; border-radius: 6px; background: #fcfcfc;
+        overflow: hidden; height: 64px;
+      }
+      .row-bar {
+        position: absolute; inset: 0 auto 0 0; height: 100%;
+        background: #f1ecff; /* bg-primary/10 = #7033FF @ 10% */
+      }
+      .row-fg {
+        position: relative; height: 100%;
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 16px; padding: 0 18px;
+      }
+      .row-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+      .rank-bubble {
+        flex: none; width: 34px; height: 34px; border-radius: 999px;
+        display: grid; place-items: center; font-size: 17px; font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .rank-1 { background: rgba(217, 118, 6, 0.20); color: #d97706; }
+      .rank-2 { background: rgba(82, 82, 82, 0.20); color: #525252; }
+      .rank-3 { background: rgba(217, 118, 6, 0.10); color: #d97706; }
+      .rank-n { background: #f5f5f5; color: #525252; }
+      .row-name {
+        position: relative; height: 26px; flex: 1; min-width: 0;
+        font-size: 21px; font-weight: 500; color: #000;
+      }
+      .row-name .nm { position: absolute; left: 0; top: 0; white-space: nowrap; line-height: 26px; }
+      .row-right { flex: none; text-align: right; position: relative; min-width: 130px; }
+      .row-value {
+        position: relative; height: 26px;
+        font-size: 21px; font-weight: 600; color: #000; font-variant-numeric: tabular-nums;
+      }
+      .row-value .val { position: absolute; right: 0; top: 0; white-space: nowrap; line-height: 26px; }
+      .row-unit { font-size: 15px; color: #525252; margin-top: 1px; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; }
+      #payoff-line {
+        margin-bottom: 96px; font-size: 38px; font-weight: 600; color: #000;
+        letter-spacing: -0.02em; text-align: center; max-width: 1300px;
+      }
+
+      /* cursor */
+      #cursor { position: absolute; left: 0; top: 0; width: 42px; z-index: 40; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- ============================== HOOK ============================== -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.45" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Analytics</span>
+          <h1>Who is burning the <em>budget</em>? Now you can see.</h1>
+        </div>
+      </div>
+
+      <!-- ============================== SURFACE ============================== -->
+      <div id="app" class="clip" data-start="2.1" data-duration="6.9" data-track-index="3">
+        <div id="surface">
+          <!-- page-header row -->
+          <div id="header-row">
+            <span class="split-label">Split by:</span>
+            <div class="select-trigger" id="select-trigger">
+              <div class="st-value-wrap">
+                <span class="st-value" id="st-agents">Agents</span>
+                <span class="st-value" id="st-teams" style="opacity:0">Teams</span>
+              </div>
+              <svg class="st-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+
+            <!-- Select popover -->
+            <div id="popover">
+              <div class="sel-item" id="opt-agents">
+                <svg class="sel-check" id="check-agents" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                <div class="item-hl"></div><span class="item-label">Agents</span>
+              </div>
+              <div class="sel-item" id="opt-users">
+                <div class="item-hl"></div><span class="item-label">Users</span>
+              </div>
+              <div class="sel-item" id="opt-projects">
+                <div class="item-hl"></div><span class="item-label">Projects</span>
+              </div>
+              <div class="sel-item" id="opt-teams">
+                <svg class="sel-check" id="check-teams" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="opacity:0"><path d="M20 6 9 17l-5-5"/></svg>
+                <div class="item-hl" id="teams-hl"></div><span class="item-label">Teams</span>
+              </div>
+              <div class="sel-item" id="opt-roles">
+                <div class="item-hl"></div><span class="item-label">Roles</span>
+              </div>
+              <div class="sel-item" id="opt-routines">
+                <div class="item-hl"></div><span class="item-label">Routines</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Breakdown card -->
+          <div id="card">
+            <div id="card-header">
+              <div class="ch-titles">
+                <div class="ch-title">Breakdown</div>
+                <div class="ch-desc">
+                  <span class="desc-txt" id="desc-agents">Agents · by spend</span>
+                  <span class="desc-txt" id="desc-teams" style="opacity:0">Teams · by spend</span>
+                </div>
+              </div>
+              <div class="ch-tools">
+                <div class="csv-btn">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                  Export CSV
+                </div>
+                <div class="toggle-group">
+                  <div class="tg-seg active" aria-label="List view">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></svg>
+                  </div>
+                  <div class="tg-seg" aria-label="Share view">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="card-content">
+              <div id="rank-list">
+                <!-- Row 1 -->
+                <div class="row" id="row-1">
+                  <div class="row-bar" id="bar-1" style="width:100%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-1">1</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-1">Support agent</span>
+                        <span class="nm" id="nm-t-1" style="opacity:0">Finance</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-1">$1,204.50</span>
+                        <span class="val" id="val-t-1" style="opacity:0">$2,041.70</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Row 2 -->
+                <div class="row" id="row-2">
+                  <div class="row-bar" id="bar-2" style="width:74%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-2">2</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-2">Research agent</span>
+                        <span class="nm" id="nm-t-2" style="opacity:0">Support</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-2">$892.30</span>
+                        <span class="val" id="val-t-2" style="opacity:0">$1,388.20</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Row 3 -->
+                <div class="row" id="row-3">
+                  <div class="row-bar" id="bar-3" style="width:55%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-3">3</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-3">Onboarding agent</span>
+                        <span class="nm" id="nm-t-3" style="opacity:0">Engineering</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-3">$661.80</span>
+                        <span class="val" id="val-t-3" style="opacity:0">$1,061.40</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Row 4 -->
+                <div class="row" id="row-4">
+                  <div class="row-bar" id="bar-4" style="width:41%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-n">4</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-4">Billing agent</span>
+                        <span class="nm" id="nm-t-4" style="opacity:0">Sales</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-4">$498.10</span>
+                        <span class="val" id="val-t-4" style="opacity:0">$796.30</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Row 5 -->
+                <div class="row" id="row-5">
+                  <div class="row-bar" id="bar-5" style="width:30%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-n">5</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-5">Triage agent</span>
+                        <span class="nm" id="nm-t-5" style="opacity:0">Operations</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-5">$358.90</span>
+                        <span class="val" id="val-t-5" style="opacity:0">$551.90</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Row 6 -->
+                <div class="row" id="row-6">
+                  <div class="row-bar" id="bar-6" style="width:22%"></div>
+                  <div class="row-fg">
+                    <div class="row-left">
+                      <div class="rank-bubble rank-n">6</div>
+                      <div class="row-name">
+                        <span class="nm" id="nm-a-6">Summary agent</span>
+                        <span class="nm" id="nm-t-6" style="opacity:0">Marketing</span>
+                      </div>
+                    </div>
+                    <div class="row-right">
+                      <div class="row-value">
+                        <span class="val" id="val-a-6">$265.40</span>
+                        <span class="val" id="val-t-6" style="opacity:0">$367.50</span>
+                      </div>
+                      <div class="row-unit">spend</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- house cursor -->
+          <div id="cursor">
+            <svg width="42" height="42" viewBox="0 0 24 24" style="position: relative">
+              <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================== PAYOFF ============================== -->
+      <div id="payoff" class="clip" data-start="6.55" data-duration="2.45" data-track-index="4">
+        <div id="payoff-line">Split spend by team, project, or agent — top 10, ranked.</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---- HOOK: enters 0.00–0.30, holds static to 2.10 --------------------- */
+      tl.from(".pill", { y: 24, opacity: 0, duration: 0.30, ease: "power2.out" }, 0.05);
+      tl.from("#hook h1", { y: 36, opacity: 0, duration: 0.30, ease: "power3.out" }, 0.10);
+
+      /* ---- 2.10–2.45: hook fades out, surface fades in ---------------------- */
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 2.10);
+      tl.fromTo("#surface", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: "power2.out" }, 2.10);
+
+      /* ---- 2.45–3.25: static hold on the Agents leaderboard ----------------- */
+
+      /* ---- 3.25–3.75: cursor moves to Select trigger and clicks; popover opens */
+      tl.set("#cursor", { x: 310, y: 150 }, 3.05);
+      tl.fromTo("#cursor", { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "power1.out" }, 3.05);
+      tl.to("#cursor", { x: 186, y: 8, duration: 0.55, ease: "power2.out" }, 3.20);
+      /* click press at 3.55 */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.06, ease: "power1.in" }, 3.55);
+      tl.to("#cursor svg", { scale: 1, duration: 0.10, ease: "power1.out" }, 3.61);
+      /* popover opens: 150ms fade + 2px rise */
+      tl.fromTo("#popover", { opacity: 0, y: 2 }, { opacity: 1, y: 0, duration: 0.15, ease: "power2.out" }, 3.58);
+
+      /* ---- 3.75–4.45: popover holds; cursor drops to hover-highlight Teams -- */
+      tl.to("#cursor", { x: 118, y: 172, duration: 0.45, ease: "power2.out" }, 3.85);
+      tl.to("#teams-hl", { opacity: 1, duration: 0.18, ease: "power1.out" }, 4.20);
+
+      /* ---- 4.45–4.75: cursor clicks Teams; popover closes; trigger → "Teams" */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.06, ease: "power1.in" }, 4.45);
+      tl.to("#cursor svg", { scale: 1, duration: 0.10, ease: "power1.out" }, 4.51);
+      /* move check from Agents to Teams */
+      tl.to("#check-agents", { opacity: 0, duration: 0.10, ease: "none" }, 4.48);
+      tl.to("#check-teams", { opacity: 1, duration: 0.10, ease: "none" }, 4.48);
+      /* popover closes */
+      tl.to("#popover", { opacity: 0, y: 2, duration: 0.16, ease: "power2.in" }, 4.52);
+      /* trigger value crossfades Agents → Teams */
+      tl.to("#st-agents", { opacity: 0, duration: 0.16, ease: "power2.out" }, 4.56);
+      tl.to("#st-teams", { opacity: 1, duration: 0.16, ease: "power2.out" }, 4.56);
+      /* cursor fades out after the click */
+      tl.to("#cursor", { opacity: 0, duration: 0.18, ease: "power1.in" }, 4.62);
+
+      /* ---- 4.75–5.55: card re-ranks (crossfades + bar-width tweens) --------- */
+      /* description crossfade */
+      tl.to("#desc-agents", { opacity: 0, duration: 0.28, ease: "power2.out" }, 4.78);
+      tl.to("#desc-teams", { opacity: 1, duration: 0.28, ease: "power2.out" }, 4.78);
+      /* per-row name + value crossfades + bar-width tweens, staggered ~40ms top→down */
+      const teamBars = { 1: "100%", 2: "68%", 3: "52%", 4: "39%", 5: "27%", 6: "18%" };
+      [1, 2, 3, 4, 5, 6].forEach((r, i) => {
+        const at = 4.80 + i * 0.04;
+        tl.to("#nm-a-" + r, { opacity: 0, duration: 0.26, ease: "power2.out" }, at);
+        tl.to("#nm-t-" + r, { opacity: 1, duration: 0.26, ease: "power2.out" }, at);
+        tl.to("#val-a-" + r, { opacity: 0, duration: 0.26, ease: "power2.out" }, at);
+        tl.to("#val-t-" + r, { opacity: 1, duration: 0.26, ease: "power2.out" }, at);
+        tl.to("#bar-" + r, { width: teamBars[r], duration: 0.30, ease: "power2.out" }, at);
+      });
+
+      /* ---- 5.55–6.55: re-ranked Teams leaderboard holds completely still ---- */
+
+      /* ---- 6.55–6.95: payoff lower-third enters; still 6.95 → 9.00 ---------- */
+      tl.fromTo("#payoff-line", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 6.55);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

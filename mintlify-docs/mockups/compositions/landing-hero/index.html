@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — landing hero (chat workspace)</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/chat.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      /* Full-bleed hero: the app fills the whole canvas edge-to-edge. */
+      #root .clip { position: absolute; inset: 0; background: var(--surface); }
+
+      /* ============ layout: history rail | chat column | files panel ============ */
+      #root .hero { display: flex; width: 100%; height: 100%; background: var(--surface); font-family: var(--font-sans); color: var(--tx-hi); }
+
+      /* shared idioms (ported from the website mockup, translated to docs tokens) */
+      #root .dot { width: 8px; height: 8px; flex: none; background: var(--accent-soft); }
+      #root .mono-label { font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); }
+
+      /* ---------- app navigation ---------- */
+      #root .appnav { width: 262px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--hair); background: var(--surface); }
+      #root .appnav .wordmark { display: flex; align-items: center; gap: 11px; padding: 22px 22px 10px; font-size: 21px; letter-spacing: -0.01em; color: var(--tx-hi); }
+      #root .appnav .wm-dot { width: 9px; height: 9px; flex: none; background: var(--accent); }
+      #root .appnav .nav-group { padding: 20px 22px 7px; font-family: var(--font-mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--tx-faint); }
+      #root .appnav .nav-item { display: flex; align-items: center; gap: 13px; padding: 10px 22px; font-size: 17px; color: var(--tx-mid); border-left: 3px solid transparent; }
+      #root .appnav .nav-item svg { width: 19px; height: 19px; flex: none; stroke-width: 1.5; color: var(--tx-lo); }
+      #root .appnav .nav-item.active { color: var(--tx-hi); background: var(--surface-2); border-left-color: var(--tx-hi); }
+      #root .appnav .nav-item.active svg { color: var(--tx-hi); }
+
+      /* ---------- history rail ---------- */
+      #root .rail { width: 314px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--hair); background: var(--bg); }
+      #root .rail-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hair); padding: 20px 22px; }
+      #root .rail-head .agent { display: flex; align-items: center; gap: 11px; font-size: 19px; color: var(--tx-hi); }
+      #root .rail-tools { padding: 17px 17px 0; }
+      #root .rail-new { display: flex; align-items: center; justify-content: center; gap: 10px; background: var(--ink); color: var(--surface); padding: 14px 16px; font-family: var(--font-mono); font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; }
+      #root .rail-new svg { width: 19px; height: 19px; stroke-width: 1.6; }
+      #root .rail-search { margin-top: 17px; display: flex; align-items: center; gap: 11px; border: 1px solid var(--hair); background: var(--surface); padding: 12px 14px; font-size: 17px; color: var(--tx-faint); }
+      #root .rail-search svg { width: 19px; height: 19px; stroke-width: 1.4; }
+      #root .rail-label { padding: 22px 22px 11px; }
+      #root .rail-list { flex: 1; overflow: hidden; }
+      #root .rail-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 22px; border-left: 3px solid transparent; }
+      #root .rail-row.active { border-left-color: var(--tx-hi); background: var(--surface-2); }
+      #root .rail-row svg { width: 19px; height: 19px; flex: none; margin-top: 4px; stroke-width: 1.3; color: var(--tx-faint); }
+      #root .rail-row .t { font-size: 17.5px; line-height: 1.35; color: var(--tx-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #root .rail-row.active .t { color: var(--tx-hi); }
+      #root .rail-row .m { margin-top: 3px; font-family: var(--font-mono); font-size: 14px; color: var(--tx-faint); }
+      #root .rail-foot { border-top: 1px solid var(--hair); padding: 17px 22px; }
+
+      /* ---------- chat column ---------- */
+      #root .chat { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--surface); }
+      #root .chat-head { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--hair); padding: 19px 34px; }
+      #root .chat-head .hl { display: flex; align-items: center; gap: 17px; min-width: 0; }
+      #root .chat-head .name { font-size: 20px; color: var(--tx-hi); white-space: nowrap; }
+      #root .head-chip { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--hair); padding: 5px 11px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-lo); white-space: nowrap; }
+      #root .head-chip svg { width: 17px; height: 17px; stroke-width: 1.4; }
+      #root .chat-head .share { display: inline-flex; align-items: center; gap: 9px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-lo); }
+      #root .chat-head .share svg { width: 19px; height: 19px; stroke-width: 1.4; }
+
+      #root .chat-scroll { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; padding: 34px 34px 22px; }
+      #root .thread { width: 100%; max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+      #root .msg-user { align-self: flex-end; max-width: 82%; background: var(--surface-2); padding: 14px 22px; font-size: 19px; line-height: 1.55; color: var(--tx-hi); }
+
+      #root .tool-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 11px; border: 1px solid var(--hair); padding: 6px 14px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-lo); }
+      #root .tool-chip svg { width: 17px; height: 17px; stroke-width: 1.4; }
+
+      #root .msg-agent { font-size: 19px; line-height: 1.7; color: var(--tx-mid); }
+      #root .msg-agent .code { font-family: var(--font-mono); font-size: 17.5px; color: var(--tx-hi); }
+      #root .cite { display: inline-flex; align-items: baseline; gap: 8px; margin: 0 4px; border: 1px solid var(--hair); background: var(--surface-2); padding: 1px 11px 2px; font-family: var(--font-mono); font-size: 15px; color: var(--tx-hi); white-space: nowrap; vertical-align: baseline; }
+      #root .cite .dot { width: 7px; height: 7px; transform: translateY(-1px); align-self: center; }
+      #root .cite .loc { color: var(--tx-lo); }
+      #root .sources { margin-top: 17px; display: flex; align-items: center; gap: 11px; font-family: var(--font-mono); font-size: 16px; color: var(--tx-lo); }
+      #root .sources svg { width: 19px; height: 19px; stroke-width: 1.4; }
+      #root .sources svg.chev { width: 16px; height: 16px; stroke-width: 1.5; }
+
+      #root .approval { border: 1px solid var(--hair); background: var(--surface-2); padding: 17px 22px; }
+      #root .approval .q { display: flex; align-items: center; gap: 11px; font-size: 17.5px; color: var(--tx-hi); }
+      #root .approval .q svg { width: 19px; height: 19px; stroke-width: 1.4; color: var(--tx-mid); }
+      #root .approval .a { margin-top: 11px; display: flex; align-items: center; gap: 11px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-lo); }
+
+      #root .artifact { display: flex; align-items: center; gap: 17px; border: 1px solid var(--hair); padding: 14px 22px; }
+      #root .artifact svg { width: 22px; height: 22px; flex: none; stroke-width: 1.4; color: var(--tx-lo); }
+      #root .artifact .n { font-size: 17.5px; color: var(--tx-hi); }
+      #root .artifact .share { margin-left: auto; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-lo); }
+
+      /* composer */
+      #root .composer-zone { padding: 0 34px 34px; }
+      #root .composer-col { max-width: 880px; margin: 0 auto; }
+      #root .suggests { display: flex; gap: 11px; margin-bottom: 14px; }
+      #root .suggest { border: 1px solid var(--hair); padding: 6px 14px; font-size: 16px; color: var(--tx-lo); }
+      #root .composer { display: flex; align-items: center; gap: 17px; border: 1px solid var(--hair); background: var(--surface); padding: 14px 17px; }
+      #root .composer svg { width: 22px; height: 22px; flex: none; stroke-width: 1.4; color: var(--tx-lo); }
+      #root .composer .ph { flex: 1; font-size: 18px; color: var(--tx-faint); }
+      #root .composer .send { width: 45px; height: 45px; flex: none; display: grid; place-items: center; background: var(--chip); }
+      #root .composer .send svg { width: 22px; height: 22px; stroke-width: 1.8; color: var(--ink); }
+
+      /* ---------- session files panel ---------- */
+      #root .files { width: 372px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--hair); background: var(--bg); }
+      #root .files-head { border-bottom: 1px solid var(--hair); padding: 20px 22px; }
+      #root .files-head .t { font-size: 18.5px; color: var(--tx-hi); }
+      #root .files-head .m { margin-top: 3px; }
+      #root .files-list { flex: 1; min-height: 0; }
+      #root .file-row { display: flex; align-items: flex-start; gap: 17px; border-bottom: 1px solid var(--hair); padding: 17px 22px; }
+      #root .file-row.fresh { background: var(--chip-soft); }
+      #root .file-row svg { width: 22px; height: 22px; flex: none; margin-top: 3px; stroke-width: 1.3; color: var(--tx-lo); }
+      #root .file-row .n { display: flex; align-items: center; gap: 9px; font-size: 17px; color: var(--tx-hi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #root .file-row .m { margin-top: 3px; font-family: var(--font-mono); font-size: 14px; color: var(--tx-faint); }
+      #root .files-upload { margin: 22px; display: flex; flex-direction: column; align-items: center; gap: 9px; border: 1px dashed var(--hair); padding: 34px 22px; text-align: center; }
+      #root .files-upload svg { width: 28px; height: 28px; stroke-width: 1.3; color: var(--tx-lo); }
+      #root .files-upload .t { font-size: 16px; color: var(--tx-lo); }
+      #root .files-foot { border-top: 1px solid var(--hair); padding: 17px 22px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="landing-hero"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="hero">
+          <!-- ============ app navigation ============ -->
+          <aside class="appnav">
+            <div class="wordmark"><span class="wm-dot"></span>IMP</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="nav-group">Workspace</div>
+            <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+            <div class="nav-group">Build</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Knowledge</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Prompts</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 19.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>Skills</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>Routines</div>
+            <div class="nav-group">Administration</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 5V3H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3"/><path d="M4 7v11a2 2 0 0 0 2 2h13a1 1 0 0 0 1-1v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>Budgets</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>Analytics</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>Theme</div>
+          </aside>
+          <!-- ============ history rail ============ -->
+          <aside class="rail">
+            <div class="rail-head">
+              <span class="agent"><span class="dot"></span>Support Assistant</span>
+              <span class="mono-label">Agent</span>
+            </div>
+            <div class="rail-tools">
+              <div class="rail-new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>New chat</div>
+              <div class="rail-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>Search chats…</div>
+            </div>
+            <div class="rail-label mono-label">History</div>
+            <div class="rail-list">
+              <div class="rail-row active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Error 0x4F on the AC-300</span><br /><span class="m">4 min ago</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Warranty terms for the X200</span><br /><span class="m">Yesterday</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Onboarding: API access</span><br /><span class="m">Yesterday</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Q3 release notes summary</span><br /><span class="m">Wed</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Calibration procedure AC-300</span><br /><span class="m">Mon</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Firmware 2.4 upgrade path</span><br /><span class="m">Mon</span></span>
+              </div>
+              <div class="rail-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>
+                <span><span class="t">Spare part lookup: relay K4</span><br /><span class="m">Last week</span></span>
+              </div>
+            </div>
+            <div class="rail-foot mono-label">View all chats</div>
+          </aside>
+
+          <!-- ============ chat column ============ -->
+          <section class="chat">
+            <header class="chat-head">
+              <span class="hl">
+                <span class="name">Support Assistant · Technical knowledge agent</span>
+                <span class="head-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>4 tools</span>
+                <span class="head-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></svg>7 knowledge bases</span>
+              </span>
+              <span class="share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg>Share</span>
+            </header>
+
+            <div class="chat-scroll">
+              <div class="thread">
+                <!-- turn 1 — user -->
+                <div class="msg-user">We're seeing error 0x4F on an AC-300 controller — what causes it, and how do we clear it?</div>
+
+                <!-- tool call -->
+                <div class="tool-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tool: search knowledge base · 0.8 s</div>
+
+                <!-- turn 1 — assistant -->
+                <div class="msg-agent">
+                  <span class="code">0x4F</span> on the AC-300 signals a supply-voltage fault on the controller board. Check
+                  the 24&nbsp;V rail and fuse F2 first
+                  <span class="cite"><span class="dot"></span>AC-300_manual.pdf<span class="loc">· p. 143</span></span>,
+                  then re-seat the sensor harness on connector X3 before clearing the code
+                  <span class="cite"><span class="dot"></span>wiring_diagram.dwg<span class="loc">· sheet 2</span></span>.
+                  Clearance requires a documented visual inspection
+                  <span class="cite"><span class="dot"></span>service_bulletin_04-26.pdf<span class="loc">· §2.1</span></span>.
+                  <div class="sources">
+                    <span class="dot"></span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                    Sources used: 3
+                    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                  </div>
+                </div>
+
+                <!-- turn 2 — user -->
+                <div class="msg-user">Generate an inspection report from this as a PDF.</div>
+
+                <!-- tool approval — resolved -->
+                <div class="approval">
+                  <div class="q"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>Create a file in the sandbox?</div>
+                  <div class="a"><span class="dot"></span>Approved — inspection_report.pdf created</div>
+                </div>
+
+                <!-- artifact -->
+                <div class="artifact">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                  <span class="n">inspection_report.pdf</span>
+                  <span class="share">Share as link</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- composer -->
+            <div class="composer-zone">
+              <div class="composer-col">
+                <div class="suggests">
+                  <span class="suggest">What does fuse F2 protect?</span>
+                  <span class="suggest">Show the 0x4F reset sequence</span>
+                  <span class="suggest">Email this to the service team</span>
+                </div>
+                <div class="composer">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  <span class="ph">Ask a question…</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>
+                  <span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ session files panel ============ -->
+          <aside class="files">
+            <div class="files-head">
+              <div class="t">Session files</div>
+              <div class="m mono-label">Sandbox · 4 files</div>
+            </div>
+            <div class="files-list">
+              <div class="file-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                <span><span class="n">AC-300_manual.pdf</span><br /><span class="m">412 pages · indexed</span></span>
+              </div>
+              <div class="file-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m12.99 6.74 1.93 3.44"/><path d="M19.136 12a10 10 0 0 1-14.271 0"/><path d="m21 21-2.16-3.84"/><path d="m3 21 8.02-14.26"/><circle cx="12" cy="5" r="2"/></svg>
+                <span><span class="n">wiring_diagram.dwg</span><br /><span class="m">Vision · read</span></span>
+              </div>
+              <div class="file-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>
+                <span><span class="n">parameters.xlsx</span><br /><span class="m">3 sheets</span></span>
+              </div>
+              <div class="file-row fresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                <span><span class="n"><span class="dot"></span>inspection_report.pdf</span><br /><span class="m">just generated</span></span>
+              </div>
+            </div>
+            <div class="files-upload">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13v8"/><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="m8 17 4-4 4 4"/></svg>
+              <span class="t">Drop files here to upload</span>
+            </div>
+            <div class="files-foot mono-label">Publish artifact</div>
+          </aside>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["landing-hero"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

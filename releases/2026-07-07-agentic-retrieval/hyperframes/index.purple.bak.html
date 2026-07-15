@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agentic retrieval — wizard open (marquee)</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 22px; font-size: 104px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+      #hook .sub { font-size: 36px; color: #525252; font-weight: 500; }
+
+      /* ----------------------------- app surface ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #app-card {
+        position: relative; width: 1560px; height: 840px;
+        background: #fdfdfd; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+      }
+      #window-bar {
+        height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 26px;
+        border-bottom: 1px solid #e7e7ee; background: #f7f8fa;
+      }
+      #window-bar .dot { width: 16px; height: 16px; border-radius: 50%; }
+      #app-main { padding: 44px 56px 0; }
+
+      .breadcrumb { font-size: 22px; color: #525252; font-weight: 500; }
+      .breadcrumb .sep { color: #a3a3a3; }
+      #agent-name { margin-top: 14px; font-size: 40px; font-weight: 700; letter-spacing: -0.03em; }
+      #section-title { margin-top: 40px; font-size: 27px; font-weight: 600; }
+
+      #tool-card {
+        margin-top: 22px; width: 880px;
+        border: 1px solid #e7e7ee; border-radius: 12px; background: #fff;
+        padding: 30px 32px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.06);
+      }
+      #tool-card-head { display: flex; align-items: center; justify-content: space-between; }
+      #tool-card-head .title { font-size: 27px; font-weight: 600; }
+      .switch { width: 62px; height: 34px; border-radius: 999px; background: #7033ff; position: relative; flex: none; }
+      .switch::after {
+        content: ""; position: absolute; top: 4px; right: 4px;
+        width: 26px; height: 26px; border-radius: 50%; background: #fff;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+      }
+      #tool-desc { margin-top: 8px; font-size: 21px; color: #525252; max-width: 700px; }
+      #digest-block { margin-top: 24px; border-top: 1px solid #e7e7ee; padding-top: 22px; }
+      #digest { font-size: 21px; color: #525252; }
+      #edit-btns { margin-top: 18px; display: flex; gap: 14px; }
+      .btn-outline {
+        display: inline-flex; align-items: center; height: 50px; padding: 0 22px;
+        border: 1px solid #e7e7ee; border-radius: 9px; background: #fff;
+        font-size: 20px; font-weight: 500; color: #1a1a1a;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+
+      /* ------------------------------ wizard sheet ----------------------------- */
+      #sheet {
+        position: absolute; top: 0; right: 0; width: 680px; height: 100%;
+        background: #fcfcfc; border-left: 1px solid #e7e7ee;
+        box-shadow: -24px 0 60px -24px rgba(0, 0, 0, 0.25);
+        padding: 36px 38px 30px; display: flex; flex-direction: column;
+        z-index: 8;
+      }
+      #sheet-title { font-size: 30px; font-weight: 600; }
+      #sheet-desc { margin-top: 8px; font-size: 20px; color: #525252; line-height: 1.4; }
+      #step-pills { display: flex; gap: 7px; margin-top: 18px; padding-bottom: 22px; border-bottom: 1px solid #e7e7ee; }
+      .step-pill {
+        padding: 7px 15px; border-radius: 999px; font-size: 17.5px; font-weight: 500;
+        background: #f0f0f3; color: #8a8a93; letter-spacing: -0.01em; white-space: nowrap;
+      }
+      .step-pill.done { color: #1a1a1a; }
+      .step-pill.active { background: #7033ff; color: #fff; }
+      #sheet-body { flex: 1; padding-top: 24px; }
+      .intro { font-size: 19.5px; color: #525252; line-height: 1.45; }
+      #default-note {
+        margin-top: 16px; padding: 14px 18px; border-radius: 9px;
+        background: #eef3ff; color: #1e69dc; font-size: 18px; line-height: 1.45;
+      }
+      #rule-card { margin-top: 20px; border: 1px solid #e7e7ee; border-radius: 10px; background: #fff; padding: 22px 24px; }
+      .field-label { font-size: 17px; font-weight: 600; margin-bottom: 7px; }
+      .field-box {
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        padding: 11px 14px; font-size: 19px;
+      }
+      .field-box.muted { color: #525252; font-size: 18px; }
+      .chip-row { display: flex; gap: 9px; flex-wrap: wrap; }
+      .chip {
+        display: inline-flex; align-items: center; padding: 7px 15px; border-radius: 999px;
+        background: #edf1f5; font-size: 17.5px; font-weight: 500; color: #1a1a1a;
+      }
+      .mt18 { margin-top: 18px; }
+      #sheet-footer {
+        border-top: 1px solid #e7e7ee; padding-top: 20px;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .btn-ghost { font-size: 20px; font-weight: 500; color: #8a8a93; display: inline-flex; align-items: center; gap: 8px; }
+      .btn-primary {
+        display: inline-flex; align-items: center; gap: 10px; height: 54px; padding: 0 26px;
+        border-radius: 9px; background: #7033ff; color: #fff; font-size: 21px; font-weight: 600;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16);
+      }
+      svg.ic { width: 1em; height: 1em; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+      /* ------------------------------ cursor ---------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+      #click-ripple {
+        position: absolute; left: -26px; top: -22px; width: 72px; height: 72px;
+        border-radius: 50%; background: rgba(112, 51, 255, 0.25); transform: scale(0);
+      }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; display: flex; align-items: center; gap: 18px;
+        padding: 26px 44px; background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 34px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.8"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.8" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Revamped</span>
+          <h1>Agentic Retrieval, <em>reconfigured</em></h1>
+          <div class="sub">Retrieval setup in plain language.</div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="2.0" data-duration="7.8" data-track-index="3" data-layout-allow-occlusion>
+        <div id="app-card">
+          <div id="window-bar">
+            <span class="dot" style="background: #f26b60"></span>
+            <span class="dot" style="background: #f5bf4f"></span>
+            <span class="dot" style="background: #5fc454"></span>
+          </div>
+          <div id="app-main">
+            <div class="breadcrumb">Agents <span class="sep">/</span> Edit</div>
+            <div id="agent-name">Support Assistant</div>
+            <div id="section-title">Knowledge &amp; memory</div>
+
+            <div id="tool-card">
+              <div id="tool-card-head">
+                <span class="title">Agentic retrieval</span>
+                <span class="switch"></span>
+              </div>
+              <div id="tool-desc">A tool loop that searches knowledge contexts intelligently when needed.</div>
+              <div id="digest-block">
+                <div id="digest">4 knowledge bases · 3 routing rules · memory on · reranker: cohere/rerank-v3.5</div>
+                <div id="edit-btns">
+                  <span class="btn-outline">Knowledge bases</span>
+                  <span class="btn-outline" id="btn-routing">Routing</span>
+                  <span class="btn-outline">Vocabulary</span>
+                  <span class="btn-outline">Behavior</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- wizard sheet (slides in on click) -->
+          <div id="sheet">
+            <div id="sheet-title">Configure knowledge search</div>
+            <div id="sheet-desc">Teach the assistant which sources to check first for different kinds of questions.</div>
+            <div id="step-pills">
+              <span class="step-pill done">Sources</span>
+              <span class="step-pill active">Routing</span>
+              <span class="step-pill">Vocabulary</span>
+              <span class="step-pill">Memory</span>
+              <span class="step-pill">Behavior</span>
+              <span class="step-pill">Review</span>
+            </div>
+            <div id="sheet-body">
+              <div class="intro">Routing rules describe kinds of questions in plain language and point them at the right sources.</div>
+              <div id="default-note">No rules means every enabled knowledge base is searched for every question.</div>
+              <div id="rule-card">
+                <div class="field-label">Technical questions</div>
+                <div class="field-box muted">Questions about products, error codes, installation or specifications.</div>
+                <div class="field-label mt18">Search these first</div>
+                <div class="chip-row">
+                  <span class="chip">Product manuals</span>
+                  <span class="chip">Regulations</span>
+                </div>
+                <div class="field-label mt18">Also check when the first search looks weak</div>
+                <div class="chip-row">
+                  <span class="chip">Support tickets</span>
+                </div>
+              </div>
+            </div>
+            <div id="sheet-footer">
+              <span class="btn-ghost">
+                <svg class="ic" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+                Back
+              </span>
+              <span class="btn-primary">
+                Continue
+                <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              </span>
+            </div>
+          </div>
+
+          <div id="cursor">
+            <div id="click-ripple"></div>
+            <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+              <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2.6" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">Six steps. Plain language.</span>
+          <span class="b">No JSON.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.95);
+
+      /* editor establishes; sheet starts off-canvas */
+      tl.set("#sheet", { x: 720 }, 2.0);
+      tl.from("#app-card", { y: 30, opacity: 0, duration: 0.5, ease: "power2.out" }, 2.05);
+
+      /* cursor glides to the Routing button */
+      tl.set("#cursor", { x: 900, y: 700 }, 3.1);
+      tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power1.out" }, 3.2);
+      tl.to("#cursor", { x: 351, y: 476, duration: 0.75, ease: "power2.inOut" }, 3.3);
+
+      /* hover + click */
+      tl.fromTo("#btn-routing", { backgroundColor: "#ffffff" }, { backgroundColor: "#f0f0f3", duration: 0.15 }, 4.0);
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.09, ease: "power1.in" }, 4.15);
+      tl.to("#cursor svg", { scale: 1, duration: 0.12, ease: "power1.out" }, 4.24);
+      tl.fromTo("#click-ripple", { scale: 0, opacity: 0.8 }, { scale: 1.5, opacity: 0, duration: 0.4, ease: "power2.out" }, 4.16);
+
+      /* sheet slides in; cursor exits */
+      tl.to("#sheet", { x: 0, duration: 0.6, ease: "power3.out" }, 4.4);
+      tl.to("#cursor", { opacity: 0, duration: 0.25 }, 4.6);
+
+      /* breath: 5.0 → 7.25 the sheet just sits (viewer reads the routing step) */
+
+      /* payoff */
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 7.25);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 7.35);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

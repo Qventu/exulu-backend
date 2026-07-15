@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — evals results</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* ── page-level layout ── */
+      #root .page-shell { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+      #root .page-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 28px 16px; border-bottom: 1px solid var(--hair); }
+      #root .page-header-left { display: flex; flex-direction: column; gap: 4px; }
+      #root .page-header-breadcrumb { font-size: 12px; color: var(--tx-lo); }
+      #root .page-header-title { font-size: 22px; font-weight: 600; color: var(--tx-hi); }
+      #root .page-header-desc { font-size: 13px; color: var(--tx-mid); max-width: 560px; }
+      #root .page-header-actions { display: flex; align-items: center; gap: 8px; }
+
+      /* ── workers warning (shown because workers are off in this mockup) — not shown to keep focus on matrix ── */
+
+      /* ── tabs strip ── */
+      #root .tabs-list { display: flex; align-items: center; gap: 0; border-bottom: 1px solid var(--hair); padding: 0 28px; }
+      #root .tab { display: flex; align-items: center; gap: 6px; padding: 10px 14px; font-size: 13px; color: var(--tx-mid); cursor: default; border-bottom: 2px solid transparent; }
+      #root .tab.active { color: var(--tx-hi); font-weight: 500; border-bottom-color: var(--accent); }
+      #root .tab-badge { background: var(--surface-2); color: var(--tx-mid); font-size: 11px; padding: 1px 6px; font-family: var(--font-mono); }
+
+      /* ── results tab body ── */
+      #root .results-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; padding: 20px 28px; gap: 12px; }
+
+      /* ── queue chip ── */
+      #root .queue-chip-row { display: flex; justify-content: flex-end; }
+      #root .queue-chip { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--tx-mid); padding: 4px 10px; border: 1px solid var(--hair); background: var(--surface); cursor: default; }
+      #root .queue-chip .label { font-weight: 600; color: var(--tx-hi); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .queue-chip .active { color: var(--tx-hi); }
+      #root .queue-chip .failed { color: var(--destructive); }
+
+      /* ── results matrix ── */
+      #root .matrix { display: grid; border: 1px solid var(--hair); overflow: hidden; background: var(--bg); }
+      /* grid: sticky case col (260px) + 3 run cols (equal) */
+      #root .matrix { grid-template-columns: 260px repeat(3, 1fr); }
+
+      /* header row */
+      #root .matrix-header-case { display: flex; align-items: center; padding: 0 12px; height: 52px; border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); background: var(--surface-2); }
+      #root .matrix-header-case span { font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-lo); }
+      #root .matrix-col-header { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 52px; padding: 4px 8px; border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); background: var(--surface-2); gap: 2px; }
+      #root .matrix-col-header:last-child { border-right: none; }
+      #root .run-name { font-size: 12px; font-weight: 600; color: var(--tx-hi); }
+      #root .run-meta { font-size: 10px; color: var(--tx-lo); }
+
+      /* average row */
+      #root .matrix-avg-case { display: flex; align-items: center; padding: 0 12px; height: 52px; border-bottom: 4px solid var(--hair); border-right: 1px solid var(--hair); background: var(--surface); }
+      #root .matrix-avg-case span { font-size: 12px; font-weight: 700; color: var(--tx-hi); }
+      #root .matrix-avg-cell { display: flex; align-items: center; justify-content: center; height: 52px; border-bottom: 4px solid var(--hair); border-right: 1px solid var(--hair); background: var(--surface); }
+      #root .matrix-avg-cell:last-child { border-right: none; }
+      #root .avg-score { font-size: 15px; font-weight: 700; }
+      #root .score-pass { color: var(--success, #3a7a3a); }
+      #root .score-warn { color: var(--warning, #b46c00); }
+      #root .score-fail { color: var(--destructive, #c0392b); }
+
+      /* data rows */
+      #root .matrix-row-case { display: flex; flex-direction: column; justify-content: center; padding: 0 12px; height: 52px; border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); background: var(--bg); }
+      #root .matrix-row-case .case-name { font-size: 12px; font-weight: 500; color: var(--tx-hi); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #root .matrix-row-case .case-id { font-size: 10px; color: var(--tx-lo); font-family: var(--font-mono); }
+      #root .matrix-row-cell { display: flex; align-items: center; justify-content: center; height: 52px; border-bottom: 1px solid var(--hair); border-right: 1px solid var(--hair); }
+      #root .matrix-row-cell:last-child { border-right: none; }
+      #root .cell-score { font-size: 13px; font-weight: 600; }
+      #root .cell-waiting { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--tx-lo); }
+      #root .cell-empty { color: var(--tx-faint); font-size: 13px; background: repeating-linear-gradient(45deg, var(--surface-2) 0, var(--surface-2) 4px, var(--bg) 4px, var(--bg) 8px); width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+
+      /* run col overflow menu mock */
+      #root .col-menu { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: var(--tx-lo); }
+
+      /* ── buttons ── */
+      #root .btn-primary { background: var(--accent); color: #fff; border: none; padding: 8px 18px; font-size: 12px; font-weight: 500; cursor: default; display: flex; align-items: center; gap: 6px; }
+      #root .btn-primary svg { width: 13px; height: 13px; stroke-width: 2; }
+      #root .btn-ghost { background: transparent; color: var(--tx-hi); border: 1px solid var(--hair); padding: 8px 18px; font-size: 12px; font-weight: 400; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="evals-results"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home
+            </div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>Knowledge
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h8"/><path d="M8 12h4"/><path d="M8 18h2"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>Prompts
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>Skills
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>Routines
+            </div>
+            <div class="imp-sidebar-group">Develop</div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m9 9.5 2 2 4-4"/></svg>Evals
+            </div>
+          </aside>
+
+          <!-- main area -->
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span>
+                <span style="font-size:12px;color:var(--tx-lo)">Evals</span>
+                <span style="color:var(--tx-faint);margin:0 6px">/</span>
+                <span style="font-size:13px;font-weight:600;color:var(--tx-hi)">Customer Support Scenarios</span>
+              </span>
+              <span style="display:flex;align-items:center;gap:8px">
+                <!-- Run eval button (primary) — evals/[id]/page.tsx line 221-228 -->
+                <button class="btn-primary">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                  Run eval
+                </button>
+                <!-- overflow ⋯ — evals/[id]/page.tsx line 246-272 -->
+                <button class="btn-ghost" style="padding:8px 10px">
+                  <svg style="width:14px;height:14px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                </button>
+              </span>
+            </div>
+
+            <!-- page body -->
+            <div class="page-shell">
+              <!-- breadcrumb + description under topbar -->
+              <div style="padding:12px 28px 0;border-bottom:1px solid var(--hair)">
+                <p style="font-size:12px;color:var(--tx-mid);margin:0 0 12px">Test agents against expected behavior and track scores across runs.</p>
+
+                <!-- tabs — evals/[id]/page.tsx line 303-315 -->
+                <div class="tabs-list" style="padding:0;border-bottom:none">
+                  <div class="tab active">Results</div>
+                  <div class="tab">Test cases <span class="tab-badge">8</span></div>
+                </div>
+              </div>
+
+              <!-- results tab content -->
+              <div class="results-body">
+
+                <!-- queue chip — eval-runs.tsx line 117-122; chip.label="Queue:" chip.active="{count} active" chip.failed="{count} failed" -->
+                <div class="queue-chip-row">
+                  <div class="queue-chip">
+                    <span class="label">Queue:</span>
+                    <span class="active">3 active</span>
+                    <span>·</span>
+                    <span class="failed">1 failed</span>
+                    <span style="margin-left:4px;color:var(--tx-lo);font-size:10px">Open queue</span>
+                  </div>
+                </div>
+
+                <!--
+                  Results matrix — eval-runs-table.tsx
+                  Grid: minmax(220px,280px) + repeat(N, minmax(140px,1fr))
+                  First col sticky; Average row pinned at top; last 3 runs shown
+                  Row sources: eval-runs-table.tsx lines 248-335
+                -->
+                <div class="matrix">
+                  <!-- header row: test case label + 3 run headers -->
+                  <!-- matrix-header-case: eval-runs-table.tsx line 251-254; tMatrix("caseColumnHeader")="Test case" (en.json line 1912) -->
+                  <div class="matrix-header-case"><span>Test case</span></div>
+
+                  <!-- run col header 1: run name, date, agent (eval-runs-table.tsx lines 313-323) -->
+                  <div class="matrix-col-header">
+                    <div class="run-name">GPT-4o baseline</div>
+                    <div class="run-meta">Jun 28 · 09:14 · Support Agent v2</div>
+                    <!-- column ⋯ menu trigger — eval-run-column.tsx line 130-179 -->
+                    <div class="col-menu">
+                      <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                    </div>
+                  </div>
+
+                  <!-- run col header 2 -->
+                  <div class="matrix-col-header">
+                    <div class="run-name">Claude Sonnet 4 test</div>
+                    <div class="run-meta">Jul 1 · 14:02 · Support Agent v2</div>
+                    <div class="col-menu">
+                      <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                    </div>
+                  </div>
+
+                  <!-- run col header 3 -->
+                  <div class="matrix-col-header">
+                    <div class="run-name">Claude Sonnet 4 +RAG</div>
+                    <div class="run-meta">Jul 7 · 11:30 · Support Agent v3</div>
+                    <div class="col-menu">
+                      <svg style="width:13px;height:13px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                    </div>
+                  </div>
+
+                  <!-- average row — eval-run-column.tsx lines 183-196; tMatrix("averageRow")="Average" (en.json 1913) -->
+                  <div class="matrix-avg-case"><span>Average</span></div>
+                  <!-- avg cells: eval-run-column.tsx averageColor logic; threshold 70 -->
+                  <div class="matrix-avg-cell"><span class="avg-score score-warn">63.4</span></div>
+                  <div class="matrix-avg-cell"><span class="avg-score score-pass">74.8</span></div>
+                  <div class="matrix-avg-cell"><span class="avg-score score-pass">82.1</span></div>
+
+                  <!-- data rows — 8 test cases -->
+                  <!-- row 1 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Refund request — standard</div>
+                    <div class="case-id">tc_a1b2c3d4</div>
+                  </div>
+                  <!-- score-cell: state=completed, score colored against threshold=70 (score-cell.tsx) -->
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">77.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">81.5</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">88.0</span></div>
+
+                  <!-- row 2 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Escalation — angry user</div>
+                    <div class="case-id">tc_e5f6g7h8</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-fail">42.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-warn">55.5</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-warn">63.0</span></div>
+
+                  <!-- row 3 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Product FAQ — pricing</div>
+                    <div class="case-id">tc_i9j0k1l2</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">89.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">91.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">94.5</span></div>
+
+                  <!-- row 4 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Order status multi-turn</div>
+                    <div class="case-id">tc_m3n4o5p6</div>
+                  </div>
+                  <!-- cell-empty: striped background, state="empty" (score-cell.tsx line 80-89) — case not in run 1 -->
+                  <div class="matrix-row-cell"><div class="cell-empty">—</div></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">72.0</span></div>
+                  <!-- cell-waiting: state="waiting" (score-cell.tsx line 92-99) -->
+                  <div class="matrix-row-cell">
+                    <span class="cell-waiting">
+                      <svg style="width:11px;height:11px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                      Waiting
+                    </span>
+                  </div>
+
+                  <!-- row 5 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Return policy edge case</div>
+                    <div class="case-id">tc_q7r8s9t0</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-warn">65.5</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">70.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">78.0</span></div>
+
+                  <!-- row 6 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Tone — formal language check</div>
+                    <div class="case-id">tc_u1v2w3x4</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-fail">48.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-warn">66.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">80.5</span></div>
+
+                  <!-- row 7 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Billing dispute — credits</div>
+                    <div class="case-id">tc_y5z6a7b8</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">73.0</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">76.5</span></div>
+                  <div class="matrix-row-cell"><span class="cell-score score-pass">85.0</span></div>
+
+                  <!-- row 8 -->
+                  <div class="matrix-row-case">
+                    <div class="case-name">Out-of-hours response</div>
+                    <div class="case-id">tc_c9d0e1f2</div>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-fail">52.0</span></div>
+                  <!-- state=active: spinner + "Running" (score-cell.tsx line 93-126) -->
+                  <div class="matrix-row-cell">
+                    <span class="cell-waiting" style="color:var(--accent,#4a7c1a)">
+                      <svg style="width:11px;height:11px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                      Running
+                    </span>
+                  </div>
+                  <div class="matrix-row-cell"><span class="cell-score score-warn">68.0</span></div>
+                </div>
+
+                <!-- "New run config" secondary trigger — eval-runs.tsx lines 158-170 -->
+                <div style="display:flex;justify-content:flex-end;margin-top:4px">
+                  <button class="btn-ghost" style="font-size:11px;padding:5px 12px;display:flex;align-items:center;gap:5px">
+                    <svg style="width:12px;height:12px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    New run config
+                  </button>
+                </div>
+
+              </div><!-- /results-body -->
+            </div><!-- /page-shell -->
+          </div><!-- /imp-main -->
+        </div><!-- /imp-shell -->
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["evals-results"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

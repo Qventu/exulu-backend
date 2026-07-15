@@ -1,0 +1,86 @@
+---
+title: "Tools and skills"
+description: "Enable and configure tools per agent: parameter bindings, sub-agents, and skills toggles."
+icon: "wrench"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+## Tools vs. skills
+
+IMP distinguishes two kinds of agent capability:
+
+- **Tools** are server-side integrations — API calls, search functions, code runners, and data connectors — installed and managed by administrators. Each tool has a type, a category, and optionally a set of parameters that must be bound before the agent can use it.
+- **Skills** are reusable prompt-level capabilities: pre-written reasoning patterns, formatting rules, or multi-step response strategies. Skills are toggled on per agent and do not require parameter configuration.
+
+## The Tools & skills section
+
+In the [workbench](/building/agents/workbench), open the **Tools & skills** section. The toolbar has:
+
+- **Search** — filter by name or description ("Search tools by name or description…").
+- **Category filter** — narrow to a single category (default "All categories"). Only categories present on this deployment appear.
+- **Clear filters** (×) — resets search and category together.
+- **Expand all / Collapse all** — open or close every category accordion.
+- **Result count** — "`{n}` tool(s) found" when a filter is active, "`{n}` tool(s) available" when showing all.
+
+Tools are grouped by category in an accordion. Each tool row shows the tool name, description, and an enable toggle.
+
+## Enabling a tool
+
+Toggle the switch on a tool row to enable it for this agent. For tools with required parameters, IMP automatically opens the **Configuration** sheet the moment you enable the tool so you can fill in the bindings immediately — the tool stays enabled even if you close the sheet before configuring, but it won't work until all required parameters have values.
+
+<Note>
+A tool that has required parameters but no bindings set will not function at runtime. Check the configuration sheet for any tool the agent uses that produces unexpected errors.
+</Note>
+
+## Per-tool configuration
+
+Many tools expose one or more parameters that must be bound to a value before the agent can call them. Parameter types include plain strings, numbers, and **variable references** — a dropdown that lets you pick a named variable from the organization's Variables store instead of hard-coding a value. Using variable references keeps secrets out of the agent form and allows administrators to rotate values in one place.
+
+To configure a tool:
+
+<Steps>
+  <Step title="Enable the tool">
+    Toggle the tool on in the Tools & skills section. If the tool has parameters, the configuration sheet opens automatically.
+  </Step>
+  <Step title="Fill in each parameter">
+    For each parameter, either type a literal value or select a variable reference from the dropdown. The parameter's description tells you what the tool expects.
+  </Step>
+  <Step title="Close the sheet">
+    Close the sheet. The configuration is staged locally until you save the agent.
+  </Step>
+  <Step title="Save the agent">
+    Click **Save** in the workbench header or Save Bar.
+  </Step>
+</Steps>
+
+You can reopen the configuration sheet at any time by clicking the **Configure** button (gear icon) on an already-enabled tool row.
+
+## Sub-agents as tools
+
+When **sub-agent orchestration** is enabled on this deployment, other agents appear in the Tools & skills section under the **Agents** category. Enabling an agent-as-tool means the current agent can call the sub-agent during a conversation — for example, routing specialized questions to a domain expert agent.
+
+A toggle at the top of the Agents category controls whether the current agent's own tools and sub-agents are shown in the list ("Show this agent's tools & sub-agents"). Self-referential loops are excluded automatically.
+
+<Tip>
+Use sub-agents to decompose complex workflows: a general assistant can delegate to a coding agent, a data agent, or a support agent depending on what the user asks.
+</Tip>
+
+## Skills
+
+Below the tools accordion, the **Skills** section lists available skills. Each skill row shows the skill name and description with a toggle. Skills have no parameters — enabling one activates it for all conversations this agent handles.
+
+See [Skills](/building/skills/overview) in the Building section for how to define custom skills.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Back to workbench" icon="settings" href="/building/agents/workbench">
+    Review all nine workbench sections.
+  </Card>
+  <Card title="Access" icon="shield" href="/building/agents/access-and-safety">
+    Share the agent with users, roles, and teams.
+  </Card>
+</Columns>

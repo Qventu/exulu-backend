@@ -1,0 +1,95 @@
+---
+title: "Agents"
+description: "The agent type represents an AI agent configuration — its model, instructions, tools, skills, and access rules."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+The `agent` type is the central building block of IMP. Each agent carries its own model binding, system instructions, tool and skill lists, and access rules. See [Agents overview](/building/agents/overview) for the product-level documentation.
+
+```graphql
+type agent {
+  name: String
+  image: String
+  defaultagent: Boolean
+  category: String
+  feedback: Boolean
+  suggestions_enabled: Boolean
+  description: String
+  welcomemessage: String
+  instructions: String
+  memory: String
+  model: String
+  active: Boolean
+  tools: JSON
+  skills: JSON
+  animation_idle: String
+  animation_responding: String
+  sandbox_enabled: Boolean
+  max_tool_steps: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  providerName: String
+  modelName: String
+  streaming: Boolean
+  capabilities: AgentCapabilities
+  maxContextLength: Int
+  authenticationInformation: String
+  systemInstructions: String
+  workflows: AgentWorkflows
+  slug: String
+  budget: JSON
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `rights_mode` | `"public"` — visible to all users; `"private"` — only accessible to users, roles, or teams listed in `RBAC`. |
+| `created_by` | Numeric ID of the user who created this agent. |
+| `model` | Internal model ID string referencing a `model` record. |
+| `providerName` | Computed: the display name of the model's provider (e.g. `"Anthropic"`). Read-only; populated from the underlying `model` record. |
+| `modelName` | Computed: the human-readable model name (e.g. `"claude-sonnet-4-5"`). Read-only. |
+| `systemInstructions` | Computed: final resolved system prompt after merging `instructions` and `memory`. Read-only. |
+| `capabilities` | Computed: the content types this agent accepts, derived from the underlying model's capabilities. |
+| `budget` | JSON budget envelope attached to this agent; shape matches the LiteLLM budget object. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when the vector embeddings for this record were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  agentsPagination(
+    limit: 10
+    filters: [{ active: { eq: true } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      modelName
+      providerName
+      capabilities {
+        text
+        images
+        files
+      }
+      rights_mode
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      hasNextPage
+    }
+  }
+}
+```

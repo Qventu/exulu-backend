@@ -1,0 +1,281 @@
+---
+title: "Configuration"
+description: "Every ExuluEval constructor option: id, name, description, llm, execute, config, and queue."
+icon: "settings"
+---
+
+The `ExuluEval` constructor takes a single options object. This page documents every option, verified against the current `@exulu/backend` source.
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+const eval = new ExuluEval({
+  id,           // string — required
+  name,         // string — required
+  description,  // string — required
+  llm,          // boolean — required
+  execute,      // function — required
+  config,       // config param array
+  queue,        // Promise<ExuluQueueConfig>
+});
+```
+
+## Identity
+
+<ParamField path="id" type="string" required>
+  Unique identifier for this eval function, used for registration and deduplication.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable name shown in the evals workbench.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  What this eval measures, shown to administrators when selecting evals for an agent.
+</ParamField>
+
+## LLM flag
+
+<ParamField path="llm" type="boolean" required>
+  Whether this eval calls a language model internally (LLM-as-judge). The platform UI uses this flag to warn administrators about the cost and latency of eval runs that use an LLM. Set `true` when `execute` calls `provider.generateSync()` or any other model-calling API; set `false` for deterministic, code-only evals.
+</ParamField>
+
+## Execute function
+
+<ParamField path="execute" type="function" required>
+  The scoring function. Receives a single params object and must return a `Promise<number>` where the number is in `[0, 100]`. Scores outside that range cause `run()` to throw.
+</ParamField>
+
+```typescript
+execute: async (params: {
+  agent: ExuluAgent;
+  provider: ExuluProvider;
+  messages: UIMessage[];
+  testCase: TestCase;
+  config?: Record<string, any>;
+}) => Promise<number>
+```
+
+<ParamField path="execute.params.agent" type="ExuluAgent" required>
+  The database agent record being evaluated — the row resolved by `app.agent(id)`. Contains the agent's `id`, `name`, `description`, `instructions`, `model`, and tool configuration.
+</ParamField>
+
+<ParamField path="execute.params.provider" type="ExuluProvider" required>
+  The `ExuluProvider` instance that ran the generation. Useful when the eval itself needs to call `provider.generateSync()` for LLM-as-judge scoring.
+</ParamField>
+
+<ParamField path="execute.params.messages" type="UIMessage[]" required>
+  The full conversation as Vercel AI-SDK `UIMessage` objects, including user messages, assistant turns, and tool invocations. The last message is typically the assistant's final response.
+</ParamField>
+
+<ParamField path="execute.params.testCase" type="TestCase" required>
+  The structured test case with inputs and expected outputs.
+</ParamField>
+
+<ParamField path="execute.params.config" type="Record<string, any>">
+  Runtime configuration values passed to `run()` by the caller (or sourced from admin-set config params in the platform UI).
+</ParamField>
+
+The `TestCase` type carries these fields:
+
+```typescript
+type TestCase = {
+  id: string;
+  name: string;
+  description?: string;
+  inputs: UIMessage[];                       // Conversation inputs for the agent
+  expected_output: string;                   // Expected final response
+  expected_tools?: string[];                 // Tool names the agent should call
+  expected_knowledge_sources?: string[];     // Context IDs the agent should search
+  expected_agent_tools?: string[];           // Agent-tool names the agent should call
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+### Common scoring patterns
+
+**Exact match:**
+
+```typescript
+execute: async ({ messages, testCase }) => {
+  const response = (messages[messages.length - 1]?.content ?? "").trim();
+  return response === testCase.expected_output.trim() ? 100 : 0;
+}
+```
+
+**Keyword presence:**
+
+```typescript
+execute: async ({ messages, testCase, config }) => {
+  const response = (messages[messages.length - 1]?.content ?? "").toLowerCase();
+  const keywords: string[] = config?.keywords ?? [];
+  if (keywords.length === 0) return 100;
+  const found = keywords.filter((kw) => response.includes(kw.toLowerCase()));
+  return (found.length / keywords.length) * 100;
+}
+```
+
+**Tool usage:**
+
+```typescript
+execute: async ({ messages, testCase }) => {
+  const toolCalls = messages
+    .flatMap((m) => (m as any).toolInvocations ?? [])
+    .map((inv: any) => inv.toolName);
+  const expected = testCase.expected_tools ?? [];
+  if (expected.length === 0) return 100;
+  const matched = expected.filter((t) => toolCalls.includes(t));
+  return (matched.length / expected.length) * 100;
+}
+```
+
+**LLM-as-judge:**
+
+```typescript
+execute: async ({ provider, messages, testCase, config }) => {
+  const response = messages[messages.length - 1]?.content ?? "";
+  const judgePrompt = `
+Rate the following response on accuracy, completeness, and clarity (0-100).
+
+Expected: ${testCase.expected_output}
+Actual: ${response}
+
+Respond with ONLY a number from 0 to 100.
+  `.trim();
+
+  const text = await provider.generateSync({
+    prompt: judgePrompt,
+    languageModel: judgeLanguageModel,
+  });
+
+  const score = parseInt(String(text).trim(), 10);
+  if (isNaN(score)) return 0;
+  return Math.max(0, Math.min(100, score));
+}
+```
+
+<Warning>
+`execute` must return a number strictly in `[0, 100]`. If it returns a value outside that range, `run()` throws `"Eval function <name> must return a score between 0 and 100, got <value>"`. Clamp your score before returning when you cannot guarantee the range.
+</Warning>
+
+## Config params
+
+<ParamField path="config" type="object[]">
+  Optional array of runtime parameters. Administrators set values for these params in the platform UI when configuring an eval run. Values are passed to `execute` in the `config` argument as a `Record<string, any>`.
+</ParamField>
+
+```typescript
+type ExuluEvalConfigParam = {
+  name: string;
+  description: string;
+};
+```
+
+<ParamField path="config[].name" type="string" required>
+  Parameter name, used as the key in the `config` record passed to `execute`.
+</ParamField>
+
+<ParamField path="config[].description" type="string" required>
+  Description shown to the administrator in the platform UI.
+</ParamField>
+
+```typescript
+config: [
+  { name: "keywords", description: "Comma-separated keywords that must appear in the response." },
+  { name: "judge_agent_id", description: "Agent ID to use as the LLM judge." },
+  { name: "min_length", description: "Minimum expected character count for the response." },
+]
+```
+
+<Note>
+Unlike `ExuluTool` config params, eval config params have no `type` or `default` field in the current source — they are declared as `{ name: string; description: string }` only. The value type and default must be handled inside `execute` itself (for example, using optional chaining and a fallback).
+</Note>
+
+## Queue
+
+<ParamField path="queue" type="Promise<ExuluQueueConfig>" required>
+  Queue configuration for running evals as background jobs. In the current source, `queue` is a required field in the `ExuluEvalParams` interface — though if you pass `undefined` at runtime (in JavaScript), the constructor still assigns it and the class treats it as optional (`public queue?: Promise<ExuluQueueConfig>`). For robustness, always pass a queue config when registering production evals.
+</ParamField>
+
+```typescript
+import { ExuluQueues } from "@exulu/backend";
+
+const evalQueue = ExuluQueues.register("eval_runs", { worker: 2, queue: 10 }).use();
+
+const myEval = new ExuluEval({
+  id: "quality_check",
+  name: "Quality check",
+  description: "LLM-as-judge quality scoring.",
+  llm: true,
+  execute: async ({ provider, messages, testCase }) => {
+    // ... scoring logic
+    return score;
+  },
+  queue: evalQueue,
+});
+```
+
+<Note>
+`ExuluQueues` registration requires an Enterprise Edition license. Without a valid `EXULU_ENTERPRISE_LICENSE`, `app.create()` throws when it detects registered queues.
+</Note>
+
+## Complete example
+
+```typescript
+import { ExuluEval, ExuluQueues } from "@exulu/backend";
+
+const evalQueue = ExuluQueues.register("eval_runs", { worker: 2, queue: 10 }).use();
+
+export const responseQualityEval = new ExuluEval({
+  id: "response_quality",
+  name: "Response quality",
+  description: "Scores the agent's response for accuracy and completeness using an LLM judge.",
+  llm: true,
+
+  execute: async ({ provider, messages, testCase, config }) => {
+    const response = messages[messages.length - 1]?.content ?? "";
+
+    const judgePrompt = `
+You are an expert evaluator. Rate the agent response below on a scale of 0-100.
+
+Test case: ${testCase.name}
+Expected output: ${testCase.expected_output}
+Actual response: ${response}
+
+Criteria:
+- Accuracy (40 pts): Does the response contain the correct information?
+- Completeness (30 pts): Does it address all aspects of the expected output?
+- Clarity (30 pts): Is it well-structured and easy to understand?
+
+Respond with ONLY a number from 0 to 100.
+    `.trim();
+
+    const text = await provider.generateSync({
+      prompt: judgePrompt,
+      languageModel: resolvedJudgeModel,
+    });
+
+    const score = parseInt(String(text).trim(), 10);
+    if (isNaN(score)) return 0;
+    return Math.max(0, Math.min(100, score));
+  },
+
+  config: [
+    { name: "judge_agent_id", description: "Agent ID to use as the LLM judge." },
+  ],
+
+  queue: evalQueue,
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-eval/api-reference">
+    The run() method, score-range enforcement, and public properties.
+  </Card>
+  <Card title="Evals (UI side)" icon="chart-bar" href="/building/evals/overview">
+    Test cases, runs, and the evals workbench.
+  </Card>
+</CardGroup>

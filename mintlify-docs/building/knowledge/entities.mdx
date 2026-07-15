@@ -1,0 +1,106 @@
+---
+title: "Entities"
+description: "Extract structured entities from knowledge items to enable entity-aware retrieval."
+icon: "tag"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+## What entities add to retrieval
+
+Standard retrieval matches a user's query against chunk embeddings. Entity-aware retrieval adds a second layer: named entities extracted from each item — people, organizations, products, standards, locations — are indexed separately and can be pinned or weighted in retrieval results.
+
+When an agent searches with entity awareness, it can identify key names or codes in the user's question and surface items that mention those entities, even when the phrasing of the question does not closely match the chunk text.
+
+## The Entities tab
+
+Inside a context workspace, click the **Entities** tab. The tab has two areas:
+
+1. **Extraction model** — shows which LLM is used to extract entities from documents.
+2. **Entity types list** — the named types the extractor is configured to recognize.
+
+## Extraction model
+
+The model card shows:
+
+- **No model configured** — entity extraction is skipped. "Entity extraction is skipped until a model is set. Pick one below, or define `context.entities.model` in code."
+- **Using `{model}` · `{source}`** — the model in use and where it was set: "set here" (via the UI), "defined in code" (via the backend SDK), or "from environment" (via an environment variable).
+
+To set a model from the UI, use the model picker below the card and save. Click **Reset to default** to remove a UI-set model and fall back to the code or environment default.
+
+<Note>
+If the model is "defined in code" or "from environment", the UI picker is for override only. Resetting returns to the code-defined value.
+</Note>
+
+## Entity types
+
+Entity types tell the extractor what to look for. Each type has:
+
+- **Name** — the category label (for example, "Person", "Company", "Product number").
+- **Description** — plain-language guidance for the extractor: "What counts as this entity type?". A clear description improves extraction accuracy.
+- **Active / Inactive** — inactive types are retained in the schema but skipped during extraction runs.
+
+### Adding an entity type
+
+Click **Add type**. The **Add entity type** dialog has:
+
+- **Name** (required) — for example "Product" or "Error code".
+- **Description** — what the extractor should recognize. For example: "A specific product name or model number mentioned in the document."
+- **Active** — toggle to set the initial state.
+
+Click **Save**. The type appears in the list immediately.
+
+### Editing and deactivating types
+
+Use the ⋯ menu on any type row:
+
+- **Edit** — rename or change the description.
+- **Activate / Deactivate** — toggle without deleting.
+- **Delete** — removes the type permanently. Existing entity links that used this type are removed on the next backfill.
+
+### Suggested types
+
+When the extractor notices entity-like patterns in your content that are not yet configured as types, they appear in a **Suggested types** section at the bottom of the tab. Each suggestion has:
+
+- **Add** — promotes the suggestion to an active entity type.
+- **Dismiss** — removes it from the suggestions list.
+
+## Backfill
+
+When you add a new entity type or change an existing one, already-processed items do not automatically have their entities re-extracted. The **Backfill recommended** banner appears showing how many items were processed before the current entity types.
+
+Click **Backfill now** to re-run extraction on those items. The confirmation dialog shows the item count and warns: "Each item runs an LLM extraction, so this can be slow and costly on large sets."
+
+Click **Re-run extraction** to backfill every item in the context regardless of when it was processed.
+
+<Warning>
+Backfilling a large context can consume significant model tokens. Check the item count before confirming.
+</Warning>
+
+After backfill completes, a toast shows: "Processed `{n}` item(s)" and, if any were skipped due to a cap: "· `{n}` skipped (cap reached)".
+
+## Item entity view
+
+Every item detail panel includes an **Entities** section showing the entities extracted for that specific item.
+
+- **No entities extracted for this item yet** — with "Run extraction to find entities in this item."
+- **`{n}` entities** — listed by type and value.
+
+From the item panel you can:
+
+- **Extract entities** — run extraction on this item immediately (single-item, not bulk).
+- **Re-extract** — re-run extraction to pick up type changes.
+- **Detach all** — removes every entity link from this item. "Entities used only by this item are deleted. You can re-extract at any time." Requires confirmation.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Pipeline" icon="workflow" href="/building/knowledge/pipeline">
+    How processing and embedding connect to entity extraction.
+  </Card>
+  <Card title="Items" icon="list" href="/building/knowledge/items">
+    Manage the items entities are extracted from.
+  </Card>
+</Columns>

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — record meeting flow</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/widgets.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* — hook — */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; transform: translateY(10px); }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; transform: translateY(14px); }
+
+      /* — stage — */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; transform: translateY(16px); }
+
+      /* transcripts page */
+      #root .content { padding: 20px 28px; display: flex; flex-direction: column; gap: 16px; }
+      #root .page-desc { font-size: 13px; color: var(--tx-lo); }
+
+      /* composer card */
+      #root .composer-card { border: 1px solid var(--hair); background: var(--surface); padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+      #root .mode-toggle { display: flex; gap: 0; align-self: flex-start; border: 1px solid var(--hair); }
+      #root .mode-opt { padding: 8px 16px; font-size: 12.5px; color: var(--tx-lo); background: var(--bg); position: relative; }
+      #root .mode-opt.on { background: var(--surface-2); color: var(--tx-hi); font-weight: 500; }
+      #root .mode-hl { position: absolute; inset: 0; background: var(--surface-2); opacity: 0; }
+      #root .mode-opt .mode-txt { position: relative; }
+
+      /* two stacked composer bodies (audio ↔ meeting) */
+      #root .composer-swap { position: relative; min-height: 332px; }
+      #root .composer-state { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px; }
+      #root .composer-meeting { opacity: 0; transform: translateY(8px); }
+      #root .q-empty-wrap { position: relative; }
+      #root .q-empty { font-size: 12.5px; color: var(--tx-faint); padding: 2px 0 0; }
+      #root .q-empty-wrap .queue-row { position: absolute; left: 0; right: 0; top: 0; }
+      #root .drop-zone { border: 1px dashed var(--hair); background: var(--bg); min-height: 150px; display: grid; place-items: center; }
+      #root .drop-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--tx-lo); }
+      #root .drop-inner svg { width: 22px; height: 22px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .drop-label { font-size: 13.5px; }
+      #root .drop-hint { font-size: 12px; color: var(--tx-faint); }
+
+      #root .field { display: flex; flex-direction: column; gap: 6px; }
+      #root .field-label { font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .field-input { border: 1px solid var(--hair); background: var(--bg); padding: 8px 12px; font-size: 13.5px; color: var(--tx-hi); }
+      #root .field-input.empty { color: var(--tx-faint); }
+      #root .fields-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      #root .sel { display: flex; align-items: center; justify-content: space-between; }
+      #root .sel .arrow { color: var(--tx-faint); font-size: 11px; }
+      #root .type-wrap { position: relative; display: inline-block; }
+      #root .type-cover { position: absolute; inset: 0; background: var(--bg); transform-origin: 100% 50%; }
+      #root .options-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .options-row svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .options-summary { flex: 1; text-align: right; font-size: 12px; font-weight: 400; color: var(--tx-faint); }
+      #root .card-footer { display: flex; justify-content: flex-end; gap: 10px; }
+
+      /* queue below */
+      #root .queue-label { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); }
+      #root .queue-row { border: 1px solid var(--hair); background: var(--surface); padding: 13px 16px; display: flex; align-items: center; gap: 12px; }
+      #root .queue-row svg { width: 15px; height: 15px; stroke-width: 1.5; color: var(--tx-lo); flex: none; }
+      #root .q-title { font-size: 13.5px; font-weight: 500; color: var(--tx-hi); }
+      #root .q-meta { font-size: 12px; color: var(--tx-lo); }
+      #root .q-end { margin-left: auto; font-size: 12px; color: var(--tx-lo); display: inline-flex; align-items: center; gap: 8px; }
+      #root .q-live { width: 7px; height: 7px; background: var(--accent); }
+      #root .queue-row.row-new { opacity: 0; transform: translateY(10px); }
+      #root .queue-stack { display: flex; flex-direction: column; gap: 8px; }
+
+      /* toast */
+      #root .imp-toast { opacity: 0; transform: translateY(12px); }
+
+      /* payoff bar */
+      #root #payoff-bar { position: absolute; left: 50%; bottom: 56px; opacity: 0; background: var(--ink); color: #f4f5f2; padding: 18px 34px; font-size: 30px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; }
+      #root #payoff-bar em { font-style: normal; color: var(--chip); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="record-meeting"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.6"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.6" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Transcripts</span>
+          <h1 class="hook-headline" id="hook-headline">Send a bot to your meeting.</h1>
+        </div>
+      </div>
+
+      <div id="app" class="clip" data-start="1.9" data-duration="7.7" data-track-index="3" data-layout-allow-occlusion>
+        <div class="stage" id="stage">
+          <div id="page" data-layout-allow-overlap>
+            <div class="imp-shell">
+              <aside class="imp-sidebar">
+                <div class="imp-wordmark">IMP</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+                <div class="imp-sidebar-group">Workspace</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+                <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+              </aside>
+              <div class="imp-main">
+                <div class="imp-topbar">
+                  <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Transcripts</span>
+                  <span class="imp-btn imp-btn-ink" style="display:flex;align-items:center;gap:6px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                    New transcription
+                  </span>
+                </div>
+                <div class="imp-content" style="padding:0;display:flex;flex-direction:column;flex:1;min-height:0;">
+                  <div class="content">
+                    <div class="page-desc">Turn audio into speaker-labeled transcripts you can use in chats and projects.</div>
+
+                    <!-- composer card -->
+                    <div class="composer-card" id="composer-card">
+                      <div class="mode-toggle">
+                        <div class="mode-opt on" id="mode-audio"><span class="mode-txt">Upload audio</span></div>
+                        <div class="mode-opt" id="mode-meeting"><span class="mode-hl" id="mode-hl"></span><span class="mode-txt">Record a meeting</span></div>
+                      </div>
+
+                      <div class="composer-swap">
+                        <!-- audio state -->
+                        <div class="composer-state composer-audio" id="state-audio">
+                          <div class="drop-zone">
+                            <div class="drop-inner">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13v8"/><path d="m8 17 4-4 4 4"/><path d="M20 16.7A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.3"/></svg>
+                              <span class="drop-label">Drop an audio file or browse</span>
+                              <span class="drop-hint">mp3, wav, m4a, mp4, mpeg</span>
+                            </div>
+                          </div>
+                          <div class="field">
+                            <div class="field-label">Title</div>
+                            <div class="field-input empty">Transcript title</div>
+                          </div>
+                          <div class="options-row">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                            Options
+                            <span class="options-summary">Auto-detect language · Auto-detect speakers · No project · Private</span>
+                          </div>
+                        </div>
+
+                        <!-- meeting state -->
+                        <div class="composer-state composer-meeting" id="state-meeting">
+                          <div class="field">
+                            <div class="field-label">Meeting URL</div>
+                            <div class="field-input" id="url-input">
+                              <span class="type-wrap"><span>https://meet.google.com/kzt-qwer-abc</span><span class="type-cover" id="url-cover"></span></span>
+                            </div>
+                          </div>
+                          <div class="fields-2">
+                            <div class="field">
+                              <div class="field-label">Title</div>
+                              <div class="field-input">Weekly steering call</div>
+                            </div>
+                            <div class="field">
+                              <div class="field-label">Bot name</div>
+                              <div class="field-input empty">IMP Notetaker</div>
+                            </div>
+                          </div>
+                          <div class="fields-2">
+                            <div class="field">
+                              <div class="field-label">When to join</div>
+                              <div class="field-input sel">Join now<span class="arrow">▾</span></div>
+                            </div>
+                            <div class="field">
+                              <div class="field-label">&nbsp;</div>
+                              <div class="options-row" style="padding-top:8px;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+                                Options
+                                <span class="options-summary">Join now · Auto-detect language · No project · Private</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="card-footer">
+                            <span class="imp-btn imp-btn-ghost">Cancel</span>
+                            <span class="imp-btn imp-btn-ink" id="btn-start">Start recording</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- queue -->
+                    <div class="queue-stack" id="queue">
+                      <div class="queue-label">Processing</div>
+                      <div class="q-empty-wrap" style="min-height:66px;">
+                        <div class="q-empty" id="q-empty">Nothing processing right now.</div>
+                        <div class="queue-row row-new" id="row-meeting">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                          <span><span class="q-title">Weekly steering call</span><br /><span class="q-meta">Meeting recording</span></span>
+                          <span class="q-end"><span class="q-live"></span>In the meeting…</span>
+                        </div>
+                      </div>
+                      <div class="queue-label" style="margin-top:6px;">Needs review</div>
+                      <div class="queue-row">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>
+                        <span><span class="q-title">Q3 partner briefing</span><br /><span class="q-meta">Uploaded audio</span></span>
+                        <span class="q-end">Awaiting review (32:41)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- toast -->
+            <div class="imp-toast" id="toast">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+              Bot is joining the meeting
+            </div>
+          </div>
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.7" data-duration="1.9" data-track-index="4">
+        <div id="payoff-bar"><span>Meeting ends → transcript lands in <em>Needs review</em>.</span></div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* 0.00-0.50 hook enters; holds until 1.9 */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.90-2.35 hook exits; transcripts page rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.9);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.0);
+
+      /* 2.40-2.80 page sits still (composer open in Upload audio mode) */
+
+      /* 2.80-3.45 cursor glides to "Record a meeting" and clicks */
+      let t1 = impCursor(tl, { from: [1150, 850], to: [478, 143], at: 2.8, click: true, duration: 0.5 });
+      tl.to("#mode-hl", { opacity: 1, duration: 0.14, ease: "power1.out" }, t1 - 0.26);
+
+      /* 3.55-3.95 composer body swaps to the meeting fields; toggle state moves */
+      tl.to("#mode-audio", { backgroundColor: "#f8f6f1", color: "#6b6560", duration: 0.18, ease: "power1.out" }, 3.55);
+      tl.to("#mode-meeting .mode-txt", { color: "#241f1a", duration: 0.18, ease: "power1.out" }, 3.55);
+      tl.to("#state-audio", { opacity: 0, duration: 0.22, ease: "power1.out" }, 3.55);
+      tl.to("#state-meeting", { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, 3.65);
+
+      /* 3.95-4.55 meeting fields hold still (read labels) */
+
+      /* 4.55-5.65 meeting URL types in; focus border */
+      tl.to("#url-input", { borderColor: "#6f9a37", duration: 0.15, ease: "power1.out" }, 4.55);
+      tl.to("#url-cover", { scaleX: 0, duration: 1.0, ease: "steps(18)" }, 4.65);
+
+      /* 5.65-6.25 breath; cursor glides to "Start recording" */
+      let t2 = impCursor(tl, { to: [1488, 412], at: 5.85, click: true, show: false, duration: 0.5 });
+      tl.to("#btn-start", { backgroundColor: "#cef79e", color: "#241f1a", duration: 0.14, ease: "power1.out" }, t2 - 0.28);
+
+      /* 6.70-7.40 composer closes; queue slides up; processing row + toast appear */
+      tl.to("#cur", { opacity: 0, duration: 0.18, ease: "power1.in" }, 6.7);
+      tl.to("#composer-card", { opacity: 0, duration: 0.3, ease: "power1.inOut" }, 6.75);
+      tl.to("#queue", { y: -433, duration: 0.45, ease: "power2.inOut" }, 6.85);
+      tl.to("#q-empty", { opacity: 0, duration: 0.18, ease: "power1.out" }, 6.8);
+      tl.to("#row-meeting", { opacity: 1, y: 0, duration: 0.35, ease: "power2.out" }, 7.1);
+      tl.to("#toast", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 7.2);
+
+      /* 7.75-8.15 payoff caption bar rises */
+      tl.fromTo("#payoff-bar", { xPercent: -50, y: 110, opacity: 0 }, { xPercent: -50, y: 0, opacity: 1, duration: 0.4, ease: "power2.out", immediateRender: false }, 7.8);
+
+      /* 8.15-9.60 settled hold */
+
+      window.__timelines["record-meeting"] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,444 @@
+---
+title: "API reference"
+description: "Every public method and property of ExuluApp: lifecycle, component accessors, embeddings, and workers."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For constructor-time options, see [Configuration](/developers/core/exulu-app/configuration).
+
+## Constructor
+
+```typescript
+const app = new ExuluApp();
+```
+
+Takes no parameters. The instance does nothing until you call `create()`.
+
+## Lifecycle
+
+### create()
+
+Initializes the app: merges built-in contexts, registers default providers, tools, and evals, validates IDs, checks the queue license, and probes system dependencies. See [Introduction](/developers/core/exulu-app/introduction#what-create-does) for the full behavior list.
+
+```typescript
+create(options: {
+  contexts?: Record<string, ExuluContext>;
+  config: ExuluConfig;
+  agents?: ExuluAgent[];
+  providers?: ExuluProvider[];
+  evals?: ExuluEval[];
+  tools?: ExuluTool[];
+}): Promise<ExuluApp>
+```
+
+<ParamField path="options.config" type="ExuluConfig" required>
+  Platform configuration. See [Configuration](/developers/core/exulu-app/configuration#exuluconfig-reference).
+</ParamField>
+
+<ParamField path="options.contexts" type="Record<string, ExuluContext>">
+  Contexts to register. Built-in contexts win on key collision.
+</ParamField>
+
+<ParamField path="options.agents" type="ExuluAgent[]">
+  Code-defined agents, merged with database agents at read time.
+</ParamField>
+
+<ParamField path="options.providers" type="ExuluProvider[]">
+  Custom providers, appended after the 19 defaults.
+</ParamField>
+
+<ParamField path="options.evals" type="ExuluEval[]">
+  Custom evals. Only registered when Redis is configured.
+</ParamField>
+
+<ParamField path="options.tools" type="ExuluTool[]">
+  Custom tools, registered ahead of the built-in tools.
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluApp>">
+  The initialized instance (the same object you called `create()` on). It is also stored in an internal singleton.
+</ResponseField>
+
+```typescript
+const app = new ExuluApp();
+
+await app.create({
+  contexts: { product_docs: productDocsContext },
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+    telemetry: { enabled: false },
+  },
+  tools: [myCustomTool],
+});
+```
+
+<Warning>
+`create()` throws on invalid IDs, on registered queues without an Enterprise Edition license, and — unless `requireSystemDependencies` is `false` — on missing system dependencies.
+</Warning>
+
+### express.init()
+
+Builds and returns the Express application: registers the GraphQL and REST routes, sets up authentication middleware and logging, mounts the MCP endpoints when `config.MCP.enabled` is `true`, starts the LiteLLM proxy supervisor when `EXULU_USE_LITELLM=true`, and starts the transcription polling loop when `TRANSCRIPTION_SERVER` is set.
+
+```typescript
+express.init(): Promise<Express>
+```
+
+<ResponseField name="return" type="Promise<Express>">
+  The Express application, ready to `listen()` on a port. Calling `express.init()` again returns the same instance.
+</ResponseField>
+
+```typescript
+const server = await app.express.init();
+server.listen(Number(process.env.PORT ?? 9001), () => {
+  console.log("IMP backend listening on :9001");
+});
+```
+
+<Note>
+If the LiteLLM supervisor fails to start, `express.init()` does not throw — the app keeps booting so the admin UI stays reachable, and agent requests fail with `LITELLM_NOT_READY` until the underlying issue is fixed and the process restarted.
+</Note>
+
+### expressApp
+
+Getter for the initialized Express application.
+
+```typescript
+get expressApp(): Express
+```
+
+<ResponseField name="return" type="Express">
+  The Express application created by `express.init()`.
+</ResponseField>
+
+```typescript
+const server = app.expressApp;
+```
+
+<Warning>
+Throws if `express.init()` has not been called yet.
+</Warning>
+
+## Component accessors
+
+### tool()
+
+Returns a registered tool by ID.
+
+```typescript
+tool(id: string): ExuluTool | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The tool ID.
+</ParamField>
+
+<ResponseField name="return" type="ExuluTool | undefined">
+  The tool, or `undefined` if no tool with that ID is registered.
+</ResponseField>
+
+```typescript
+const todo = app.tool("todo_write");
+if (todo) {
+  console.log(todo.name);
+}
+```
+
+### tools()
+
+Returns all registered tools: your custom tools plus the built-ins.
+
+```typescript
+tools(): ExuluTool[]
+```
+
+<ResponseField name="return" type="ExuluTool[]">
+  All registered tools.
+</ResponseField>
+
+```typescript
+console.log(`Registered ${app.tools().length} tools`);
+```
+
+### context()
+
+Returns a registered context by ID.
+
+```typescript
+context(id: string): ExuluContext | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The context ID.
+</ParamField>
+
+<ResponseField name="return" type="ExuluContext | undefined">
+  The context, or `undefined` if not registered.
+</ResponseField>
+
+```typescript
+const docs = app.context("product_docs");
+```
+
+### contexts
+
+Getter returning all registered contexts (yours plus built-ins) as an array.
+
+```typescript
+get contexts(): ExuluContext[]
+```
+
+```typescript
+for (const context of app.contexts) {
+  console.log(`${context.id}: ${context.name}`);
+}
+```
+
+### provider()
+
+Returns a registered model provider by ID.
+
+```typescript
+provider(id: string): ExuluProvider | undefined
+```
+
+<ParamField path="id" type="string" required>
+  The provider ID.
+</ParamField>
+
+<ResponseField name="return" type="ExuluProvider | undefined">
+  The provider, or `undefined` if not registered.
+</ResponseField>
+
+### providers
+
+Getter returning all registered providers — the 19 defaults plus any you passed to `create()`.
+
+```typescript
+get providers(): ExuluProvider[]
+```
+
+```typescript
+console.log(app.providers.map((p) => p.id));
+```
+
+### agent()
+
+Resolves an agent by ID. Unlike the other accessors, this is **async**: agents can be defined in code (passed to `create()`) or created in the database through the platform UI, and this method checks both.
+
+```typescript
+agent(id: string, include?: {
+  source: {
+    code: boolean;
+    database: boolean;
+  };
+}): Promise<ExuluAgent | undefined>
+```
+
+<ParamField path="id" type="string" required>
+  The agent ID.
+</ParamField>
+
+<ParamField path="include" type="object" default="{ source: { code: true, database: true } }">
+  Which sources to check. Code-defined agents are checked first; database agents second.
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluAgent | undefined>">
+  The agent with its `RBAC` block resolved. Code-defined agents without an explicit `RBAC` get a default public one and `source: "code"`.
+</ResponseField>
+
+```typescript
+const agent = await app.agent("my_support_agent");
+```
+
+<Warning>
+When the database source is included and no agent matches in either source, this method **throws** `Agent instance not found.` rather than returning `undefined`. It only returns `undefined` when the database lookup is excluded (`include.source.database: false`) and no code-defined agent matches.
+</Warning>
+
+### agents()
+
+Returns all agents. Also **async** — database agents are fetched and their RBAC resolved; code-defined agents are prepended with default public RBAC.
+
+```typescript
+agents(include?: {
+  source: {
+    code: boolean;
+    database: boolean;
+  };
+}): Promise<ExuluAgent[]>
+```
+
+<ParamField path="include" type="object" default="{ source: { code: true, database: true } }">
+  Which sources to include.
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluAgent[]>">
+  Code-defined agents first, then database agents.
+</ResponseField>
+
+```typescript
+const agents = await app.agents();
+console.log(agents.map((a) => `${a.name} (${a.id}, ${a.source ?? "database"})`));
+```
+
+## Embeddings
+
+App-level convenience wrappers around the per-context embedding methods. They resolve the context by ID and delegate to the context's own [embeddings methods](/developers/core/exulu-context/api-reference#embeddings).
+
+### embeddings.generate.one()
+
+Loads one item from the context's items table by ID and generates (or queues) its embeddings.
+
+```typescript
+embeddings.generate.one(options: {
+  context: string;
+  item: string;
+}): Promise<{ id: string; job?: string; chunks?: number }>
+```
+
+<ParamField path="options.context" type="string" required>
+  The context ID.
+</ParamField>
+
+<ParamField path="options.item" type="string" required>
+  The item ID (UUID) within that context.
+</ParamField>
+
+<ResponseField name="id" type="string">
+  The item ID.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Job ID when the context's embedder runs on a queue.
+</ResponseField>
+
+<ResponseField name="chunks" type="number">
+  Number of chunks written when embeddings were generated inline.
+</ResponseField>
+
+```typescript
+const result = await app.embeddings.generate.one({
+  context: "product_docs",
+  item: "123e4567-e89b-12d3-a456-426614174000",
+});
+```
+
+<Warning>
+Throws if the context ID is not registered.
+</Warning>
+
+### embeddings.generate.all()
+
+Generates (or queues) embeddings for every item in a context.
+
+```typescript
+embeddings.generate.all(options: {
+  context: string;
+}): Promise<{ jobs: string[]; items: number }>
+```
+
+<ParamField path="options.context" type="string" required>
+  The context ID.
+</ParamField>
+
+<ResponseField name="jobs" type="string[]">
+  Job IDs when the embedder runs on a queue.
+</ResponseField>
+
+<ResponseField name="items" type="number">
+  Number of items processed.
+</ResponseField>
+
+```typescript
+await app.embeddings.generate.all({ context: "product_docs" });
+```
+
+<Warning>
+Without a queue configured on the context's embedder, this throws when the context holds more than 2,000 items. Configure `embedder.queue` for larger datasets.
+</Warning>
+
+## Workers
+
+### bullmq.workers.create()
+
+Starts BullMQ workers in the current process. Run this in a dedicated worker process, not inside the HTTP server.
+
+```typescript
+bullmq.workers.create(queues?: string[]): Promise<Worker[]>
+```
+
+<ParamField path="queues" type="string[]">
+  Queue names this worker should listen to. When omitted, the worker listens to **all** registered queues.
+</ParamField>
+
+<ResponseField name="return" type="Promise<Worker[]>">
+  The BullMQ `Worker` instances, one per queue.
+</ResponseField>
+
+```typescript
+// Listen to all queues
+await app.bullmq.workers.create();
+
+// Or split workloads across processes
+await app.bullmq.workers.create(["embeddings", "doc_processing"]);
+```
+
+What it does before starting the workers:
+
+1. **Checks the license** — throws without a valid `EXULU_ENTERPRISE_LICENSE` covering queues.
+2. **Enables LiteLLM client mode** — when `EXULU_USE_LITELLM=true`, the worker health-probes the server-managed proxy instead of spawning its own.
+3. **Configures worker logging** — uses `workers.logger.winston.transports`, falling back to `logger.winston.transports`, then to the built-in console transport.
+4. **Creates context source schedulers** — for every context source with a `config.schedule` cron expression and a queue, a BullMQ job scheduler is upserted with the source's `retries` (default 3) and `backoff` (default exponential, 2000 ms).
+
+<Warning>
+Throws if `create()` has not resolved yet — always `await` the `create()` promise before starting workers.
+</Warning>
+
+## Types
+
+### ExuluConfig
+
+Documented in full in [Configuration](/developers/core/exulu-app/configuration#exuluconfig-reference).
+
+### Create options
+
+```typescript
+type CreateOptions = {
+  contexts?: Record<string, ExuluContext>;
+  config: ExuluConfig;
+  agents?: ExuluAgent[];
+  providers?: ExuluProvider[];
+  evals?: ExuluEval[];
+  tools?: ExuluTool[];
+};
+```
+
+## Putting it together
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+await app.create({
+  contexts: { product_docs: productDocsContext },
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: true },
+    telemetry: { enabled: false },
+  },
+});
+
+// Server process
+const server = await app.express.init();
+server.listen(9001);
+
+// Inspect the registry
+console.log("Contexts:", app.contexts.map((c) => c.id));
+console.log("Providers:", app.providers.map((p) => p.id));
+console.log("Tools:", app.tools().map((t) => t.id));
+console.log("Agents:", (await app.agents()).map((a) => a.id));
+
+// Kick off embeddings for a context
+await app.embeddings.generate.all({ context: "product_docs" });
+```

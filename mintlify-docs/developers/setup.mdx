@@ -1,0 +1,125 @@
+---
+title: "Setup"
+description: "Install @exulu/backend, configure your project scaffold, and prepare your environment."
+icon: "package"
+---
+
+<Info>
+The fastest way to get started is to clone the public [exulu-example](https://github.com/Qventu/exulu-example) repository. It ships the recommended project layout, Docker Compose files, and start scripts, so you can skip the scaffolding steps below and go straight to configuration.
+</Info>
+
+`@exulu/backend` is published to the public npm registry. No token or `.npmrc` configuration is required. This page walks you through installing it, setting up a TypeScript project that builds with tsup, and running the optional Python environment for document processing.
+
+## Prerequisites
+
+- **Node.js 22.18.0 exactly.** The package includes a `preinstall` script that exits with an error if the version does not match. Use [nvm](https://github.com/nvm-sh/nvm) to pin it:
+
+  ```bash
+  nvm install 22.18.0
+  nvm use 22.18.0
+  ```
+
+- **TypeScript `^5.8.3`** — a peer dependency. Install it in your project:
+
+  ```bash
+  npm install --save-dev typescript@^5.8.3
+  ```
+
+## Install the package
+
+```bash
+npm install @exulu/backend
+```
+
+The `preinstall` check runs immediately. If Node.js is not exactly `22.18.0`, the install exits with:
+
+```
+❌ Wrong Node.js version. Expected v22.18.0, got v…
+```
+
+Fix the version and re-run.
+
+## What you get
+
+`@exulu/backend` ships:
+
+- **Dual CJS/ESM output** — `dist/index.mjs` (ESM) and `dist/index.js` (CommonJS-resolution entry point), with bundled TypeScript declarations at `dist/index.d.ts`.
+- **Auto-loaded `.env`** — the package prepends `import "dotenv/config"` (ESM) or `require("dotenv/config")` (CJS) to every emitted bundle chunk, so your `.env` file is loaded before any module-scope code runs. No manual dotenv call is needed in your entry files.
+- **CLI binaries** — `npx @exulu/backend setup-python` (Python environment setup) and `npx @exulu/backend exulu-start-whisper` (Whisper transcription server).
+
+## Project scaffold
+
+The recommended structure uses [tsup](https://tsup.egoist.dev/) with two entry points: one for the HTTP server and one for the background worker. This mirrors the container split in production deployments.
+
+### Install build tooling
+
+```bash
+npm install --save-dev tsup tsx
+```
+
+### tsup.config.ts
+
+```typescript
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+  format: ["esm"],
+  entry: {
+    server: "./src/server.ts",
+    worker: "./src/worker.ts",
+  },
+  dts: false,
+  skipNodeModulesBundle: true,
+  clean: true,
+});
+```
+
+### package.json scripts
+
+```json
+{
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/worker.js"
+  }
+}
+```
+
+### Recommended file layout
+
+```
+your-project/
+├── .env
+├── tsup.config.ts
+├── tsconfig.json
+└── src/
+    ├── exulu.ts      # shared app definition
+    ├── server.ts     # HTTP server entry
+    └── worker.ts     # BullMQ worker entry
+```
+
+See [Getting started](/developers/getting-started) for the contents of each file.
+
+## Python environment (document processing)
+
+If your deployment uses document knowledge processing (PDF, DOCX, and other office formats ingested into contexts), run the one-time Python setup:
+
+```bash
+npx @exulu/backend setup-python
+```
+
+This creates a virtual environment under `ee/python/.venv` and installs the required Python packages, including `docling`, `transformers`, and the LiteLLM proxy dependencies. The process takes several minutes on first run.
+
+<Note>
+Python setup is only needed for knowledge processing features. You can skip it if you do not ingest documents into contexts.
+</Note>
+
+## Next steps
+
+Once installation is complete, go to [Getting started](/developers/getting-started) to initialize `ExuluApp`, wire up the server and worker entry points, and run your first boot.
+
+For deployment, see [Self-hosting](/self-hosting/architecture).

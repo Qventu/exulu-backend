@@ -1,0 +1,2518 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "IMP REST API",
+    "version": "1.0.0",
+    "description": "REST endpoints of the IMP backend. GraphQL covers entity CRUD; REST covers agent runs, media, files, and system utilities. All requests require authentication unless the agent is public."
+  },
+  "servers": [
+    {
+      "url": "{baseUrl}",
+      "variables": {
+        "baseUrl": {
+          "default": "http://localhost:9001",
+          "description": "Base URL of your IMP backend. Self-hosted deployments typically run on port 9001."
+        }
+      }
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Organisation API key. Format: `sk_<secret>/<keyname>` — the secret portion, a literal slash, and the human-readable key name. The header `exulu-api-key` is accepted as an alias. A `Bearer ` prefix is tolerated and stripped. Keys with an agent scope are only valid for the scoped agent instance."
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "NextAuth session JWT (HS256, signed with `NEXTAUTH_SECRET`). This is the token the IMP frontend uses automatically."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Human-readable error message."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message (alternate key used on some endpoints)."
+          }
+        }
+      },
+      "UIMessage": {
+        "type": "object",
+        "description": "An AI SDK UIMessage object. Contains an `id` string, a `role` string (`user` | `assistant` | `system` | `tool`), and a `parts` array of part objects (text, tool-call, tool-result, image, etc.).",
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string", "enum": ["user", "assistant", "system", "tool"] },
+          "parts": {
+            "type": "array",
+            "items": { "type": "object" }
+          }
+        },
+        "required": ["id", "role", "parts"]
+      }
+    }
+  },
+  "security": [{ "apiKey": [] }, { "bearer": [] }],
+  "tags": [
+    { "name": "Agents", "description": "Endpoints for running, compacting, and querying agent instances." },
+    { "name": "Sessions", "description": "Endpoints for managing files attached to agent sessions." },
+    { "name": "Media", "description": "Transcription, speech synthesis, and image generation." },
+    { "name": "System", "description": "Platform health and configuration utilities." },
+    { "name": "Budgets", "description": "LiteLLM tag-budget management for users, roles, teams, projects, agents, and routines. Access requires `super_admin` or a role with `budget_management` write scope." },
+    { "name": "Skills", "description": "Skills are versioned bundles of files (markdown, scripts, assets) mounted into the agent sandbox. These endpoints manage the skill registry and individual skill files." },
+    { "name": "Uploads", "description": "Uppy-compatible S3 companion routes for single-part and multipart file uploads. Accept the standard API key. The `internal-key` header (set to `INTERNAL_SECRET`) is accepted only on `/s3/delete`, `/s3/download`, `/s3/list`, and `/s3/object` — it does **not** work on `/s3/sign` or the `/s3/multipart` routes." },
+    { "name": "Compliance", "description": "GDPR / DSGVO operator endpoints for data-subject access (export) and erasure. Both require `super_admin`." },
+    { "name": "Artifacts", "description": "Shareable artifact links — create, list, and revoke share links for files stored in S3." }
+  ],
+  "paths": {
+    "/ping": {
+      "get": {
+        "operationId": "ping",
+        "summary": "Check authentication",
+        "description": "Returns whether the request is authenticated. Does not require authentication to call — unauthenticated callers receive `{ authenticated: false }` rather than a 401. Useful for verifying credentials before a chat session.",
+        "tags": ["System"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Authentication status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authenticated": { "type": "boolean" }
+                  },
+                  "required": ["authenticated"]
+                },
+                "examples": {
+                  "authenticated": {
+                    "summary": "Authenticated",
+                    "value": { "authenticated": true }
+                  },
+                  "unauthenticated": {
+                    "summary": "Unauthenticated",
+                    "value": { "authenticated": false }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/theme": {
+      "get": {
+        "operationId": "getTheme",
+        "summary": "Retrieve theme configuration",
+        "description": "Returns the platform's active theme (light and dark colour maps) as stored in `platform_configurations`. Returns empty `light`/`dark` objects when the deployment is not licensed for custom branding or when no theme has been configured. No authentication is required.",
+        "tags": ["System"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Theme configuration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "theme": {
+                      "type": "object",
+                      "properties": {
+                        "light": { "type": "object", "additionalProperties": true },
+                        "dark": { "type": "object", "additionalProperties": true }
+                      },
+                      "required": ["light", "dark"]
+                    }
+                  },
+                  "required": ["theme"]
+                },
+                "example": {
+                  "theme": {
+                    "light": { "primary": "#6f9a37" },
+                    "dark": { "primary": "#cef79e" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "getConfig",
+        "summary": "Retrieve platform configuration",
+        "description": "Returns selected `ExuluApp` configuration options needed by the frontend: auth mode, feature entitlements, MCP status, telemetry, file-upload endpoint, worker health, LiteLLM status, and Recall integration. No authentication is required.",
+        "tags": ["System"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Platform configuration subset.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authMode": { "type": "string", "enum": ["password", "otp"] },
+                    "entitlements": { "type": "object", "additionalProperties": true },
+                    "MCP": {
+                      "type": "object",
+                      "properties": { "enabled": { "type": "boolean" } }
+                    },
+                    "telemetry": {
+                      "type": "object",
+                      "properties": { "enabled": { "type": "boolean" } }
+                    },
+                    "fileUploads": {
+                      "type": "object",
+                      "properties": { "s3endpoint": { "type": "string" } }
+                    },
+                    "workers": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": { "type": "boolean" },
+                        "redisHost": { "type": "string" },
+                        "telemetry": {
+                          "type": "object",
+                          "properties": { "enabled": { "type": "boolean" } }
+                        }
+                      }
+                    },
+                    "liteLLM": {
+                      "type": "object",
+                      "properties": { "enabled": { "type": "boolean" } }
+                    },
+                    "recall": {
+                      "type": "object",
+                      "properties": { "enabled": { "type": "boolean" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/litellm/run/{instance}": {
+      "post": {
+        "operationId": "runAgent",
+        "summary": "Run an agent",
+        "description": "Sends a message to an agent instance and returns the response. When the `stream` header is `true`, the response is an AI SDK UIMessage stream over SSE (text/event-stream); otherwise a sync JSON response is returned. The agent's `rights_mode` controls whether an API key or session JWT is required — public agents allow unauthenticated calls. An agent-scoped API key is only valid for its bound agent instance. Supply the `session` header to persist messages to a session.",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "path",
+            "required": true,
+            "description": "Agent ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "stream",
+            "in": "header",
+            "required": false,
+            "description": "Set to `true` to receive a streaming SSE response (AI SDK UIMessage stream). Omit or set to `false` for a synchronous JSON response.",
+            "schema": { "type": "string", "enum": ["true", "false"], "default": "false" }
+          },
+          {
+            "name": "session",
+            "in": "header",
+            "required": false,
+            "description": "Agent session ID. When provided, message history is loaded from and saved to the session. The caller must have write access to the session.",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "x-exulu-model-override",
+            "in": "header",
+            "required": false,
+            "description": "LiteLLM model ID to use for this request, overriding the model configured on the agent. Only accepted when the resolved model is permitted for the calling user.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "$ref": "#/components/schemas/UIMessage",
+                    "description": "The user message to send. Used when `session` is set or when sending a single message without history."
+                  },
+                  "messages": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/UIMessage" },
+                    "description": "Full conversation history. When provided without a `session` header and without a `message` field, the last element is used as the current message and the rest as prior context."
+                  },
+                  "customInstructions": {
+                    "type": "string",
+                    "description": "Additional system instructions appended to the agent's base instructions for this run only."
+                  },
+                  "disabledTools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Tool IDs to exclude from this run, even if enabled on the agent."
+                  },
+                  "disabledSkills": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Skill IDs to exclude from this run."
+                  },
+                  "approvedTools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Tool call IDs that the user has pre-approved for execution without a confirmation prompt."
+                  }
+                }
+              },
+              "examples": {
+                "streaming": {
+                  "summary": "Streaming run with session",
+                  "value": {
+                    "message": {
+                      "id": "msg_01Ab2Cd3Ef4Gh5",
+                      "role": "user",
+                      "parts": [{ "type": "text", "text": "Summarise last quarter's revenue figures." }]
+                    }
+                  }
+                },
+                "sync": {
+                  "summary": "Synchronous run without session",
+                  "value": {
+                    "message": {
+                      "id": "msg_01Ab2Cd3Ef4Gh5",
+                      "role": "user",
+                      "parts": [{ "type": "text", "text": "What is the capital of France?" }]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response. When `stream: true` the body is an AI SDK UIMessage stream (text/event-stream); each line is a server-sent event carrying a UIMessage part or finish chunk. When `stream: false` the body is a sync JSON object returned by `provider.generateSync`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "AI SDK UIMessage stream. Lines are SSE events; each event carries a serialised UIMessage part (text delta, tool-call, tool-result, finish-step, finish). The final `finish` event includes token usage in its `messageMetadata`."
+                },
+                "example": "0:{\"id\":\"msg_01Ab\",\"role\":\"assistant\",\"parts\":[]}\n2:{\"type\":\"text-delta\",\"textDelta\":\"Paris\"}\n9:{\"finishReason\":\"stop\",\"usage\":{\"inputTokens\":42,\"outputTokens\":3}}\n"
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "The assistant's final text as a JSON-encoded string."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid request parameters (missing instance, missing model on agent, bad scope, request validation error).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks read access to the agent or write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Model not permitted for the calling user or agent-scoped key used against a different agent.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Agent with the given `instance` ID not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "Context window is full and compaction is required before the next message can be sent.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "bash",
+            "label": "cURL — streaming",
+            "source": "curl -X POST https://your-imp-host/agents/litellm/run/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10 \\\n  -H \"x-api-key: sk_abc123.../my-key\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"stream: true\" \\\n  -H \"session: e7c3b8a2-0d4f-4b1e-9c72-3a6d5e8f1b20\" \\\n  -d '{\"message\":{\"id\":\"msg_01Ab\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"Hello\"}]}}'"
+          }
+        ]
+      }
+    },
+    "/agents/litellm/compact/{instance}": {
+      "post": {
+        "operationId": "compactSession",
+        "summary": "Compact a session",
+        "description": "Summarises older messages in the session into a compact checkpoint message, reducing the context window footprint. Returns a 409 if a response is currently streaming for the session. Returns a 422 if the session history is too short to benefit from compaction. The `x-exulu-model-override` header is accepted to choose the summarisation model.",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "instance",
+            "in": "path",
+            "required": true,
+            "description": "Agent ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "session",
+            "in": "header",
+            "required": true,
+            "description": "Agent session ID whose history should be compacted.",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "x-exulu-model-override",
+            "in": "header",
+            "required": false,
+            "description": "LiteLLM model ID to use for summarisation, overriding the agent's configured model.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "steer": {
+                    "type": "string",
+                    "description": "Optional freeform instruction appended to the compaction prompt to guide what the summary should emphasise."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compaction result including the checkpoint message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "Result returned by compactSession — includes the generated checkpoint message and the number of messages replaced."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing session header, missing instance, or agent has no model configured.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks access to the agent or session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Model not permitted for the calling user.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Agent or session not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "409": {
+            "description": "A response is still streaming for this session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "422": {
+            "description": "Session history is too short to compact.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/agents/suggestions/{agentId}": {
+      "post": {
+        "operationId": "getAgentSuggestions",
+        "summary": "Generate follow-up suggestions",
+        "description": "Generates up to three short follow-up prompts based on the most recent conversation exchange. Requires `suggestions_enabled` to be set on the agent; returns 400 otherwise. This call is stateless — it does not read from or write to a session. The agent's `rights_mode` controls whether authentication is required.",
+        "tags": ["Agents"],
+        "parameters": [
+          {
+            "name": "agentId",
+            "in": "path",
+            "required": true,
+            "description": "Agent ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["messages"],
+                "properties": {
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "$ref": "#/components/schemas/UIMessage" },
+                    "description": "The conversation history (at minimum the last user + assistant pair) to base suggestions on."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Array of up to three suggested follow-up strings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "suggestions": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "maxItems": 3
+                    }
+                  },
+                  "required": ["suggestions"]
+                },
+                "example": {
+                  "suggestions": [
+                    "Can you break that down by region?",
+                    "What were the main drivers of growth?",
+                    "How does this compare to last year?"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `agentId`, empty `messages` array, suggestions not enabled on the agent, or no model configured.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks read access to the agent.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Model not permitted for the calling user or agent-scoped key mismatch.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Agent not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/files": {
+      "get": {
+        "operationId": "listSessionFiles",
+        "summary": "List session files",
+        "description": "Lists all files stored in the session's S3 prefix, sorted most-recent first. Returns presigned download URLs for each file. Requires read access to the session and S3 file-upload configuration on the deployment.",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of session files.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string", "description": "Full S3 object key." },
+                          "name": { "type": "string", "description": "Filename (last path segment)." },
+                          "size": { "type": "integer", "description": "File size in bytes." },
+                          "lastModified": { "type": "string", "format": "date-time" },
+                          "contentType": { "type": "string" },
+                          "presignedUrl": { "type": "string", "description": "Temporary presigned GET URL." }
+                        },
+                        "required": ["key", "name", "size", "lastModified", "contentType", "presignedUrl"]
+                      }
+                    }
+                  },
+                  "required": ["files"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks read access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Caller does not have read access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "File uploads not configured or S3 listing failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSessionFile",
+        "summary": "Delete a session file",
+        "description": "Deletes a single file from the session's S3 prefix. The `key` query parameter must belong to the session prefix — the backend enforces a prefix check and returns 403 if it does not. Requires write access to the session.",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "description": "Full S3 object key of the file to delete (as returned by the list endpoint).",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "deleted": { "type": "boolean", "example": true } },
+                  "required": ["deleted"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid `key` query parameter.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Key does not belong to this session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/files/upload-sign": {
+      "post": {
+        "operationId": "signSessionFileUpload",
+        "summary": "Get a presigned upload URL",
+        "description": "Returns a presigned S3 PUT URL and the full S3 key for uploading a single file into the session's prefix. The caller should PUT the file bytes directly to `uploadUrl`, then call `/sessions/{sessionId}/files/sync-to-sandbox` with the returned `key`. Requires write access to the session.",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filename", "contentType"],
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "description": "Desired filename. Path separators and `..` are rejected."
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "description": "MIME type for the S3 object (e.g. `application/pdf`)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned upload URL and the resulting S3 key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "uploadUrl": { "type": "string", "description": "Presigned S3 PUT URL." },
+                    "key": { "type": "string", "description": "Full S3 object key to pass to sync-to-sandbox." }
+                  },
+                  "required": ["uploadUrl", "key"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `filename` or `contentType`, or filename failed safety validation.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/files/sync-to-sandbox": {
+      "post": {
+        "operationId": "syncSessionFileToSandbox",
+        "summary": "Sync an uploaded file into the sandbox",
+        "description": "After a successful Uppy upload, call this endpoint with the S3 key to materialise the file in the agent's sandbox filesystem so the agent can read it on its next tool call. No-op if the sandbox is not currently active. Requires write access to the session and the key must belong to the session prefix.",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["key"],
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "Full S3 object key as returned by upload-sign."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync result.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "additionalProperties": true }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `key` in request body.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Key does not belong to this session's prefix.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/sessions/{sessionId}/file/preview-pdf": {
+      "get": {
+        "operationId": "previewSessionFilePdf",
+        "summary": "Preview a file as PDF",
+        "description": "Converts an Office binary file (.docx, .xlsx, .pptx, etc.) in the session's S3 prefix to PDF via LibreOffice and returns the PDF bytes. Results are cached by S3 ETag — subsequent requests for the same file version are served from disk. The JWT may be passed as an `?auth=` query parameter (instead of the `Authorization` header) so `<iframe>` elements can load the PDF directly. Requires read access to the session and the key must belong to the session prefix.",
+        "tags": ["Sessions"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "description": "Full S3 object key of the Office file to convert.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "auth",
+            "in": "query",
+            "required": false,
+            "description": "Bearer JWT as an alternative to the `Authorization` header. Use this when loading the PDF in an `<iframe>`.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PDF bytes of the converted file.",
+            "headers": {
+              "Content-Type": { "schema": { "type": "string", "example": "application/pdf" } },
+              "Cache-Control": { "schema": { "type": "string", "example": "private, max-age=300" } }
+            },
+            "content": {
+              "application/pdf": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid `key` query parameter.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed or caller lacks read access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Key does not belong to this session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Source file not found in S3.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "LibreOffice render failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/transcribe": {
+      "post": {
+        "operationId": "transcribeAudio",
+        "summary": "Transcribe audio",
+        "description": "Transcribes an audio file using the Whisper model configured via `TRANSCRIPTION_MODEL`. Accepts multipart/form-data with a single `file` field; the MIME type must start with `audio/`. Maximum file size is 25 MB. Returns 503 when `EXULU_USE_LITELLM` or `TRANSCRIPTION_MODEL` are not set.",
+        "tags": ["Media"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Audio file. MIME type must start with `audio/`. Maximum 25 MB."
+                  },
+                  "language": {
+                    "type": "string",
+                    "pattern": "^[a-z]{2}$",
+                    "description": "Optional ISO 639-1 language hint (e.g. `de`). Without it, Whisper auto-detects the language."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transcription text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "text": { "type": "string", "description": "Transcribed text." }
+                  },
+                  "required": ["text"]
+                },
+                "example": { "text": "The quarterly revenue increased by twelve percent year over year." }
+              }
+            }
+          },
+          "400": {
+            "description": "No file provided, unsupported MIME type, or upload failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "413": {
+            "description": "File exceeds the 25 MB limit.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Speech-to-text not enabled on this deployment, or the transcription service is not yet ready.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/speech": {
+      "post": {
+        "operationId": "synthesizeSpeech",
+        "summary": "Synthesize speech",
+        "description": "Converts text to speech using the model configured via `TTS_MODEL` and the voice from `TTS_VOICE`. Returns MP3 audio bytes (`audio/mpeg`). Input is capped at 4,000 characters. Returns 503 when `EXULU_USE_LITELLM`, `TTS_MODEL`, or `TTS_VOICE` are not set.",
+        "tags": ["Media"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "description": "Text to synthesize. Maximum 4,000 characters."
+                  }
+                }
+              },
+              "example": { "text": "Welcome to the Intelligence Management Platform." }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MP3 audio bytes.",
+            "headers": {
+              "Content-Type": { "schema": { "type": "string", "example": "audio/mpeg" } },
+              "Cache-Control": { "schema": { "type": "string", "example": "no-store" } }
+            },
+            "content": {
+              "audio/mpeg": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or empty `text`, or text exceeds 4,000 characters.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Text-to-speech not enabled on this deployment, or the speech service is not yet ready.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/images/generate": {
+      "post": {
+        "operationId": "generateImage",
+        "summary": "Generate images",
+        "description": "Generates one or more images from a text prompt using an image-generation model from `config.litellm.yaml`. Generated images are uploaded to S3 under the session's prefix and a presigned URL is returned for each. Requires write access to the session. Returns 503 when LiteLLM, S3, or image-generation models are not configured.",
+        "tags": ["Media"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sessionId", "toolCallId", "model", "prompt"],
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Session to associate the generated images with."
+                  },
+                  "toolCallId": {
+                    "type": "string",
+                    "description": "Tool call ID linking this generation to a specific tool invocation."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model name as listed in `config.litellm.yaml` with `model_info.type: image_generation`."
+                  },
+                  "prompt": {
+                    "type": "string",
+                    "description": "Text prompt to generate images from."
+                  },
+                  "n": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of images to generate. Must not exceed the model's `max_n` limit."
+                  },
+                  "size": {
+                    "type": "string",
+                    "description": "Image dimensions (e.g. `1024x1024`). Must be a value supported by the chosen model."
+                  },
+                  "quality": {
+                    "type": "string",
+                    "description": "Generation quality level (e.g. `standard`, `hd`). Must be supported by the chosen model."
+                  },
+                  "styleId": {
+                    "type": "string",
+                    "description": "Optional ID of a saved style (`platform_configurations` row). Its markdown content is appended to the prompt."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated images.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generationId": { "type": "string", "description": "ID of the `image_generations` row." },
+                    "images": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "presignedUrl": { "type": "string" },
+                          "revisedPrompt": { "type": ["string", "null"] }
+                        },
+                        "required": ["key", "presignedUrl", "revisedPrompt"]
+                      }
+                    }
+                  },
+                  "required": ["generationId", "images"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing required fields, unknown model, invalid `n`/`size`/`quality`, or style not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Caller lacks write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Session not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Image generation not enabled on this deployment or service not ready.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/images/edit": {
+      "post": {
+        "operationId": "editImage",
+        "summary": "Edit images",
+        "description": "Edits one or more reference images using a text prompt and uploads the results to S3. Reference image keys must belong to the calling user's S3 folder or the session's images prefix — the backend enforces this with a prefix check. An optional mask image key may be provided for inpainting. The chosen model must support editing (`supports_edit: true` in `config.litellm.yaml`).",
+        "tags": ["Media"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sessionId", "toolCallId", "model", "prompt", "referenceImageKeys"],
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "toolCallId": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Image-generation model that supports editing."
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "referenceImageKeys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string" },
+                    "description": "S3 keys of the source images. Must belong to the session or calling user's prefix."
+                  },
+                  "maskKey": {
+                    "type": "string",
+                    "description": "Optional S3 key of a mask image for inpainting."
+                  },
+                  "n": { "type": "integer", "minimum": 1 },
+                  "size": { "type": "string" },
+                  "quality": { "type": "string" },
+                  "styleId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Edited images.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generationId": { "type": "string" },
+                    "images": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "presignedUrl": { "type": "string" },
+                          "revisedPrompt": { "type": ["string", "null"] }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing fields, model does not support editing, or invalid parameters.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Caller lacks write access to the session or a reference/mask key is inaccessible.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Session not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Image generation not enabled or service not ready.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/images/select": {
+      "post": {
+        "operationId": "selectImages",
+        "summary": "Select generated images",
+        "description": "Marks one or more generated images as selected and appends a system message to the session so the agent sees the selection on its next turn. Each selection identifies a `generationId` and an `imageKey` from within that generation. The image key must be part of the referenced generation row. Requires write access to the session.",
+        "tags": ["Media"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sessionId", "toolCallId", "selections"],
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "toolCallId": {
+                    "type": "string"
+                  },
+                  "selections": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": ["generationId", "imageKey"],
+                      "properties": {
+                        "generationId": {
+                          "type": "string",
+                          "description": "ID of the `image_generations` row."
+                        },
+                        "imageKey": {
+                          "type": "string",
+                          "description": "S3 key of the specific image to select."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Selection recorded and system message appended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean", "example": true },
+                    "systemMessage": { "type": "object", "additionalProperties": true },
+                    "selectedImages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": { "type": "string" },
+                          "presignedUrl": { "type": "string" },
+                          "prompt": { "type": "string" },
+                          "model": { "type": "string" },
+                          "styleName": { "type": ["string", "null"] }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing fields or `imageKey` not part of the referenced generation.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Caller lacks write access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Session not found, or generation ID not found in this tool call.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Image routes not enabled on this deployment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/images/history": {
+      "get": {
+        "operationId": "getImageHistory",
+        "summary": "Get image generation history",
+        "description": "Returns all image generation records for a given session and tool call, ordered oldest first. Includes presigned URLs for all generated images and reference images. Requires read access to the session.",
+        "tags": ["Media"],
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "query",
+            "required": true,
+            "description": "Agent session ID (UUID).",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "toolCallId",
+            "in": "query",
+            "required": true,
+            "description": "Tool call ID to filter generations by.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image generation history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "generationId": { "type": "string" },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "operation": { "type": "string", "enum": ["generate", "edit"] },
+                          "model": { "type": "string" },
+                          "prompt": { "type": "string" },
+                          "appliedStyleId": { "type": ["string", "null"] },
+                          "appliedStyleMarkdown": { "type": ["string", "null"] },
+                          "size": { "type": ["string", "null"] },
+                          "quality": { "type": ["string", "null"] },
+                          "n": { "type": "integer" },
+                          "selected": { "type": "boolean" },
+                          "error": { "type": ["string", "null"] },
+                          "maskImageKey": { "type": ["string", "null"] },
+                          "images": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": { "type": "string" },
+                                "presignedUrl": { "type": "string" },
+                                "revisedPrompt": { "type": ["string", "null"] }
+                              }
+                            }
+                          },
+                          "references": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "key": { "type": "string" },
+                                "presignedUrl": { "type": "string" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "required": ["history"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `sessionId` or `toolCallId` query parameters.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Authentication failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "403": {
+            "description": "Caller lacks read access to the session.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Session not found.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "Image routes not enabled on this deployment.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+
+    "/admin/budgets/settings": {
+      "get": {
+        "operationId": "getBudgetSettings",
+        "summary": "Get budget settings",
+        "description": "Returns the global budget settings stored in Postgres, including the default per-user budget configuration and the UI display preferences. Requires `super_admin` or a role with `budget_management` read or write access.",
+        "tags": ["Budgets"],
+        "responses": {
+          "200": {
+            "description": "Budget settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "global_user_budget": {
+                          "type": "object",
+                          "properties": {
+                            "enabled": { "type": "boolean" },
+                            "max_budget": { "type": "number" },
+                            "budget_duration": { "type": "string", "enum": ["1d", "7d", "30d"] }
+                          }
+                        },
+                        "show_user_budget_in_chat": { "type": "boolean" },
+                        "user_budget_display": { "type": "string", "enum": ["percent", "amount"] }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Budget management access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "put": {
+        "operationId": "setBudgetSettings",
+        "summary": "Update budget settings",
+        "description": "Persists global budget settings. Enables or disables the default per-user budget, sets the global limit and reset period, and controls whether the budget indicator is shown in the chat UI. Requires `super_admin` or `budget_management` write.",
+        "tags": ["Budgets"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["global_user_budget"],
+                "properties": {
+                  "global_user_budget": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": { "type": "boolean" },
+                      "max_budget": { "type": "number", "description": "Maximum spend in USD. Required when `enabled` is true." },
+                      "budget_duration": { "type": "string", "enum": ["1d", "7d", "30d"] }
+                    }
+                  },
+                  "show_user_budget_in_chat": { "type": "boolean" },
+                  "user_budget_display": { "type": "string", "enum": ["percent", "amount"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated settings.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "settings": { "type": "object" } } } } }
+          },
+          "400": { "description": "Invalid budget settings body.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Budget management write access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/me/budget": {
+      "get": {
+        "operationId": "getMyBudget",
+        "summary": "Get my budget",
+        "description": "Returns the calling user's current budget view — spent amount, limit, and reset date — for the in-chat budget indicator. Returns `null` when `show_user_budget_in_chat` is disabled or the user has no active budget. Any authenticated user may call this endpoint.",
+        "tags": ["Budgets"],
+        "responses": {
+          "200": {
+            "description": "Current user budget (or `null`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "budget": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "max_budget": { "type": "number" },
+                        "budget_duration": { "type": "string" },
+                        "spend": { "type": "number" },
+                        "budget_reset_at": { "type": ["string", "null"], "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/admin/budgets/{entityType}/bulk": {
+      "put": {
+        "operationId": "bulkUpsertBudgets",
+        "summary": "Bulk-upsert entity budgets",
+        "description": "Creates or updates LiteLLM tag budgets for multiple entities of the same type in a single call. Each entity ID is mapped to a tag (`{entityType}_id_{entityId}`) and upserted via the LiteLLM admin API. Results include per-entity success/error status. Requires `super_admin` or `budget_management` write.",
+        "tags": ["Budgets"],
+        "parameters": [
+          {
+            "name": "entityType",
+            "in": "path",
+            "required": true,
+            "description": "Entity type to budget. One of `user`, `role`, `team`, `project`, `agent`, `routine`.",
+            "schema": { "type": "string", "enum": ["user", "role", "team", "project", "agent", "routine"] }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entityIds", "max_budget", "budget_duration"],
+                "properties": {
+                  "entityIds": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": ["string", "integer"] },
+                    "description": "IDs of entities to budget."
+                  },
+                  "max_budget": { "type": "number", "description": "Maximum spend in USD (must be > 0)." },
+                  "budget_duration": { "type": "string", "enum": ["1d", "7d", "30d"] },
+                  "budget_reset_at": { "type": "string", "description": "ISO UTC calendar boundary for the next reset. Passed to LiteLLM via `/budget/update`." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-entity results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "entityId": { "type": "string" },
+                          "ok": { "type": "boolean" },
+                          "error": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid entity type, empty `entityIds`, or invalid budget body.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Budget management write access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/admin/budgets/{entityType}/{entityId}": {
+      "put": {
+        "operationId": "upsertEntityBudget",
+        "summary": "Upsert an entity budget",
+        "description": "Creates or updates the LiteLLM tag budget for a single entity. The tag is `{entityType}_id_{entityId}`. On success, returns the live budget info fetched from LiteLLM. Requires `super_admin` or `budget_management` write.",
+        "tags": ["Budgets"],
+        "parameters": [
+          { "name": "entityType", "in": "path", "required": true, "schema": { "type": "string", "enum": ["user", "role", "team", "project", "agent", "routine"] } },
+          { "name": "entityId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["max_budget", "budget_duration"],
+                "properties": {
+                  "max_budget": { "type": "number" },
+                  "budget_duration": { "type": "string", "enum": ["1d", "7d", "30d"] },
+                  "budget_reset_at": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Live budget info after upsert.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "budget": { "type": "object", "additionalProperties": true, "nullable": true } } } } }
+          },
+          "400": { "description": "Invalid entity type or budget body.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Budget management write access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "LiteLLM upsert failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEntityBudget",
+        "summary": "Delete an entity budget",
+        "description": "Removes the LiteLLM tag budget for a single entity and invalidates the local cache. Returns 204 on success. Requires `super_admin` or `budget_management` write.",
+        "tags": ["Budgets"],
+        "parameters": [
+          { "name": "entityType", "in": "path", "required": true, "schema": { "type": "string", "enum": ["user", "role", "team", "project", "agent", "routine"] } },
+          { "name": "entityId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Budget deleted." },
+          "400": { "description": "Invalid entity type.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Budget management write access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "LiteLLM delete failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/admin/litellm/tag-activity": {
+      "get": {
+        "operationId": "getTagActivity",
+        "summary": "Get LiteLLM tag-activity analytics",
+        "description": "Queries LiteLLM's `/tag/daily/activity` endpoint, projects the response into a stable shape, and returns daily spend/token breakdowns with per-tag and per-model aggregates. The `tag_prefix` parameter is an IMP convenience: it resolves all tags matching the prefix via `/tag/list` before forwarding to LiteLLM, ensuring the full window is covered regardless of page size. Restricted to `super_admin`.",
+        "tags": ["Budgets"],
+        "parameters": [
+          { "name": "start_date", "in": "query", "required": true, "description": "Start date (`YYYY-MM-DD` or ISO datetime).", "schema": { "type": "string" } },
+          { "name": "end_date", "in": "query", "required": true, "description": "End date (`YYYY-MM-DD` or ISO datetime).", "schema": { "type": "string" } },
+          { "name": "tag_prefix", "in": "query", "required": false, "description": "Resolves all LiteLLM tags matching this prefix (e.g. `user_id_`, `agent_id_`) and passes them to the query.", "schema": { "type": "string" } },
+          { "name": "tags", "in": "query", "required": false, "description": "Comma-separated explicit tag list. When combined with `tag_prefix`, returns the intersection.", "schema": { "type": "string" } },
+          { "name": "model", "in": "query", "required": false, "description": "Filter to a specific LiteLLM model name.", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "required": false, "description": "Page number (default `1`).", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "exclude_team_tags", "in": "query", "required": false, "description": "Set `true` to exclude `team_*` tags from the breakdown.", "schema": { "type": "string", "enum": ["true", "false"] } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Projected analytics payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": { "type": "object", "properties": { "start_date": { "type": "string" }, "end_date": { "type": "string" } } },
+                    "totals": { "type": "object", "additionalProperties": true },
+                    "daily": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "byTag": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "byTagByDay": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "byModel": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "pagination": { "type": "object", "additionalProperties": true },
+                    "tagPrefix": { "type": ["string", "null"] },
+                    "dedupePrefix": { "type": "string" },
+                    "truncated": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing or invalid `start_date`/`end_date` or invalid `page`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Super admin access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "502": { "description": "LiteLLM upstream error.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/agent/bootstrap": {
+      "get": {
+        "operationId": "downloadBootstrapSkill",
+        "summary": "Download the bootstrap skill",
+        "description": "Returns a zip containing the `imp-skills` bootstrap skill — `SKILL.md`, `references/clients.json`, and `scripts/imp` (executable). This endpoint is public (no authentication required) so any agent client can self-install it without a logged-in session.",
+        "tags": ["Skills"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Bootstrap skill zip.",
+            "content": {
+              "application/zip": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "500": { "description": "Failed to build the zip.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/registry": {
+      "get": {
+        "operationId": "listSkills",
+        "summary": "List skills",
+        "description": "Returns all skills the caller can read, filtered by RBAC. Optionally filter by tag. The response is the agent-facing catalog shape (name, description, tags, current_version, updated_at).",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "tag", "in": "query", "required": false, "description": "Return only skills whose `tags` array contains this value.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill catalog.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "description": { "type": "string" },
+                          "tags": { "type": "array", "items": { "type": "string" } },
+                          "current_version": { "type": "integer" },
+                          "updated_at": { "type": ["string", "null"], "format": "date-time" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/registry/{name}/download": {
+      "get": {
+        "operationId": "downloadSkillByName",
+        "summary": "Download a skill by name",
+        "description": "Streams all files for the requested version as a `.skill` zip with a single wrapper folder (`{name}/`) so the archive round-trips cleanly through the uploader. Defaults to `current_version` when `version` is omitted or `latest`. Requires read access to the skill.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "description": "Skill name (unique).", "schema": { "type": "string" } },
+          { "name": "version", "in": "query", "required": false, "description": "Version number or `latest` (default).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill zip.",
+            "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "400": { "description": "Invalid version.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "No read access to the skill.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill or version not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/registry/{name}": {
+      "get": {
+        "operationId": "getSkillByName",
+        "summary": "Get skill metadata by name",
+        "description": "Returns metadata for a single skill (name, description, tags, current_version, history). Requires read access to the skill.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "description": "Skill name (unique).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skill metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "current_version": { "type": "integer" },
+                    "history": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "No read access.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "post": {
+        "operationId": "publishSkillByName",
+        "summary": "Publish a skill (agent-facing)",
+        "description": "Publishes a skill bundle from an agent. If the name does not exist, creates a new skill at v1 and requires `?visibility=public|private`. If the name exists and the caller has write access, appends a new version. Returns 403 when the name exists but the caller lacks write access; returns 409 when the name exists but the caller cannot even read it (existence is not revealed). The request body must be raw zip/`.skill` bytes.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "description": "Skill name (unique).", "schema": { "type": "string" } },
+          { "name": "visibility", "in": "query", "required": false, "description": "Required for new skills. `public` or `private`. Ignored when updating an existing skill.", "schema": { "type": "string", "enum": ["public", "private"] } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/zip": { "schema": { "type": "string", "format": "binary" } },
+            "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Publish result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "version": { "type": "integer" },
+                    "created": { "type": "boolean", "description": "True when a new skill row was created." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Empty body, missing `visibility`, or bundle validation error.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Skill exists but caller lacks write access.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Name unavailable (exists but caller cannot read it).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/init": {
+      "post": {
+        "operationId": "initSkill",
+        "summary": "Initialise a skill",
+        "description": "Called immediately after a skill row is created via GraphQL. Writes a starter `SKILL.md` to S3 and sets `s3folder`, `current_version`, and `history` on the skill row. Returns the S3 key of the created file.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "default": "Skill" },
+                  "description": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Init result.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "version": { "type": "integer" }, "skillMdKey": { "type": "string" } } } } }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "S3 write failed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/upload-sign": {
+      "post": {
+        "operationId": "signSkillUpload",
+        "summary": "Get a presigned URL for staging a skill bundle",
+        "description": "Returns a presigned PUT URL targeting a per-user staging area in S3. After the upload completes, call `/skills/{skillId}/init-from-upload` to extract the bundle. Accepts `.zip`, `.md`, or `.skill` extensions.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["extension", "contentType"],
+                "properties": {
+                  "extension": { "type": "string", "enum": [".zip", ".md", ".skill"] },
+                  "contentType": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned URL and staging key.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "uploadUrl": { "type": "string" }, "stagingKey": { "type": "string" } } } } }
+          },
+          "400": { "description": "Invalid extension or missing content type.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/init-from-upload": {
+      "post": {
+        "operationId": "initSkillFromUpload",
+        "summary": "Extract a staged skill bundle",
+        "description": "Fetches a staged bundle from S3, validates it (SKILL.md presence, path safety, size and count caps), and extracts it to `skills/{skillId}/v1/`. Updates the skill row's `s3folder`, `current_version`, and `history`. The `stagingKey` must belong to the authenticated user's staging prefix; the call fails with 403 otherwise. On extraction failure the skill row is deleted so the user can retry.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["stagingKey", "isZip"],
+                "properties": {
+                  "stagingKey": { "type": "string", "description": "Key returned by `upload-sign`. Must start with `user_{id}/skills/_staging/`." },
+                  "isZip": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Extraction result.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "version": { "type": "integer" }, "filesCount": { "type": "integer" } } } } }
+          },
+          "400": { "description": "Missing fields or bundle validation error.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Staging key does not belong to the authenticated user.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/files": {
+      "get": {
+        "operationId": "listSkillFiles",
+        "summary": "List skill files",
+        "description": "Lists all files in a skill version and returns a virtual folder tree reconstructed from the flat S3 listing. Defaults to `current_version` when `version` is not supplied.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "version", "in": "query", "required": false, "description": "Version number. Defaults to `current_version`.", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "File tree and count.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "version": { "type": "integer" }, "tree": { "type": "object" }, "fileCount": { "type": "integer" } } } } }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/download": {
+      "get": {
+        "operationId": "downloadSkillById",
+        "summary": "Download a skill version as a zip",
+        "description": "Bundles every file in the requested skill version into a zip. Pass `?format=skill` to produce a `.skill` archive with a wrapper folder (`{name}/`) for round-tripping through the uploader. Defaults to the current version.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "version", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "format", "in": "query", "required": false, "description": "Set to `skill` to produce a `.skill` archive.", "schema": { "type": "string", "enum": ["skill"] } }
+        ],
+        "responses": {
+          "200": { "description": "Skill zip.", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } },
+          "400": { "description": "Invalid version.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/sign": {
+      "post": {
+        "operationId": "signSkillFileUpload",
+        "summary": "Get a presigned URL for a skill file",
+        "description": "Returns a presigned PUT URL for uploading a single file at an exact path within the skill's current version. The `filePath` is sanitised (leading slashes stripped, path traversal blocked) before the S3 key is constructed.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filePath"],
+                "properties": {
+                  "filePath": { "type": "string", "description": "Relative path within the skill version (e.g. `scripts/analyze.py`)." },
+                  "contentType": { "type": "string", "default": "application/octet-stream" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned URL.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" }, "url": { "type": "string" }, "method": { "type": "string", "example": "PUT" } } } } }
+          },
+          "400": { "description": "Missing `filePath`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/file": {
+      "get": {
+        "operationId": "getSkillFile",
+        "summary": "Get a skill file",
+        "description": "Returns a presigned download URL for the specified S3 key. For small text files (≤ 200 KB, recognised extensions like `.md`, `.py`, `.json`) also returns the raw content inline to avoid a second round trip. The key must start with `skills/{skillId}/`.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "key", "in": "query", "required": true, "description": "Full S3 key (must start with `skills/{skillId}/`).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Presigned URL and optional inline content.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "content": { "type": "string", "description": "Raw text content (only for small text files)." }, "key": { "type": "string" } } } } }
+          },
+          "400": { "description": "Missing `key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Key does not belong to this skill.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSkillFile",
+        "summary": "Delete a skill file or folder",
+        "description": "Deletes a single file (pass `?key=`) or all files under a prefix (pass `?prefix=`). Both must start with `skills/{skillId}/`; otherwise a 403 is returned.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "key", "in": "query", "required": false, "description": "Full S3 key of a single file to delete.", "schema": { "type": "string" } },
+          { "name": "prefix", "in": "query", "required": false, "description": "S3 key prefix — all matching objects are deleted.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of deleted objects.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "deleted": { "type": "integer" } } } } }
+          },
+          "400": { "description": "Neither `key` nor `prefix` provided.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Key/prefix does not belong to this skill.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/version": {
+      "post": {
+        "operationId": "snapshotSkillVersion",
+        "summary": "Snapshot the current skill version",
+        "description": "Copies all files in `current_version` into a new version slot, then advances `current_version`. Editing then happens in the new slot while prior versions remain immutable. Fails with 400 if the current version has no files.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "label": { "type": "string", "description": "Human-readable label for the history entry." } } }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New version number and file count.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "newVersion": { "type": "integer" }, "fileCount": { "type": "integer" } } } } }
+          },
+          "400": { "description": "No files in current version.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/rename": {
+      "post": {
+        "operationId": "renameSkillFile",
+        "summary": "Rename (move) a skill file",
+        "description": "Copies `sourceKey` to a new path within the current version and deletes the original — effectively a rename or move. `destPath` is sanitised before use. `sourceKey` must start with `skills/{skillId}/`.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sourceKey", "destPath"],
+                "properties": {
+                  "sourceKey": { "type": "string", "description": "Full S3 key of the file to move." },
+                  "destPath": { "type": "string", "description": "New relative path within the current version." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "New S3 key.", "content": { "application/json": { "schema": { "type": "object", "properties": { "newKey": { "type": "string" } } } } } },
+          "400": { "description": "Missing `sourceKey` or `destPath`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Source key does not belong to this skill.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/skills/{skillId}/diff": {
+      "get": {
+        "operationId": "diffSkillVersions",
+        "summary": "Diff two skill versions",
+        "description": "Compares two versions of a skill and returns per-file status (`added`, `removed`, `modified`). Unchanged files are filtered out of the response. For modified text files (≤ 500 KB total) also returns a unified diff string. Files with non-text extensions are listed as `modified` without a diff.",
+        "tags": ["Skills"],
+        "parameters": [
+          { "name": "skillId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "fromVersion", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "toVersion", "in": "query", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-file diff results.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "fromVersion": { "type": "integer" },
+                    "toVersion": { "type": "integer" },
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": { "type": "string" },
+                          "status": { "type": "string", "enum": ["added", "removed", "modified"] },
+                          "diff": { "type": "string", "description": "Unified diff string (text files only)." }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing `fromVersion` or `toVersion`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Skill not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/sign": {
+      "post": {
+        "operationId": "s3Sign",
+        "summary": "Get a presigned single-part PUT URL",
+        "description": "Returns a presigned S3 PUT URL for uploading a file directly from the browser. Generates a UUID-prefixed key under `user_{id}/` (or `global/` when the `global` header is set). Used by the Uppy AwsS3 plugin. Accepts the standard API key or session JWT.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "global", "in": "header", "required": false, "description": "Set to any truthy value to upload under `global/` instead of `user_{id}/`.", "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filename", "type"],
+                "properties": {
+                  "filename": { "type": "string" },
+                  "type": { "type": "string", "description": "MIME content type." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned PUT URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "key": { "type": "string", "description": "UUID-prefixed filename (without user/global prefix)." },
+                    "url": { "type": "string", "description": "Presigned PUT URL." },
+                    "method": { "type": "string", "example": "PUT" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing `filename` or `type`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/multipart": {
+      "post": {
+        "operationId": "s3CreateMultipart",
+        "summary": "Initiate a multipart upload",
+        "description": "Creates an S3 multipart upload and returns the `uploadId` and full key. The full key (including user/global prefix and any S3 general prefix) must be passed back on all subsequent part-signing and completion calls.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "global", "in": "header", "required": false, "description": "Upload under `global/` instead of `user_{id}/`.", "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["filename", "type"],
+                "properties": {
+                  "filename": { "type": "string" },
+                  "type": { "type": "string" },
+                  "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Optional S3 metadata. Non-ASCII characters are URL-encoded automatically." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Multipart upload created.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" }, "uploadId": { "type": "string" } } } } }
+          },
+          "400": { "description": "Missing or invalid `filename` or `type`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/multipart/{uploadId}/{partNumber}": {
+      "get": {
+        "operationId": "s3SignPart",
+        "summary": "Sign a multipart upload part",
+        "description": "Returns a presigned URL for uploading a single part. `partNumber` must be an integer between 1 and 10,000. The `key` query parameter must be the full key returned by the multipart-create call.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "partNumber", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1, "maximum": 10000 } },
+          { "name": "key", "in": "query", "required": true, "description": "Full S3 key returned by the multipart-create call.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Presigned part URL.", "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "expires": { "type": "integer" } } } } } },
+          "400": { "description": "Invalid part number or missing key.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/multipart/{uploadId}": {
+      "get": {
+        "operationId": "s3ListParts",
+        "summary": "List uploaded parts",
+        "description": "Lists all parts already uploaded for a multipart upload. Handles S3 pagination automatically.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Array of uploaded parts.", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "properties": { "PartNumber": { "type": "integer" }, "ETag": { "type": "string" } } } } } } },
+          "400": { "description": "Missing `key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "operationId": "s3AbortMultipart",
+        "summary": "Abort a multipart upload",
+        "description": "Aborts the multipart upload and removes any already-uploaded parts from S3.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Aborted.", "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" } } } } } },
+          "400": { "description": "Missing `key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/multipart/{uploadId}/complete": {
+      "post": {
+        "operationId": "s3CompleteMultipart",
+        "summary": "Complete a multipart upload",
+        "description": "Sends the CompleteMultipartUpload command to S3 with the list of part ETags. The `parts` array must contain `{ PartNumber, ETag }` objects for every uploaded part.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "uploadId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["parts"],
+                "properties": {
+                  "parts": {
+                    "type": "array",
+                    "items": { "type": "object", "properties": { "PartNumber": { "type": "integer" }, "ETag": { "type": "string" } }, "required": ["PartNumber", "ETag"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Upload complete.", "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" }, "location": { "type": "string" } } } } } },
+          "400": { "description": "Missing `key` or invalid `parts` array.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/list": {
+      "get": {
+        "operationId": "s3List",
+        "summary": "List S3 objects",
+        "description": "Lists objects under the calling user's S3 prefix (or `global/` when the `global` header is set). Supports a `search` query for substring filtering and a `continuationToken` for pagination. Returns up to 9 objects per page when not searching. Also accepts the `internal-key` header (set to `INTERNAL_SECRET`) for server-to-server calls.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "global", "in": "header", "required": false, "description": "List under `global/` instead of `user_{id}/`.", "schema": { "type": "string" } },
+          { "name": "search", "in": "query", "required": false, "description": "Substring to filter object keys by (case-insensitive, scans all pages).", "schema": { "type": "string" } },
+          { "name": "continuationToken", "in": "query", "required": false, "description": "S3 continuation token for the next page.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "S3 list response with `Contents` keys prefixed by bucket name.", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/download": {
+      "get": {
+        "operationId": "s3Download",
+        "summary": "Get a presigned download URL",
+        "description": "Returns a presigned GET URL for an S3 object. The `key` must include the bucket as the first path segment (format returned by `/s3/list`). Access is restricted to the owner's prefix, super admins, and API-type users. Also accepts the `internal-key` header (set to `INTERNAL_SECRET`) for server-to-server calls.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "key", "in": "query", "required": true, "description": "Full key including bucket prefix (e.g. `my-bucket/user_1/file.pdf`).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Presigned GET URL.", "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "method": { "type": "string", "example": "GET" }, "expiresIn": { "type": "integer" } } } } } },
+          "400": { "description": "Missing or invalid `key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "405": { "description": "Caller is not permitted to access the requested key.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/sts": {
+      "get": {
+        "operationId": "s3Sts",
+        "summary": "Get STS federation token",
+        "description": "Returns temporary AWS STS credentials (via `GetFederationToken`) that give the holder `s3:PutObject` permission on the configured bucket. The token is cached by the browser for `expiresIn` seconds. Used by the Uppy AwsS3 plugin for direct multipart uploads.",
+        "tags": ["Uploads"],
+        "responses": {
+          "200": {
+            "description": "STS credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "credentials": { "type": "object", "additionalProperties": true },
+                    "bucket": { "type": "string" },
+                    "region": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/s3/delete": {
+      "delete": {
+        "operationId": "s3Delete",
+        "summary": "Delete an S3 object",
+        "description": "Deletes a single object from S3. The `key` must include the bucket as the first segment. Access is restricted to the owner's prefix, super admins, and API-type users. Also accepts the `internal-key` header (set to `INTERNAL_SECRET`) for server-to-server calls.",
+        "tags": ["Uploads"],
+        "parameters": [
+          { "name": "key", "in": "query", "required": true, "description": "Full key including bucket prefix.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Deleted.", "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string" } } } } } },
+          "400": { "description": "Missing or invalid `key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "405": { "description": "Caller is not permitted to delete the requested key.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/users/{id}/data-export": {
+      "get": {
+        "operationId": "exportUserData",
+        "summary": "Export user data (GDPR Art. 15)",
+        "description": "Returns a ZIP archive containing every personal-data record held for the target user: `user_data.json` (account row with password/API-key hashes stripped), `sessions.json` (chat sessions with messages inlined), `feedback.json`, `prompt_favorites.json`, and `tracking.json`. Callers must be `super_admin`. The target user may also export their own data (self-export is allowed).",
+        "tags": ["Compliance"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Numeric user ID.", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "User data export zip.",
+            "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "400": { "description": "Invalid user ID.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Super admin access required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "User not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/users/{id}": {
+      "delete": {
+        "operationId": "deleteUser",
+        "summary": "Delete a user (GDPR Art. 17)",
+        "description": "Hard-deletes the target user and all personally identifiable data in a single database transaction: messages, sessions, feedback, prompt_favorites, tracking, RBAC entries, and the users row. After the transaction commits, S3 objects under `user_{id}/` are deleted best-effort (failure is logged but does not fail the request). Callers must be `super_admin`. Admins cannot delete their own account (`allowSelf: false`).",
+        "tags": ["Compliance"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Numeric user ID.", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "User deleted." },
+          "400": { "description": "Invalid user ID.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Super admin required, or caller attempted self-delete.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "User not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/shared-artifacts": {
+      "get": {
+        "operationId": "listSharedArtifacts",
+        "summary": "List share links for a file",
+        "description": "Returns all share links created by the calling user for a given S3 key. The `s3key` is normalised (bucket stripped if present) before querying.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          { "name": "s3key", "in": "query", "required": true, "description": "S3 key of the file (as returned by `/s3/list`).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share links for the file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "auth_mode": { "type": "string", "enum": ["public", "password", "regular"] },
+                      "expires_at": { "type": ["string", "null"], "format": "date-time" },
+                      "rights_mode": { "type": ["string", "null"] }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Missing `s3key`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "post": {
+        "operationId": "createSharedArtifact",
+        "summary": "Create a share link",
+        "description": "Creates a named share link for an S3 object. `auth_mode` controls access: `public` (share name is the capability, no further auth), `password` (caller supplies a password hashed with bcrypt), `regular` (standard IMP RBAC applies). For `regular` shares, pass `rbac` to configure visibility. Returns 409 when the name is already taken.",
+        "tags": ["Artifacts"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["s3key", "name", "auth_mode"],
+                "properties": {
+                  "s3key": { "type": "string" },
+                  "name": { "type": "string", "description": "URL-safe slug for the share link." },
+                  "auth_mode": { "type": "string", "enum": ["public", "password", "regular"] },
+                  "password": { "type": "string", "description": "Required when `auth_mode` is `password`." },
+                  "expires_at": { "type": "string", "format": "date-time", "description": "Optional expiry ISO datetime." },
+                  "content_type": { "type": "string" },
+                  "rights_mode": { "type": "string", "description": "For `regular` shares: `private`, `organization`, etc." },
+                  "rbac": { "type": "object", "additionalProperties": true, "description": "RBAC config for `regular` shares." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Share link created.", "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" } } } } } },
+          "400": { "description": "Validation error (invalid name, missing password, etc.).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "Name already taken.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/shared-artifacts/{name}": {
+      "delete": {
+        "operationId": "deleteSharedArtifact",
+        "summary": "Delete a share link",
+        "description": "Removes the share link and any associated RBAC entries. Only the creator may delete their own share links.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "description": "Share link name (slug).", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Deleted." },
+          "401": { "description": "Not authenticated.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "Caller is not the creator.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Share link not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/shared-artifacts/{name}/meta": {
+      "get": {
+        "operationId": "getSharedArtifactMeta",
+        "summary": "Get share link metadata",
+        "description": "Returns low-sensitivity metadata for a share link — `auth_mode`, `expires_at`, `filename`, `content_type`, and `is_html` — without revealing the password hash or file bytes. Public (no authentication required); the share name is the capability.",
+        "tags": ["Artifacts"],
+        "security": [],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Share link metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "auth_mode": { "type": "string", "enum": ["public", "password", "regular"] },
+                    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+                    "filename": { "type": "string" },
+                    "content_type": { "type": ["string", "null"] },
+                    "is_html": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "410": { "description": "Link has expired.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/shared-artifacts/{name}/content": {
+      "get": {
+        "operationId": "getSharedArtifactContent",
+        "summary": "Get share link content",
+        "description": "Serves the raw file bytes from S3. Authentication depends on `auth_mode`: `public` — no auth; `password` — pass the password in `x-share-password`; `regular` — standard IMP API key or bearer JWT, RBAC-checked. Returns 410 when the link has expired.",
+        "tags": ["Artifacts"],
+        "security": [],
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "x-share-password", "in": "header", "required": false, "description": "Password for password-protected shares.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "File bytes.", "content": { "*/*": { "schema": { "type": "string", "format": "binary" } } } },
+          "401": { "description": "Password incorrect or authentication required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "RBAC check failed for `regular` share.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "Share or file not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "410": { "description": "Link has expired.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    }
+  }
+}

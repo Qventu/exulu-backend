@@ -1,0 +1,37 @@
+<article class="chapter" id="r-litellm-proxy" data-release="2026-05-29-spring-platform-release" aria-labelledby="r-litellm-proxy-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">04</span>
+      <span class="pill">May 29, 2026</span>
+      <span class="ch-name">The Spring Drop</span>
+    </div>
+    <h1 class="ch-title" id="r-litellm-proxy-h">LiteLLM proxy integration</h1>
+    <p class="ch-lede">Bring your own model gateway.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <figure class="demo"><video data-vid="2026-05-29-spring-platform-release__03-litellm-proxy.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Set <code>EXULU_USE_LITELLM=true</code> and Exulu runs LiteLLM as a managed sidecar, routing every model call through the proxy. Model names map directly to the <code>model_name</code> entries in your LiteLLM catalog.</p>
+          <p>The Models admin page becomes a read-only view of that catalog, and the agent and chat model pickers draw from the same list. Rate limits, token budgets, cost tracking, and cross-provider routing all live in <code>config.yaml</code> — one file, every provider.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Enable</div>
+<pre><code>EXULU_USE_LITELLM=true
+LITELLM_MASTER_KEY=sk-…
+LITELLM_CONFIG_PATH=ee/python/.litellm/config.yaml  # default</code></pre>
+
+            <div class="snippet-label">Catalog (config.yaml)</div>
+<pre><code>general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+model_list:
+  - model_name: vertex-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/GOOGLE_VERTEX_PROJECT
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY</code></pre>
+          </div>
+        </div></section>
+</article>

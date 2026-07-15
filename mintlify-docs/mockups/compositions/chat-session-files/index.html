@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — chat session files</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/chat.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* — chat screen internals (composition-scoped) — */
+      #root .chat-body { display: flex; flex: 1; min-height: 0; }
+
+      /* history rail */
+      #root .chat-rail { width: 250px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); display: flex; flex-direction: column; padding: 12px 10px; gap: 10px; }
+      #root .rail-agent { display: flex; align-items: center; gap: 8px; padding: 2px 6px; font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .rail-agent svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .rail-agent .rail-menu { margin-left: auto; color: var(--tx-lo); display: grid; place-items: center; }
+      #root .rail-new { justify-content: center; width: 100%; box-sizing: border-box; }
+      #root .rail-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--surface); padding: 7px 10px; font-size: 12.5px; color: var(--tx-faint); }
+      #root .rail-search svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .rail-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); padding: 4px 6px 0; }
+      #root .rail-list { display: flex; flex-direction: column; gap: 2px; }
+      #root .rail-row { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; font-size: 13px; color: var(--tx-mid); }
+      #root .rail-row .time { font-size: 11px; color: var(--tx-faint); }
+      #root .rail-row.active { background: var(--surface-2); color: var(--tx-hi); }
+      #root .rail-seeall { padding: 8px 10px; font-size: 12.5px; color: var(--tx-lo); }
+
+      /* chat header (the .imp-topbar content) */
+      #root .hd-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      #root .hd-icon { width: 26px; height: 26px; display: grid; place-items: center; color: var(--tx-lo); }
+      #root .hd-icon svg { width: 15px; height: 15px; stroke-width: 1.5; }
+      #root .hd-avatar { width: 22px; height: 22px; flex: none; background: var(--chip); color: var(--ink); font-family: var(--font-mono); font-size: 10px; display: grid; place-items: center; }
+      #root .hd-name { font-size: 13.5px; font-weight: 500; color: var(--tx-hi); }
+      #root .hd-sep { color: var(--tx-faint); font-size: 13px; }
+      #root .hd-title { font-size: 13.5px; color: var(--tx-hi); }
+      #root .hd-chip { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; border: 1px solid var(--hair); padding: 3px 8px; color: var(--tx-lo); display: inline-flex; align-items: center; gap: 6px; }
+      #root .hd-chip svg { width: 12px; height: 12px; stroke-width: 1.5; }
+      #root .hd-right { display: flex; align-items: center; gap: 10px; }
+
+      /* conversation column */
+      #root .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      #root .chat-scroll { flex: 1; overflow: hidden; padding: 30px 24px 0; }
+      #root .chat-bottom { padding: 0 24px 16px; }
+      #root .chat-col { max-width: 760px; margin: 0 auto; }
+      #root .chat-suggestions { display: flex; gap: 8px; margin-bottom: 10px; }
+      #root .chip-suggest { border: 1px solid var(--hair); background: var(--surface); font-size: 12px; color: var(--tx-mid); padding: 6px 12px; }
+      #root .chat-disclaimer { text-align: center; font-size: 11px; color: var(--tx-faint); margin-top: 9px; }
+
+      /* session files side panel */
+      #root .files-panel { width: 380px; flex: none; border-left: 1px solid var(--hair); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+      #root .fp-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px; border-bottom: 1px solid var(--hair); font-size: 13.5px; font-weight: 500; color: var(--tx-hi); }
+      #root .fp-head svg { width: 14px; height: 14px; stroke-width: 1.5; color: var(--tx-lo); }
+      #root .fp-note { display: flex; align-items: flex-start; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--hair); background: var(--surface-2); font-size: 11px; line-height: 1.45; color: var(--tx-lo); }
+      #root .fp-note svg { width: 13px; height: 13px; flex: none; margin-top: 1px; stroke-width: 1.5; }
+      #root .fp-list { flex: 1; min-height: 0; }
+      #root .fp-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--hair); }
+      #root .fp-row > svg { width: 16px; height: 16px; flex: none; stroke-width: 1.5; color: var(--tx-lo); }
+      #root .fp-file { flex: 1; min-width: 0; }
+      #root .fp-file .fp-name { display: block; font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .fp-file .fp-meta { display: block; margin-top: 1px; font-size: 11px; color: var(--tx-faint); }
+      #root .fp-actions { display: flex; align-items: center; gap: 9px; color: var(--tx-lo); }
+      #root .fp-actions svg { width: 14px; height: 14px; stroke-width: 1.5; }
+      #root .fp-actions svg.destructive { color: var(--destructive); }
+      #root .fp-upload { margin: 12px 14px 14px; border: 1px dashed var(--hair); padding: 18px 12px; text-align: center; }
+      #root .fp-upload .fp-drop { font-size: 12px; font-weight: 500; color: var(--tx-mid); }
+      #root .fp-upload .fp-limit { margin-top: 3px; font-size: 11px; color: var(--tx-faint); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="chat-session-files"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- chat header -->
+            <div class="imp-topbar">
+              <span class="hd-left">
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="hd-avatar">SA</span>
+                <span class="hd-name">Support Assistant</span>
+                <span class="hd-sep">/</span>
+                <span class="hd-title">Hamburg ticket summary</span>
+                <span class="hd-chip">9% · 12k</span>
+              </span>
+              <span class="hd-right">
+                <span class="hd-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>3 files</span>
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+              </span>
+            </div>
+
+            <div class="chat-body">
+              <!-- history rail -->
+              <div class="chat-rail">
+                <div class="rail-agent">
+                  Support Assistant
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+                  <span class="rail-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+                </div>
+                <span class="imp-btn imp-btn-ink rail-new">+ New chat</span>
+                <div class="rail-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>Search chats</div>
+                <div class="rail-label">Recents</div>
+                <div class="rail-list">
+                  <div class="rail-row active">Hamburg ticket summary<span class="time">just now</span></div>
+                  <div class="rail-row">Draft reply to Maren Vogel<span class="time">2 h ago</span></div>
+                  <div class="rail-row">Onboarding checklist<span class="time">yesterday</span></div>
+                  <div class="rail-row">VPN incident timeline<span class="time">2 days ago</span></div>
+                  <div class="rail-row">Untitled chat<span class="time">last week</span></div>
+                </div>
+                <div class="rail-seeall">See all</div>
+              </div>
+
+              <!-- conversation column -->
+              <div class="chat-main">
+                <div class="chat-scroll">
+                  <div class="imp-chat">
+                    <div class="imp-msg-user">Summarize last week's support tickets for the Hamburg office.</div>
+                    <div class="imp-msg-agent">
+                      <p>Three themes stand out across the 42 tickets logged last week:</p>
+                      <ul>
+                        <li><strong>Printer queue outages</strong> (14 tickets) — resolved by Wednesday's driver update; no new reports since.</li>
+                        <li><strong>VPN drops for remote staff</strong> (11 tickets) — still open; the network team is investigating a gateway timeout.</li>
+                        <li><strong>Onboarding access requests</strong> (9 tickets) — all closed, average resolution time 4 hours.</li>
+                      </ul>
+                      <p>The remaining 8 tickets were one-off requests. Want this as a short email to the facilities team?</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-bottom">
+                  <div class="chat-col">
+                    <div class="imp-composer">
+                      <span class="imp-composer-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+                      <span class="imp-composer-input">Ask me anything...</span>
+                      <span class="imp-composer-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg></span>
+                      <span class="imp-composer-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></span>
+                    </div>
+                    <div class="chat-disclaimer">AI can make mistakes. Check important info.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- session files panel -->
+              <div class="files-panel">
+                <div class="fp-head">
+                  Session files
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </div>
+                <div class="fp-note">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                  <span>Files in this session aren't shared with other sessions, projects, or knowledge bases. · 3 files</span>
+                </div>
+                <div class="fp-list">
+                  <div class="fp-row">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>
+                    <span class="fp-file"><span class="fp-name">tickets-may-week4.csv</span><span class="fp-meta">96 KB · 12 min ago</span></span>
+                    <span class="fp-actions">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
+                      <svg class="destructive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </span>
+                  </div>
+                  <div class="fp-row">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22h6a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v6"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M3 16v-1.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5V16"/><path d="M6 22h2"/><path d="M7 14v8"/></svg>
+                    <span class="fp-file"><span class="fp-name">printer-fault-log.pdf</span><span class="fp-meta">1.4 MB · 18 min ago</span></span>
+                    <span class="fp-actions">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
+                      <svg class="destructive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </span>
+                  </div>
+                  <div class="fp-row">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+                    <span class="fp-file"><span class="fp-name">hamburg-summary.md</span><span class="fp-meta">3.1 KB · 2 min ago</span></span>
+                    <span class="fp-actions">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/></svg>
+                      <svg class="destructive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </span>
+                  </div>
+                </div>
+                <div class="fp-upload">
+                  <span class="fp-drop">Drop files or click to upload</span>
+                  <div class="fp-limit">Max 50 MB per file</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["chat-session-files"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

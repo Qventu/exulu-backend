@@ -1,0 +1,50 @@
+---
+title: "Observability"
+description: "OpenTelemetry traces and logs for IMP via SigNoz."
+icon: "activity"
+---
+
+IMP exports OpenTelemetry traces and logs to [SigNoz](https://signoz.io/) — either the SigNoz Cloud offering or a self-hosted SigNoz instance. Observability is optional and off by default.
+
+## Setup
+
+Call `ExuluOtel.create()` in your backend entrypoint before the application starts:
+
+```typescript
+import { ExuluOtel } from "@exulu/backend";
+
+ExuluOtel.create({
+  SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!,
+  SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+  SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+});
+```
+
+The SDK uses `@opentelemetry/auto-instrumentations-node` which automatically instruments HTTP, Express, database queries, and other common Node.js modules. The service name reported to SigNoz is `Exulu`.
+
+## Configuration reference
+
+| Variable | Description |
+|---|---|
+| `SIGNOZ_ACCESS_TOKEN` | API key from your SigNoz Cloud account or self-hosted instance |
+| `SIGNOZ_TRACES_URL` | OTLP HTTP traces endpoint (e.g. `https://ingest.<region>.signoz.cloud:443/v1/traces`) |
+| `SIGNOZ_LOGS_URL` | OTLP HTTP logs endpoint (e.g. `https://ingest.<region>.signoz.cloud:443/v1/logs`) |
+
+All three variables must be set for telemetry to initialise.
+
+## What gets traced
+
+Auto-instrumentation covers:
+
+- Incoming HTTP requests to the backend (Express routes)
+- Outgoing HTTP calls (to LiteLLM, provider APIs, Whisper)
+- Postgres queries (via `pg`)
+- BullMQ job lifecycle events (via `bullmq-otel`)
+
+Traces include standard OpenTelemetry span attributes. BullMQ spans carry queue name, job name, and job ID.
+
+## Operational notes
+
+**SDK shutdown.** The OTel SDK registers a `SIGTERM` handler and flushes pending spans before the process exits. Expect a short delay on container shutdown while spans drain.
+
+**No SigNoz account.** If you prefer a different OTLP-compatible backend (Jaeger, Grafana Tempo, Honeycomb, etc.), point `SIGNOZ_TRACES_URL` and `SIGNOZ_LOGS_URL` at those endpoints and set `SIGNOZ_ACCESS_TOKEN` to whatever authentication token the backend requires. The header sent is `signoz-access-token`; some backends may require a different header name. In that case you need to customise the `ExuluOtel.create()` call.

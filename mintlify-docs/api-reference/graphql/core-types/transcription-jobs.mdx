@@ -1,0 +1,97 @@
+---
+title: "Transcription jobs"
+description: "The transcription_job type tracks an audio or meeting recording through the transcription pipeline."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+A `transcription_job` represents one recording — uploaded audio or a live meeting bot recording — moving through the Whisper transcription pipeline. After finalization the job produces a saved knowledge item. See [Transcripts overview](/user-guide/transcripts/overview).
+
+```graphql
+type transcription_job {
+  audio_s3key: String
+  title: String
+  status: String
+  whisper_job_id: String
+  raw_segments: JSON
+  speakers: JSON
+  language: String
+  duration_seconds: Float
+  project_id: String
+  target_rights_mode: String
+  target_rbac_users: JSON
+  target_rbac_roles: JSON
+  saved_item_id: String
+  error: String
+  source: String
+  meeting_url: String
+  recall_bot_id: String
+  recall_recording_id: String
+  recall_transcript_id: String
+  bot_status: String
+  join_at: Date
+  post_processing_prompts: JSON
+  post_processing_outputs: JSON
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `audio_s3key` | S3 key of the uploaded audio file. Set for file-upload jobs; absent for live meeting bot jobs. |
+| `status` | Pipeline status string: `"pending"`, `"processing"`, `"done"`, `"error"`, or `"cancelled"`. |
+| `whisper_job_id` | BullMQ job ID for the Whisper transcription task; used to poll progress. |
+| `raw_segments` | JSON array of Whisper diarisation segments returned by the transcription service. |
+| `speakers` | JSON map of speaker IDs to display names set during finalization. |
+| `target_rights_mode` | The `rights_mode` to apply to the resulting saved knowledge item (`"public"` or `"private"`). |
+| `target_rbac_users` | JSON array of user RBAC entries to apply to the saved item. |
+| `target_rbac_roles` | JSON array of role RBAC entries to apply to the saved item. |
+| `saved_item_id` | ID of the knowledge item created after finalization. Present only after `transcriptionJobFinalize`. |
+| `source` | Origin of this job: `"upload"` (file upload) or `"bot"` (meeting bot). |
+| `recall_bot_id` | Recall.ai bot ID for meeting-bot jobs. |
+| `recall_recording_id` | Recall.ai recording ID after the bot leaves the meeting. |
+| `recall_transcript_id` | Recall.ai transcript ID produced by the bot. |
+| `bot_status` | Last-known status string from the meeting bot service (e.g. `"in_call"`, `"done"`). |
+| `join_at` | Scheduled time for the bot to join the meeting (ISO 8601). |
+| `post_processing_prompts` | JSON array of `{ prompt_id, agent_id }` objects to run after finalization. |
+| `post_processing_outputs` | JSON array of agent outputs produced by the post-processing step. |
+| `rights_mode` | `"public"` or `"private"`; access control on the job itself. |
+| `created_by` | Numeric ID of the user who initiated the transcription. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  transcription_jobsPagination(
+    limit: 20
+    filters: [{ status: { eq: "done" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      title
+      status
+      language
+      duration_seconds
+      source
+      saved_item_id
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

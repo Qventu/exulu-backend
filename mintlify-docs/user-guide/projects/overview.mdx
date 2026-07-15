@@ -1,0 +1,75 @@
+---
+title: "Projects overview"
+description: "Group related sessions, shared files, and access controls in one place."
+icon: "folder-open"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+## What a project groups
+
+A project is a workspace that keeps related work together. Every project holds:
+
+- **Sessions** — the conversations you start inside the project. Members can see and continue any session in the project.
+- **Files** — up to 15 pinned knowledge items shared across every session in that project. You don't need to re-add them each time.
+- **Custom instructions** — text added to the system prompt of every conversation in the project. Use it to set context once ("This project covers our Q3 roadmap — respond in German.").
+- **Access control** — the project can be private (only you), shared with specific users, or shared with roles.
+
+<Frame caption="Creating a new project: enter a name, optionally add a description, and click Create project.">
+  <video autoPlay muted loop playsInline src="/videos/create-project.mp4" />
+</Frame>
+
+## The projects screen
+
+Open **Projects** from the app sidebar. The page shows "Workspaces that group your conversations and shared context." — your projects are listed below a search bar.
+
+- **Search** — type into **Search projects...** to filter by name as you type.
+- **Favorites** — starred projects appear in a pinned **Favorites** group above the full list.
+- **All projects** — the complete list ordered by last-updated time. Each row shows the project name, how long ago it was last updated, and a star toggle.
+- **Load more** — when you have more than the first page of projects, a **Load more** button appears at the bottom of the list.
+
+## Create a project
+
+<Steps>
+  <Step title="Open the create dialog">
+    Click **New project** in the top-right of the Projects page (or navigate to `/projects?new=1` from the command palette).
+  </Step>
+  <Step title="Name the project">
+    Type into **Name** — this is the only required field. The placeholder reads "Enter project name".
+  </Step>
+  <Step title="Add a description (optional)">
+    Fill in **Description** ("Describe what this project is about…") so collaborators know the purpose at a glance.
+  </Step>
+  <Step title="Add custom instructions (optional)">
+    Expand **Advanced** and fill in **Custom instructions** ("Instructions every chat session in this project will follow…"). These apply automatically to every new session in the project.
+
+    <Note>
+    New projects start as **Private — only you can see this project until you share it.** Change access after creation from the project's Settings tab.
+    </Note>
+  </Step>
+  <Step title="Create it">
+    Click **Create project**. You land on the new project's Sessions tab.
+  </Step>
+</Steps>
+
+## Favorites
+
+Star any project to pin it at the top of the Projects list. The favorite state is personal — it only affects your view.
+
+- **Add to favorites** — click the star icon on any project row.
+- **Remove from favorites** — click the filled star to unstar it.
+
+You can also toggle the star from inside a project using the star button in the project header.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Work inside a project" icon="layout-panel-top" href="/user-guide/projects/working-in-a-project">
+    Start sessions, pin files, and manage project settings.
+  </Card>
+  <Card title="Pin knowledge in chat" icon="pin" href="/user-guide/chat/pinned-knowledge-and-presets">
+    Add knowledge to a single session without a project.
+  </Card>
+</Columns>

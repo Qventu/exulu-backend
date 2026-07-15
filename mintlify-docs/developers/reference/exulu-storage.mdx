@@ -1,0 +1,124 @@
+---
+title: "ExuluStorage"
+description: "S3-compatible file storage — generate presigned URLs and upload files using the platform's configured S3 credentials."
+---
+
+`ExuluStorage` is a class that wraps the platform's S3-compatible object storage. It uses the same configuration as the IMP server's Uppy-based upload pipeline, so files written through `ExuluStorage` are accessible from the same bucket the platform uses for attachments and knowledge items.
+
+You do not instantiate `ExuluStorage` directly — you receive an instance through the `utils.storage` object passed to `ExuluContext` processors and chunker operations.
+
+## Constructor
+
+```typescript
+new ExuluStorage({ config: ExuluConfig })
+```
+
+<ParamField path="config" type="ExuluConfig" required>
+  The application config object from `ExuluApp`. Passed automatically by the platform to processor and chunker callbacks.
+</ParamField>
+
+## API surface
+
+### getPresignedUrl
+
+```typescript
+storage.getPresignedUrl(key: string): Promise<string>
+```
+
+Returns a presigned GET URL for a stored object. The `key` must be in the format `<bucket>/<object-path>`.
+
+<ParamField path="key" type="string" required>
+  S3 key in `<bucket>/<object-path>` format (e.g. `"uploads/documents/report.pdf"`). Throws when the bucket or key portion is empty.
+</ParamField>
+
+<ResponseField name="return" type="Promise<string>">
+  A time-limited presigned URL the caller can use to download the object directly from S3.
+</ResponseField>
+
+---
+
+### uploadFile
+
+```typescript
+storage.uploadFile(
+  file: Buffer | Uint8Array,
+  fileName: string,
+  type: string,
+  user?: number,
+  metadata?: Record<string, string>,
+  customBucket?: string,
+): Promise<string>
+```
+
+Uploads a file to S3 and returns the stored object key.
+
+<ParamField path="file" type="Buffer | Uint8Array" required>
+  The file content to upload.
+</ParamField>
+
+<ParamField path="fileName" type="string" required>
+  The target file name (used to derive the object key in the bucket).
+</ParamField>
+
+<ParamField path="type" type="string" required>
+  MIME type (e.g. `"application/pdf"`, `"image/png"`). Stored as the object's `Content-Type`.
+</ParamField>
+
+<ParamField path="user" type="number">
+  Numeric user ID. Stored as metadata on the S3 object when provided.
+</ParamField>
+
+<ParamField path="metadata" type="Record<string, string>">
+  Additional key-value metadata stored on the S3 object.
+</ParamField>
+
+<ParamField path="customBucket" type="string">
+  Override the default bucket. When omitted the platform's configured default bucket is used.
+</ParamField>
+
+<ResponseField name="return" type="Promise<string>">
+  The S3 object key under which the file was stored.
+</ResponseField>
+
+## Example
+
+Inside a custom `ExuluContext` processor:
+
+```typescript
+import type { ExuluContextProcessor } from "@exulu/backend";
+
+const myProcessor: ExuluContextProcessor = {
+  name: "pdf-text-extractor",
+  description: "Reads a PDF from storage and extracts its text.",
+  config: { trigger: "onInsert" },
+  execute: async ({ item, utils }) => {
+    // Download the source PDF
+    const pdfUrl = await utils.storage.getPresignedUrl(item.source_key);
+
+    const response = await fetch(pdfUrl);
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    // ... extract text from buffer ...
+    const text = "extracted text";
+
+    // Upload the result
+    const resultKey = await utils.storage.uploadFile(
+      Buffer.from(text),
+      `${item.id}-extracted.txt`,
+      "text/plain",
+    );
+
+    return { ...item, content: text, result_key: resultKey };
+  },
+};
+```
+
+## Notes
+
+- `ExuluStorage` is exposed through `utils.storage` inside context processors and chunker operations — you do not need to import or instantiate it directly.
+- The `getPresignedUrl` key parsing expects exactly one `/` separating the bucket from the object path. Multi-level paths (`bucket/folder/file.pdf`) are handled correctly.
+
+## Related
+
+- [ExuluContext — configuration](/developers/core/exulu-context/configuration): how to add a processor to a context.
+- [Self-hosting / S3 storage](/self-hosting/services/s3-storage): configure the S3-compatible storage backend.

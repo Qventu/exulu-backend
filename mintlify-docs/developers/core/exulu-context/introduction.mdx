@@ -1,0 +1,167 @@
+---
+title: "Introduction"
+description: "ExuluContext is a typed, Postgres-backed knowledge collection with hybrid vector and full-text retrieval — the code-level class behind Knowledge in the IMP UI."
+icon: "database"
+---
+
+`ExuluContext` defines a knowledge collection: a typed schema of fields, an embedding model, chunking, optional data sources and processors, and a hybrid search method that combines pgvector similarity with Postgres full-text search under role-based access control. Contexts you register on [ExuluApp](/developers/core/exulu-app/introduction) appear as Knowledge in the platform UI, where users browse items and agents retrieve from them.
+
+## What a context gives you
+
+<CardGroup cols={2}>
+  <Card title="Typed items" icon="table">
+    Custom fields on top of built-in columns (name, description, tags, rights mode, external ID).
+  </Card>
+  <Card title="Hybrid search" icon="search">
+    Vector similarity, full-text search, or both — with score cutoffs, chunk expansion, and RBAC filtering.
+  </Card>
+  <Card title="Sources" icon="calendar">
+    Scheduled cron ingestion from external systems, upserting by external ID.
+  </Card>
+  <Card title="Processors" icon="workflow">
+    Transform items on insert or update — extract text from files, enrich, then embed.
+  </Card>
+  <Card title="Entity layer" icon="share-2">
+    Optional entity extraction over chunks for graph-style filtering and insights.
+  </Card>
+  <Card title="Pipelines" icon="git-branch">
+    Query rewriting, score cutoffs, and chunk expansion around retrieval.
+  </Card>
+</CardGroup>
+
+## Database layout
+
+Each context owns up to three Postgres tables, named after the context ID (lowercased, spaces replaced by underscores):
+
+| Table | Purpose |
+|---|---|
+| `<id>_items` | The items themselves: built-in columns plus your custom fields. |
+| `<id>_chunks` | Embedding chunks: content, `vector` embedding (pgvector), generated `fts` tsvector, JSONB metadata. |
+| `<id>_entities` | Extracted entities — only when the entity layer is enabled. |
+
+Built-in item columns include `id` (UUID), `name`, `description`, `tags`, `archived`, `external_id` (unique), `created_by`, `ttl`, `rights_mode`, `embeddings_updated_at`, `last_processed_at`, `textlength`, `source`, `chunks_count`, `createdAt`, `updatedAt`, and a generated `fts` column indexing name, description, and external ID. Fields of type `file` become a `<name>_s3key` column holding the S3 object key.
+
+<Note>
+The context `id` becomes the table name — never change it after creation, or the context points at empty tables. IDs must start with a letter or underscore, use only letters, digits, and underscores, and be at most 80 characters; treat 5 as the practical minimum.
+</Note>
+
+## Minimal example
+
+```typescript
+import { ExuluContext } from "@exulu/backend";
+
+export const productDocsContext = new ExuluContext({
+  id: "product_docs",
+  name: "Product documentation",
+  description: "Guides, references, and tutorials for the product.",
+  active: true,
+  fields: [
+    { name: "content", type: "longText", required: true },
+    { name: "category", type: "enum", enumValues: ["guide", "reference", "tutorial"] },
+    { name: "url", type: "text", unique: true },
+  ],
+  embedder: {
+    model: "text-embedding-3-small",
+  },
+  sources: [],
+  configuration: {
+    calculateVectors: "onInsert",
+    maxRetrievalResults: 10,
+  },
+});
+```
+
+Register it on the app:
+
+```typescript
+await app.create({
+  contexts: { product_docs: productDocsContext },
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+  },
+});
+```
+
+<Info>
+The `embedder.model` is the `model_name` of an embedding model declared in `config.litellm.yaml`. Embedding generation runs through the LiteLLM proxy, and the chunks table's vector dimensionality is read from the model's `model_info`. There is no separate embedder class — chunking is configured independently via the context's `chunker`, defaulting to the built-in sentence chunker. See [LiteLLM](/self-hosting/services/litellm) for model declaration.
+</Info>
+
+## Searching
+
+`search()` is the retrieval entry point. Three methods are supported:
+
+<Tabs>
+  <Tab title="Hybrid search">
+    Combines vector similarity and full-text rank. The default choice for most queries.
+
+    ```typescript
+    const results = await context.search({
+      query: "How do I configure authentication?",
+      keywords: ["auth", "configuration"],
+      method: "hybridSearch",
+      itemFilters: [],
+      chunkFilters: [],
+      sort: undefined,
+      trigger: "api",
+      limit: 10,
+      page: 1,
+    });
+    ```
+  </Tab>
+  <Tab title="Vector search">
+    Pure cosine-distance similarity over embeddings. Best for conceptual queries, synonyms, and paraphrasing.
+
+    ```typescript
+    const results = await context.search({
+      query: "authentication setup process",
+      method: "cosineDistance",
+      itemFilters: [],
+      chunkFilters: [],
+      sort: undefined,
+      trigger: "api",
+      limit: 10,
+      page: 1,
+    });
+    ```
+  </Tab>
+  <Tab title="Full-text search">
+    Postgres tsvector matching. Best for exact terms, IDs, and specific phrases — the generated index also matches normalized forms, so a search for `FST2XT` finds `FST_2XT`.
+
+    ```typescript
+    const results = await context.search({
+      keywords: ["FST_2XT", "production"],
+      method: "tsvector",
+      itemFilters: [],
+      chunkFilters: [],
+      sort: undefined,
+      trigger: "api",
+      limit: 10,
+      page: 1,
+    });
+    ```
+  </Tab>
+</Tabs>
+
+Pass a `user` to enforce access control — only chunks from items the user may read are returned. Score `cutoffs`, chunk `expand` windows, and the optional `queryRewriter` hook shape the result set; the optional entity layer adds `entityFilter` and `entityInsights`. All options are covered in the [API reference](/developers/core/exulu-context/api-reference#search).
+
+## Ingesting data
+
+Three ways to get items into a context:
+
+1. **Direct calls** — `createItem()` / `updateItem()` from your own code, or through the platform's GraphQL API and UI.
+2. **Sources** — declare an `execute` function with a cron `schedule`; the worker process runs it on schedule and upserts the returned items by `external_id`.
+3. **Processors** — transform items on insert or update (for example, extract text from an uploaded PDF) and optionally trigger embedding generation when done.
+
+Embedding generation itself is controlled by `configuration.calculateVectors` (`manual`, `onInsert`, `onUpdate`, or `always`) and can run inline or on a BullMQ queue.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-context/configuration">
+    Every constructor option: fields, embedder, chunker, sources, processor, entities.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-context/api-reference">
+    Every public method: search, item CRUD, embeddings, entity layer, tables.
+  </Card>
+</CardGroup>

@@ -1,0 +1,292 @@
+---
+title: "Data sources and sync"
+description: "Add a scheduled ExuluContextSource that pulls data from a REST API with cursor pagination, rate-limit-aware retries, and incremental sync via external_id upserts."
+icon: "refresh-cw"
+---
+
+A data source tells IMP how to ingest items from an external system. This tutorial builds a complete source for the `support_tickets_context` defined in [Defining contexts](/developers/tutorials/defining-contexts): a cron job that fetches closed tickets from a generic ticketing API with cursor pagination, skips unchanged items via a content hash, and upserts the results into the context.
+
+## Prerequisites
+
+- Completed [Defining contexts](/developers/tutorials/defining-contexts) — `support_tickets_context` exists in your project.
+- Read [ExuluContext — configuration](/developers/core/exulu-context/configuration) — the Sources section explains the `ExuluContextSource` shape.
+
+## What you will build
+
+A source with:
+- A daily cron schedule.
+- A dedicated BullMQ queue.
+- Exponential-backoff retries.
+- Cursor-based pagination that fetches all changed tickets from the API.
+- A content hash check that skips items whose content has not changed since the last sync.
+
+<Steps>
+
+<Step title="Register a source queue">
+
+Register a queue for the source sync job. Source queues run one job at a time by default — a sync job is long-running and should not overlap itself:
+
+```typescript src/contexts/index.ts
+import { ExuluContext, ExuluQueues, ExuluChunkers, type ExuluItem } from "@exulu/backend";
+import { createHash } from "crypto";
+
+const ticketSyncQueue = ExuluQueues.register(
+  "ticket_api_sync",
+  { worker: 1, queue: 1 }, // one sync at a time
+  1,                        // 1 job per second (source jobs are long-running)
+  60 * 30,                  // 30-minute timeout
+);
+```
+
+</Step>
+
+<Step title="Write a paginated API fetcher">
+
+Create a helper that fetches tickets from a generic REST API. It uses cursor-based pagination (a `cursor` token returned in each response) and waits when the API signals rate-limit throttling:
+
+```typescript src/integrations/ticketing/fetcher.ts
+export type ApiTicket = {
+  id:         string;
+  subject:    string;
+  body:       string;
+  status:     "open" | "pending" | "solved" | "closed";
+  priority:   "low" | "normal" | "high" | "urgent";
+  submitter:  string;
+  created_at: string;
+  updated_at: string;
+};
+
+type FetchTicketsResult = {
+  tickets:     ApiTicket[];
+  next_cursor: string | null;
+  end_of_stream: boolean;
+};
+
+export async function fetchTicketsPage(params: {
+  after:    string | null;
+  limit:    number;
+  start_time?: string;
+}): Promise<FetchTicketsResult> {
+  const url = new URL("https://api.example.com/v2/tickets");
+  url.searchParams.set("limit",  String(params.limit));
+  url.searchParams.set("status", "solved");
+  if (params.after)      url.searchParams.set("cursor",     params.after);
+  if (params.start_time) url.searchParams.set("start_time", params.start_time);
+
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.TICKETING_API_TOKEN}` },
+  });
+
+  // Respect Retry-After on 429
+  if (response.status === 429) {
+    const retryAfter = Number(response.headers.get("Retry-After") ?? 5);
+    await new Promise((r) => setTimeout(r, retryAfter * 1_000));
+    return fetchTicketsPage(params); // one recursive retry
+  }
+
+  if (!response.ok) {
+    throw new Error(`Ticketing API returned ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json() as Promise<FetchTicketsResult>;
+}
+
+export async function fetchAllTickets(startTime?: string): Promise<ApiTicket[]> {
+  const all: ApiTicket[] = [];
+  let cursor: string | null = null;
+
+  do {
+    const page = await fetchTicketsPage({ after: cursor, limit: 100, start_time: startTime });
+    all.push(...page.tickets);
+    cursor = page.next_cursor;
+    if (page.end_of_stream) break;
+  } while (cursor);
+
+  return all;
+}
+```
+
+</Step>
+
+<Step title="Add the source to the context">
+
+Now attach the source to `supportTicketsContext`. The source fetches only tickets updated since the last run (via `start_time`), computes a hash of each ticket's content, and skips items whose hash has not changed:
+
+```typescript src/contexts/index.ts (continued)
+export const supportTicketsContext = new ExuluContext({
+  id: "support_tickets_context",
+  // ... fields, embedder, chunker, configuration from the defining-contexts tutorial
+
+  sources: [
+    {
+      id: "ticket_api_source",
+      name: "Ticketing API source",
+      description: "Pulls closed tickets updated since the previous run from the ticketing API.",
+      config: {
+        schedule: "0 2 * * *",   // daily at 02:00 UTC
+        queue: ticketSyncQueue.use(),
+        retries: 3,
+        backoff: { type: "exponential", delay: 2_000 },
+        params: [
+          {
+            name: "start_time",
+            description: "ISO datetime — fetch tickets updated after this time. Defaults to 25 hours ago.",
+          },
+          {
+            name: "full_sync",
+            description: "Set to 'true' to ignore start_time and fetch all tickets.",
+            default: "false",
+          },
+        ],
+      },
+
+      execute: async ({ start_time: inputStartTime, full_sync: inputFullSync }) => {
+        const fullSync = inputFullSync === "true";
+        const startTime = fullSync
+          ? undefined
+          : (inputStartTime ?? new Date(Date.now() - 25 * 60 * 60 * 1_000).toISOString());
+
+        console.log("[ticket_api_source] Fetching tickets", { startTime, fullSync });
+
+        const tickets = await fetchAllTickets(startTime);
+        console.log(`[ticket_api_source] Fetched ${tickets.length} tickets`);
+
+        return tickets.map((ticket): ExuluItem => {
+          // Hash the content to detect changes on subsequent runs
+          const contentHash = createHash("sha256")
+            .update(ticket.subject + ticket.body + ticket.status)
+            .digest("hex");
+
+          return {
+            external_id: ticket.id,          // upsert key — existing items with this ID are updated
+            name:        ticket.subject,
+            body:        ticket.body,
+            status:      ticket.status,
+            priority:    ticket.priority,
+            submitter:   ticket.submitter,
+            created_at:  new Date(ticket.created_at),
+            content_hash: contentHash,        // stored in a custom field — compare on next run
+            rights_mode: "users",
+          };
+        });
+      },
+    },
+  ],
+});
+```
+
+</Step>
+
+<Step title="Understand upsert behavior">
+
+When `execute` returns items, IMP calls `createItem` on each one. The upsert logic depends on `external_id`:
+
+| Item has `external_id` | Existing row found | Result |
+|---|---|---|
+| Yes | Yes | Row is **updated** with the new field values |
+| Yes | No | Row is **inserted** |
+| No | — | Row is always **inserted** fresh |
+
+This means returning the same `external_id` on every run is safe — IMP updates the item in place rather than creating duplicates. Processor and embedding triggers apply to both inserts and updates according to the context's `calculateVectors` and `processor.config.trigger` settings.
+
+To skip processing unchanged items, store a `content_hash` in a custom field and check it before returning the item from `execute`:
+
+```typescript
+// Inside execute, before building the return array:
+const existingItems = await supportTicketsContext.getItems({
+  fields: ["external_id", "content_hash"],
+  filters: [],
+});
+const existingByExternalId = new Map(
+  existingItems
+    .filter((i) => i.external_id && i.content_hash)
+    .map((i) => [i.external_id!, i.content_hash as string]),
+);
+
+return tickets
+  .filter((ticket) => {
+    const newHash = createHash("sha256")
+      .update(ticket.subject + ticket.body + ticket.status)
+      .digest("hex");
+    const existingHash = existingByExternalId.get(ticket.id);
+    return !existingHash || existingHash !== newHash; // only return changed tickets
+  })
+  .map((ticket) => ({ /* ... ExuluItem fields ... */ }));
+```
+
+<Note>
+Add `content_hash` to the context's `fields` array (`{ name: "content_hash", type: "shortText", calculated: true }`) so IMP creates the column.
+</Note>
+
+</Step>
+
+<Step title="Trigger the source manually">
+
+Start the worker:
+
+```bash
+npm run dev:worker
+```
+
+In the IMP admin interface, go to **Build → Knowledge → support_tickets_context → Pipeline → Sources**. Click **Run** on the `ticket_api_source` row. In the dialog, leave `start_time` empty for the default (25 hours ago) or enter a specific ISO date. Click **Trigger source** to enqueue the job.
+
+You can also trigger it programmatically:
+
+```typescript
+await supportTicketsContext.sources[0]!.execute({
+  start_time: "2026-01-01T00:00:00Z",
+  full_sync:  "false",
+  exuluConfig: appConfig,
+});
+```
+
+`ExuluApp` does not expose a public `config` accessor, so keep a reference to the config object you passed to `app.create()`. In `src/exulu.ts`, extract it as a named const before calling `app.create()`:
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+
+export const app = new ExuluApp();
+
+export const appConfig = {
+  fileUploads: {
+    s3region:   process.env.COMPANION_S3_REGION!,
+    s3key:      process.env.COMPANION_S3_KEY!,
+    s3secret:   process.env.COMPANION_S3_SECRET!,
+    s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+    s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+  },
+  workers: { enabled: true },
+  MCP:     { enabled: false },
+};
+
+export const ready = app.create({
+  config: appConfig,
+  contexts,
+  tools: [],
+});
+```
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- A daily-scheduled source that fetches tickets with cursor pagination and rate-limit-aware retries.
+- Content-hash-based incremental sync that skips unchanged items.
+- Upsert-by-`external_id` semantics that keep items idempotent across runs.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Custom processors" icon="workflow" href="/developers/tutorials/custom-processors">
+    Transform items after ingestion — extract text from file attachments, compute derived fields, and trigger embeddings.
+  </Card>
+  <Card title="Queues and workers" icon="layers" href="/developers/tutorials/queues-and-workers">
+    Size queues to API rate limits and scope worker processes.
+  </Card>
+  <Card title="ExuluContext — configuration" icon="settings" href="/developers/core/exulu-context/configuration">
+    Full source and processor configuration reference.
+  </Card>
+</CardGroup>

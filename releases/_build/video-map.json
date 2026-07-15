@@ -1,0 +1,337 @@
+[
+  {
+    "release": "2026-05-24-speech-to-text",
+    "video": "speech-to-text",
+    "file": "2026-05-24-speech-to-text/hyperframes/index.html"
+  },
+  {
+    "release": "2026-05-29-spring-platform-release",
+    "video": "01-session-files-panel",
+    "file": "2026-05-29-spring-platform-release/hyperframes/compositions/01-session-files-panel.html"
+  },
+  {
+    "release": "2026-05-29-spring-platform-release",
+    "video": "02-followup-suggestions",
+    "file": "2026-05-29-spring-platform-release/hyperframes/compositions/02-followup-suggestions.html"
+  },
+  {
+    "release": "2026-05-29-spring-platform-release",
+    "video": "03-litellm-proxy",
+    "file": "2026-05-29-spring-platform-release/hyperframes/compositions/03-litellm-proxy.html"
+  },
+  {
+    "release": "2026-05-29-spring-platform-release",
+    "video": "04-skill-bundle-upload",
+    "file": "2026-05-29-spring-platform-release/hyperframes/compositions/04-skill-bundle-upload.html"
+  },
+  {
+    "release": "2026-05-29-spring-platform-release",
+    "video": "05-gdpr-export-delete",
+    "file": "2026-05-29-spring-platform-release/hyperframes/compositions/05-gdpr-export-delete.html"
+  },
+  {
+    "release": "2026-05-29-transcription",
+    "video": "slice-1-review-and-rename",
+    "file": "2026-05-29-transcription/hyperframes/transcription-release/index.html"
+  },
+  {
+    "release": "2026-05-29-transcription",
+    "video": "slice-2-standalone-whisper",
+    "file": "2026-05-29-transcription/hyperframes/transcription-release/index.html"
+  },
+  {
+    "release": "2026-05-29-transcription",
+    "video": "slice-3-knowledge-and-chat",
+    "file": "2026-05-29-transcription/hyperframes/transcription-release/index.html"
+  },
+  {
+    "release": "2026-06-10-summer-release",
+    "video": "oauth-tools",
+    "file": "2026-06-10-summer-release/hyperframes/compositions/oauth-tools.html"
+  },
+  {
+    "release": "2026-06-10-summer-release",
+    "video": "image-widget",
+    "file": "2026-06-10-summer-release/hyperframes/compositions/image-widget.html"
+  },
+  {
+    "release": "2026-06-10-summer-release",
+    "video": "personal-prompt",
+    "file": "2026-06-10-summer-release/hyperframes/compositions/personal-prompt.html"
+  },
+  {
+    "release": "2026-06-10-summer-release",
+    "video": "teams",
+    "file": "2026-06-10-summer-release/hyperframes/compositions/teams.html"
+  },
+  {
+    "release": "2026-06-22-knowledge-and-cost",
+    "video": "recall",
+    "file": "2026-06-22-knowledge-and-cost/hyperframes/compositions/recall.html"
+  },
+  {
+    "release": "2026-06-22-knowledge-and-cost",
+    "video": "kb-v2",
+    "file": "2026-06-22-knowledge-and-cost/hyperframes/compositions/kb-v2.html"
+  },
+  {
+    "release": "2026-06-22-knowledge-and-cost",
+    "video": "budgets",
+    "file": "2026-06-22-knowledge-and-cost/hyperframes/compositions/budgets.html"
+  },
+  {
+    "release": "2026-06-22-knowledge-and-cost",
+    "video": "entities",
+    "file": "2026-06-22-knowledge-and-cost/hyperframes/compositions/entities.html"
+  },
+  {
+    "release": "2026-06-22-knowledge-and-cost",
+    "video": "litellm-routing",
+    "file": "2026-06-22-knowledge-and-cost/hyperframes/compositions/litellm-routing.html"
+  },
+  {
+    "release": "2026-06-22-new-exulu-redesign",
+    "video": "the-spine",
+    "file": "2026-06-22-new-exulu-redesign/hyperframes/index.html"
+  },
+  {
+    "release": "2026-06-22-new-exulu-redesign",
+    "video": "mobile",
+    "file": "2026-06-22-new-exulu-redesign/hyperframes/compositions/mobile.html"
+  },
+  {
+    "release": "2026-06-22-new-exulu-redesign",
+    "video": "design-system",
+    "file": "2026-06-22-new-exulu-redesign/hyperframes/compositions/design-system.html"
+  },
+  {
+    "release": "2026-06-22-new-exulu-redesign",
+    "video": "home",
+    "file": "2026-06-22-new-exulu-redesign/hyperframes/compositions/home.html"
+  },
+  {
+    "release": "2026-07-02-shareable-artifacts",
+    "video": "share-dialog",
+    "file": "2026-07-02-shareable-artifacts/hyperframes/compositions/share-dialog.html"
+  },
+  {
+    "release": "2026-07-02-shareable-artifacts",
+    "video": "artifact-render",
+    "file": "2026-07-02-shareable-artifacts/hyperframes/compositions/artifact-render.html"
+  },
+  {
+    "release": "2026-07-07-agentic-retrieval",
+    "video": "wizard-open",
+    "file": "2026-07-07-agentic-retrieval/hyperframes/index.html"
+  },
+  {
+    "release": "2026-07-07-agentic-retrieval",
+    "video": "sources",
+    "file": "2026-07-07-agentic-retrieval/hyperframes/compositions/sources.html"
+  },
+  {
+    "release": "2026-07-07-agentic-retrieval",
+    "video": "routing",
+    "file": "2026-07-07-agentic-retrieval/hyperframes/compositions/routing.html"
+  },
+  {
+    "release": "2026-07-07-agentic-retrieval",
+    "video": "vocabulary",
+    "file": "2026-07-07-agentic-retrieval/hyperframes/compositions/vocabulary.html"
+  },
+  {
+    "release": "2026-07-07-agentic-retrieval",
+    "video": "behavior",
+    "file": "2026-07-07-agentic-retrieval/hyperframes/compositions/behavior.html"
+  },
+  {
+    "release": "2026-07-07-tool-configs",
+    "video": "tool-configs",
+    "file": "2026-07-07-tool-configs/hyperframes/index.html"
+  },
+  {
+    "release": "2026-07-08-admin-and-theming",
+    "video": "theme-studio",
+    "file": "2026-07-08-admin-and-theming/hyperframes/theme-studio/index.html"
+  },
+  {
+    "release": "2026-07-08-admin-and-theming",
+    "video": "role-matrix",
+    "file": "2026-07-08-admin-and-theming/hyperframes/role-matrix/index.html"
+  },
+  {
+    "release": "2026-07-08-agent-evals",
+    "video": "results-matrix",
+    "file": "2026-07-08-agent-evals/hyperframes/results-matrix/index.html"
+  },
+  {
+    "release": "2026-07-08-agent-evals",
+    "video": "eval-run-wizard",
+    "file": "2026-07-08-agent-evals/hyperframes/eval-run-wizard/index.html"
+  },
+  {
+    "release": "2026-07-08-agent-evals",
+    "video": "result-deep-dive",
+    "file": "2026-07-08-agent-evals/hyperframes/result-deep-dive/index.html"
+  },
+  {
+    "release": "2026-07-08-agent-evals",
+    "video": "case-authoring",
+    "file": "2026-07-08-agent-evals/hyperframes/case-authoring/index.html"
+  },
+  {
+    "release": "2026-07-08-analytics",
+    "video": "spend-leaderboard",
+    "file": "2026-07-08-analytics/hyperframes/spend-leaderboard/index.html"
+  },
+  {
+    "release": "2026-07-08-analytics",
+    "video": "trend-chart",
+    "file": "2026-07-08-analytics/hyperframes/trend-chart/index.html"
+  },
+  {
+    "release": "2026-07-08-analytics",
+    "video": "date-range-lens",
+    "file": "2026-07-08-analytics/hyperframes/date-range-lens/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-quality-of-life",
+    "video": "composer-slash-autocomplete",
+    "file": "2026-07-08-chat-quality-of-life/hyperframes/composer-slash-autocomplete/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-quality-of-life",
+    "video": "context-preset-update",
+    "file": "2026-07-08-chat-quality-of-life/hyperframes/context-preset-update/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-quality-of-life",
+    "video": "trajectory-reuse-feedback",
+    "file": "2026-07-08-chat-quality-of-life/hyperframes/trajectory-reuse-feedback/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-quality-of-life",
+    "video": "transcription-delete-cascade",
+    "file": "2026-07-08-chat-quality-of-life/hyperframes/transcription-delete-cascade/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-trust-and-control",
+    "video": "tool-approval",
+    "file": "2026-07-08-chat-trust-and-control/hyperframes/tool-approval/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-trust-and-control",
+    "video": "citations",
+    "file": "2026-07-08-chat-trust-and-control/hyperframes/citations/index.html"
+  },
+  {
+    "release": "2026-07-08-chat-trust-and-control",
+    "video": "question-cards",
+    "file": "2026-07-08-chat-trust-and-control/hyperframes/question-cards/index.html"
+  },
+  {
+    "release": "2026-07-08-context-management",
+    "video": "context-meter",
+    "file": "2026-07-08-context-management/hyperframes/context-meter/index.html"
+  },
+  {
+    "release": "2026-07-08-context-management",
+    "video": "steerable-compaction",
+    "file": "2026-07-08-context-management/hyperframes/steerable-compaction/index.html"
+  },
+  {
+    "release": "2026-07-08-context-management",
+    "video": "hard-limit-block",
+    "file": "2026-07-08-context-management/hyperframes/hard-limit-block/index.html"
+  },
+  {
+    "release": "2026-07-08-context-management",
+    "video": "tool-output-offload",
+    "file": "2026-07-08-context-management/hyperframes/tool-output-offload/index.html"
+  },
+  {
+    "release": "2026-07-08-feedback-management",
+    "video": "feedback-triage",
+    "file": "2026-07-08-feedback-management/hyperframes/feedback-triage/index.html"
+  },
+  {
+    "release": "2026-07-08-feedback-management",
+    "video": "feedback-detail-replay",
+    "file": "2026-07-08-feedback-management/hyperframes/feedback-detail-replay/index.html"
+  },
+  {
+    "release": "2026-07-08-platform-roundup",
+    "video": "text-to-speech",
+    "file": "2026-07-08-platform-roundup/hyperframes/text-to-speech/index.html"
+  },
+  {
+    "release": "2026-07-08-platform-roundup",
+    "video": "memory-visibility",
+    "file": "2026-07-08-platform-roundup/hyperframes/memory-visibility/index.html"
+  },
+  {
+    "release": "2026-07-08-platform-roundup",
+    "video": "file-sandbox-toggle",
+    "file": "2026-07-08-platform-roundup/hyperframes/file-sandbox-toggle/index.html"
+  },
+  {
+    "release": "2026-07-08-platform-roundup",
+    "video": "unattributed-spend-hint",
+    "file": "2026-07-08-platform-roundup/hyperframes/unattributed-spend-hint/index.html"
+  },
+  {
+    "release": "2026-07-08-project-search-and-budgets",
+    "video": "project-search-toggle",
+    "file": "2026-07-08-project-search-and-budgets/hyperframes/project-search-toggle/index.html"
+  },
+  {
+    "release": "2026-07-08-project-search-and-budgets",
+    "video": "max-tool-steps",
+    "file": "2026-07-08-project-search-and-budgets/hyperframes/max-tool-steps/index.html"
+  },
+  {
+    "release": "2026-07-08-projects",
+    "video": "project-files",
+    "file": "2026-07-08-projects/hyperframes/project-files/index.html"
+  },
+  {
+    "release": "2026-07-08-projects",
+    "video": "new-project",
+    "file": "2026-07-08-projects/hyperframes/new-project/index.html"
+  },
+  {
+    "release": "2026-07-08-prompt-and-skill-libraries",
+    "video": "skill-ide",
+    "file": "2026-07-08-prompt-and-skill-libraries/hyperframes/skill-ide/index.html"
+  },
+  {
+    "release": "2026-07-08-prompt-and-skill-libraries",
+    "video": "prompt-variables",
+    "file": "2026-07-08-prompt-and-skill-libraries/hyperframes/prompt-variables/index.html"
+  },
+  {
+    "release": "2026-07-08-prompt-and-skill-libraries",
+    "video": "prompt-versions",
+    "file": "2026-07-08-prompt-and-skill-libraries/hyperframes/prompt-versions/index.html"
+  },
+  {
+    "release": "2026-07-08-prompt-and-skill-libraries",
+    "video": "skill-versions",
+    "file": "2026-07-08-prompt-and-skill-libraries/hyperframes/skill-versions/index.html"
+  },
+  {
+    "release": "2026-07-08-routines",
+    "video": "chat-to-routine",
+    "file": "2026-07-08-routines/hyperframes/chat-to-routine/index.html"
+  },
+  {
+    "release": "2026-07-08-routines",
+    "video": "cron-schedule",
+    "file": "2026-07-08-routines/hyperframes/cron-schedule/index.html"
+  },
+  {
+    "release": "2026-07-08-routines",
+    "video": "run-forensics",
+    "file": "2026-07-08-routines/hyperframes/run-forensics/index.html"
+  }
+]

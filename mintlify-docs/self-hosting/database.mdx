@@ -1,0 +1,115 @@
+---
+title: "Database"
+description: "How IMP manages its Postgres schema: the no-migration-framework model, idempotent initdb, first-boot bootstrap, and backup strategy."
+icon: "database"
+---
+
+IMP uses a schema-per-boot initialisation model rather than a migration framework. Understanding how it works helps you operate the database safely and restore quickly from a backup.
+
+## The no-migration model
+
+IMP does not use Knex migrations, Flyway, Liquibase, or any versioned migration tool for its application schema. Instead, `npm run utils:initdb` runs on **every** backend and worker boot.
+
+The routine:
+
+1. Attempts to auto-create the database if it does not exist (requires `CREATEDB` privilege).
+2. Creates the `vector` extension if absent.
+3. Iterates over every known table schema and either creates the table (if missing) or adds any missing columns with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
+4. Runs any one-time data migrations, each gated behind a column-existence check so they are no-ops after their first successful run.
+5. Creates the `admin` and `default` roles if they do not exist.
+6. Creates the default admin user (`admin@exulu.com`) if it does not exist.
+7. Generates and logs a one-time API key.
+
+This design means the database schema is always current after a boot, and there is nothing to run manually when you upgrade. A failing initdb step is a hard error — the backend exits rather than booting with an incomplete schema.
+
+## First-boot bootstrap
+
+<Warning>
+The first boot is the only moment the API key is ever persisted. Capture it before the log scrolls away:
+
+```bash
+docker logs exulu-backend 2>&1 | grep -A 5 "Default api key"
+```
+
+`initdb` generates a fresh key on **every** boot and logs it every time, but only the key from the very first startup is stored in the database. Keys logged on subsequent startups are never inserted and will not authenticate.
+</Warning>
+
+On first boot, initdb creates:
+
+- An `admin` role with full write access to all permission keys.
+- A `default` role with limited read access.
+- A default admin user with email `admin@exulu.com` and password `admin`.
+- One API key scoped to `api@exulu.com`.
+
+**Change the admin password immediately after first login.** Navigate to your user settings and set a strong password. The default `admin` password is written in plain text in this documentation and in the source code.
+
+## One-time data migrations
+
+Old installs may have data in columns that have been superseded. These migrations are embedded directly in `initdb` and run exactly once, gated on a column-existence check:
+
+```typescript
+const hasOldProviderCol = await knex.schema.hasColumn("agents", "provider");
+if (hasOldProviderCol || hasOldKeyCol) {
+  // migrate agents.provider/providerapikey → models table
+  // drops old columns on completion
+}
+```
+
+After the migration runs and drops the old columns, the block becomes a permanent no-op. No state outside the database is required.
+
+## LiteLLM database
+
+The LiteLLM proxy maintains its own schema in a **separate** Postgres database (set via `LITELLM_DATABASE_URL` in `config.litellm.yaml`). On every boot, IMP runs a guarded `prisma db push` against that database to keep the LiteLLM schema up to date.
+
+The push is skipped with a loud warning banner if:
+
+- `LITELLM_DATABASE_URL` points at the same host, port, and database name as the IMP application database.
+- The target database contains tables that do not start with `LiteLLM_` (indicating it is not a dedicated LiteLLM database).
+
+In either case, the backend continues booting but LiteLLM-dependent features (model routing, budget tracking, spend logging) fail at runtime. See [LiteLLM service](/self-hosting/services/litellm) for the full warning and setup instructions.
+
+## Per-context tables
+
+IMP creates additional tables for each knowledge context (e.g., `projects_items`, `projects_chunks`). These tables include a `vector(N)` column whose dimensionality comes from the `dimensionality` field of the configured embedding model in `config.litellm.yaml`.
+
+Changing the embedding model after context tables exist requires migrating or recreating those tables — `pgvector` column dimensionality is fixed at creation time. There is no automated path for this today; back up and plan the migration manually.
+
+## Backup
+
+IMP data lives in two places: the Postgres databases and the S3 bucket. Both require regular backups.
+
+### Postgres
+
+Back up both the IMP application database and the LiteLLM database:
+
+```bash
+pg_dump -h <host> -U <user> -Fc <POSTGRES_DB_NAME> > imp-$(date +%Y%m%d).dump
+pg_dump -h <host> -U <user> -Fc litellm        > litellm-$(date +%Y%m%d).dump
+```
+
+Restore with:
+
+```bash
+pg_restore -h <host> -U <user> -d <POSTGRES_DB_NAME> imp-20260114.dump
+pg_restore -h <host> -U <user> -d litellm litellm-20260114.dump
+```
+
+The IMP schema is re-created by initdb on first boot, so you can also restore to an empty database and let initdb handle structure. However, restoring from a dump is faster and preserves pgvector indexes.
+
+### S3 bucket
+
+All uploaded files — session attachments, knowledge documents, and audio recordings — live in the `COMPANION_S3_BUCKET`. Back it up using your S3-compatible provider's tooling. For MinIO:
+
+```bash
+mc mirror minio/<bucket-name> /local/backup/minio/<bucket-name>
+```
+
+For AWS S3 or compatible:
+
+```bash
+aws s3 sync s3://<bucket-name> /local/backup/<bucket-name>
+```
+
+### Backup cadence
+
+A daily backup of both Postgres databases and the S3 bucket is the minimum for production deployments. Before any IMP upgrade, take a manual backup so you have a clean snapshot to roll back to if a migration behaves unexpectedly.

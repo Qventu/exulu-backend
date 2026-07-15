@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Agent Evals</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Agent Evals</span>
+      <h1 class="hero">Ship agents you can <em>trust</em>.</h1>
+      <p class="lede">Evals are now a first-class surface in Exulu: build named test suites, run any agent against them, compare every run side by side with red-amber-green scoring, and trace each score back to the transcript, the tokens, and the per-metric judge that produced it.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="results-matrix">
+        <h2>Results matrix</h2>
+        <p class="one-liner">Every run, every case, side by side.</p>
+        <div class="slice">
+          <video src="./shorts/results-matrix.mp4" poster="./shorts/results-matrix-poster.png" autoplay loop muted playsinline></video>
+          <p>Open an eval set and every run becomes a lane in a single cases &times; runs matrix. The test cases run down a sticky left column; each run is a self-contained lane with its name, date, agent, a pinned <strong>Average</strong> row, and one cell per case. Completed scores render to one decimal, colored against that run's pass threshold — green at or above it, amber within twenty points below, red under that — so a whole suite's health reads at a glance.</p>
+          <p>The matrix is alive. Cells flip from a spinning <strong>Running</strong> to a colored score as the queue lands each result, and the lane <strong>Average</strong> updates and recolors with every landing — no reload. The runs and cases lists poll every ten seconds (the queue chip every five), so new runs and row changes appear on their own. In-flight cells show their real status — Waiting, Running, Failed, Delayed — a case outside a run's selection is a striped dash, and a lane with nothing finished says <strong>"No results yet"</strong> instead of a NaN average.</p>
+          <p>The matrix shows the <strong>last 3 runs</strong> by default, sorted oldest to newest so the freshest lane sits at the right edge; a quiet <strong>"Show older runs"</strong> rail reveals five more at a time. Each lane's overflow menu carries <strong>"Refresh results"</strong> for everyone, and <strong>"Start run"</strong>, <strong>"Copy run"</strong>, <strong>"Edit run"</strong> and <strong>"Delete run"</strong> for writers — starting confirms first, and completed score cells are now real keyboard-focusable buttons (they used to be inert divs).</p>
+          <div class="snippet-label">GraphQL — every cell is a queue job — start runs from the API and watch the matrix fill:</div>
+          <pre><code>mutation RunEval($id: ID!, $test_case_ids: [ID!]) {
+  runEval(id: $id, test_case_ids: $test_case_ids) {
+    jobs
+    count
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="eval-run-wizard">
+        <h2>Eval run wizard</h2>
+        <p class="one-liner">Test your agents like you test your code.</p>
+        <div class="slice">
+          <video src="./shorts/eval-run-wizard.mp4" poster="./shorts/eval-run-wizard-poster.png" autoplay loop muted playsinline></video>
+          <p>One dialog configures an eval run in three sections. <strong>Essentials</strong> sets the run name, agent, and a test-case multi-select where every case shows a <strong>"N msgs"</strong> badge for its scripted conversation length, with a live "x of y" counter and one-click Select all. <strong>Eval functions</strong> is the same multi-select pattern — and checking a function that declares config reveals its settings inline: for the built-in <strong>LLM as Judge</strong>, a <strong>Configuration</strong> block with a <code>prompt</code> textarea for the judge instructions, scored 0&ndash;100 with <code>{actual_output}</code> and <code>{expected_output}</code> template slots.</p>
+          <p><strong>Advanced</strong> stays out of the way in a collapsed section whose trigger summarizes it at a glance — <strong>"Advanced — Average · pass ≥ 70 · 300s"</strong> — covering scoring method (Average / Median / Sum), pass threshold, and timeout. Sensible defaults mean most runs never open it. Submit stays disabled until a name, an agent, at least one test case, and at least one eval function are set.</p>
+          <p>It's one modal doing three jobs: the same dialog powers create ("New run config"), edit ("Edit run config"), and copy — the table's Copy action re-opens it pre-filled as "name (Copy)" with a cleared id. And a run config is a plain API object, so you can script it directly.</p>
+          <div class="snippet-label">GraphQL — a run config is just data — script it via GraphQL:</div>
+          <pre><code>mutation CreateEvalRun($data: eval_runInput!) {
+  eval_runsCreateOne(input: $data) {
+    item {
+      id
+      name
+      agent_id
+      eval_functions
+      scoring_method
+      pass_threshold
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="result-deep-dive">
+        <h2>Result deep-dive</h2>
+        <p class="one-liner">Every score, explained.</p>
+        <div class="slice">
+          <video src="./shorts/result-deep-dive.mp4" poster="./shorts/result-deep-dive-poster.png" autoplay loop muted playsinline></video>
+          <p>Every completed cell in the matrix is now a door, not just a number. Click a finished score and a <strong>"Test result details"</strong> sheet slides in from the right with four tabs. <strong>Overview</strong> leads with the score, a duration card, a <strong>"Completed"</strong> status badge and the job ID, and a <strong>"Token usage"</strong> card splitting total tokens into input and output — a bare number turned into score, tokens, transcript, and per-function breakdown.</p>
+          <p><strong>Messages</strong> replays the eval conversation in the same renderer the chat page uses, so you audit exactly what the agent said rather than a paraphrase. <strong>Functions</strong> breaks the composite score apart — one card per eval function with its name, id, individual score to two decimals, and the exact config it ran with. <strong>Raw</strong> is the full result metadata as pretty JSON for when you want everything. When a result carries an error, the Overview tab adds a destructive-bordered <strong>"Error details"</strong> card, so the same flow doubles as the debugging view.</p>
+          <p>The sheet only opens on real, finished data: in-flight and failed states render as status labels and are never clickable, so you can't deep-dive into a half-finished result. Completed cells are proper focusable buttons, so the whole sheet is keyboard-reachable.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="case-authoring">
+        <h2>Conversation test cases</h2>
+        <p class="one-liner">Test cases that talk like your users.</p>
+        <div class="slice">
+          <video src="./shorts/case-authoring.mp4" poster="./shorts/case-authoring-poster.png" autoplay loop muted playsinline></video>
+          <p>Test cases are authored as real conversations, not one-line prompts. The <strong>Create test case</strong> modal has two tabs: <strong>Basic info</strong> for the name, description and required expected output, and <strong>Conversation</strong> to script a multi-turn exchange. Type a user message and press <strong>Enter</strong> to add it (Shift+Enter for a new line), or click <strong>Add message</strong> — <strong>"Add user messages in order. The agent will respond between each message automatically."</strong></p>
+          <p>Every user turn you add gets a ghost assistant turn appended after it — <strong>"💬 Placeholder, generated agent response will be added here when the test case is run…"</strong> — display-only scaffolding that the agent's real reply replaces at run time. The transcript is the product's actual chat renderer, so user bubbles sit on the right with per-message edit and remove actions; removing a user message also removes its placeholder. You can attach up to ten files per message through the shared file picker (images, PDF, Office docs, CSV, audio, video), with an amber note reminding you the agent under test must support the attached media types.</p>
+          <p>The same modal opens pre-filled to edit existing cases and saves through the test-case mutations — and because the scripted conversation is stored verbatim in the record's <code>inputs</code> field, you can script cases programmatically.</p>
+          <div class="snippet-label">GraphQL — test cases are plain records — script the conversation via GraphQL:</div>
+          <pre><code>mutation CreateTestCase($data: test_caseInput!) {
+  test_casesCreateOne(input: $data) {
+    item {
+      id
+      name
+      inputs
+      expected_output
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="eval-sets">
+        <h2>Every eval set, one searchable home</h2>
+        <p class="one-liner">Eval suites get a permanent address, not a scattered set of fixtures.</p>
+        <div class="slice">
+          <p>The new <strong>/evals</strong> area gives eval suites a permanent address: a paginated table of eval sets — <strong>"Test agents against expected behavior and track scores across runs."</strong> — with a <strong>"Filter by name…"</strong> search box that filters server-side as you type, and a <strong>"Test case library"</strong> shortcut in the toolbar. Creating a suite is one dialog: <strong>"New eval set"</strong> opens <strong>"Create eval set"</strong> — <strong>"Create a new evaluation set. You can add test cases after creation."</strong> — with just a name and description, so the empty state is two fields away from gone.</p>
+          <p>Access is RBAC-gated on the <code>evals</code> right, the same predicate that drives the sidebar nav, so nav and page never disagree. Anyone without at least <code>evals: read</code> lands on a lock screen — <strong>"Access denied. You don't have permission to access Evals. Contact your administrator to request access."</strong> — and deleting a set is confirm-guarded and permanent.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="test-case-library">
+        <h2>A test-case library that outlives any one suite</h2>
+        <p class="one-liner">Cases are named, versioned records — authoring and suite assembly stay separate steps.</p>
+        <div class="slice">
+          <p>Test cases now live in their own library at <strong>/evals/cases</strong> — <strong>"Create and manage test cases for evaluating agent performance."</strong> — where every case is a named, multi-turn conversation with an expected output, not a throwaway fixture buried inside a suite. Each row shows a Messages badge (<strong>"3 messages"</strong>) that counts only the user turns you authored, so the auto-generated assistant placeholders between them never inflate the number.</p>
+          <p>From any eval set you pull cases in via <strong>"Add existing test cases"</strong> — <strong>"Pick from unassigned test cases. A case can belong to only one set."</strong> — so authoring and suite assembly are two separate, deliberate steps. Sets cap at <strong>"{count}/500 cases"</strong>, and the case editor is the same two-tab modal you use everywhere: Basic info and Conversation, with a required expected output that can be an exact response or a description of what the output should contain.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="queue-console">
+        <h2>The run queue, one quiet chip away</h2>
+        <p class="one-liner">Runs execute on a background queue — its whole state fits in one chip, with a full console behind it.</p>
+        <div class="slice">
+          <p>Eval runs execute on a background queue, and its whole state now fits in one quiet chip above the results matrix — <strong>"Queue: 4 active · 1 failed"</strong> — polling every five seconds, turning the failed count red, and disappearing entirely when the queue is empty. Click it and a full console slides in (<strong>"Queue: eval_runs"</strong>): status tabs (Active / Waiting / Failed / Completed) with live counts, a jobs table with click-to-copy IDs, attempts and timestamps, and bulk actions — <strong>"Retry 3 job(s)"</strong>, <strong>"Delete 3 job(s)"</strong>, with an optional <strong>"Delete the original jobs after retrying"</strong> cascade.</p>
+          <p>Queue-level controls — <strong>"Pause queue"</strong>, <strong>"Resume queue"</strong>, <strong>"Drain queue"</strong> — are all confirm-guarded and, like every mutating action in the panel, visible only to users with <code>evals: write</code>; readers can still open and inspect everything. And the operation the Retry button fires is the same one that fans a run out into queue jobs — pass <code>test_case_ids</code> to re-run just the cases that failed.</p>
+          <div class="snippet-label">GraphQL — one mutation fans a run out into queue jobs — the same call the console's Retry button makes:</div>
+          <pre><code>mutation RunEval($id: ID!, $test_case_ids: [ID!]) {
+  runEval(id: $id, test_case_ids: $test_case_ids) {
+    jobs
+    count
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="workers-guardrail">
+        <h2>A guardrail, not a dead end</h2>
+        <p class="one-liner">No background workers? The evals area says so — and stays fully browsable.</p>
+        <div class="slice">
+          <p>If the deployment has no background workers, the evals area says so instead of failing silently: an orange banner — <strong>"Background workers are not configured"</strong> — explains exactly what still works: <strong>"Eval sets are viewable but runs can't execute. Configure Redis to enable evaluation runs."</strong></p>
+          <p>It's deliberately a warning, not an error, because browsing and authoring stay fully functional — and only super-admins, the people who can actually fix it, get the <strong>"Configuration →"</strong> link.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

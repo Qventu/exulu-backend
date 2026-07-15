@@ -1,0 +1,26 @@
+<article class="chapter" id="r-vertex-billing-labels" data-release="2026-07-08-platform-roundup" aria-labelledby="r-vertex-billing-labels-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">20</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-vertex-billing-labels-h">Vertex billing labels</h1>
+    <p class="ch-lede">Your GCP invoice now knows which agent spent what.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>Vertex spend used to arrive in Google Cloud Billing as one undifferentiated line. Every Vertex <code>generateContent</code> call now carries up to six billing labels — provider, user, role, project, and agent — visible in Cloud Billing reports (with Google's usual ~24-hour lag). A label failure never breaks a model call, and only opaque IDs leave the box — no emails, no names. Keep in-product tagging for your dashboards; this one is for the bill.</p>
+          <div class="snippet-label">Injected into every Vertex generateContent call</div>
+          <pre><code>{
+  "contents": [ "..." ],
+  "labels": {
+    "provider_id": "default_vertex_gemini_2_5_flash_provider",
+    "provider_name": "gemini-2-5-flash",
+    "user_id": "42",
+    "role_id": "f3a91c",
+    "project_id": "7d20b4",
+    "agent_id": "9c51e8"
+  }
+}</code></pre>
+        </div></section>
+</article>

@@ -1,0 +1,29 @@
+<article class="chapter" id="r-models-decoupling" data-release="2026-07-08-platform-roundup" aria-labelledby="r-models-decoupling-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">22</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-models-decoupling-h">Models: agents decoupled from providers</h1>
+    <p class="ch-lede">One model catalog. Every agent, every route, one resolver.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>Agents no longer hard-wire a provider and an API key. Model configuration lives in one place — the LiteLLM proxy's <code>config.yaml</code> — and everything on the platform resolves models from it, with access control applied. What admins configure and what agents can use can no longer drift apart.</p>
+          <p>The <strong>/models</strong> page renders that catalog: context windows, modalities, input and output cost per million tokens, status, and tags — searchable, with a per-model detail sheet. The model used is saved on every assistant message, and the <code>x-exulu-model-override</code> header swaps the model for a single request.</p>
+          <div class="snippet-label">GraphQL — the catalog the UI renders</div>
+          <pre><code>query GetLiteLLMCatalog {
+  litellmCatalog {
+    model_name
+    active
+    type
+    max_input_tokens
+    max_output_tokens
+    supports_vision
+    supports_function_calling
+    input_cost_per_million_tokens
+    output_cost_per_million_tokens
+  }
+}</code></pre>
+        </div></section>
+</article>

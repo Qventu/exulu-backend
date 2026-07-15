@@ -1,0 +1,61 @@
+---
+title: "Dictation"
+description: "Speak your message instead of typing it — IMP transcribes your recording into the message box."
+icon: "mic"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="Transcripts (a transcription backend must be configured)" />
+
+When your deployment has a transcription backend configured, a microphone button appears in the composer next to the send button. Recordings are transcribed server-side (Whisper-style speech-to-text) and the text lands in the message box — nothing is sent until you press send.
+
+<Frame caption="Dictation in action: click the mic button, speak, and the transcribed text lands in the message box ready to send.">
+  <video autoPlay muted loop playsInline src="/videos/dictation.mp4" />
+</Frame>
+
+## Dictate a message
+
+<Steps>
+  <Step title="Start recording">
+    Click the microphone button (**Start recording**). The first time, your browser asks for microphone permission — allow it.
+  </Step>
+  <Step title="Speak">
+    While recording, the button shows a pulsing stop symbol. Speak normally; you can dictate several sentences.
+  </Step>
+  <Step title="Stop">
+    Click the button again (**Stop recording**). The button shows a spinner while the audio is **Transcribing**.
+  </Step>
+  <Step title="Review and send">
+    The transcribed text is appended to whatever is already in the message box. Read it, fix anything the transcription got wrong, and send. Dictation never sends automatically.
+  </Step>
+</Steps>
+
+<Tip>
+Transcription uses your interface language as a hint, which makes short recordings in languages other than English noticeably more accurate. Set your language in the user menu.
+</Tip>
+
+## If the microphone doesn't work
+
+If recording can't start, IMP shows a **Microphone unavailable** message explaining why:
+
+<AccordionGroup>
+  <Accordion title="Permission was denied">
+    "Microphone permission was denied. Click the lock/permissions icon next to the URL and allow microphone access for this site." — re-enable the permission in your browser's site settings, then try again.
+  </Accordion>
+  <Accordion title="No microphone found">
+    "No microphone was found on this device." — plug in or enable a microphone, then reload the page.
+  </Accordion>
+  <Accordion title="Microphone is busy">
+    "The microphone is in use by another application." — close the other app (video call software is the usual culprit) and try again.
+  </Accordion>
+  <Accordion title="Not a secure connection">
+    Recording requires HTTPS (or localhost). If your deployment is served over plain HTTP, browsers block microphone access entirely — ask your administrator.
+  </Accordion>
+</AccordionGroup>
+
+If a recording fails to transcribe, IMP shows "Transcription failed" — your recording is discarded, so dictate again.
+
+<Note>
+Dictation transcribes short voice input into the message box. To transcribe whole meetings or audio files, use [**Transcripts**](/user-guide/transcripts/overview) in the sidebar instead.
+</Note>

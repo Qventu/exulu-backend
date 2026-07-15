@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — chat tool approval</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/chat.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* chat screen */
+      #root .chat-body { display: flex; flex: 1; min-height: 0; }
+
+      /* history rail */
+      #root .chat-rail { width: 250px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); display: flex; flex-direction: column; padding: 12px 10px; gap: 10px; }
+      #root .rail-agent { display: flex; align-items: center; gap: 8px; padding: 2px 6px; font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .rail-agent svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .rail-agent .rail-menu { margin-left: auto; color: var(--tx-lo); display: grid; place-items: center; }
+      #root .rail-new { justify-content: center; width: 100%; box-sizing: border-box; }
+      #root .rail-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--surface); padding: 7px 10px; font-size: 12.5px; color: var(--tx-faint); }
+      #root .rail-search svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .rail-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); padding: 4px 6px 0; }
+      #root .rail-list { display: flex; flex-direction: column; gap: 2px; }
+      #root .rail-row { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; font-size: 13px; color: var(--tx-mid); }
+      #root .rail-row .time { font-size: 11px; color: var(--tx-faint); }
+      #root .rail-row.active { background: var(--surface-2); color: var(--tx-hi); }
+      #root .rail-seeall { padding: 8px 10px; font-size: 12.5px; color: var(--tx-lo); }
+
+      /* chat header */
+      #root .hd-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      #root .hd-icon { width: 26px; height: 26px; display: grid; place-items: center; color: var(--tx-lo); }
+      #root .hd-icon svg { width: 15px; height: 15px; stroke-width: 1.5; }
+      #root .hd-avatar { width: 22px; height: 22px; flex: none; background: var(--chip); color: var(--ink); font-family: var(--font-mono); font-size: 10px; display: grid; place-items: center; }
+      #root .hd-name { font-size: 13.5px; font-weight: 500; color: var(--tx-hi); }
+      #root .hd-sep { color: var(--tx-faint); font-size: 13px; }
+      #root .hd-title { font-size: 13.5px; color: var(--tx-hi); }
+      #root .hd-chip { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; border: 1px solid var(--hair); padding: 3px 8px; color: var(--tx-lo); display: inline-flex; align-items: center; gap: 6px; }
+      #root .hd-chip svg { width: 12px; height: 12px; stroke-width: 1.5; }
+      #root .hd-right { display: flex; align-items: center; gap: 10px; }
+
+      /* conversation column */
+      #root .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      #root .chat-scroll { flex: 1; overflow: hidden; padding: 30px 24px 0; }
+      #root .chat-bottom { padding: 0 24px 16px; }
+      #root .chat-col { max-width: 760px; margin: 0 auto; }
+      #root .chat-disclaimer { text-align: center; font-size: 11px; color: var(--tx-faint); margin-top: 9px; }
+
+      /* tool call approval card */
+      #root .tool-approval-card { border: 1px solid var(--hair); background: var(--surface); margin-top: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+      #root .tool-approval-header { display: flex; align-items: flex-start; gap: 10px; }
+      #root .tool-approval-icon { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--tx-mid); }
+      #root .tool-approval-icon svg { width: 16px; height: 16px; stroke-width: 1.5; }
+      #root .tool-approval-title { font-size: 14px; font-weight: 500; color: var(--tx-hi); }
+      #root .tool-approval-desc { font-size: 13px; color: var(--tx-mid); margin-top: 2px; }
+      #root .tool-approval-input { font-family: var(--font-mono); font-size: 11.5px; color: var(--tx-mid); background: var(--surface-2); border: 1px solid var(--hair); padding: 8px 12px; line-height: 1.5; }
+      #root .tool-approval-actions { display: flex; gap: 8px; }
+      #root .tool-btn { font-family: var(--font-mono); font-size: 11.5px; padding: 7px 14px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--hair); cursor: default; }
+      #root .tool-btn-primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+      #root .tool-btn-outline { background: transparent; color: var(--tx-mid); }
+      #root .tool-btn-deny { background: transparent; color: var(--destructive); border-color: var(--hair); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="chat-tool-approval"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- chat header -->
+            <div class="imp-topbar">
+              <span class="hd-left">
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="hd-avatar">DA</span>
+                <span class="hd-name">Data Analyst</span>
+                <span class="hd-sep">/</span>
+                <span class="hd-title">Q2 sales analysis</span>
+                <span class="hd-chip">14% · 8k</span>
+              </span>
+              <span class="hd-right">
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+              </span>
+            </div>
+
+            <div class="chat-body">
+              <!-- history rail -->
+              <div class="chat-rail">
+                <div class="rail-agent">
+                  Data Analyst
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+                  <span class="rail-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+                </div>
+                <span class="imp-btn imp-btn-ink rail-new">+ New chat</span>
+                <div class="rail-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>Search chats</div>
+                <div class="rail-label">Recents</div>
+                <div class="rail-list">
+                  <div class="rail-row active">Q2 sales analysis<span class="time">just now</span></div>
+                  <div class="rail-row">Monthly KPI report<span class="time">1 h ago</span></div>
+                  <div class="rail-row">Revenue breakdown<span class="time">yesterday</span></div>
+                  <div class="rail-row">Forecast model<span class="time">2 days ago</span></div>
+                </div>
+                <div class="rail-seeall">See all</div>
+              </div>
+
+              <!-- conversation column -->
+              <div class="chat-main">
+                <div class="chat-scroll">
+                  <div class="imp-chat">
+                    <div class="imp-msg-user">Run a Python script to compute the Q2 revenue breakdown by region.</div>
+                    <div class="imp-msg-agent">
+                      <p>I'll run a script to compute the regional breakdown. Please review the request below before I proceed.</p>
+                      <!-- tool approval card -->
+                      <div class="tool-approval-card">
+                        <div class="tool-approval-header">
+                          <span class="tool-approval-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
+                          <div>
+                            <div class="tool-approval-title">Run bash?</div>
+                            <div class="tool-approval-desc">The agent wants to run this tool. Review the request and choose how to proceed.</div>
+                          </div>
+                        </div>
+                        <div class="tool-approval-input">python3 /sandbox/q2_revenue_breakdown.py --region all --output /sandbox/q2_report.csv</div>
+                        <div class="tool-approval-actions">
+                          <span class="tool-btn tool-btn-primary">Allow once</span>
+                          <span class="tool-btn tool-btn-outline">Allow for this chat</span>
+                          <span class="tool-btn tool-btn-deny">Deny</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-bottom">
+                  <div class="chat-col">
+                    <div class="imp-composer">
+                      <span class="imp-composer-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+                      <span class="imp-composer-input">Ask me anything...</span>
+                      <span class="imp-composer-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></span>
+                    </div>
+                    <div class="chat-disclaimer">AI can make mistakes. Check important info.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["chat-tool-approval"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

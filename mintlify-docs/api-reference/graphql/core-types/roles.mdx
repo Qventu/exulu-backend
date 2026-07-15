@@ -1,0 +1,71 @@
+---
+title: "Roles"
+description: "The role type defines a named permission set controlling what a user can read or write across the platform."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Roles require an Enterprise Edition license (`rbac` entitlement).
+
+A `role` groups permission flags for each resource domain. Users are assigned one role; the role determines what they can view and modify. See [Users & access](/administration/users-access/overview).
+
+```graphql
+type role {
+  name: String
+  agents: String
+  api: String
+  workflows: String
+  variables: String
+  users: String
+  evals: String
+  budget_management: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `agents` | Permission level for agent resources: `"read"` or `"write"`. |
+| `api` | Permission level for API key management. |
+| `workflows` | Permission level for workflow template operations. |
+| `variables` | Permission level for variables. |
+| `users` | Permission level for user and role administration. |
+| `evals` | Permission level for eval runs, sets, and test cases. |
+| `budget_management` | Permission level for budget administration. |
+| `budget` | JSON budget envelope constraining total spend for users in this role. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  rolesPagination(
+    limit: 20
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      agents
+      api
+      workflows
+      variables
+      users
+      evals
+      budget_management
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

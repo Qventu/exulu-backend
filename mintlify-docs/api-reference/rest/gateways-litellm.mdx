@@ -1,0 +1,157 @@
+---
+title: "LiteLLM gateway"
+description: "OpenAI-compatible pass-through at /litellm/{project} — call any model in your LiteLLM config from any OpenAI-compatible SDK."
+---
+
+IMP exposes a direct pass-through to the internal LiteLLM proxy at `/litellm/{project}/v1/...`. Use it to call models by their LiteLLM `model_list` names from any tool that speaks the OpenAI protocol — without exposing the LiteLLM master key.
+
+This is the right path when you want to call a specific model directly (for batch jobs, embeddings, or custom integrations). For agent conversations, use the [agent run endpoint](/api-reference/rest/introduction#agent-run-endpoint) or [MCP](/api-reference/rest/mcp) instead.
+
+## Base URL
+
+```text
+https://your-imp-host/litellm/{project}/v1
+```
+
+`{project}` is required:
+
+| Value | Meaning |
+|---|---|
+| A project ID | The request is associated with that project for cost attribution. The caller must have access to the project. |
+| `DEFAULT` | No project association. Useful when calling from a script or service not tied to a specific project. |
+
+Requests without a valid `{project}` return `404 "Project not found or you do not have access to it."`.
+
+## Authentication
+
+Pass your IMP API key or session JWT — not the LiteLLM master key. The gateway strips your `Authorization` header and injects the master key upstream, so the master key never leaves the server.
+
+**API key** (recommended for non-interactive use) — pass it in the `x-api-key` (or `exulu-api-key`) header. API keys are not accepted in the `Authorization` header, which is reserved for session JWTs:
+
+```bash
+curl https://your-imp-host/litellm/DEFAULT/v1/models \
+  -H "x-api-key: sk_abc123.../my-key"
+```
+
+API keys have the format `sk_<secret>/<keyname>`.
+
+**Session JWT**: pass in `Authorization: Bearer <token>` as usual.
+
+Unauthenticated requests return `401`.
+
+## Exposed surface
+
+Only paths under `/v1/` are proxied. Requests to any other path (LiteLLM admin paths like `/model/new`, `/key/generate`, `/user/*`) return `403 "Path ... is not exposed through the Exulu LiteLLM proxy."` — admin paths fail closed by design.
+
+The `/v1/` surface is LiteLLM's OpenAI-compatible API:
+
+| Path | Method | Description |
+|---|---|---|
+| `/v1/chat/completions` | `POST` | Chat completions (streaming and non-streaming) |
+| `/v1/completions` | `POST` | Text completions |
+| `/v1/embeddings` | `POST` | Text embeddings |
+| `/v1/models` | `GET` | List available models |
+| Other `/v1/*` | Various | Any other path LiteLLM exposes under `/v1/` |
+
+## Model names
+
+Use the `model_name` values from your `config.litellm.yaml` `model_list`. These are **not** IMP agent names. See [LiteLLM service](/self-hosting/services/litellm) for how to define models in the config.
+
+```yaml
+# config.litellm.yaml excerpt
+model_list:
+  - model_name: claude-sonnet-4-6    # ← use this as the "model" field
+    litellm_params:
+      model: vertex_ai/claude-sonnet-4-6
+      ...
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+    model_info:
+      type: embedder
+```
+
+## Cost attribution
+
+Every request is tagged with the authenticated user's identity, role, team, and project. These tags flow through LiteLLM's spend logging. Requests count against any budgets configured for the user, role, team, or project. Per-user default budgets are provisioned lazily on first request.
+
+## Streaming
+
+Pass `"stream": true` in the request body. The response is a standard OpenAI SSE stream (`text/event-stream`). The gateway pipes the upstream response through transparently.
+
+## Worked example — `openai` npm client
+
+IMP reads API keys from the `x-api-key` header. Pass your IMP API key via `defaultHeaders` and set `apiKey` to any non-empty string (the SDK requires it, but IMP ignores it when `x-api-key` is present):
+
+```typescript
+import OpenAI from "openai";
+
+const IMP_API_KEY = "sk_abc123.../my-key";   // format: sk_<secret>/<keyname>
+
+const client = new OpenAI({
+  baseURL: "https://your-imp-host/litellm/DEFAULT/v1",
+  apiKey: "not-used",                         // required by SDK, ignored by IMP
+  defaultHeaders: {
+    "x-api-key": IMP_API_KEY,
+  },
+});
+
+// Chat completion
+const response = await client.chat.completions.create({
+  model: "claude-sonnet-4-6",   // LiteLLM model_name from config.litellm.yaml
+  messages: [{ role: "user", content: "Summarise this document." }],
+});
+
+console.log(response.choices[0].message.content);
+
+// Embeddings
+const embedding = await client.embeddings.create({
+  model: "text-embedding-3-small",
+  input: "Text to embed",
+});
+
+console.log(embedding.data[0].embedding.length);
+```
+
+For streaming:
+
+```typescript
+const stream = await client.chat.completions.create({
+  model: "claude-sonnet-4-6",
+  messages: [{ role: "user", content: "List five ideas." }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
+}
+```
+
+## Error reference
+
+| Status | Condition |
+|---|---|
+| `401` | Missing or invalid credentials |
+| `403` | Path is not under `/v1/` |
+| `404` | Project ID not found or caller lacks access |
+| `503` | `EXULU_USE_LITELLM` is not `true`, or `LITELLM_MASTER_KEY` is not set |
+| `502` | Upstream LiteLLM proxy request failed (network or proxy error) |
+
+Errors from LiteLLM itself (model errors, quota exceeded, etc.) are passed through with their original status codes.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="LiteLLM service" icon="cpu" href="/self-hosting/services/litellm">
+    Configure models in config.litellm.yaml and manage the proxy.
+  </Card>
+  <Card title="MCP endpoint" icon="plug" href="/api-reference/rest/mcp">
+    Expose agents as MCP servers for Claude Desktop and other clients.
+  </Card>
+  <Card title="Agent run endpoint" icon="play" href="/api-reference/rest/introduction#agent-run-endpoint">
+    Run an IMP agent with its full instruction set and knowledge.
+  </Card>
+  <Card title="API keys" icon="key" href="/administration/api-keys">
+    Create and manage API keys for gateway authentication.
+  </Card>
+</CardGroup>

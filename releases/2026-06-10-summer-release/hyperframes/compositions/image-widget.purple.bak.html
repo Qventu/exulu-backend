@@ -1,0 +1,282 @@
+<template id="image-widget-template">
+  <div data-composition-id="image-widget" data-width="1920" data-height="1080">
+    <div class="bg"></div>
+    <div class="glow"></div>
+    <div class="dotgrid"></div>
+    <div class="ghost" data-layout-allow-overflow>IMAGES</div>
+
+    <div class="stage">
+      <div class="copy">
+        <div class="chip">NEW · CHAT</div>
+        <h1 class="headline">Images,<br />in the loop.</h1>
+        <p class="sub" id="iw-sub">Generate, refine and pick —<br />without leaving the chat.</p>
+        <p class="sub payoff" id="iw-payoff">You pick. The agent only<br />sees your selection.</p>
+        <div class="meta"><span class="meta-dot"></span>EXULU · JUNE 2026 RELEASE</div>
+      </div>
+
+      <div class="demo">
+        <div class="widget" id="iw-widget">
+          <div class="w-header">
+            <div class="w-field">
+              <div class="w-label">Model</div>
+              <div class="w-select">gpt-image-1<span class="chev">▾</span></div>
+            </div>
+            <div class="w-field">
+              <div class="w-label">Style</div>
+              <div class="w-select">Watercolor<span class="chev">▾</span></div>
+            </div>
+          </div>
+          <div class="w-prompt">
+            <div class="w-label">Prompt</div>
+            <div class="w-textarea">A friendly robot assistant waving hello, soft watercolor style</div>
+          </div>
+          <div class="w-controls">
+            <div class="w-field">
+              <div class="w-label">Size</div>
+              <div class="w-select">1024 × 1024<span class="chev">▾</span></div>
+            </div>
+            <div class="w-field">
+              <div class="w-label">Quality</div>
+              <div class="w-select">High<span class="chev">▾</span></div>
+            </div>
+            <div class="w-field">
+              <div class="w-label">Count</div>
+              <div class="w-count"><span class="cbtn">−</span><span class="cnum">4</span><span class="cbtn">+</span></div>
+            </div>
+          </div>
+          <div class="w-generate" id="iw-genbtn">
+            <span class="g-idle" id="iw-gidle">✦&nbsp; Generate</span>
+            <span class="g-busy" id="iw-gbusy"><span class="spinner" id="iw-spin"></span>Generating… (click to cancel)</span>
+          </div>
+          <div class="w-grid" id="iw-grid" data-layout-allow-overflow>
+            <div class="tile t1" id="iw-t1" data-layout-allow-overflow><span class="sel-ring"></span><span class="sel-check">✓</span></div>
+            <div class="tile t2"></div>
+            <div class="tile t3"></div>
+            <div class="tile t4"></div>
+          </div>
+          <div class="w-footer" id="iw-footer">
+            <span class="f-info">1 image selected</span>
+            <span class="f-use">✓&nbsp; Use these</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cursor" id="iw-cursor"></div>
+
+    <style>
+      [data-composition-id="image-widget"] {
+        position: relative; overflow: hidden;
+        font-family: 'Inter', system-ui, sans-serif;
+        letter-spacing: -0.025em; color: #000;
+      }
+      [data-composition-id="image-widget"] .bg {
+        position: absolute; inset: 0;
+        background: linear-gradient(150deg, #FDFDFD 0%, #F5F8FB 55%, #F5F5F5 100%);
+      }
+      [data-composition-id="image-widget"] .glow {
+        position: absolute; right: -280px; top: -300px; width: 1400px; height: 1100px;
+        background: radial-gradient(closest-side, rgba(112, 51, 255, 0.14), transparent 70%);
+      }
+      [data-composition-id="image-widget"] .dotgrid {
+        position: absolute; left: 0; bottom: 0; width: 900px; height: 560px;
+        background-image: radial-gradient(rgba(112, 51, 255, 0.30) 1.6px, transparent 1.6px);
+        background-size: 30px 30px; opacity: 0.32;
+        -webkit-mask-image: radial-gradient(closest-side at 25% 80%, #000, transparent);
+        mask-image: radial-gradient(closest-side at 25% 80%, #000, transparent);
+      }
+      [data-composition-id="image-widget"] .ghost {
+        position: absolute; right: -50px; top: -70px;
+        font-size: 280px; font-weight: 900; letter-spacing: -0.05em;
+        color: rgba(112, 51, 255, 0.09); white-space: nowrap;
+      }
+      [data-composition-id="image-widget"] .stage {
+        position: relative; width: 100%; height: 100%;
+        display: flex; align-items: center; gap: 60px;
+        padding: 80px 100px; box-sizing: border-box;
+      }
+      [data-composition-id="image-widget"] .copy {
+        width: 620px; flex-shrink: 0; display: flex; flex-direction: column; gap: 28px;
+        position: relative; height: 100%; justify-content: center;
+      }
+      [data-composition-id="image-widget"] .chip {
+        align-self: flex-start; background: #7033FF; color: #fff;
+        font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600;
+        letter-spacing: 0.12em; padding: 10px 20px; border-radius: 7px;
+      }
+      [data-composition-id="image-widget"] .headline {
+        margin: 0; font-size: 96px; font-weight: 800; line-height: 1.02; letter-spacing: -0.035em;
+      }
+      [data-composition-id="image-widget"] .sub {
+        margin: 0; font-size: 31px; line-height: 1.42; color: #525252; font-weight: 450;
+      }
+      [data-composition-id="image-widget"] .payoff { position: absolute; bottom: 158px; left: 0; opacity: 0; }
+      [data-composition-id="image-widget"] .meta {
+        position: absolute; bottom: 0; left: 0;
+        display: flex; align-items: center; gap: 14px;
+        font-family: 'JetBrains Mono', monospace; font-size: 18px;
+        letter-spacing: 0.14em; color: #525252;
+      }
+      [data-composition-id="image-widget"] .meta-dot { width: 12px; height: 12px; background: #7033FF; border-radius: 3px; }
+      [data-composition-id="image-widget"] .demo {
+        position: relative; flex: 1; height: 100%;
+        display: flex; align-items: center; justify-content: flex-end;
+      }
+      [data-composition-id="image-widget"] .widget {
+        width: 900px; background: #FDFDFD;
+        border: 1.5px solid #E7E7EE; border-radius: 12px;
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.14); overflow: hidden;
+      }
+      [data-composition-id="image-widget"] .w-header {
+        display: flex; gap: 16px; padding: 18px 20px;
+        border-bottom: 1.5px solid #E7E7EE; background: #F5F5F5;
+      }
+      [data-composition-id="image-widget"] .w-field { flex: 1; }
+      [data-composition-id="image-widget"] .w-label {
+        font-size: 15.5px; font-weight: 550; color: #525252; margin-bottom: 7px;
+      }
+      [data-composition-id="image-widget"] .w-select {
+        display: flex; align-items: center; justify-content: space-between;
+        border: 1.5px solid #EBEBEB; background: #FDFDFD; border-radius: 7px;
+        padding: 10px 14px; font-size: 18.5px; font-weight: 500;
+      }
+      [data-composition-id="image-widget"] .chev { color: #525252; font-size: 14px; }
+      [data-composition-id="image-widget"] .w-prompt { padding: 16px 20px; border-bottom: 1.5px solid #E7E7EE; }
+      [data-composition-id="image-widget"] .w-textarea {
+        border: 1.5px solid #EBEBEB; border-radius: 7px; padding: 12px 14px;
+        font-size: 19px; line-height: 1.45; color: #000; min-height: 56px;
+      }
+      [data-composition-id="image-widget"] .w-controls {
+        display: flex; gap: 16px; padding: 16px 20px; border-bottom: 1.5px solid #E7E7EE;
+      }
+      [data-composition-id="image-widget"] .w-count {
+        display: flex; align-items: center; gap: 12px;
+      }
+      [data-composition-id="image-widget"] .cbtn {
+        width: 40px; height: 40px; border: 1.5px solid #EBEBEB; border-radius: 7px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 20px; color: #525252; background: #FDFDFD;
+      }
+      [data-composition-id="image-widget"] .cnum { font-size: 19px; font-weight: 600; width: 30px; text-align: center; }
+      [data-composition-id="image-widget"] .w-generate {
+        position: relative; margin: 16px 20px; height: 52px;
+        background: #7033FF; border-radius: 8px; color: #fff;
+        font-size: 20px; font-weight: 600;
+      }
+      [data-composition-id="image-widget"] .g-idle, [data-composition-id="image-widget"] .g-busy {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+      }
+      [data-composition-id="image-widget"] .g-busy { opacity: 0; }
+      [data-composition-id="image-widget"] .spinner {
+        width: 22px; height: 22px; border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.35); border-top-color: #fff;
+      }
+      [data-composition-id="image-widget"] .w-grid {
+        display: flex; gap: 12px; padding: 0 20px; height: 0; opacity: 0; overflow: hidden;
+        align-items: flex-start;
+      }
+      [data-composition-id="image-widget"] .tile {
+        position: relative; flex: 1; aspect-ratio: 1; border-radius: 8px; overflow: visible;
+      }
+      [data-composition-id="image-widget"] .t1 { background: radial-gradient(circle at 30% 28%, #E2EBFF, #9CC4FF 45%, #7033FF 100%); }
+      [data-composition-id="image-widget"] .t2 { background: radial-gradient(circle at 65% 30%, #FFE9D6, #F0A35E 50%, #C2410C 100%); }
+      [data-composition-id="image-widget"] .t3 { background: radial-gradient(circle at 40% 65%, #D8F8E5, #4AC885 55%, #14532D 100%); }
+      [data-composition-id="image-widget"] .t4 { background: radial-gradient(circle at 60% 60%, #F3E8FF, #C4B5FD 45%, #5B21B6 100%); }
+      [data-composition-id="image-widget"] .sel-ring {
+        position: absolute; inset: 0; border: 3px solid #7033FF; border-radius: 8px; opacity: 0;
+      }
+      [data-composition-id="image-widget"] .sel-check {
+        position: absolute; top: 8px; right: 8px; width: 30px; height: 30px;
+        background: #7033FF; color: #fff; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 16px; font-weight: 800; opacity: 0;
+      }
+      [data-composition-id="image-widget"] .w-footer {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 16px 20px; background: #F5F5F5; border-top: 1.5px solid #E7E7EE; opacity: 0;
+      }
+      [data-composition-id="image-widget"] .f-info { font-size: 18px; color: #525252; }
+      [data-composition-id="image-widget"] .f-use {
+        background: #7033FF; color: #fff; font-size: 18px; font-weight: 600;
+        padding: 11px 22px; border-radius: 7px;
+      }
+      [data-composition-id="image-widget"] .cursor {
+        position: absolute; width: 26px; height: 26px; border-radius: 50%;
+        background: rgba(26, 22, 37, 0.85); border: 2.5px solid #fff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); z-index: 30;
+        left: 1500px; top: 1000px; opacity: 0;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      (function () {
+        const R = '[data-composition-id="image-widget"] ';
+        const tl = gsap.timeline({ paused: true });
+
+        // ambient
+        tl.fromTo(R + ".glow", { x: 40 }, { x: -30, duration: 9, ease: "sine.inOut" }, 0);
+        tl.fromTo(R + ".ghost", { y: -16 }, { y: 14, duration: 9, ease: "none" }, 0);
+
+        // copy cascade
+        tl.fromTo(R + ".chip", { scale: 0.6, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.8)" }, 0.2);
+        tl.fromTo(R + ".headline", { x: -70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.75, ease: "expo.out" }, 0.35);
+        tl.fromTo("#iw-sub", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power1.out" }, 0.6);
+        tl.fromTo(R + ".meta", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "sine.out" }, 0.7);
+
+        // widget rises
+        tl.fromTo("#iw-widget", { y: 90, opacity: 0, scale: 0.97 },
+          { y: 0, opacity: 1, scale: 1, duration: 0.7, ease: "power3.out" }, 1.1);
+
+        // cursor in, click generate
+        tl.fromTo("#iw-cursor", { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "sine.out" }, 1.75);
+        tl.to("#iw-cursor", { left: 1390, top: 657, duration: 0.45, ease: "power2.inOut" }, 1.8);
+        tl.to("#iw-cursor", { scale: 0.78, duration: 0.1, ease: "power2.in" }, 2.3);
+        tl.to("#iw-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 2.4);
+        tl.to("#iw-genbtn", { scale: 0.985, duration: 0.1, ease: "power2.in" }, 2.3);
+        tl.to("#iw-genbtn", { scale: 1, duration: 0.14, ease: "power2.out" }, 2.4);
+        tl.to("#iw-cursor", { opacity: 0, duration: 0.3, ease: "sine.in" }, 2.6);
+
+        // generating state
+        tl.to("#iw-gidle", { opacity: 0, duration: 0.18, ease: "power2.in" }, 2.42);
+        tl.fromTo("#iw-gbusy", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "sine.out" }, 2.54);
+        tl.fromTo("#iw-spin", { rotation: 0 }, { rotation: 900, duration: 1.2, ease: "none" }, 2.54);
+
+        // generation completes: busy -> idle, grid expands, tiles pop
+        tl.to("#iw-gbusy", { opacity: 0, duration: 0.18, ease: "power2.in" }, 3.74);
+        tl.set("#iw-gbusy", { visibility: "hidden" }, 3.92);
+        tl.to("#iw-gidle", { opacity: 1, duration: 0.22, ease: "sine.out" }, 3.92);
+        tl.to("#iw-grid", { height: 218, opacity: 1, duration: 0.45, ease: "power2.out" }, 3.8);
+        tl.fromTo(R + ".t1", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.8)" }, 3.95);
+        tl.fromTo(R + ".t2", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.5)" }, 4.07);
+        tl.fromTo(R + ".t3", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.5)" }, 4.19);
+        tl.fromTo(R + ".t4", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.45, ease: "back.out(1.8)" }, 4.31);
+
+        // select first tile
+        tl.set("#iw-cursor", { left: 1300, top: 980, scale: 1 }, 4.55);
+        tl.to("#iw-cursor", { opacity: 1, duration: 0.2, ease: "sine.out" }, 4.6);
+        tl.to("#iw-cursor", { left: 1045, top: 706, duration: 0.45, ease: "power2.inOut" }, 4.65);
+        tl.to("#iw-cursor", { scale: 0.78, duration: 0.1, ease: "power2.in" }, 5.12);
+        tl.to("#iw-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 5.22);
+        tl.fromTo("#iw-t1 .sel-ring", { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: 0.3, ease: "power3.out" }, 5.22);
+        tl.fromTo("#iw-t1 .sel-check", { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(2.2)" }, 5.27);
+        tl.to("#iw-cursor", { opacity: 0, duration: 0.3, ease: "sine.in" }, 5.5);
+        tl.set("#iw-cursor", { visibility: "hidden" }, 5.8);
+
+        // footer appears
+        tl.fromTo("#iw-footer", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 5.45);
+
+        // payoff caption swap (breath: footer settles 5.85 -> swap 6.5)
+        tl.to("#iw-sub", { y: -16, opacity: 0, duration: 0.3, ease: "power2.in" }, 6.5);
+        tl.set("#iw-sub", { visibility: "hidden" }, 6.8);
+        tl.fromTo("#iw-payoff", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 6.65);
+
+        // graceful end for looping
+        tl.to(R + ".stage", { opacity: 0, duration: 0.35, ease: "power2.in" }, 8.65);
+
+        window.__timelines["image-widget"] = tl;
+      })();
+    </script>
+  </div>
+</template>

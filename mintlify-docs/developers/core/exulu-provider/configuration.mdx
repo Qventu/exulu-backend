@@ -1,0 +1,244 @@
+---
+title: "Configuration"
+description: "Every ExuluProvider constructor option: id, name, provider, config (model factory and instructions), capabilities, maxContextLength, workflows, queue, and authenticationInformation."
+icon: "settings"
+---
+
+The `ExuluProvider` constructor takes a single options object. This page documents every option, verified against the current `@exulu/backend` source.
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+
+const provider = new ExuluProvider({
+  id,                        // string — required
+  name,                      // string — required
+  description,               // string — required
+  type,                      // "agent" — required
+  provider,                  // string — required
+  config,                    // ExuluProviderConfig
+  capabilities,              // capabilities object
+  maxContextLength,          // number
+  workflows,                 // ExuluProviderWorkflowConfig
+  queue,                     // ExuluQueueConfig
+  authenticationInformation, // string
+});
+```
+
+<Note>
+`ExuluProvider` is the runtime class for defining model-backed agents in code. `ExuluAgent` is a separate TypeScript type that represents agent database rows — records created by administrators through the platform UI. You use `ExuluProvider` in your codebase; `ExuluAgent` appears in method signatures that receive a resolved agent record from the database.
+</Note>
+
+## Identity
+
+<ParamField path="id" type="string" required>
+  Unique identifier. Used for database references and routing — never change it after data has been saved against it. Must start with a letter or underscore, contain only letters, digits, and underscores, and be at most 80 characters; treat 5 as the practical minimum.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable name shown in the platform UI. Also used to generate the provider's `slug` (`/agents/<slugified-name>/run`).
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  What this provider does. Surfaced in the workbench and used as the tool description when the provider is exported via `tool()`.
+</ParamField>
+
+<ParamField path="type" type='"agent"' required>
+  Must be `"agent"`. This is the only accepted value.
+</ParamField>
+
+<ParamField path="provider" type="string" required>
+  The underlying LLM provider name, for example `"anthropic"`, `"openai"`, or `"google"`. Exposed as the `providerName` getter and used in platform analytics.
+</ParamField>
+
+<Warning>
+Never change `id` after the provider has been used — it is stored as a foreign key in agent records and session history.
+</Warning>
+
+## Model configuration
+
+<ParamField path="config" type="ExuluProviderConfig">
+  The model configuration object, including the factory function, optional instructions, and optional memory context.
+</ParamField>
+
+```typescript
+type ExuluProviderConfig = {
+  name?: string;                                          // Model display name
+  model?: {
+    create: (params: {
+      apiKey?: string;
+      user?: number;
+      role?: string;
+      project?: string;
+      agent?: string;
+    }) => LanguageModel;
+  };
+  instructions?: string;                                  // Default system prompt
+  memory?: string;                                        // Context ID for memory retrieval
+};
+```
+
+<ParamField path="config.name" type="string">
+  Display name for the model, for example `"claude-sonnet-4-5"`. Exposed as the `modelName` getter and shown in the platform UI and analytics.
+</ParamField>
+
+<ParamField path="config.model" type="object">
+  Factory object with a single `create` method that returns a Vercel AI-SDK `LanguageModel`. IMP calls `create()` with the resolved `apiKey` (from LiteLLM or an admin-set variable), the `user` ID, `role`, `project`, and `agent` UUID. Instantiate your provider SDK inside `create` so each call gets a fresh model instance.
+</ParamField>
+
+<ParamField path="config.model.create" type="function">
+  `({ apiKey, user, role, project, agent }) => LanguageModel` — the factory. Source the API key from the `apiKey` argument (resolved by IMP at call time) rather than from a closure over `process.env`, so per-user or per-project key overrides work correctly.
+</ParamField>
+
+<ParamField path="config.instructions" type="string">
+  Default system prompt for this provider. Administrators can override it per agent record in the workbench. IMP appends generic context (current date, user personalization, session file info) after your instructions at call time.
+</ParamField>
+
+<ParamField path="config.memory" type="string">
+  Context ID of an `ExuluContext` to use as a memory store. When set, `generateSync` and `generateStream` run a hybrid search over the context before building the system prompt, injecting the top results as pre-fetched context. See [ExuluContext](/developers/core/exulu-context/introduction).
+</ParamField>
+
+```typescript
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+config: {
+  name: "claude-sonnet-4-5",
+  model: {
+    create: ({ apiKey }) =>
+      createAnthropic({ apiKey })("claude-sonnet-4-5-20251219"),
+  },
+  instructions: `You are a helpful assistant. Answer questions accurately and concisely.
+When you use a tool, do not repeat the raw output — summarise the key information instead.`,
+  memory: "user_interactions",
+}
+```
+
+<Info>
+`config.model` is optional in the type definition but required for any call to `generateSync` or `generateStream` — both throw `"Config is required for generating."` when `this.config` is undefined.
+</Info>
+
+## Capabilities
+
+<ParamField path="capabilities" type="object">
+  Declares which input modalities the underlying model accepts. IMP uses this to decide whether to forward image parts, file parts, audio, and video in messages. When omitted, defaults to `{ text: false, images: [], files: [], audio: [], video: [] }`.
+</ParamField>
+
+```typescript
+capabilities: {
+  text: boolean;
+  images: imageTypes[];   // e.g. [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+  files: fileTypes[];     // e.g. [".pdf", ".docx", ".xlsx", ".txt"]
+  audio: audioTypes[];    // e.g. [".mp3", ".wav", ".m4a"]
+  video: videoTypes[];    // e.g. [".mp4"]
+}
+```
+
+<ParamField path="capabilities.text" type="boolean">
+  Whether the provider accepts text input. Set to `true` for all text-capable models.
+</ParamField>
+
+<ParamField path="capabilities.images" type="imageTypes[]">
+  Image file extensions accepted by the model, for example `[".png", ".jpg", ".jpeg", ".gif", ".webp"]`. IMP forwards image attachments as image parts only when the extension appears here.
+</ParamField>
+
+<ParamField path="capabilities.files" type="fileTypes[]">
+  Document file extensions accepted by the model. Non-image files are extracted to text via `officeparser` before being included in the prompt. Supported values include `.pdf`, `.docx`, `.xlsx`, `.xls`, `.csv`, `.pptx`, `.ppt`, `.txt`, `.md`, `.json`.
+</ParamField>
+
+<ParamField path="capabilities.audio" type="audioTypes[]">
+  Audio file extensions accepted by the model. Supported values include `.mp3`, `.wav`, `.m4a`, `.mp4`, `.mpeg`.
+</ParamField>
+
+<ParamField path="capabilities.video" type="videoTypes[]">
+  Video file extensions accepted by the model. Supported values include `.mp4`, `.m4a`, `.mp3`, `.mpeg`, `.wav`.
+</ParamField>
+
+## Context length
+
+<ParamField path="maxContextLength" type="number">
+  Context-window size in tokens. Used by the context-budget guard in both generate methods — IMP blocks a request when the estimated occupancy of the message history exceeds a threshold derived from this value. When omitted, the budget guard uses a conservative default.
+</ParamField>
+
+```typescript
+maxContextLength: 200_000  // e.g. for Claude 3.5 Sonnet
+```
+
+## Workflows
+
+<ParamField path="workflows" type="ExuluProviderWorkflowConfig">
+  Enables background workflow processing for this provider.
+</ParamField>
+
+```typescript
+type ExuluProviderWorkflowConfig = {
+  enabled: boolean;
+  queue?: Promise<ExuluQueueConfig>;
+};
+```
+
+<ParamField path="workflows.enabled" type="boolean" required>
+  Whether workflows are enabled for this provider.
+</ParamField>
+
+<ParamField path="workflows.queue" type="Promise<ExuluQueueConfig>">
+  Queue for workflow jobs. Requires an Enterprise Edition license.
+</ParamField>
+
+## Queue
+
+<ParamField path="queue" type="ExuluQueueConfig">
+  Direct queue configuration for background agent runs, distinct from the `workflows.queue`. Accepted as an already-resolved config object (not a Promise), unlike `workflows.queue`.
+</ParamField>
+
+## Authentication information
+
+<ParamField path="authenticationInformation" type="string">
+  Free-text description of how this provider authenticates, shown in the platform admin UI. For example: `"Requires an OpenAI API key set via the OPENAI_API_KEY variable."` This is purely informational — IMP does not parse it.
+</ParamField>
+
+## Complete example
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createOpenAI } from "@ai-sdk/openai";
+
+export const researchProvider = new ExuluProvider({
+  id: "research_agent",
+  name: "Research agent",
+  description: "Deep-research agent that uses web search and document analysis to answer complex questions.",
+  type: "agent",
+  provider: "openai",
+
+  config: {
+    name: "gpt-4o",
+    model: {
+      create: ({ apiKey }) => createOpenAI({ apiKey })("gpt-4o"),
+    },
+    instructions: `You are an expert research assistant.
+Gather information from multiple sources before answering. Always cite your sources inline.
+When you are unsure, say so rather than speculating.`,
+  },
+
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
+    files: [".pdf", ".docx", ".txt", ".md"],
+    audio: [],
+    video: [],
+  },
+
+  maxContextLength: 128_000,
+
+  authenticationInformation: "Uses the OPENAI_API_KEY variable set in Administration → Variables.",
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-provider/api-reference">
+    generateSync, generateStream, tool(), and all public properties.
+  </Card>
+  <Card title="ExuluApp" icon="layers" href="/developers/core/exulu-app/introduction">
+    Register the provider on the app.
+  </Card>
+</CardGroup>

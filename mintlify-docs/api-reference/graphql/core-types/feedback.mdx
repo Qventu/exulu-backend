@@ -1,0 +1,64 @@
+---
+title: "Feedback"
+description: "The feedback type records user ratings and status on individual agent responses."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Feedback requires an Enterprise Edition license (`agent-feedback` entitlement).
+
+`feedback` records capture thumbs-up/thumbs-down ratings and optional written descriptions linked to a specific agent session. Administrators can review and resolve open feedback items. See [Feedback](/building/feedback) for product context.
+
+```graphql
+type feedback {
+  description: String
+  status: statusEnum
+  agent: String
+  session: String
+  score: Float
+  user: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `status` | One of `OPEN` or `SOLVED`; administrators mark items solved after review. |
+| `score` | Numeric rating submitted by the user (typically `1` for positive, `-1` for negative). |
+| `agent` | ID string of the `agent` the feedback targets. |
+| `session` | ID string of the `agent_session` this feedback was left on. |
+| `user` | Numeric ID of the user who submitted the feedback. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  feedbackPagination(
+    limit: 20
+    filters: [{ status: { eq: OPEN } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      description
+      status
+      score
+      agent
+      session
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

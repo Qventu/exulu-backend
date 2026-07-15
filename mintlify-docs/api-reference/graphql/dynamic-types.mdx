@@ -1,0 +1,273 @@
+---
+title: "Dynamic types"
+description: "How each ExuluContext becomes a generated items type with CRUD, vector search, chunk management, and entity operations in your deployment's schema."
+---
+
+The core schema is only half of your GraphQL API. Every [`ExuluContext`](/developers/core/exulu-context/introduction) your backend registers is converted into a table definition at boot and run through the same schema generator as the core tables — producing a full type family plus knowledge-specific operations.
+
+<Warning>
+Your deployment's schema **differs from this reference**. The generated core SDL this section is verified against contains no context types at all, because contexts are defined per deployment. The patterns below are exact, but the names depend on your context IDs — use `/explorer` to see the real thing.
+</Warning>
+
+## From context to type name
+
+The generated table (and type) name is the sanitized context ID — lowercased, spaces replaced with underscores — with an `_items` suffix:
+
+| Context ID | Type name | Filter type |
+| --- | --- | --- |
+| `product_docs` | `product_docs_items` | `FilterProduct_docs_items` |
+| `Support Tickets` | `support_tickets_items` | `FilterSupport_tickets_items` |
+
+Because the name always ends in `s`, the singular and plural forms used by the [naming conventions](/api-reference/graphql/conventions#naming) are identical — every operation for a context shares the single prefix `{context_id}_items`.
+
+## The generated type family
+
+Take the `product_docs` context used throughout the developer docs:
+
+```typescript
+export const productDocsContext = new ExuluContext({
+  id: "product_docs",
+  name: "Product documentation",
+  fields: [
+    { name: "content", type: "longText", required: true },
+    { name: "category", type: "enum", enumValues: ["guide", "reference", "tutorial"] },
+    { name: "url", type: "text", unique: true },
+  ],
+  embedder: { model: "text-embedding-3-small" },
+  sources: [],
+});
+```
+
+The generator produces the object type, an input type, a filter type, per-enum types, and result wrappers:
+
+```graphql
+enum categoryEnum {
+  GUIDE
+  REFERENCE
+  TUTORIAL
+}
+
+type product_docs_items {
+  # Your fields
+  content: String!
+  category: categoryEnum
+  url: String
+
+  # Standard fields added to every context type
+  id: String
+  name: String
+  description: String
+  source: String
+  external_id: String
+  tags: String
+  archived: Boolean
+  textlength: Float
+  ttl: String
+  chunks_count: Float
+  createdAt: Date
+  updatedAt: Date
+  last_processed_at: Date
+  embeddings_updated_at: Date
+
+  # RBAC (always enabled on context tables)
+  rights_mode: String
+  created_by: Float!
+  RBAC: RBACData
+
+  # Retrieval fields
+  averageRelevance: Float
+  totalRelevance: Float
+  chunks: [ItemChunks]
+}
+
+input product_docs_itemsInput {
+  content: String
+  category: categoryEnum
+  url: String
+  # ... standard fields ...
+  RBAC: RBACInput
+}
+
+input FilterProduct_docs_items {
+  content: FilterOperatorString
+  category: FilterOperatorcategoryEnum
+  url: FilterOperatorString
+  # ... standard fields with their operator inputs ...
+}
+```
+
+The `chunks` field exposes the item's embedded chunks; its element type is part of the core SDL (verbatim):
+
+```graphql
+type ItemChunks {
+  chunk_id: String!
+  chunk_metadata: JSON!
+  chunk_index: Int!
+  chunk_content: String!
+  chunk_source: String!
+  chunk_created_at: Date!
+  chunk_updated_at: Date!
+}
+```
+
+### Field type mapping
+
+| `ExuluContext` field type | GraphQL type | Notes |
+| --- | --- | --- |
+| `text`, `shortText`, `longText`, `markdown`, `code` | `String` | |
+| `number` | `Float` | |
+| `boolean` | `Boolean` | |
+| `date` | `Date` | Custom scalar |
+| `json` | `JSON` | Custom scalar |
+| `enum` | `{fieldName}Enum` | Values uppercased; non-alphanumeric characters become `_`; a leading digit is prefixed with `_` |
+| `file` | `String` | Field is renamed `{fieldName}_s3key` and holds the object-storage key |
+
+## Operations every context gets
+
+The full [CRUD convention set](/api-reference/graphql/conventions) applies — `product_docs_itemsById`, `product_docs_itemsPagination`, `product_docs_itemsCreateOne`, and so on:
+
+```graphql
+mutation {
+  product_docs_itemsCreateOne(
+    input: {
+      name: "Deploying with Docker Compose"
+      content: "IMP ships a compose file that starts the backend, frontend, and services..."
+      category: GUIDE
+      url: "https://docs.example.com/self-hosting/quickstart"
+    }
+  ) {
+    item {
+      id
+      name
+    }
+    job
+  }
+}
+```
+
+The returned `job` is the embedding job's ID when the context is configured to calculate vectors on insert.
+
+On top of CRUD, every context type adds retrieval and pipeline operations. Queries:
+
+```graphql
+{context_id}_itemsVectorSearch(
+  limit: Int
+  query: String!
+  method: VectorMethodEnum!
+  itemFilters: [Filter{Context_id}_items]
+  cutoffs: SearchCutoffs
+  expand: SearchExpand
+  entityFilter: {context_id}_itemsEntityFilterInput
+): {context_id}_itemsVectorSearchResult
+
+{context_id}_itemsChunkById(id: ID!): {context_id}_itemsVectorSearchChunk
+{context_id}_itemsStaleEntityCount: Int
+{context_id}_itemsEntityModel: {context_id}_itemsEntityModelInfo
+{context_id}_itemsEntitiesForItem(item: ID!): [{context_id}_itemsItemEntity!]
+```
+
+Mutations:
+
+```graphql
+{context_id}_itemsGenerateChunks(where: [Filter{Context_id}_items], limit: Int): {context_id}_itemsGenerateChunksReturnPayload
+{context_id}_itemsExecuteSource(source: ID!, inputs: JSON!): {context_id}_itemsExecuteSourceReturnPayload
+{context_id}_itemsDeleteChunks(where: [Filter{Context_id}_items], limit: Int): {context_id}_itemsDeleteChunksReturnPayload
+{context_id}_itemsBackfillEntities(onlyStale: Boolean, limit: Int): {context_id}_itemsEntityBackfillPayload
+{context_id}_itemsPurgeEntityType(type: String!): {context_id}_itemsEntityPurgePayload
+{context_id}_itemsSetEntityModel(model: String): {context_id}_itemsEntityModelInfo
+{context_id}_itemsExtractEntities(item: ID!): {context_id}_itemsEntityExtractPayload
+{context_id}_itemsDetachEntities(item: ID!): {context_id}_itemsEntityDetachPayload
+```
+
+### Vector search and chunks
+
+`VectorSearch` is the retrieval workhorse — semantic, hybrid, or full-text search over the context's chunks, with cutoffs, context expansion, and entity filters. It gets its own page: [Vector search](/api-reference/graphql/vector-search).
+
+`GenerateChunks` (re-)chunks and embeds items matching a filter, returning `{ message, items, jobs }`; `DeleteChunks` removes chunks while keeping the items. `ChunkById` fetches a single chunk joined with its parent item.
+
+```graphql
+mutation {
+  product_docs_itemsGenerateChunks(
+    where: [{ category: { eq: GUIDE } }]
+    limit: 50
+  ) {
+    message
+    items
+    jobs
+  }
+}
+```
+
+### Sources and processors
+
+`ExecuteSource` triggers one of the context's registered data sources with runtime inputs, returning `{ message, jobs, items }`:
+
+```graphql
+mutation {
+  product_docs_itemsExecuteSource(
+    source: "docs_site_crawler"
+    inputs: { startUrl: "https://docs.example.com", maxPages: 200 }
+  ) {
+    message
+    items
+    jobs
+  }
+}
+```
+
+Contexts that define a [processor](/developers/tutorials/custom-processors) additionally get:
+
+```graphql
+{context_id}_itemsProcessItem(item: ID!): {context_id}_itemsProcessItemFieldReturnPayload
+{context_id}_itemsProcessItems(limit: Int, filters: [Filter{Context_id}_items], sort: SortBy): {context_id}_itemsProcessItemFieldReturnPayload
+```
+
+Both return `{ message, results, jobs }` — direct results when the processor runs inline, job IDs when it runs on a queue.
+
+### Entity operations
+
+Contexts with the [entity layer](/building/knowledge/entities) enabled maintain a graph of named entities extracted from chunks. `EntitiesForItem` lists an item's entities with mention counts, `StaleEntityCount` reports items needing re-extraction, `BackfillEntities` re-extracts in bulk, `ExtractEntities`/`DetachEntities` operate on a single item, `PurgeEntityType` drops an entity type, and `EntityModel`/`SetEntityModel` read and override the extraction model.
+
+## License-gated tables
+
+Some **core** tables only exist on deployments with an enterprise license (`EXULU_ENTERPRISE_LICENSE`). On a community-edition deployment their types and operations are absent from the schema entirely:
+
+| Entitlement | Tables |
+| --- | --- |
+| `rbac` | `role`, `team` |
+| `evals` | `test_case`, `eval_set`, `eval_run` |
+| `template-conversations` | `workflow_template` |
+| `agent-feedback` | `feedback` |
+| `queues` | `job_result` |
+
+The generated reference SDL includes all of them. The internal `rbac` sharing table itself is never exposed via GraphQL, even on licensed deployments — you interact with sharing through the `RBAC` field and `RBACInput` described in [Conventions](/api-reference/graphql/conventions#access-control).
+
+## Runtime enums
+
+Two enums are populated from the running deployment rather than from table definitions:
+
+- **`QueueEnum`** — one value per queue registered with `ExuluQueues` at boot. It parameterizes the `jobs` and `queue` queries and the queue-management mutations (`pauseQueue`, `resumeQueue`, `drainQueue`, `deleteJob`, `retryJob`). In a deployment with no queues (or in the generated reference SDL) it contains the single placeholder value `NO_QUEUES`.
+- **`JobStateEnum`** — fixed job lifecycle states (verbatim):
+
+```graphql
+enum JobStateEnum {
+  active
+  waiting
+  delayed
+  failed
+  completed
+  paused
+  stuck
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Vector search" icon="search" href="/api-reference/graphql/vector-search">
+    The retrieval query in depth — methods, cutoffs, expansion, entity filters.
+  </Card>
+  <Card title="Defining contexts" icon="database" href="/developers/tutorials/defining-contexts">
+    Create the contexts that generate these types.
+  </Card>
+</CardGroup>

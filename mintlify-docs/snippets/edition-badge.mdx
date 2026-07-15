@@ -1,0 +1,7 @@
+export const EditionBadge = ({ edition }) => (
+  <Tooltip tip={edition === "ee" ? "Requires an Enterprise Edition license." : "Available in the Community Edition."}>
+    <span style={{ fontFamily: "RobotoMono, monospace", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.04em", border: "1px solid var(--imp-hair-light)", padding: "2px 8px" }}>
+      {edition === "ee" ? "Enterprise" : "Community"}
+    </span>
+  </Tooltip>
+);

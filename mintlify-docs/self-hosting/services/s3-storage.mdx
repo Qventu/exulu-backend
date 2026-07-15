@@ -1,0 +1,85 @@
+---
+title: "S3-compatible storage"
+description: "File storage for IMP uploads — MinIO or AWS S3 via the COMPANION_S3_* variables."
+icon: "hard-drive"
+---
+
+IMP uses S3-compatible object storage for chat attachments, session files, and knowledge source uploads. The bucket must exist before the application starts — IMP does not create it.
+
+## Supported backends
+
+- **AWS S3** — set `COMPANION_S3_ENDPOINT` to empty / omit it.
+- **MinIO** — set `COMPANION_S3_ENDPOINT` to the MinIO API URL (e.g. `http://exulu-minio:9000`) and IMP enables `forcePathStyle: true` automatically.
+- Any other S3-compatible store that supports presigned PUT URLs.
+
+## Presigned URL flow
+
+File uploads go directly from the browser to the object store via presigned PUT URLs. The backend generates a signed URL, returns it to the frontend, and the browser uploads the file directly without passing through the backend. This keeps large uploads off the API process.
+
+<Warning>
+**AWS SDK checksum gotcha.** AWS SDK for JavaScript v3.729 and later injects an `x-amz-checksum-crc32` header (computed over an empty body) into presigned PUT URLs by default. MinIO and some other S3-compatible stores validate that checksum against the uploaded bytes and reject the PUT with a checksum mismatch error, causing session file uploads to silently fail.
+
+IMP disables this default by setting `requestChecksumCalculation: "WHEN_REQUIRED"` and `responseChecksumValidation: "WHEN_REQUIRED"` on the shared S3 client (fix shipped in backend commit `fa88d2e`). If you build `@exulu/backend` from a revision older than that commit, upgrades to AWS SDK >= 3.729 will break file uploads against MinIO.
+</Warning>
+
+## Create the bucket before starting IMP
+
+IMP does not create the bucket. Create it first:
+
+```bash
+# MinIO via mcli
+mc alias set local http://localhost:9000 <root-user> <root-password>
+mc mb local/<bucket-name>
+```
+
+Or create it through the MinIO web console at `http://localhost:9001`.
+
+## Configuration reference
+
+| Variable | Example | Description |
+|---|---|---|
+| `COMPANION_S3_REGION` | `eu-central-1` | Bucket region. For MinIO this matches the region you configured. |
+| `COMPANION_S3_KEY` | — | Access key ID |
+| `COMPANION_S3_SECRET` | — | Secret access key |
+| `COMPANION_S3_BUCKET` | `exulu-uploads` | Bucket name. Must exist before startup. |
+| `COMPANION_S3_ENDPOINT` | `http://exulu-minio:9000` | Endpoint URL. Omit for AWS S3. Set to the MinIO API URL for MinIO. |
+
+## Compose excerpt (MinIO)
+
+```yaml
+exulu-minio:
+  image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+  restart: unless-stopped
+  command: server /data --console-address ":9001"
+  environment:
+    MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+    MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
+  ports:
+    - "9000:9000"   # API
+    - "9001:9001"   # Web console
+  volumes:
+    - minio-data:/data
+  healthcheck:
+    test: ["CMD", "mc", "ready", "local"]
+    interval: 30s
+    timeout: 20s
+    retries: 3
+```
+
+Point the backend at MinIO:
+
+```ini
+COMPANION_S3_ENDPOINT=http://exulu-minio:9000
+COMPANION_S3_REGION=eu-central-1
+COMPANION_S3_KEY=<your-access-key>
+COMPANION_S3_SECRET=<your-secret-key>
+COMPANION_S3_BUCKET=<your-bucket-name>
+```
+
+## Operational notes
+
+**Network reachability.** `COMPANION_S3_ENDPOINT` is used server-side (by the backend) to generate presigned URLs. The endpoint must be reachable from the backend container. If the backend and MinIO are on the same Docker network, use the container name (e.g. `http://exulu-minio:9000`). The presigned URL returned to the browser must resolve from the end user's machine — configure a public URL or reverse proxy for MinIO's API port if users are outside the Docker network.
+
+**Bucket policy.** The bucket does not need to be public. Presigned URLs grant time-limited read and write access to individual objects without a bucket-level public policy.
+
+**Signature expiry.** IMP presigns URLs with a 1-day expiry (`expiresIn = 86400`). Uploads or downloads attempted after the signature expires will receive a 403 from S3.

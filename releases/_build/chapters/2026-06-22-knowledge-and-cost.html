@@ -1,0 +1,79 @@
+<article class="chapter" id="r-knowledge-and-cost" data-release="2026-06-22-knowledge-and-cost" aria-labelledby="r-knowledge-and-cost-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">05</span>
+      <span class="pill">June 22, 2026</span>
+      <span class="ch-name">Knowledge & Cost</span>
+    </div>
+    <h1 class="ch-title" id="r-knowledge-and-cost-h">Knowledge, <em>connected</em>.<br>Cost, <em>controlled</em>.</h1>
+    <p class="ch-lede">Five shipped upgrades that make Exulu's retrieval sharper and its spend predictable. Meetings become searchable transcripts, an entity graph deepens retrieval, and the knowledge pipeline shows its work end to end — while you get <strong>live, per-tag control</strong> over what it all costs.</p>
+  </header>
+  <section class="feature" id="r-knowledge-and-cost--recall"><div class="idx">01 — Meetings</div>
+        <h2>Send a bot to any meeting</h2>
+        <p class="one-liner">Drop in a meeting link — Exulu joins, records, and transcribes, then runs your prompts on the result automatically.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-06-22-knowledge-and-cost__recall.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Paste a Zoom, Meet, or Teams link and Exulu sends a bot to join, record, and transcribe the call. The recording comes back as a <strong>speaker-labeled transcript</strong> you can review and rename — and any prompts or agents you attached (a summary, an action-item extractor) have already run against it.</p>
+          <p>Meetings become searchable knowledge without anyone taking notes, alongside the rest of your documents.</p>
+          <div class="snippet-label">GraphQL</div>
+          <pre><code><span class="c">mutation</span> MeetingBotStart($input: MeetingBotStartInput!) {
+  meetingBotStart(input: $input) { ...TranscriptionJobFields }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-knowledge-and-cost--knowledge-v2"><div class="idx">02 — Knowledge</div>
+        <h2>A pipeline that shows its work</h2>
+        <p class="one-liner">Watch every document move Ingested → Processed → Embedded → Ready to search — live, with the next action right there.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-06-22-knowledge-and-cost__kb-v2.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Every knowledge item now carries a live <strong>pipeline stepper</strong>: see exactly where a document is and kick off the next stage with one click. Statuses stick around after a refresh — no more black-box ingestion.</p>
+          <p>A pipeline-health view rolls the whole base up into a single "is this searchable?" number and surfaces anything stuck before it quietly breaks retrieval.</p>
+        </div></section>
+<section class="feature" id="r-knowledge-and-cost--budgets"><div class="idx">03 — Cost</div>
+        <h2>Cap spend on anything</h2>
+        <p class="one-liner">Set a budget per user, team, project, or agent — and watch the burn rate, with a projection that flags overspend before it happens.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-06-22-knowledge-and-cost__budgets.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Put a cap on any <strong>user, team, project, or agent</strong> and every model call is metered against it. Burn-down bars with a projection marker flag who's on track to blow their budget before the bill arrives.</p>
+          <p>A chip in the top bar keeps your own spend in view, and the analytics page breaks it all down by tag and by day.</p>
+          <div class="snippet-label">REST</div>
+          <pre><code><span class="k">PUT</span>  /admin/budgets/:entityType/:entityId   <span class="c"># upsert one budget</span>
+<span class="k">PUT</span>  /admin/budgets/:entityType/bulk        <span class="c"># apply to many entityIds[]</span>
+<span class="k">GET</span>  /me/budget                             <span class="c"># caller's own spend (in-chat)</span>
+
+<span class="c"># entityType ∈ user | role | team | project | agent</span></code></pre>
+        </div></section>
+<section class="feature" id="r-knowledge-and-cost--entities"><div class="idx">04 — Retrieval</div>
+        <h2>A connected entity graph</h2>
+        <p class="one-liner">Turn documents into People, Companies, and Products — sharper retrieval, and a graph your agents can follow.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-06-22-knowledge-and-cost__entities.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Switch on entity extraction and Exulu reads the entity types you define out of every document. Those shared entities <strong>sharpen retrieval</strong> — disambiguating and boosting on top of hybrid search — and give agents a graph to follow between related records.</p>
+          <p>A one-click backfill brings your existing corpus into the graph, and suggested types surface entities worth promoting.</p>
+          <div class="snippet-label">From the SDK</div>
+          <pre><code><span class="c">new</span> ExuluContext({
+  id: <span class="s">"contracts"</span>,
+  entities: {                       <span class="c">// declaring this turns the layer on</span>
+    types: [
+      { name: <span class="s">"Person"</span>,  description: <span class="s">"Individuals named in the contract"</span> },
+      { name: <span class="s">"Company"</span>, description: <span class="s">"Legal entities / organizations"</span> },
+    ],
+    model: <span class="s">"&lt;models.id uuid&gt;"</span>, boostWeight: 0.3, canonicalLanguage: <span class="s">"english"</span>,
+  },
+});</code></pre>
+        </div></section>
+<section class="feature" id="r-knowledge-and-cost--litellm-routing"><div class="idx">05 — Models</div>
+        <h2>One path for every model</h2>
+        <p class="one-liner">Reranking, embeddings, and OCR now route through the LiteLLM proxy — swap any provider in YAML, and every call is cost-attributed.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-06-22-knowledge-and-cost__litellm-routing.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Reranking, embeddings, and OCR now run through the same proxy as your chat models. <strong>Swap providers by editing one YAML file</strong> — pick any reranker, embedder, or OCR model in the catalog — and every call is tagged and cost-attributed alongside everything else. One control plane for every model Exulu touches.</p>
+          <div class="snippet-label">config.litellm.yaml</div>
+          <pre><code>- model_name: rerank-v4.0-pro
+  litellm_params:
+    model: cohere/rerank-v4.0-pro
+    api_key: os.environ/COHERE_API_KEY
+  model_info:
+    <span class="k">type: reranker</span>        <span class="c"># ← makes it a selectable reranker</span>
+    top_n: 20</code></pre>
+        </div></section>
+</article>

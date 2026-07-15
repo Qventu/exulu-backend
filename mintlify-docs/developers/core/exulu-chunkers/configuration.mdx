@@ -1,0 +1,296 @@
+---
+title: "Configuration"
+description: "Every option for SentenceChunker.create(), RecursiveChunker.create(), RecursiveRules, MarkdownChunker.chunk(), and guidance on chunk-size selection."
+icon: "settings"
+---
+
+This page documents every constructor and factory option for the three built-in chunkers, plus the `RecursiveRules` class used to customise the recursive splitting strategy. All options are verified against the current `@exulu/backend` source.
+
+## SentenceChunker
+
+Use `SentenceChunker.create()` — the constructor is private.
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.sentence.create(options?);
+```
+
+### Options
+
+<ParamField path="chunkSize" type="number" default="512">
+  Maximum number of tokens per chunk. Chunks are never larger than this value. Set this to the embedding model's `max_chunk_size` as a ceiling; a value of 512 is a reasonable default for most 1 024-dimension models.
+</ParamField>
+
+<ParamField path="chunkOverlap" type="number" default="0">
+  Number of tokens to repeat at the start of the next chunk from the end of the current chunk. Must be non-negative and strictly less than `chunkSize`. Use 10–20 % of `chunkSize` (e.g. 50–100 for a 512-token chunk) to preserve context across boundaries for natural-language content. Disabled by default.
+</ParamField>
+
+<ParamField path="minSentencesPerChunk" type="number" default="1">
+  Minimum number of sentences to include in every chunk. When the token budget forces fewer sentences than this, the chunker extends the chunk past the token limit to satisfy the minimum. Default: 1.
+</ParamField>
+
+<ParamField path="minCharactersPerSentence" type="number" default="12">
+  Sentence fragments shorter than this character count are merged with the preceding or following sentence rather than treated as standalone sentences. Prevents punctuation artefacts (e.g. abbreviations) from becoming their own sentences.
+</ParamField>
+
+<ParamField path="tokenizer" type="TokenizerModelName" default='"gpt-3.5-turbo"'>
+  Tokenizer model used for accurate token counting. `TokenizerModelName` is a string union of supported model names. The default `"gpt-3.5-turbo"` tokenizer is compatible with most embedding models. If your embedding model uses a materially different tokenizer, specify the matching model name.
+</ParamField>
+
+<ParamField path="delim" type="string[]" default='[". ", "! ", "? ", "\n"]'>
+  Characters or strings that mark sentence boundaries. The chunker splits input at each delimiter and reassembles splits into chunks respecting `chunkSize`.
+</ParamField>
+
+<ParamField path="includeDelim" type='"prev" | "next" | null' default='"prev"'>
+  Where to attach the delimiter character when splitting. `"prev"` keeps it with the preceding sentence (e.g. `"Hello."` stays whole). `"next"` moves it to the start of the next sentence. `null` discards the delimiter.
+</ParamField>
+
+<ParamField path="approximate" type="boolean" default="false">
+  Deprecated. Was used for character-based approximate token counting. Has no effect in current builds. Will be removed in a future version.
+</ParamField>
+
+### Example
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 64,
+  minSentencesPerChunk: 2,
+  minCharactersPerSentence: 15,
+  delim: [". ", "! ", "? ", "\n\n"],
+});
+
+const chunks = await chunker("Long article text here...");
+
+for (const chunk of chunks) {
+  console.log(chunk.text);        // string
+  console.log(chunk.tokenCount);  // number — actual token count
+  console.log(chunk.startIndex);  // number — byte offset in original text
+  console.log(chunk.endIndex);    // number
+}
+```
+
+### Batch chunking
+
+```typescript
+const batchResults = await chunker(["Document one.", "Document two."]);
+// batchResults: SentenceChunk[][]
+```
+
+## RecursiveChunker
+
+Use `RecursiveChunker.create()` — the constructor is private.
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.recursive.function.create(options?);
+```
+
+### Options
+
+<ParamField path="chunkSize" type="number" default="512">
+  Maximum tokens per output chunk. If a `prefix` is supplied, the prefix token count is subtracted from this limit automatically.
+</ParamField>
+
+<ParamField path="rules" type="RecursiveRules" default="new RecursiveRules()">
+  The recursive splitting rule set. See [RecursiveRules](#recursiverules) below. Defaults to five levels: paragraphs → sentences → punctuation → words → tokens.
+</ParamField>
+
+<ParamField path="minCharactersPerChunk" type="number" default="24">
+  Chunks shorter than this character count are merged with adjacent chunks. Prevents tiny artefacts at split boundaries.
+</ParamField>
+
+<ParamField path="prefix" type="string">
+  Optional string prepended to every output chunk. Useful for providing domain context to the embedding model (e.g. `"Product documentation: "`). The prefix token count is subtracted from `chunkSize` so output chunks still fit within the model limit.
+</ParamField>
+
+<ParamField path="retainHeaders" type="boolean" default="false">
+  When `true`, the chunker extracts Markdown and HTML headers from the input and prepends the active header hierarchy to each chunk. Improves retrieval quality for structured documents by ensuring every chunk carries its section context.
+</ParamField>
+
+<ParamField path="tokenizer" type="TokenizerModelName" default='"gpt-3.5-turbo"'>
+  Tokenizer model. See the SentenceChunker note above.
+</ParamField>
+
+### Example
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+  minCharactersPerChunk: 50,
+  retainHeaders: true,
+  prefix: "Product docs: ",
+});
+
+const chunks = await chunker(markdownText);
+
+for (const chunk of chunks) {
+  console.log(chunk.text);        // Includes prefix if set
+  console.log(chunk.tokenCount);
+  console.log(chunk.level);       // Recursion level where the split occurred (0 = top)
+}
+```
+
+## RecursiveRules
+
+`RecursiveRules` defines the ordered list of splitting strategies the `RecursiveChunker` tries from coarsest to finest.
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const rules = new ExuluChunkers.recursive.rules({ levels? });
+```
+
+<ParamField path="levels" type="RecursiveLevelData[]">
+  Array of level definitions. When omitted, defaults to five built-in levels:
+  1. Paragraphs: `["\n\n", "\r\n", "\n", "\r"]`
+  2. Sentences: `[". ", "! ", "? "]`
+  3. Punctuation/pauses: `["{", "}", '"', "[", "]", "<", ">", "(", ")", ":", ";", ",", "—", "|", "~", "-", "...", "`", "'"]`
+  4. Words: `{ whitespace: true }`
+  5. Tokens: fallback raw token split
+</ParamField>
+
+Each level is a `RecursiveLevel`:
+
+```typescript
+{
+  delimiters?: string | string[];   // Split on these strings
+  whitespace?: boolean;             // Split on spaces (mutually exclusive with delimiters)
+  includeDelim?: "prev" | "next";   // Attach delimiter to previous or next segment (default "prev")
+}
+```
+
+### Custom rules example
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const markdownRules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n## ", "\n### "], includeDelim: "next" }, // Split at H2/H3 headings
+    { delimiters: ["\n\n"] },                                   // Then paragraphs
+    { delimiters: [". ", "! ", "? "] },                        // Then sentences
+    { whitespace: true },                                       // Then words
+  ],
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 768,
+  rules: markdownRules,
+});
+```
+
+## MarkdownChunker
+
+`MarkdownChunker` is an Enterprise Edition class — instantiate directly (no factory):
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+
+const mdChunker = new ExuluChunkers.markdown();
+```
+
+The constructor checks your license. If `advanced-markdown-chunker` is not enabled, it logs a warning but does not throw — you can still call `chunk()`.
+
+### chunk()
+
+```typescript
+await mdChunker.chunk(
+  text: string,
+  chunkSize: number,
+  prefix?: string,
+  config?: { pageBreakTags?: boolean },
+): Promise<{ text: string; page: number }[]>
+```
+
+<ParamField path="text" type="string" required>
+  The markdown text to chunk. The method converts tables to numbered-list format before splitting. `<page_break page=N>` tags are converted to HTML comments internally and used to track page numbers.
+</ParamField>
+
+<ParamField path="chunkSize" type="number" required>
+  Target maximum tokens per chunk. The actual internal budget is `chunkSize - prefixTokenCount - headerContextTokenCount`. Uses a `gpt-5` tokenizer for counting.
+</ParamField>
+
+<ParamField path="prefix" type="string">
+  Optional prefix prepended to every chunk. Token count is subtracted from the effective `chunkSize`.
+</ParamField>
+
+<ParamField path="config.pageBreakTags" type="boolean" default="false">
+  When `true`, prepends `<!-- Current page: N -->` to each chunk so the embedding and retrieval pipeline can filter or cite by page number.
+</ParamField>
+
+### Return value
+
+```typescript
+{ text: string; page: number }[]
+```
+
+`text` is the final chunk content (header context + optional page comment + prefix + content). `page` is the page number in effect at the chunk boundary (1 if no `<page_break>` tags were present).
+
+### Wrapping for ExuluContext
+
+`MarkdownChunker.chunk()` does not return `ChunkerResponse`. Wrap it:
+
+```typescript
+import { ExuluChunkers } from "@exulu/backend";
+import type { ChunkerOperation } from "@exulu/backend";
+
+const mdChunker = new ExuluChunkers.markdown();
+
+export const markdownChunkerOp: ChunkerOperation = async (item, maxChunkSize) => {
+  const text = typeof item.content === "string" ? item.content : "";
+  if (!text) return { item, chunks: [] };
+
+  const pieces = await mdChunker.chunk(text, maxChunkSize, undefined, { pageBreakTags: true });
+
+  return {
+    item,
+    chunks: pieces
+      .map((p, index) => ({
+        content: p.text.trim(),
+        index,
+        metadata: { page: p.page },
+      }))
+      .filter((c) => c.content.length > 0)
+      .map((c, index) => ({ ...c, index })), // re-index after filter
+  };
+};
+```
+
+## Chunk size guidance
+
+The right `chunkSize` depends on your embedding model's capabilities. Query LiteLLM's `/model/info` endpoint at runtime for the `max_chunk_size` of your model:
+
+```typescript
+const modelInfo = await fetch("/model/info?model=text-embedding-3-small");
+const { max_chunk_size } = await modelInfo.json();
+
+const chunker = await ExuluChunkers.sentence.create({ chunkSize: max_chunk_size });
+```
+
+Practical guidance:
+
+| Embedding model dimensionality | Suggested `chunkSize` | Notes |
+|---|---|---|
+| 384 | 256–512 | Small models benefit from tighter, more focused chunks |
+| 768–1 024 | 512–1 024 | Good balance for most retrieval tasks |
+| 1 536+ | 512–2 048 | Larger models can handle longer context; test your use case |
+
+Using the model's full `max_chunk_size` may degrade retrieval precision for short queries. Start at half the model's maximum and adjust based on evaluation results.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-chunkers/api-reference">
+    Method signatures, ChunkerOperation/ChunkerResponse types, and the custom chunker contract.
+  </Card>
+  <Card title="ExuluContext" icon="layers" href="/developers/core/exulu-context/introduction">
+    Assign a ChunkerOperation to a context.
+  </Card>
+</CardGroup>

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — set budget flow</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <link rel="stylesheet" href="kit/dialog.css" />
+    <link rel="stylesheet" href="kit/widgets.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* — hook — */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; transform: translateY(10px); }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; transform: translateY(14px); }
+
+      /* — stage — */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; transform: translateY(16px); }
+
+      /* budgets page (trimmed replica of budgets-overview) */
+      #root .content { padding: 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+      #root .entity-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--hair); padding: 0 28px; }
+      #root .et { padding: 9px 16px; font-size: 12.5px; color: var(--tx-lo); position: relative; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .et.active { color: var(--tx-hi); font-weight: 600; }
+      #root .et.active::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--ink); }
+      #root .toolbar { display: flex; align-items: center; gap: 8px; }
+      #root .search-field { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; width: 280px; }
+      #root .search-field svg { width: 14px; height: 14px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .search-text { font-size: 13px; color: var(--tx-faint); }
+      #root .budget-table { --imp-cols: 2.2fr 1.8fr 1fr 0.8fr 100px; }
+      #root .budget-bar { display: flex; flex-direction: column; gap: 3px; }
+      #root .budget-bar-track { height: 6px; background: var(--surface-2); border: 1px solid var(--hair); position: relative; }
+      #root .budget-bar-fill { position: absolute; top: 0; left: 0; height: 100%; width: 100%; background: var(--accent); transform-origin: 0 50%; }
+      #root .budget-bar-fill.warn { background: #c98f2c; }
+      #root .budget-bar-fill.over { background: #c9522c; }
+      #root .budget-meta { font-size: 11px; color: var(--tx-lo); }
+      #root .budget-meta-over { font-size: 11px; color: #c9522c; font-weight: 500; }
+      #root .meta-stack { position: relative; }
+      #root .meta-stack .meta-new { position: absolute; left: 0; top: 0; opacity: 0; white-space: nowrap; }
+      #root .row-edit { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--hair); padding: 4px 10px; color: var(--tx-mid); background: var(--bg); }
+
+      /* budget editor dialog */
+      #root .dlg-scrim { opacity: 0; }
+      #root .dlg-panel { opacity: 0; transform: scale(0.98); }
+      #root .status-box { border: 1px solid var(--hair); background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; }
+      #root .status-box .status-line { font-size: 13px; color: var(--tx-hi); }
+      #root .status-box .status-sub { font-size: 12px; color: #c9522c; }
+      #root .fields-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      #root .type-wrap { position: relative; display: inline-block; }
+      #root .type-cover { position: absolute; inset: 0; background: var(--bg); transform-origin: 100% 50%; }
+      #root .footer-split { display: flex; justify-content: space-between; align-items: center; padding: 16px 28px 24px; }
+      #root .footer-right { display: flex; gap: 10px; }
+      #root .btn-remove { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 9px 14px; border: 1px solid var(--hair); color: #c9522c; }
+
+      /* toast (kit .imp-toast is absolute in stage) */
+      #root .imp-toast { opacity: 0; transform: translateY(12px); }
+
+      /* payoff bar */
+      #root #payoff-bar { position: absolute; left: 50%; bottom: 56px; opacity: 0; background: var(--ink); color: #f4f5f2; padding: 18px 34px; font-size: 30px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; }
+      #root #payoff-bar em { font-style: normal; color: var(--chip); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="set-budget"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.2"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.2" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Administration</span>
+          <h1 class="hook-headline" id="hook-headline">Set a spending budget.</h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the budget editor dialog intentionally dims the table -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.3" data-track-index="3" data-layout-allow-occlusion>
+        <div class="stage" id="stage">
+          <!-- data-layout-allow-overlap: the dialog scrim intentionally covers the page -->
+          <div id="page" data-layout-allow-overlap>
+            <div class="imp-shell">
+              <aside class="imp-sidebar">
+                <div class="imp-wordmark">IMP</div>
+                <div class="imp-sidebar-group">Workspace</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+                <div class="imp-sidebar-group">Build</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents</div>
+                <div class="imp-sidebar-group">Administration</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Users</div>
+                <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Budgets</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>Analytics</div>
+              </aside>
+              <div class="imp-main">
+                <div class="imp-topbar">
+                  <div>
+                    <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Budgets</span>
+                    <span style="font-size:12px;color:var(--tx-lo);margin-left:12px;">Per user: $20.00 / Monthly</span>
+                    <span style="font-size:12px;color:var(--tx-lo);margin-left:4px;">· shown in chat</span>
+                    <span style="font-size:12px;color:var(--accent);margin-left:8px;">Edit</span>
+                  </div>
+                </div>
+                <div class="imp-content" style="padding:0;flex:1;min-height:0;display:flex;flex-direction:column;">
+                  <div class="entity-tabs">
+                    <div class="et active">Users</div>
+                    <div class="et">Roles</div>
+                    <div class="et">Teams</div>
+                    <div class="et">Projects</div>
+                    <div class="et">Agents</div>
+                    <div class="et">Routines</div>
+                  </div>
+                  <div class="content">
+                    <div class="toolbar">
+                      <div class="search-field">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <span class="search-text">Search users by email…</span>
+                      </div>
+                    </div>
+                    <div class="imp-table budget-table">
+                      <div class="imp-table-head">
+                        <span></span><span>User</span><span>Budget</span><span>Resets</span><span class="imp-cell-end">Actions</span>
+                      </div>
+                      <!-- Row 1: over budget → edited during the flow -->
+                      <div class="imp-row">
+                        <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);" /></span>
+                        <span class="imp-cell-user">
+                          <span class="imp-avatar lime">MV</span>
+                          <span><span class="imp-user-name">maren.vogel@example.com</span></span>
+                        </span>
+                        <span>
+                          <div class="budget-bar">
+                            <div class="budget-bar-track"><div class="budget-bar-fill over" id="row1-fill"></div></div>
+                            <span class="meta-stack">
+                              <span class="budget-meta-over" id="row1-meta-old">$20.80 of $20.00 · 104%</span>
+                              <span class="budget-meta meta-new" id="row1-meta-new">$20.80 of $40.00 · 52%</span>
+                            </span>
+                          </div>
+                        </span>
+                        <span class="imp-cell-faint">Jul 31</span>
+                        <span class="imp-cell-end"><span class="row-edit" id="row1-edit">Edit</span></span>
+                      </div>
+                      <!-- Row 2 -->
+                      <div class="imp-row">
+                        <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);" /></span>
+                        <span class="imp-cell-user">
+                          <span class="imp-avatar soft">TS</span>
+                          <span><span class="imp-user-name">tobias.schreiber@example.com</span></span>
+                        </span>
+                        <span>
+                          <div class="budget-bar">
+                            <div class="budget-bar-track"><div class="budget-bar-fill warn" style="transform:scaleX(0.88);"></div></div>
+                            <span class="budget-meta">$17.60 of $20.00 · 88%</span>
+                          </div>
+                        </span>
+                        <span class="imp-cell-faint">Jul 31</span>
+                        <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                      </div>
+                      <!-- Row 3 -->
+                      <div class="imp-row">
+                        <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);" /></span>
+                        <span class="imp-cell-user">
+                          <span class="imp-avatar soft">AK</span>
+                          <span><span class="imp-user-name">anna.krause@example.com</span></span>
+                        </span>
+                        <span>
+                          <div class="budget-bar">
+                            <div class="budget-bar-track"><div class="budget-bar-fill" style="transform:scaleX(0.42);"></div></div>
+                            <span class="budget-meta">$8.40 of $20.00 · 42%</span>
+                          </div>
+                        </span>
+                        <span class="imp-cell-faint">Jul 31</span>
+                        <span class="imp-cell-end"><span class="row-edit">Edit</span></span>
+                      </div>
+                      <!-- Row 4 -->
+                      <div class="imp-row">
+                        <span style="padding-left:4px;"><input type="checkbox" style="width:14px;height:14px;accent-color:var(--ink);" /></span>
+                        <span class="imp-cell-user">
+                          <span class="imp-avatar soft">LB</span>
+                          <span><span class="imp-user-name">lena.bach@example.com</span></span>
+                        </span>
+                        <span style="color:var(--tx-faint);font-size:12px;">No budget set</span>
+                        <span class="imp-cell-faint">—</span>
+                        <span class="imp-cell-end"><span class="row-edit">Set</span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- budget editor dialog -->
+            <div class="imp-dialog-scrim dlg-scrim" id="dlg-scrim">
+              <div class="imp-dialog dlg-panel" id="dlg-panel" style="width: 520px;">
+                <div class="imp-dialog-header">
+                  <div class="imp-dialog-title">Edit budget</div>
+                  <div class="imp-dialog-desc">maren.vogel@example.com</div>
+                </div>
+                <div class="imp-dialog-body">
+                  <div class="imp-field">
+                    <div class="imp-label">Current status</div>
+                    <div class="status-box">
+                      <span class="status-line">$20.80 of $20.00 used</span>
+                      <span class="status-sub">Over budget · resets Jul 31</span>
+                    </div>
+                  </div>
+                  <div class="fields-2">
+                    <div class="imp-field">
+                      <div class="imp-label">Budget (USD)</div>
+                      <div class="imp-input" id="amount-input" style="position:relative;">
+                        <span id="amount-old">20</span>
+                        <span class="type-wrap" style="position:absolute;left:12px;"><span>40</span><span class="type-cover" id="amount-cover"></span></span>
+                      </div>
+                    </div>
+                    <div class="imp-field">
+                      <div class="imp-label">Reset period</div>
+                      <div class="imp-input" style="justify-content:space-between;">Monthly<span style="color:var(--tx-faint);font-size:11px;">▾</span></div>
+                    </div>
+                  </div>
+                  <div class="imp-field-hint">By default the budget resets at the start of each day, week, or month. Pick a date to set a custom reset.</div>
+                </div>
+                <div class="footer-split">
+                  <span class="btn-remove">Remove</span>
+                  <span class="footer-right">
+                    <span class="imp-btn imp-btn-ghost">Cancel</span>
+                    <span class="imp-btn imp-btn-ink" id="btn-save">Save budget</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <!-- toast -->
+            <div class="imp-toast" id="toast">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6 9 17l-5-5"/></svg>
+              Budget saved<span class="imp-toast-sub">Budget set for maren.vogel@example.com.</span>
+            </div>
+          </div>
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2" data-track-index="4">
+        <div id="payoff-bar"><span>Caps are enforced <em>at request time</em>.</span></div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* 0.00-0.50 hook enters; holds until 1.9 */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.90-2.35 hook exits; budgets page rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.9);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.0);
+
+      /* 2.40-2.70 page sits still (orienting beat) */
+
+      /* 2.70-3.35 cursor glides to the over-budget row's Edit and clicks */
+      let t1 = impCursor(tl, { from: [1220, 880], to: [1532, 222], at: 2.7, click: true, duration: 0.5 });
+      tl.to("#row1-edit", { backgroundColor: "#efece4", duration: 0.12, ease: "power1.out" }, t1 - 0.28);
+
+      /* 3.45-3.80 editor dialog scales in */
+      tl.to("#dlg-scrim", { opacity: 1, duration: 0.26, ease: "power1.out" }, 3.45);
+      tl.to("#dlg-panel", { opacity: 1, scale: 1, duration: 0.3, ease: "power2.out", transformOrigin: "50% 42%" }, 3.5);
+
+      /* 3.80-4.50 dialog holds still (read title, status, fields) */
+
+      /* 4.50-5.00 amount replaces 20 → 40 (focus border, quick type) */
+      tl.to("#amount-input", { borderColor: "#6f9a37", duration: 0.15, ease: "power1.out" }, 4.5);
+      tl.to("#amount-old", { opacity: 0, duration: 0.12, ease: "power1.out" }, 4.55);
+      tl.to("#amount-cover", { scaleX: 0, duration: 0.35, ease: "steps(2)" }, 4.7);
+
+      /* 5.00-5.60 breath; cursor glides to "Save budget" */
+      let t2 = impCursor(tl, { to: [982, 656], at: 5.6, click: true, show: false, duration: 0.5 });
+      tl.to("#btn-save", { backgroundColor: "#cef79e", color: "#241f1a", duration: 0.14, ease: "power1.out" }, t2 - 0.28);
+
+      /* 6.45-6.90 dialog closes; cursor fades; row updates; toast rises */
+      tl.to("#cur", { opacity: 0, duration: 0.18, ease: "power1.in" }, 6.45);
+      tl.to("#dlg-panel", { opacity: 0, scale: 0.985, duration: 0.22, ease: "power1.in" }, 6.5);
+      tl.to("#dlg-scrim", { opacity: 0, duration: 0.24, ease: "power1.in" }, 6.55);
+      tl.to("#row1-fill", { scaleX: 0.52, backgroundColor: "#6f9a37", duration: 0.5, ease: "power2.inOut" }, 6.8);
+      tl.to("#row1-meta-old", { opacity: 0, duration: 0.2, ease: "power1.out" }, 6.8);
+      tl.to("#row1-meta-new", { opacity: 1, duration: 0.25, ease: "power1.out" }, 6.9);
+      tl.to("#toast", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 6.9);
+
+      /* 7.25-7.65 payoff caption bar rises */
+      tl.fromTo("#payoff-bar", { xPercent: -50, y: 110, opacity: 0 }, { xPercent: -50, y: 0, opacity: 1, duration: 0.4, ease: "power2.out", immediateRender: false }, 7.3);
+
+      /* 7.65-9.20 settled hold */
+
+      window.__timelines["set-budget"] = tl;
+    </script>
+  </body>
+</html>

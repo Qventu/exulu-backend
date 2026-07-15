@@ -1,0 +1,52 @@
+<article class="chapter" id="r-transcription" data-release="2026-05-29-transcription" aria-labelledby="r-transcription-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">03</span>
+      <span class="pill">May 29, 2026</span>
+      <span class="ch-name">Transcription with Speakers</span>
+    </div>
+    <h1 class="ch-title" id="r-transcription-h">Transcripts that <em>know who's talking</em>.</h1>
+    <p class="ch-lede">Upload audio, get a diarized transcript with speaker labels you can rename in seconds, and have it land in your knowledge base — embedded, project-scoped, and reachable from chat. All running on a Whisper server you host yourself.</p>
+  </header>
+  <section class="feature" id="r-transcription--review-and-rename"><h2>Diarized review with one click per name</h2>
+        <p class="one-liner">Drop in audio, watch it transcribe with a live ETA, then rename SPEAKER_00 → Daniel before you save.</p>
+
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-05-29-transcription__slice-1-review-and-rename.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+          <p>The <strong>/transcriptions</strong> page pairs a native audio player with a colored timeline of who spoke when. Hover a segment to preview its text and timestamp; click to jump there. Speaker colors stay put as you rename — <code>SPEAKER_00</code> keeps its color after it becomes "Daniel".</p>
+
+          <p>Renames are reversible, and saved transcripts land in a <strong>Completed</strong> section on the same page. Re-open one to revise speaker names later — the existing item updates in place and re-embeds automatically, so nothing breaks downstream.</p>
+        </div></section>
+<section class="feature" id="r-transcription--standalone-whisper"><h2>Same package. Separate machine. Your environment.</h2>
+        <p class="one-liner">The Whisper + pyannote pipeline ships inside <code>@exulu/backend</code> but runs as its own process — on a box you control.</p>
+
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-05-29-transcription__slice-2-standalone-whisper.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+          <p>Start it with <code>npm run start:whisper</code> on a GPU host, point the main app at it with <code>TRANSCRIPTION_SERVER=http://...</code>, and transcription is live on the next boot — with a startup log confirming the device and whether diarization is on.</p>
+
+          <p><strong>Your audio never leaves your environment.</strong> No Exulu-managed endpoint, no third-party API key, no traffic leaving your VPC. GPU support auto-detects CUDA and Apple Silicon, with a CPU fallback; the first job downloads the <code>large-v3</code> model (~3 GB), and every run after that is fully local.</p>
+
+          <div class="snippet-label">From the CLI</div>
+<pre><span class="c"># On the GPU host</span>
+npx @exulu/backend exulu-start-whisper
+
+<span class="c"># On the main app</span>
+TRANSCRIPTION_SERVER=http://gpu-host:9876</pre>
+
+          <div class="callout">
+            <p><strong>Diarization needs a HuggingFace token.</strong> Set <code>HF_AUTH_TOKEN</code> on the Whisper host and accept the ToS for <code>pyannote/segmentation-3.0</code> and <code>pyannote/speaker-diarization-3.1</code>. Without it, transcription still works but every segment is tagged <code>speaker="unknown"</code>.</p>
+          </div>
+        </div></section>
+<section class="feature" id="r-transcription--knowledge-and-chat"><h2>From audio to project-scoped knowledge.</h2>
+        <p class="one-liner">Every saved transcript becomes a searchable item in a built-in context — optionally pinned to a project so the right agents pick it up automatically.</p>
+
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-05-29-transcription__slice-3-knowledge-and-chat.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+          <p>Every transcript you save becomes a searchable item in the built-in <code>transcriptions</code> context, embedded the moment you save it — no migration, no extra setup, no separate ingestion pipeline.</p>
+
+          <p>Pick a project at upload or review time and the transcript is scoped to that project's agents and chats. The speaker names you typed are part of the embedded text, so asking "what did Alex say" routes straight to the right segments — with citations back to the source.</p>
+        </div></section>
+</article>

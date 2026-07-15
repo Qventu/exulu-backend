@@ -1,0 +1,242 @@
+---
+title: "Defining contexts"
+description: "Build two complete ExuluContext definitions: a semantic embedder-backed support ticket context and an always-include team memory context."
+icon: "database"
+---
+
+Contexts are the knowledge layer of IMP. This tutorial walks you through two complete context definitions that represent common real-world shapes: a large, externally synced collection that uses semantic retrieval, and a small, always-included memory collection where every item is injected on every request regardless of the query.
+
+## Prerequisites
+
+- Completed [Your first app](/developers/tutorials/first-app) — you have a working project structure.
+- Read [ExuluContext — introduction](/developers/core/exulu-context/introduction) and [ExuluContext — configuration](/developers/core/exulu-context/configuration).
+
+## What you will build
+
+1. `support_tickets_context` — a context backed by an embedding model and a BullMQ queue, with an enum status field and a file attachment field, using the markdown chunker and retrieval cutoffs.
+2. `team_memory_context` — a small context where items are always injected into the agent's context window, independent of the query, using `calculateVectors: "always"` and a high `maxRetrievalResults`.
+
+<Steps>
+
+<Step title="Register an embedder queue">
+
+Both contexts share the same embedding queue. Register it at the top of `src/contexts/index.ts`:
+
+```typescript src/contexts/index.ts
+import { ExuluContext, ExuluQueues, ExuluChunkers } from "@exulu/backend";
+
+// Rate limit sized for a 5 M TPM embedding provider:
+// 5_000_000 tokens/min ÷ 1_024 tokens/request ÷ 60 sec ≈ 81 req/sec → use 80
+const embeddingsQueue = ExuluQueues.register(
+  "ticket_embeddings",
+  { worker: 8, queue: 20 }, // 8 parallel per process, 20 global max
+  80,                        // 80 jobs per second
+  300,                       // 5-minute timeout per embedding batch
+);
+```
+
+See [Queues and workers](/developers/tutorials/queues-and-workers) for the full sizing formula. See [ExuluQueues — configuration](/developers/core/exulu-queues/configuration) for every parameter.
+
+</Step>
+
+<Step title="Define the support tickets context">
+
+This context models tickets pulled from a generic support system — a collection that grows to thousands of items and needs efficient semantic retrieval:
+
+```typescript src/contexts/index.ts (continued)
+export const supportTicketsContext = new ExuluContext({
+  id: "support_tickets_context",
+  name: "Support tickets",
+  description: "Closed support tickets and their conversation threads. Use this context when the user asks about past issues, known problems, or previous resolutions.",
+  active: true,
+
+  fields: [
+    { name: "body",        type: "longText" },
+    { name: "status",      type: "enum", enumValues: ["open", "pending", "solved", "closed"], index: true },
+    { name: "priority",    type: "enum", enumValues: ["low", "normal", "high", "urgent"], index: true },
+    { name: "submitter",   type: "shortText" },
+    { name: "created_at",  type: "date" },
+    { name: "attachment",  type: "file", allowedFileTypes: [".pdf", ".txt"] },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(),
+  },
+
+  chunker: async (item, maxChunkSize, utils) => {
+    const markdownChunker = new ExuluChunkers.markdown();
+    const content = [item.name, item.body ?? ""].join("\n\n");
+    const chunks = await markdownChunker.chunk(
+      content,
+      maxChunkSize,
+      `--- Support ticket (ID: ${item.external_id}) ---`,
+    );
+    return {
+      item,
+      chunks: chunks.map((chunk, index) => ({
+        content: chunk.text,
+        index,
+        metadata: {
+          ticket_id:  item.external_id,
+          priority:   item.priority,
+          created_at: item.created_at,
+          page:       chunk.page,
+        },
+      })),
+    };
+  },
+
+  sources: [],  // added in the data-sources tutorial
+
+  configuration: {
+    calculateVectors: "manual",  // processor triggers embeddings after processing
+    maxRetrievalResults: 5,
+    defaultRightsMode: "users",
+    cutoffs: { cosineDistance: 0.4, tsvector: 0.3, hybrid: 0.35 },
+    expand:  { before: 1, after: 1 },
+    languages: ["english"],
+  },
+});
+```
+
+A few points about the choices above:
+
+| Choice | Reason |
+|---|---|
+| `calculateVectors: "manual"` | A processor will trigger embedding after enrichment. See [Custom processors](/developers/tutorials/custom-processors). |
+| `cutoffs.cosineDistance: 0.4` | Tighter than the 0.5 default — the ticket corpus is domain-specific, so weak matches are noise. |
+| `expand: { before: 1, after: 1 }` | Adds neighboring chunks around each hit so the agent sees fuller context. |
+| `ExuluChunkers.markdown()` | The markdown chunker respects headings and paragraphs, producing better semantic boundaries than a sentence chunker on structured ticket content. |
+
+The `attachment` field holds a user-uploaded (or source-written) file. The processor reads it via a presigned URL and writes the derived fields (`extracted_text`, `processed_hash`) — those are the fields marked `calculated: true`. For file fields the actual column is `attachment_s3key` — IMP appends `_s3key` automatically.
+
+</Step>
+
+<Step title="Define the team memory context">
+
+The memory context stores short items — preferences, decisions, recurring instructions — that should always accompany the agent's context window, regardless of what the user asked:
+
+```typescript src/contexts/index.ts (continued)
+const MEMORY_TYPES = ["PREFERENCE", "FACT", "DECISION", "CONTEXT"] as const;
+type MemoryType = typeof MEMORY_TYPES[number];
+
+export const teamMemoryContext = new ExuluContext({
+  id: "team_memory_context",
+  name: "Team memory",
+  description: "Standing instructions, preferences, and decisions the agent should always apply. Every item in this context is injected into every response, independent of the query.",
+  active: true,
+
+  fields: [
+    { name: "information", type: "text" },
+    {
+      name: "type",
+      type: "enum",
+      enumValues: [...MEMORY_TYPES],
+      index: true,
+      default: "FACT",
+    },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: undefined, // small collection — inline embedding is fine
+  },
+
+  chunker: async (item, maxChunkSize) => {
+    const content = [item.name, item.description ?? "", item.information ?? ""]
+      .filter(Boolean)
+      .join("\n");
+    return {
+      item,
+      chunks: [{ content, index: 0, metadata: { type: item.type } }],
+    };
+  },
+
+  sources: [],
+
+  configuration: {
+    calculateVectors: "always",  // embed immediately on every write
+    maxRetrievalResults: 50,     // retrieve all items — the collection is small by design
+    defaultRightsMode: "users",
+    languages: ["english"],
+  },
+});
+```
+
+`calculateVectors: "always"` means IMP embeds immediately whenever an item is created or updated, without needing a processor or manual trigger. Because items in this context are short and infrequent, inline embedding is fast enough; no queue is needed.
+
+<Note>
+"Always include" behavior is a retrieval-side concern: the agent's retrieval configuration controls whether a context is queried and how many results it injects. `maxRetrievalResults: 50` with a large limit ensures the agent sees every item in the collection, which is small by design (keep it under a few hundred items). For the agent workbench configuration, see [Knowledge](/building/knowledge/overview).
+</Note>
+
+</Step>
+
+<Step title="Export and register both contexts">
+
+```typescript src/contexts/index.ts (continued)
+export const contexts = {
+  support_tickets_context: supportTicketsContext,
+  team_memory_context:     teamMemoryContext,
+};
+```
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region:   process.env.COMPANION_S3_REGION!,
+      s3key:      process.env.COMPANION_S3_KEY!,
+      s3secret:   process.env.COMPANION_S3_SECRET!,
+      s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    workers: { enabled: true },
+    MCP:     { enabled: false },
+  },
+  contexts,
+  tools: [],
+});
+```
+
+The `contexts` object key matches the context `id` by convention — the key itself is not used by the framework, but matching them makes the export readable and consistent.
+
+</Step>
+
+<Step title="Verify the contexts appear in the UI">
+
+Start the server:
+
+```bash
+npm run dev:server
+```
+
+Open the IMP admin interface and navigate to **Build → Knowledge**. Both `support_tickets_context` and `team_memory_context` appear in the library. The Pipeline tab for each shows the configured stages.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- `support_tickets_context` — a semantic context with enum and file fields, a markdown chunker, a BullMQ embedder queue, and tight retrieval cutoffs.
+- `team_memory_context` — an always-available memory context that embeds inline on every write and returns up to 50 items per retrieval.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Data sources and sync" icon="refresh-cw" href="/developers/tutorials/data-sources-and-sync">
+    Add a source that pulls tickets from an external API on a cron schedule.
+  </Card>
+  <Card title="Custom processors" icon="workflow" href="/developers/tutorials/custom-processors">
+    Transform uploaded PDFs into structured fields and trigger embeddings.
+  </Card>
+  <Card title="ExuluContext — configuration" icon="settings" href="/developers/core/exulu-context/configuration">
+    Full reference for every constructor option.
+  </Card>
+</CardGroup>

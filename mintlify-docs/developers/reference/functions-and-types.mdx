@@ -1,0 +1,284 @@
+---
+title: "Functions and types"
+description: "Standalone exported functions, enums, and TypeScript types from @exulu/backend."
+---
+
+This page documents the top-level functions, enums, and types exported from `@exulu/backend` that are not part of a class. For class APIs see the [Core classes](/developers/core/exulu-app/introduction) and the other reference pages in this section.
+
+---
+
+## Functions
+
+### defaultChunker
+
+```typescript
+import { defaultChunker } from "@exulu/backend";
+```
+
+The built-in `ChunkerOperation` used when a context configures an embedding model but does not provide a custom `chunker`. It runs the `SentenceChunker` over the item's primary text content — checking `content`, then `description`, prefixed by `name` — and respects `maxChunkSize` as the per-chunk token budget.
+
+Use `defaultChunker` directly when you want to invoke the standard chunking logic from a custom processor or in tests.
+
+```typescript
+const result = await defaultChunker(item, 512, { storage });
+// result.chunks: Array<{ content: string; index: number; metadata?: Record<string, unknown> }>
+```
+
+See [ExuluChunkers](/developers/core/exulu-chunkers/introduction) for the full suite of built-in chunkers.
+
+---
+
+### enableLiteLLMClientMode
+
+```typescript
+import { enableLiteLLMClientMode } from "@exulu/backend";
+```
+
+Switches the current process into LiteLLM **client** mode: instead of spawning and supervising its own proxy, the process connects to a proxy managed by a separate process (typically the IMP HTTP server).
+
+Call this once at the very start of a worker or CLI process that shares a proxy with a running IMP server. Without it, the worker would attempt to spawn its own proxy on `LITELLM_PORT` — colliding with the server's process — or fail with "package root not set".
+
+```typescript
+// worker-boot.ts — must be the first call
+import { enableLiteLLMClientMode } from "@exulu/backend";
+enableLiteLLMClientMode();
+
+// Now safe to import anything that uses LiteLLM
+import { ExuluQueues } from "@exulu/backend";
+```
+
+`enableLiteLLMClientMode` is a no-op when the current process has already started its own supervisor (e.g. a combined server + worker process). It is idempotent.
+
+See [Self-hosting / LiteLLM](/self-hosting/services/litellm) for deployment context.
+
+---
+
+### postgresClient
+
+```typescript
+import { postgresClient } from "@exulu/backend";
+
+const { db } = await postgresClient();
+```
+
+Returns a memoized Knex instance connected to the IMP Postgres database. On first call, creates the database if it does not exist (using `POSTGRES_DB_NAME`, defaulting to `"exulu"`). Subsequent calls return the cached connection.
+
+`db` is a `Knex` instance with `pgvector` registered, so vector operations (`db.raw('... <=> ?', [vector])`) work out of the box.
+
+```typescript
+const { db } = await postgresClient();
+const users = await db.from("users").select("id", "email").limit(10);
+```
+
+The connection pool defaults to `min: 2, max: 4`. Connection timeouts, SSL, and credentials are read from environment variables (`POSTGRES_DB_HOST`, `POSTGRES_DB_PORT`, `POSTGRES_DB_USER`, `POSTGRES_DB_PASSWORD`, `POSTGRES_DB_SSL`).
+
+---
+
+## Enums
+
+### EXULU_STATISTICS_TYPE_ENUM
+
+```typescript
+import { EXULU_STATISTICS_TYPE_ENUM } from "@exulu/backend";
+```
+
+String enum for the platform's statistics event types, used as the `type` field in the `statistics` table.
+
+| Key | Value |
+|---|---|
+| `CONTEXT_RETRIEVE` | `"CONTEXT_RETRIEVE"` |
+| `SOURCE_UPDATE` | `"SOURCE_UPDATE"` |
+| `EMBEDDER_UPSERT` | `"EMBEDDER_UPSERT"` |
+| `EMBEDDER_GENERATE` | `"EMBEDDER_GENERATE"` |
+| `EMBEDDER_DELETE` | `"EMBEDDER_DELETE"` |
+| `WORKFLOW_RUN` | `"WORKFLOW_RUN"` |
+| `CONTEXT_UPSERT` | `"CONTEXT_UPSERT"` |
+| `TOOL_CALL` | `"TOOL_CALL"` |
+| `AGENT_RUN` | `"AGENT_RUN"` |
+
+The corresponding TypeScript union type is `EXULU_STATISTICS_TYPE`.
+
+---
+
+### EXULU_JOB_STATUS_ENUM
+
+```typescript
+import { EXULU_JOB_STATUS_ENUM } from "@exulu/backend";
+```
+
+String enum for BullMQ job statuses, used when querying the `jobs` table or filtering on queue inspector results.
+
+| Key | Value |
+|---|---|
+| `completed` | `"completed"` |
+| `failed` | `"failed"` |
+| `delayed` | `"delayed"` |
+| `active` | `"active"` |
+| `waiting` | `"waiting"` |
+| `paused` | `"paused"` |
+| `stuck` | `"stuck"` |
+
+The corresponding TypeScript union type is `EXULU_JOB_STATUS`.
+
+---
+
+## Types
+
+### ChunkerOperation
+
+```typescript
+type ChunkerOperation = (
+  item: Item & { id: string },
+  maxChunkSize: number,
+  utils: { storage: ExuluStorage },
+) => Promise<ChunkerResponse>;
+```
+
+The function signature for a custom chunker. Implement this type and pass the result as the `chunker` option of an `ExuluContext` embedder config. `utils.storage` is available for chunkers that need to read files from object storage (e.g. to extract text from a PDF before chunking).
+
+---
+
+### ChunkerResponse
+
+```typescript
+type ChunkerResponse = {
+  item: Item & { id: string };
+  chunks: {
+    content: string;
+    index: number;
+    metadata?: Record<string, unknown>;
+  }[];
+};
+```
+
+The return value of a `ChunkerOperation`. `metadata` is stored in a Postgres JSONB column — any JSON-serializable value is accepted (e.g. a page number from a PDF chunker).
+
+---
+
+### ExuluContextEmbedder
+
+```typescript
+type ExuluContextEmbedder = {
+  model: string;
+  queue?: Promise<ExuluQueueConfig>;
+};
+```
+
+The embedder configuration on an `ExuluContext`. `model` is the LiteLLM `model_name` of the embedding model (declared in `config.litellm.yaml`). When `queue` is provided, embedding jobs run in the background via BullMQ.
+
+---
+
+### ExuluAgent
+
+```typescript
+interface ExuluAgent {
+  id: string;
+  name: string;
+  type: "agent";
+  source: "code" | "database";
+  model?: string;
+  instructions?: string;
+  description?: string;
+  memory?: string;
+  welcomemessage?: string;
+  defaultagent?: boolean;
+  active?: boolean;
+  feedback?: boolean;
+  suggestions_enabled?: boolean;
+  sandbox_enabled?: boolean;
+  max_tool_steps?: number | null;
+  slug?: string;
+  tools?: { id: string; type: string; config: { name: string; variable: string; type: string }[]; name: string; description: string }[];
+  skills?: { id: string; name: string; /* ... */ }[];
+  workflows?: ExuluProviderWorkflowConfig;
+  // ... additional fields
+}
+```
+
+The database agent record, extended with hydrated relations. Named `ExuluAgent` at the package boundary (the internal type is `agent.ts:ExuluAgent`). Passed to tool `execute` functions, `ExuluEval.run`, `ExuluReranker.rerank`, and other contexts where the calling agent's identity is needed.
+
+---
+
+### VectorSearchChunkResult
+
+```typescript
+type VectorSearchChunkResult = {
+  chunk_content: string;
+  chunk_index: number;
+  chunk_id: string;
+  chunk_source: string;
+  chunk_metadata: Record<string, string>;
+  chunk_created_at: string;
+  chunk_updated_at: string;
+  item_id: string;
+  item_external_id: string;
+  item_name: string;
+  item_updated_at: string;
+  item_created_at: string;
+  chunk_cosine_distance?: number;
+  chunk_fts_rank?: number;
+  chunk_hybrid_score?: number;
+  chunk_entities?: { id: string; name: string; type: string }[];
+  context?: { name: string; id: string };
+};
+```
+
+The shape returned by `ExuluContext.search()`, `ExuluReadApi.authorizedRead()`, and passed to `ExuluReranker.rerank()`. `chunk_entities` is present only when the entity layer is enabled for the context.
+
+---
+
+### ExuluOauthConfig
+
+```typescript
+type ExuluOauthConfig = {
+  provider?: string;
+  authorizationUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scopes: string[];
+  pkce?: boolean;
+  extraAuthParams?: Record<string, string>;
+};
+```
+
+OAuth 2.0 configuration for an `ExuluTool`. When a tool is constructed with an `oauth` property, IMP wraps its `execute` to require a valid access token. `provider` lets multiple tools share the same token under one consent grant; when omitted each tool uses its own `id` as the provider key.
+
+See [ExuluTool — introduction](/developers/core/exulu-tool/introduction) for the full OAuth integration guide.
+
+---
+
+### ExuluOauthToolContext
+
+```typescript
+type ExuluOauthToolContext = {
+  accessToken: string;
+  expiresAt: Date | null;
+  scopes: string | null;
+};
+```
+
+The OAuth context injected into an OAuth-enabled tool's `execute` inputs as `inputs._oauth`. `expiresAt` is `null` when the provider did not report an expiry. `scopes` is the space-joined granted scope string when reported.
+
+---
+
+### ExuluItem
+
+```typescript
+type ExuluItem = {
+  id?: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  external_id?: string;
+  source?: string;
+  tags?: string[];
+  textlength?: number;
+  last_processed_at?: string;
+  chunks?: { id: string; index: number; content: string; source: string; createdAt: string; updatedAt: string }[];
+  [key: string]: any;
+};
+```
+
+The base record shape for items stored in a knowledge context. Re-exported from `@EXULU_TYPES/models/item` as `ExuluItem` for package consumers. The index signature (`[key: string]: any`) accommodates context-specific custom fields defined in `ExuluContext.fields`.

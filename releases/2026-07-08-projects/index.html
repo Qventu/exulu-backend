@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Projects</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Projects</span>
+      <h1 class="hero">A <em>home</em> for every piece of work.</h1>
+      <p class="lede">Projects are named, private workspaces that keep a team's chat sessions, pinned knowledge and shared files together — with a knowledge scope every session in the project inherits, and access controls and a configurable cascade delete when it's time to clean up.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="project-files">
+        <h2>Files tab</h2>
+        <p class="one-liner">Pin the knowledge. Every session inherits it.</p>
+        <div class="slice">
+          <video src="./shorts/project-files.mp4" poster="./shorts/project-files-poster.png" autoplay loop muted playsinline></video>
+          <p>The project detail page is a workspace, not a form. Under the header — breadcrumb <strong>"Projects /"</strong>, avatar and name, and a purple <strong>"New session"</strong> — sit three URL-backed tabs: <strong>Sessions</strong>, <strong>Files</strong>, <strong>Settings</strong> (<code>?tab=</code>, refresh-safe and back-button-steppable). The <strong>Files</strong> tab is the curation surface for a project's pinned knowledge, and pinning is the whole point: <strong>"Pin knowledge items to share them with every session in this project."</strong></p>
+          <p>A mini-toolbar shows a live <strong>"{count} / {max} files"</strong> counter (e.g. <strong>"2 / 15 files"</strong>) next to an outline <strong>"Add files"</strong> button, and the Files tab trigger carries a small secondary <strong>"2/15"</strong> badge. The shared <code>ItemsSelectionModal</code> does the picking — a Browse tab (folder tree → items list with a purple checkbox select state → a right-hand "Selected Items" rail) and a Presets tab. Confirm reads <strong>"Add (1) Item"</strong>; the modal closes, a new <code>ProjectItemCard</code> fades and scales in (200 ms), and the counter ticks <strong>"2 / 15 files" → "3 / 15 files"</strong>. Each card shows the item name (linking to <code>/data/{context}/items/{id}</code>), a description, and a footer of <code>context · relative-time · N chunks</code>.</p>
+          <p>There are three add paths but one cap: pick individual items, pick a whole <strong>"Entire context"</strong>, or apply a saved preset — each is atomic against <strong>15</strong>. An over-cap batch applies nothing and says how many slots remain (<strong>"Only # slot(s) left — nothing was added."</strong>); at the limit the button disables with <strong>"This project has reached the limit of 15 files. Remove one to add another."</strong>. Two edge cases stay honest: a full-context pin renders a distinct Database-icon card with an <strong>"Entire context"</strong> badge, and a deleted item renders a muted dashed <strong>"Item no longer exists"</strong> card that stays removable — orphans are never silently dropped.</p>
+          <div class="snippet-label">GraphQL — every confirm writes the pinned gid list — <code>project_items</code> — to the project:</div>
+          <pre><code>mutation UpdateProject($id: ID!, $input: projectInput!) {
+  projectsUpdateOneById(id: $id, input: $input) {
+    item {
+      id
+      name
+      project_items
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="new-project">
+        <h2>Projects index &amp; create dialog</h2>
+        <p class="one-liner">Named, private workspaces for your team's AI.</p>
+        <div class="slice">
+          <video src="./shorts/new-project.mp4" poster="./shorts/new-project-poster.png" autoplay loop muted playsinline></video>
+          <p>The <code>/projects</code> index is now a standard collection page (the old permanent ProjectNav sidebar and <code>projects/layout.tsx</code> are gone; switching happens here or via ⌘K). Its PageHeader carries an h1 <strong>"Projects"</strong>, the description <strong>"Workspaces that group your conversations and shared context."</strong>, and exactly one primary action — a purple <strong>"New project"</strong> button that replaces the old cryptic icon-plus.</p>
+          <p>Creating one is a single dialog (<strong>"Create new project"</strong> — <strong>"A project groups chat sessions and shared files in one place."</strong>): a <strong>Name</strong> and a <strong>Description</strong> field are visible, custom instructions tuck inside a collapsed <strong>"Advanced"</strong> section, and a Lock-icon trust line states the promise at the moment of creation — <strong>"Private — only you can see this project until you share it."</strong>. Clicking the purple <strong>"Create project"</strong> button submits with <code>rights_mode: "private"</code>, toasts <strong>"Project created."</strong>, and navigates straight into the new workspace.</p>
+          <p>The payoff is the real project detail header: a breadcrumb <strong>"Projects / Quarterly report"</strong>, avatar and name, a <strong>"Private"</strong> visibility badge (Lock pill), and the purple <strong>"New session"</strong> action. No intermediate confirmation screen — you land on the Sessions tab of a project that is already yours alone, and sharing is a later, explicit step in Settings → Access.</p>
+          <div class="snippet-label">GraphQL — create dialog fires one mutation — private by default:</div>
+          <pre><code>mutation CreateProject($input: projectInput!) {
+  projectsCreateOne(input: $input) {
+    item {
+      id
+      name
+      rights_mode
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="projects-list">
+        <h2>Your workspaces, starred and searchable</h2>
+        <p class="one-liner">A standard collection page — favorites pinned, search on the server, nothing hidden past 200.</p>
+        <div class="slice">
+          <p>Starred projects pin to the top under a <strong>"Favorites"</strong> heading (then <strong>"All projects"</strong>) and appear exactly once — the group hides while searching so a project never shows up twice — while the star itself is a <code>FavoriteToggle</code> with <code>aria-pressed</code> that pops on tap (a 200 ms <code>zoom-in-50</code>, reduced-motion safe) and, because rows are stretched links, calls <code>preventDefault</code>/<code>stopPropagation</code> so starring never navigates. Favorites are one shared source of truth across the list, the detail-header star, and re-navigations; a failed toggle reverts only the toggled project and toasts <strong>"Couldn't update favorites. Please try again."</strong>.</p>
+          <p>The single Toolbar search (<strong>"Search projects…"</strong>) filters on the server through <code>GET_PROJECTS</code> with a <code>name contains</code> filter rather than a client scan — an empty result reads <strong>"No projects found"</strong> / <strong>"Try a different search term."</strong> — and past the 200-row window a ghost <strong>"Load more"</strong> button appears whenever <code>hasNextPage</code> is true, so the old silent 200/50 ceiling finally has a visible affordance. With no projects at all, the empty state reads <strong>"No projects yet"</strong> / <strong>"Projects keep related conversations and files together."</strong>.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="sessions-tab">
+        <h2>Sessions tab</h2>
+        <p class="one-liner">Start, remove, undo — the work, not the paperwork.</p>
+        <div class="slice">
+          <p>The Sessions tab is the L1 surface of a project — "a place you work" — with each row resolving its agent's real name client-side (while unresolved or if the agent was deleted it renders nothing, never a raw id) and a title that stretches into chat's existing <code>/chat/[agent]/[session]</code> route. <strong>"New session"</strong> opens an agent picker whose description preserves the trust disclosure <strong>"Choose an agent for the conversation. Sessions started in a project can be viewed by project members."</strong>; picking an agent fires <code>CREATE_AGENT_SESSION</code> with <code>project: &lt;id&gt;</code> and <code>rights_mode: "private"</code>, then jumps straight into the new chat.</p>
+          <p>Each row's overflow menu carries two RBAC-gated actions (disabled with <strong>"You don't have write access to this session"</strong> when the user can't write): <strong>"Remove from project"</strong> detaches immediately and offers an <strong>"Undo"</strong> toast (<strong>"Session removed from project."</strong>) that re-attaches the same session, while <strong>"Delete session…"</strong> runs through the shared <code>ConfirmDialog</code> (<strong>"Delete session?"</strong> / <strong>"&quot;{title}&quot; will be permanently deleted. This cannot be undone."</strong>) and, once confirmed, collapses the row over 300 ms before the list reflows. Untitled sessions fall back to <strong>"Untitled session"</strong>, and <strong>"Load more"</strong> appears past the 50-session window.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="settings-tab">
+        <h2>Settings tab</h2>
+        <p class="one-liner">Details, access, and a delete you configure with your eyes open.</p>
+        <div class="slice">
+          <p>The Settings tab consolidates the legacy "Project information", "Access control" and "Project settings" views into three quiet sections — <strong>Details · Access · Danger zone</strong> — with only the danger zone carrying a destructive border. <strong>Details</strong> edits name, description and the custom instructions every session inherits (in read mode the header shows a quiet <strong>"Instructions active · View"</strong> line that deep-links here), and <strong>Access</strong> drives an <code>RBACControl</code> across <strong>private / users / roles</strong> whose save reports success or error via toast (<strong>"Access rights saved."</strong>) — Details and Access each own their own <code>UPDATE_PROJECT</code> hook so the two save spinners no longer animate each other.</p>
+          <p>Deleting a project is a cascade you configure with your eyes open: the shared <code>ConfirmDialog</code> (<strong>"Delete project?"</strong> / <strong>"&quot;{name}&quot; will be permanently deleted. This cannot be undone. Sessions you don't delete are kept and detached from the project."</strong>) offers checkboxes <strong>"Also delete all files"</strong> and <strong>"Also delete all sessions"</strong> whose counts are live — files from the current pinned list, sessions from <code>pageInfo.itemCount</code>, not just the loaded rows — and an amber warning recomputes per selection: <strong>"# files and # sessions will be permanently deleted with the project."</strong>. The cascade walks all session pages, not the 50 loaded rows, so no session is stranded pointing at a deleted project id; on success it toasts <strong>"Project &quot;{name}&quot; has been deleted."</strong> and routes back to <code>/projects</code>.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="connections">
+        <h2>Wired into what already shipped</h2>
+        <p class="one-liner">Pinned knowledge flows through agentic retrieval, and every project is a ready-made endpoint.</p>
+        <div class="slice">
+          <p>Files pinned in a project's Files tab now route through the same 4-phase agentic retrieval pipeline as the rest of the platform — that shipped as <strong>project_search</strong>, announced in <a href="https://docs.exulu.com">releases/2026-07-08-project-search-and-budgets</a> as part 2 of agentic retrieval; the projects page owns only the pinning UI.</p>
+          <p>And alongside yesterday's tool-config downloads, the project detail ⋯ menu offers <strong>"Download Cowork config"</strong>, <strong>"Download Claude Code config"</strong> and <strong>"Download continue.dev config"</strong> — per-project LiteLLM endpoint and credentials, from <a href="https://docs.exulu.com">releases/2026-07-07-tool-configs</a>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

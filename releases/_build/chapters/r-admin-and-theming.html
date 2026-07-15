@@ -1,0 +1,89 @@
+<article class="chapter" id="r-admin-and-theming" data-release="2026-07-08-admin-and-theming" aria-labelledby="r-admin-and-theming-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">33</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Admin & Theming</span>
+    </div>
+    <h1 class="ch-title" id="r-admin-and-theming-h">Make the platform <em>yours</em>.</h1>
+    <p class="ch-lede">White-label the entire product with a live preview and an explicit publish gate, then run least-privilege roles, a secrets vault, scoped API keys, cost analytics, and an embedded API explorer from one admin surface.</p>
+  </header>
+  <section class="feature" id="r-admin-and-theming--theme-studio"><h2>Theme studio</h2>
+        <p class="one-liner">Your platform, your brand — previewed live.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-admin-and-theming__theme-studio.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>White-label the entire product from the super-admin <strong>Theme</strong> page. Every design token — surfaces, text, brand colors, charts, sidebar, shape and typography — is editable across Light and Dark modes, with a search box and a modified-only filter to keep the list tight. A sticky preview of real UI — buttons, badges, a chat exchange, a chart ramp — updates live as you edit, with its own light/dark toggle.</p>
+          <p>Publishing is an explicit step: the confirm dialog reports exactly how many light and dark overrides you're shipping to every user, and <strong>Reset to defaults</strong> asks before publishing the stock theme.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--role-matrix"><h2>Role matrix</h2>
+        <p class="one-liner">Least-privilege roles in seconds.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-admin-and-theming__role-matrix.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Roles are now a real permission matrix: seven areas — Agents, Routines, Variables, Users, API, Evals, Budgets — each with a three-state None / Read / Write control, and the whole access model fits in one view. Change a permission and a save bar appears with Discard and Save; members of the role see navigation changes immediately.</p>
+          <p>Reserved roles are protected: the <code>admin</code> and <code>default</code> roles can't be renamed or deleted. Deleting any other role keeps member accounts but revokes its grants, and older roles with legacy permission values display correctly in the new control.</p>
+          <div class="snippet-label">Permissions are plain role fields — grant them via GraphQL:</div>
+          <pre><code>mutation UpdateUserRole($id: ID!, $budget_management: String) {
+  rolesUpdateOneById(
+    id: $id
+    input: { budget_management: $budget_management }
+  ) {
+    item {
+      id
+      name
+      budget_management
+    }
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--theme-css"><h2>Theme CSS import &amp; export</h2>
+        <p class="one-liner">Paste a stylesheet, ship a brand.</p>
+        <div class="slice">
+          <p>Round-trip whole themes as CSS. Paste a stylesheet with <code>:root</code> and <code>.dark</code> blocks into <strong>Import theme CSS</strong> and it parses live, counting the light and dark variables it finds and flagging lines it can't read without blocking the import. Nothing changes for users until you publish. Variables the editor doesn't recognize aren't dropped — they land in an editable Custom group.</p>
+          <p><strong>Export CSS</strong> copies the published theme to the clipboard, and a raw view shows the stored overrides as JSON alongside the generated stylesheet. Import expects a flat theme file, not arbitrary nested CSS.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--variables-vault"><h2>Variables vault</h2>
+        <p class="one-liner">Secrets that stay in the vault.</p>
+        <div class="slice">
+          <p>The rebuilt <code>/variables</code> vault treats every value as sensitive by default. New variables are encrypted at rest unless you explicitly choose plain text, and the list never loads values at all — a reveal fetches the secret on demand and re-masks it after 30 seconds. Copying works without revealing.</p>
+          <p>Risky edits ask first: renaming a variable warns that agents referencing the old name will break, and switching a secret to plain text warns the value will be stored unencrypted. Usage tracking isn't available yet, and the UI says so instead of showing a fake count.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--api-keys"><h2>API keys cockpit</h2>
+        <p class="one-liner">Credentials with a paper trail.</p>
+        <div class="slice">
+          <p>Scoped API keys now have a full cockpit at <code>/keys</code>. The table refreshes every 30 seconds so "Last used" stays current, and a key that has never authenticated wears a <strong>Never</strong> badge. Creating a key takes two steps: name it and pick a scope — Admin with a role, or Agents with a read-only agent allowlist — then copy the key, shown exactly once and hashed before it's stored.</p>
+          <p>Each key's detail view shows the suffix that identifies it in logs, lets you reassign its role behind a confirmation, and revokes it with immediate effect. Optional team and project selectors attribute requests for cost tracking.</p>
+          <p class="fineprint">Admin-scope keys currently act as a super admin — the selected role does not restrict them yet.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--personal-token"><h2>Personal token</h2>
+        <p class="one-liner">Your bearer token, five seconds flat.</p>
+        <div class="slice">
+          <p>The <code>/token</code> page does one job: get you a working bearer token fast, without ever showing it on screen. The token sits in a masked field where copy works without revealing, and an expiry chip shifts from green to orange under an hour remaining, to red once expired. This token acts as you — keep it private.</p>
+          <p>A collapsible cURL example comes pre-filled with your deployment's backend URL; the token stays a placeholder, because the page never renders the secret in plain text.</p>
+          <div class="snippet-label">From the /token page — cURL</div>
+          <pre><code>curl -X POST $EXULU_BACKEND/graphql \
+  -H "Authorization: Bearer $EXULU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ agentsPagination(page: 1, limit: 10) { items { id name } } }"}'</code></pre>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--analytics-lens"><h2>Cost analytics</h2>
+        <p class="one-liner">The full cost picture got its own release.</p>
+        <div class="slice">
+          <p>Spend leaderboards by agent, team, user, and project, the daily trend chart, shareable URL-driven views, and CSV export are covered in depth, with demos, on their own page: <strong><a href="#r-analytics">Analytics &amp; Leaderboards →</a></strong></p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--graphql-explorer"><h2>GraphQL explorer</h2>
+        <p class="one-liner">The whole API, signed in as you.</p>
+        <div class="slice">
+          <p>The <code>/explorer</code> page embeds a full GraphiQL workbench against your deployment's <code>/graphql</code> endpoint — schema docs, autocomplete, query history. Your session token is injected automatically, so every query runs with your real permissions: what you can read here is exactly what your integrations can read with the same credentials. It's the honest sandbox for API work before you mint a key.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--n8n-embed"><h2>n8n embed</h2>
+        <p class="one-liner">Automation, embedded (honestly).</p>
+        <div class="slice">
+          <p>When <code>N8N_URL</code> is configured on the server, the Automation page embeds the full n8n editor, so you can build and run automations without leaving the platform — with an "Open in new tab" escape hatch when you want the full window. On smaller screens the page skips the cramped canvas and points you to desktop instead.</p>
+          <p class="fineprint">When <code>N8N_URL</code> is unset the route denies access and tells you how to enable the embedded editor.</p>
+        </div></section>
+<section class="feature" id="r-admin-and-theming--projects-workspace"><h2>Projects</h2>
+        <p class="one-liner">Named, private workspaces got their own release.</p>
+        <div class="slice">
+          <p>Projects — the Sessions / Files / Settings workspace, pinned knowledge every session inherits, and the configurable cascade delete — are covered in depth, with demos, on their own page: <strong><a href="#r-projects">Projects →</a></strong></p>
+        </div></section>
+</article>

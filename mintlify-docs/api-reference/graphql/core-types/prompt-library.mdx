@@ -1,0 +1,69 @@
+---
+title: "Prompt library"
+description: "The prompt_library_item type stores a reusable prompt template that can be shared across agents and users."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+`prompt_library_item` records are named prompt templates available to users in the chat prompt picker and to administrators when configuring agent instructions. See [Building prompts](/building/prompts) for product context.
+
+```graphql
+type prompt_library_item {
+  name: String!
+  description: String
+  content: String!
+  tags: JSON
+  usage_count: Float
+  favorite_count: Float
+  assigned_agents: JSON
+  history: JSON
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `content` | The prompt text; may include `{{variable}}` placeholders that are filled in at usage time. |
+| `tags` | JSON string array for categorisation and filtering in the prompt picker. |
+| `assigned_agents` | JSON array of agent IDs this prompt is pre-assigned to; these agents display the prompt as a suggestion. |
+| `history` | JSON array of previous versions of `content`, maintained automatically on each save. |
+| `usage_count` | Incremented each time the prompt is sent from the chat picker. |
+| `favorite_count` | Number of `prompt_favorite` records pointing at this item. |
+| `rights_mode` | `"public"` or `"private"`; private prompts are scoped via `RBAC`. |
+| `created_by` | Numeric ID of the creating user. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  prompt_libraryPagination(
+    limit: 20
+    filters: [{ tags: { contains: "support" } }]
+    sort: { field: "usage_count", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      description
+      content
+      tags
+      usage_count
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

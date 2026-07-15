@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Exulu — cron scheduling with presets</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+      }
+      body {
+        font-family: "Inter", system-ui, sans-serif;
+        letter-spacing: -0.025em;
+        color: #000;
+      }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      svg.ic { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .mono { font-family: "JetBrains Mono", monospace; letter-spacing: 0; }
+
+      /* ------------------------------ background ------------------------------ */
+      #bg-wash {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block;
+        padding: 10px 22px;
+        border-radius: 999px;
+        background: #e2ebff;
+        color: #1e69dc;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: 0;
+      }
+      #hook h1 {
+        margin-top: 30px;
+        font-size: 100px;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        line-height: 1.04;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* --------------------------- schedule section --------------------------- */
+      /* Real UI dims (Tailwind h-10 / text-sm / text-xs) scaled x1.5 for video.  */
+      #schedule-card {
+        position: absolute;
+        left: 400px;
+        top: 200px;
+        width: 1120px;
+        height: 576px;
+        background: #fdfdfd;
+        border: 1.5px solid #e7e7ee;
+        border-radius: 9px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+      }
+      #col { width: 680px; margin: 0 auto; padding-top: 64px; }
+
+      /* header: chevron + "Schedule" + saved-cron meta chip */
+      #sec-header { display: flex; align-items: center; gap: 12px; height: 28px; }
+      #sec-header .chev { color: #525252; display: inline-flex; }
+      #sec-header h3 { font-size: 21px; font-weight: 500; }
+      #sec-header .meta { font-size: 18px; color: #525252; }
+
+      /* next-run line (server truth, sits ABOVE the editor) */
+      #next-run { margin-top: 24px; height: 22px; font-size: 18px; line-height: 22px; color: #525252; }
+
+      /* tabs */
+      #tabs {
+        margin-top: 18px;
+        height: 60px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: #f5f5f5;
+        border-radius: 9px;
+        padding: 6px;
+      }
+      .tab {
+        display: grid;
+        place-items: center;
+        font-size: 21px;
+        font-weight: 500;
+        border-radius: 6px;
+        color: #525252;
+      }
+      .tab.active { background: #fdfdfd; color: #000; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); }
+
+      /* preset select */
+      #select-label { margin-top: 18px; height: 26px; font-size: 21px; line-height: 26px; font-weight: 500; }
+      #select-trigger {
+        position: relative;
+        margin-top: 18px;
+        height: 60px;
+        border: 1.5px solid #e7e7ee;
+        border-radius: 9px;
+        background: #fdfdfd;
+        display: flex;
+        align-items: center;
+        padding: 0 18px;
+        font-size: 21px;
+      }
+      #trig-labels { position: relative; height: 26px; flex: 1; }
+      #trig-labels span { position: absolute; left: 0; top: 0; line-height: 26px; white-space: nowrap; }
+      #trig-new { opacity: 0; }
+      #select-trigger .chev { color: #000; opacity: 0.5; display: inline-flex; }
+
+      /* expression echo box */
+      #echo-box {
+        position: relative;
+        margin-top: 18px;
+        height: 78px;
+        background: #f5f5f5;
+        border-radius: 9px;
+        overflow: hidden;
+      }
+      #hl-wrap { position: absolute; inset: 0; border-radius: 9px; overflow: hidden; }
+      #hl-sweep {
+        position: absolute;
+        inset: 0;
+        background: #e2ebff;
+        transform: translateX(-101%);
+      }
+      #echo-content { position: relative; padding: 12px 18px; }
+      #echo-content .echo-label { display: block; font-size: 18px; line-height: 22px; color: #525252; }
+      #echo-codes { display: block; position: relative; margin-top: 4px; height: 28px; }
+      #echo-codes span { position: absolute; left: 0; top: 0; font-size: 21px; line-height: 28px; color: #000; }
+      #echo-new { opacity: 0; }
+
+      /* buttons */
+      #btn-row { margin-top: 18px; height: 60px; display: flex; gap: 12px; }
+      #btn-update {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 60px;
+        padding: 0 27px;
+        border-radius: 9px;
+        background: #7033ff;
+        color: #fff;
+        font-size: 21px;
+        font-weight: 500;
+        opacity: 0.5; /* disabled at rest — nothing pending yet */
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16);
+      }
+      #btn-remove {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        height: 60px;
+        padding: 0 24px;
+        border-radius: 9px;
+        border: 1.5px solid #e7e7ee;
+        background: transparent;
+        color: #000;
+        font-size: 21px;
+        font-weight: 500;
+      }
+      #btn-remove svg.ic { color: #000; }
+
+      /* ------------------------------- dropdown ------------------------------- */
+      #dropdown {
+        position: absolute;
+        left: 620px;
+        top: 544px;
+        width: 680px;
+        background: #fcfcfc;
+        border: 1.5px solid #e7e7ee;
+        border-radius: 9px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 10px 24px -8px rgba(0, 0, 0, 0.14);
+        padding: 6px;
+        opacity: 0;
+        transform-origin: top center;
+        z-index: 10;
+      }
+      .preset {
+        position: relative;
+        height: 66px;
+        padding: 9px 12px 9px 48px;
+        border-radius: 6px;
+      }
+      .preset .p-label { display: block; font-size: 21px; line-height: 26px; font-weight: 500; color: #000; white-space: nowrap; }
+      .preset .p-desc { display: block; font-size: 18px; line-height: 22px; color: #525252; white-space: nowrap; }
+      .preset .p-check { position: absolute; left: 14px; top: 21px; color: #000; display: inline-flex; }
+
+      /* -------------------------------- cursor -------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+      #click-ripple {
+        position: absolute;
+        left: -26px;
+        top: -22px;
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: rgba(112, 51, 255, 0.25);
+        transform: scale(0);
+      }
+
+      /* -------------------------------- payoff -------------------------------- */
+      #payoff { display: grid; place-items: end center; }
+      #payoff-card {
+        margin-bottom: 86px;
+        display: flex;
+        align-items: center;
+        padding: 26px 44px;
+        background: #fff;
+        border: 1px solid #e7e7ee;
+        border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px;
+        font-weight: 600;
+        white-space: nowrap;
+        opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="9.5"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- background -->
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Routines</span>
+          <h1>Agents that work <em>while you sleep</em>.</h1>
+        </div>
+      </div>
+
+      <!-- reconstructed Schedule section (/workflows/[id]) -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.6" data-track-index="3">
+        <div id="schedule-card">
+          <div id="col">
+            <div id="sec-header">
+              <span class="chev">
+                <svg class="ic" width="24" height="24" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+              <h3>Schedule</h3>
+              <span class="meta mono">0 0 * * *</span>
+            </div>
+
+            <div id="next-run">Next run in 7 hours</div>
+
+            <div id="tabs">
+              <span class="tab active">Presets</span>
+              <span class="tab">Custom CRON</span>
+            </div>
+
+            <div id="select-label">Select a preset</div>
+
+            <div id="select-trigger">
+              <span id="trig-labels">
+                <span id="trig-old">Every day at 00:00</span>
+                <span id="trig-new">Weekdays at 09:00</span>
+              </span>
+              <span class="chev">
+                <svg class="ic" width="24" height="24" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+            </div>
+
+            <div id="echo-box">
+              <div id="hl-wrap"><div id="hl-sweep" data-layout-allow-overflow></div></div>
+              <div id="echo-content">
+                <span class="echo-label">CRON expression</span>
+                <span id="echo-codes" class="mono">
+                  <span id="echo-old">0 0 * * *</span>
+                  <span id="echo-new">0 9 * * 1-5</span>
+                </span>
+              </div>
+            </div>
+
+            <div id="btn-row">
+              <span id="btn-update">Update schedule</span>
+              <span id="btn-remove">
+                <svg class="ic" width="24" height="24" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                Remove schedule
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- preset dropdown (SelectContent), opens below the trigger -->
+        <div id="dropdown" data-layout-allow-overflow data-layout-allow-overlap>
+          <div class="preset" id="preset-1">
+            <span class="p-check">
+              <svg class="ic" width="24" height="24" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>
+            </span>
+            <span class="p-label">Every day at 00:00</span>
+            <span class="p-desc">Runs once daily at midnight</span>
+          </div>
+          <div class="preset" id="preset-2">
+            <span class="p-label">Every hour</span>
+            <span class="p-desc">Runs at the start of every hour</span>
+          </div>
+          <div class="preset" id="preset-3">
+            <span class="p-label">Weekdays at 09:00</span>
+            <span class="p-desc">Monday to Friday at 9 AM</span>
+          </div>
+          <div class="preset" id="preset-4">
+            <span class="p-label">Every 15 minutes</span>
+            <span class="p-desc">Runs 4 times per hour</span>
+          </div>
+          <div class="preset" id="preset-5">
+            <span class="p-label">Every 30 minutes</span>
+            <span class="p-desc">Runs twice per hour</span>
+          </div>
+          <div class="preset" id="preset-6">
+            <span class="p-label">Weekly on Sunday 00:00</span>
+            <span class="p-desc">Every Sunday at midnight</span>
+          </div>
+          <div class="preset" id="preset-7">
+            <span class="p-label">Monthly on 1st at 09:00</span>
+            <span class="p-desc">First day of month at 9 AM</span>
+          </div>
+        </div>
+
+        <!-- cursor -->
+        <div id="cursor">
+          <div id="click-ripple"></div>
+          <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+            <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4"/>
+          </svg>
+        </div>
+      </div>
+
+      <!-- payoff caption (lower third) -->
+      <div id="payoff" class="clip" data-start="7.3" data-duration="2.2" data-track-index="4">
+        <div id="payoff-card">
+          <span class="a">Pick a preset</span>
+          <span class="b">&nbsp;— no cron syntax required.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---- hook: enter 0.10–0.42, hold static to 1.90, crossfade out 1.90–2.25 ----
+         tl.from → frame 0 shows the settled hook (poster frame, house convention) */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.32, ease: "power2.out" }, 0.1);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.9);
+
+      /* ---- schedule card fades in 1.95–2.40 (rest state) ---- */
+      tl.from("#schedule-card", { y: 30, opacity: 0, duration: 0.45, ease: "power2.out" }, 1.95);
+
+      /* ---- cursor appears and glides to the Select trigger 2.35–2.90 ----
+         trigger spans x 620–1300, y 478–538; cursor tip = container + (10, 6) */
+      tl.set("#cursor", { x: 1240, y: 920 }, 2.3);
+      tl.to("#cursor", { opacity: 1, duration: 0.18, ease: "power1.out" }, 2.35);
+      tl.to("#cursor", { x: 990, y: 499, duration: 0.55, ease: "power2.inOut" }, 2.35);
+
+      /* ---- click 2.90 → dropdown opens (~150ms zoom-in) ---- */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.09, ease: "power1.in" }, 2.9);
+      tl.to("#cursor svg", { scale: 1, duration: 0.12, ease: "power1.out" }, 2.99);
+      tl.fromTo("#click-ripple", { scale: 0, opacity: 0.8 }, { scale: 1.5, opacity: 0, duration: 0.35, ease: "power2.out" }, 2.91);
+      tl.fromTo("#dropdown", { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.16, ease: "power2.out" }, 2.95);
+
+      /* ---- dropdown holds; cursor glides down to "Weekdays at 09:00" 3.20–3.75 ----
+         item 3 spans y 682–748 (center 715) */
+      tl.to("#cursor", { x: 870, y: 706, duration: 0.55, ease: "power2.inOut" }, 3.2);
+
+      /* hover state on arrival (last ~370ms before the click) */
+      tl.to("#preset-3", { backgroundColor: "#e2ebff", duration: 0.13, ease: "power1.out" }, 3.73);
+      tl.to("#preset-3 .p-label", { color: "#1e69dc", duration: 0.13, ease: "power1.out" }, 3.73);
+
+      /* ---- click 4.10 → dropdown closes, state lands, all quiet by 4.33 ---- */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.08, ease: "power1.in" }, 4.1);
+      tl.to("#cursor svg", { scale: 1, duration: 0.1, ease: "power1.out" }, 4.18);
+      tl.fromTo("#click-ripple", { scale: 0, opacity: 0.8 }, { scale: 1.4, opacity: 0, duration: 0.22, ease: "power2.out" }, 4.1);
+      tl.to("#dropdown", { opacity: 0, scale: 0.97, duration: 0.16, ease: "power2.in" }, 4.12);
+
+      /* instant React-style re-render: trigger label + echo code swap */
+      tl.set("#trig-old", { opacity: 0 }, 4.14);
+      tl.set("#trig-new", { opacity: 1 }, 4.14);
+      tl.set("#echo-old", { opacity: 0 }, 4.14);
+      tl.set("#echo-new", { opacity: 1 }, 4.14);
+
+      /* "Update schedule" enables to full purple */
+      tl.to("#btn-update", { opacity: 1, duration: 0.16, ease: "power1.out" }, 4.14);
+
+      /* cursor exits */
+      tl.to("#cursor", { opacity: 0, duration: 0.18, ease: "power1.out" }, 4.14);
+
+      /* 4.35–5.15 — completely still (post-action hold) */
+
+      /* ---- highlight sweep over the echo box 5.15–5.50, hold to 7.00 ---- */
+      tl.fromTo("#hl-sweep", { x: "-101%" }, { x: "0%", duration: 0.35, ease: "power2.out" }, 5.15);
+
+      /* ---- highlight fades out 7.00–7.30 ---- */
+      tl.to("#hl-wrap", { opacity: 0, duration: 0.3, ease: "power1.inOut" }, 7.0);
+      tl.set("#hl-wrap", { opacity: 0 }, 7.3);
+
+      /* ---- payoff enters 7.30–7.70, holds still to 9.50 (last 600ms = resting frame) ---- */
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 7.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

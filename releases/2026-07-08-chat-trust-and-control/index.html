@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Trust &amp; Control in Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Chat</span>
+      <h1 class="hero">See what the agent does. Decide what it <em>may</em>.</h1>
+      <p class="lede">Enterprise-grade control lives right inside the conversation: approve sensitive tool calls before they run, verify every answer down to the source PDF page, and steer the agent through structured question cards and visible plans.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="tool-approval">
+        <h2>Tool-call approval</h2>
+        <p class="one-liner">Nothing runs without your say-so.</p>
+        <div class="slice">
+          <video src="./shorts/tool-approval.mp4" poster="./shorts/tool-approval-poster.png" autoplay loop muted playsinline></video>
+          <p>When an agent wants to run a sensitive tool, the stream pauses and an approval card renders right in the conversation, inside the assistant turn: a quiet shield icon, the title <strong>"Run Email?"</strong>, one explaining sentence, and a monospace preview of the actual tool input — no dead chevron rows, everything readable up front. Three actions with a clear hierarchy: <strong>Allow once</strong> (primary purple), <strong>Allow for this chat</strong>, and <strong>Deny</strong> (destructive). Click Allow once and the card collapses to a quiet green <strong>"Approved: Email"</strong> row, and the agent picks the stream right back up.</p>
+          <p><strong>Allow for this chat</strong> approves the pending call and persists the tool under this one conversation, sent with every subsequent request so the card never re-appears for that tool in this session. Those pre-approvals are no longer invisible or irrevocable: the capability sheet grows an <strong>"Approved for this chat"</strong> section — <em>"Tools allowed to run without asking again in this conversation."</em> — listing each pre-approved tool with a green status dot and a per-row <strong>"Revoke"</strong> button. Denying is honest too: the card collapses to a red <strong>"Denied: Email"</strong> row, the agent is told the call was refused, and it answers with what it can do instead.</p>
+          <p>Approval-by-default is a backend contract, not a frontend nicety: every custom tool asks first. The built-in sandbox <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">readFile</code> / <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">writeFile</code> / <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">bash</code> run approval-free — they operate inside the session sandbox — so the cards appear exactly where the stakes are: email, integrations, external actions.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="citations">
+        <h2>Citations</h2>
+        <p class="one-liner">Every answer shows its work — down to the page.</p>
+        <div class="slice">
+          <video src="./shorts/citations.mp4" poster="./shorts/citations-poster.png" autoplay loop muted playsinline></video>
+          <p>Answers cite their sources, and the sources defend themselves. When retrieval backs a claim, the renderer turns the model's citation into a compact badge right where the claim is made (<strong>"Reports - Quarterly Report.pdf #4"</strong>). Clicking the badge opens a provenance dialog that fetches the chunk live: the exact retrieved chunk text, a Field/Value metadata table (Source, Chunk #, Item ID, Item External ID, Created at, Updated at), and — when the chunk came from a PDF — the source PDF embedded and opened at the cited page. The preview resolves asynchronously and swaps in over the chunk-text zone, so the eye connects chunk to page in a single click.</p>
+          <p>The same dialog carries a destructive <strong>"Deactivate this source"</strong> action, with the consequences stated up front — <em>"Deactivating archives this item globally — it will no longer appear in any user's chat or search results."</em> Confirm it and the item is archived globally behind a <strong>"Deactivate this source?"</strong> dialog, then a <strong>"Source deactivated"</strong> toast — so a bad source gets pulled from exactly where you found it, no hunting through the knowledge base.</p>
+          <p>Internet-search claims get the sibling treatment: a favicon + title + hostname badge (<code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{title} · {hostname}</code>) opening a dialog with the quoted snippet in a purple-edged blockquote, the live page embedded, and a Domain/Page table. Citations stay attached to the exact sentence they support — the renderer rewrites the model's inline blobs into badges during markdown rendering, even mid-stream.</p>
+          <div class="snippet-label">GraphQL — the provenance query the dialog itself runs</div>
+          <p class="fineprint" style="margin: 0 0 8px;">The dialog runs the same provenance query you can:</p>
+          <pre><code>query GetChunkByIdreports($id: ID!) {
+  reports_itemsChunkById(id: $id) {
+    chunk_content
+    chunk_index
+    chunk_metadata   # pdf + page drive the PDF-at-page preview
+    item_id
+    item_name
+    item_external_id
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="question-cards">
+        <h2>Question cards</h2>
+        <p class="one-liner">Agents that ask before they act.</p>
+        <div class="slice">
+          <video src="./shorts/question-cards.mp4" poster="./shorts/question-cards-poster.png" autoplay loop muted playsinline></video>
+          <p>When the agent needs a decision, it renders an interactive card inside the transcript: a header with the question, a stack of checkbox options with true multi-select, and a full-width purple <strong>"Confirm selection"</strong> button — disabled until at least one option is ticked. Confirming sends the chosen options back into the conversation as check-marked purple pills in a normal user bubble, so the decision survives a page refresh and stays part of the conversation the agent can see. The card protects itself: <strong>"Confirm selection"</strong> stays disabled with nothing ticked, and the whole card disables while the agent is streaming — no double-answers, no dead clicks.</p>
+          <p>The agent's plan shows the same way. A <strong>todo list</strong> renders as a compact checklist that updates in place — a green check with strikethrough for completed steps, a blue spinner on the item in progress, a muted circle for pending — with a thin purple progress bar counting <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">n/m</code>. High-priority items get a red "(!)" marker. Only the agent's latest task list is kept, so you watch one live surface change state as the work moves forward.</p>
+          <p>The answer is just a message — model-agnostic, no special protocol. Both surfaces are built-in agent tools you toggle per-agent exactly like any other tool.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skills-and-tools">
+        <h2>Decide what the agent may use, per conversation</h2>
+        <p class="one-liner">Every skill and tool the agent carries, switched on or off — for this chat.</p>
+        <div class="slice">
+          <p>The <strong>"Skills &amp; tools"</strong> sheet — opened from the ＋ menu in the composer — lists every skill and tool the agent carries, each with its own switch, plus per-section <strong>"Enable all"</strong> / <strong>"Disable all"</strong>. Anything you approved mid-conversation shows up under <strong>"Approved for this chat"</strong> — <em>"Tools allowed to run without asking again in this conversation."</em> — with a per-row <strong>"Revoke"</strong> button, so a one-time <em>"Allow for this chat"</em> is never an invisible, permanent grant.</p>
+          <p>When capabilities are switched off, a quiet <strong>"N off"</strong> badge sits on the ＋ trigger itself, so a non-default setup is visible before you send the next message. The count only reflects this agent's own capabilities, so a stale toggle can never inflate it.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="session-sharing-rbac">
+        <h2>Share a conversation without giving away the pen</h2>
+        <p class="one-liner">Hand out the link, keep control of who can write.</p>
+        <div class="slice">
+          <p><strong>"Share conversation"</strong> hands out the link — <em>"Anyone with access can open this conversation at the link below."</em> — and an <strong>"Access"</strong> collapsible holds the actual rights editor: private, shared with specific users, or shared with roles, each recipient set to <strong>Read</strong> or <strong>Write</strong>, saved with <strong>"Save access rights"</strong>.</p>
+          <p>Recipients without write access get the full transcript but not the pen: the composer is replaced by a muted lock bar — <em>"Read-only — shared by {email}. Ask them for write access."</em> — naming the owner instead of leaving a dead input. Write access stays with the creator, listed users and roles marked <em>write</em>, and super admins; everyone else reads along.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="conversation-search">
+        <h2>Find any conversation, delete fifty at once</h2>
+        <p class="one-liner">A debounced title search and bulk delete, per agent.</p>
+        <div class="slice">
+          <p>Every agent now has a <strong>"Search conversations"</strong> page: type three characters or more into <em>"Search by title…"</em> and a debounced server-side title search narrows the list, each row a title plus relative timestamp, with <strong>"Show more (N of M)"</strong> paging in 50 at a time.</p>
+          <p>Flip on <strong>"Select"</strong> and checkboxes appear on the rows you're allowed to touch — select-all included — ending in one destructive <strong>"Delete N chats"</strong> action behind a confirm that spells out the stakes: <em>"This permanently deletes the N selected conversations for everyone with access. This can't be undone."</em></p>
+        </div>
+      </section>
+
+      <section class="feature" id="reasoning-timeline">
+        <h2>See how the answer was built</h2>
+        <p class="one-liner">A numbered reasoning timeline you can unfold and audit.</p>
+        <div class="slice">
+          <p>While an agent works, its reasoning renders as a numbered timeline — each step a small numbered bubble with the agent's thinking and chips for every tool it called; click a chip and it unfolds into the actual <strong>Input</strong> and <strong>Output</strong> of that call.</p>
+          <p>Long runs stay readable: streaming shows only the latest five steps (older ones wait behind <em>"N more reasoning steps - show all"</em>), and once the answer lands the whole trail collapses to a single quiet line — <em>"N reasoning steps - show details"</em> — expandable whenever you want to audit the run.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="feedback-source-curation">
+        <h2>Thumbs-down that fixes the source, not just the answer</h2>
+        <p class="one-liner">Pull a bad source for the whole team from inside the feedback dialog.</p>
+        <div class="slice">
+          <p>A thumbs-down now opens <strong>"What could be improved?"</strong> — and beneath the free-text field, <strong>"Sources referenced in this response"</strong> lists every knowledge item the answer actually cited. Knowledge curators get a per-source <strong>"Deactivate"</strong> button with the consequences stated up front — <em>"Deactivating archives the item globally — it will no longer appear in any user's chat or search results."</em></p>
+          <p>A two-step inline confirm (<em>"Archives "{item}" globally for every user."</em> → <strong>"Confirm deactivate"</strong>) keeps it all in one place, so one bad source can be pulled for the whole team from inside the feedback dialog — no modal-on-modal, no hunting through the knowledge base.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

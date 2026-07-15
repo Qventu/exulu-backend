@@ -1,0 +1,148 @@
+---
+title: "API reference"
+description: "Every public method and property of ExuluEval: the run() method, score-range enforcement, and public properties."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For constructor options, see [Configuration](/developers/core/exulu-eval/configuration).
+
+## Constructor
+
+```typescript
+const evaluation = new ExuluEval(options);
+```
+
+See [Configuration](/developers/core/exulu-eval/configuration) for the full options object.
+
+## run()
+
+Executes the eval against a completed agent run and returns the validated score.
+
+```typescript
+run(
+  agent: ExuluAgent,
+  provider: ExuluProvider,
+  testCase: TestCase,
+  messages: UIMessage[],
+  config?: Record<string, any>,
+): Promise<number>
+```
+
+<ParamField path="agent" type="ExuluAgent" required>
+  The database agent record that ran the generation — resolved by `app.agent(id)`. Forwarded to `execute` as-is.
+</ParamField>
+
+<ParamField path="provider" type="ExuluProvider" required>
+  The runtime `ExuluProvider` instance that ran the generation. Forwarded to `execute` so LLM-as-judge evals can call `provider.generateSync()` to score the response.
+</ParamField>
+
+<ParamField path="testCase" type="TestCase" required>
+  The test case record from the platform's test-case table, carrying inputs, expected output, and expected tool/knowledge-source metadata.
+</ParamField>
+
+<ParamField path="messages" type="UIMessage[]" required>
+  The full conversation, including all user messages, assistant turns, and tool invocations. Typically the output of the agent's `generateSync` or `generateStream` call.
+</ParamField>
+
+<ParamField path="config" type="Record<string, any>">
+  Optional runtime configuration values, passed through to `execute`. Sourced from the platform UI's eval-run configuration or passed directly by the caller.
+</ParamField>
+
+<ResponseField name="return" type="Promise<number>">
+  A validated score in `[0, 100]`. `run()` throws if the score is outside that range or if `execute` throws.
+</ResponseField>
+
+```typescript
+const score = await responseQualityEval.run(
+  agentRecord,
+  supportProvider,
+  testCase,
+  messages,
+  { judge_agent_id: "gpt_4o_judge" },
+);
+
+console.log(`Score: ${score}/100`);
+```
+
+### Score-range enforcement
+
+`run()` calls `execute`, then validates the returned number:
+
+```typescript
+if (score < 0 || score > 100) {
+  throw new Error(
+    `Eval function ${this.name} must return a score between 0 and 100, got ${score}`,
+  );
+}
+```
+
+Any error thrown by `execute` is also caught and re-thrown as:
+
+```
+Error running eval function <name>: <original message>
+```
+
+So callers see the wrapped message with the eval's `name` prepended. This means every score that reaches the caller is guaranteed to be a valid number in `[0, 100]`.
+
+<Warning>
+Errors from `execute` are always wrapped and re-thrown — they are not silently swallowed. Handle them in the calling code when you need to distinguish between a score of 0 and a scoring failure.
+</Warning>
+
+## Properties
+
+| Property | Type | Access | Notes |
+|---|---|---|---|
+| `id` | `string` | public | Unique eval identifier. |
+| `name` | `string` | public | Display name shown in the workbench. |
+| `description` | `string` | public | What this eval measures. |
+| `llm` | `boolean` | public | Whether the eval calls a language model internally. |
+| `config` | `{ name: string; description: string }[] \| undefined` | public | Admin-configurable params. |
+| `queue` | `Promise<ExuluQueueConfig> \| undefined` | public | Queue for background eval jobs. |
+| `execute` | `function` | **private** | The scoring function — not accessible on the instance. Call `run()` instead. |
+
+<Note>
+`execute` is declared `private` in the current source. You cannot call it directly on an `ExuluEval` instance — always use `run()`, which adds the score-range check and consistent error wrapping.
+</Note>
+
+```typescript
+console.log(responseQualityEval.id);    // "response_quality"
+console.log(responseQualityEval.llm);   // true
+console.log(responseQualityEval.name);  // "Response quality"
+```
+
+## Complete workflow
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+// 1. Define the eval
+const exactMatchEval = new ExuluEval({
+  id: "exact_match",
+  name: "Exact match",
+  description: "Returns 100 when the response matches the expected output exactly.",
+  llm: false,
+  execute: async ({ messages, testCase }) => {
+    const response = (messages[messages.length - 1]?.content ?? "").trim();
+    return response === testCase.expected_output.trim() ? 100 : 0;
+  },
+  queue: evalQueue,
+});
+
+// 2. Register it on the app
+await app.create({ evals: [exactMatchEval], config: { /* ... */ } });
+
+// 3. Run an eval outside the platform (e.g. in a test or CI script)
+const agentRecord = await app.agent("support_agent");
+const messages = await runAgentAndCollectMessages(agentRecord, testCase);
+
+const score = await exactMatchEval.run(
+  agentRecord,
+  supportProvider,
+  testCase,
+  messages,
+);
+
+if (score < 80) {
+  throw new Error(`Quality gate failed: ${score}/100`);
+}
+```

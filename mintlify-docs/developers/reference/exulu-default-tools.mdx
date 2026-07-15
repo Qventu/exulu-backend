@@ -1,0 +1,96 @@
+---
+title: "ExuluDefaultTools"
+description: "Built-in tool factories shipped with @exulu/backend — currently the agentic retrieval pipeline."
+---
+
+`ExuluDefaultTools` is an object that groups the tool factories bundled with IMP. Each factory returns an `ExuluTool` instance (or `undefined` when the required license entitlement is absent), ready to pass to `ExuluApp.create()` or an agent's tool list.
+
+The namespace is intentionally structured so new built-in tools can be added without breaking existing imports.
+
+<Info>
+`ExuluDefaultTools.agentic.retrieval.create.pipeline` requires the `agentic-retrieval` EE entitlement. When the entitlement is absent the factory returns `undefined` and logs a warning — filter `undefined` before passing to the tool list.
+</Info>
+
+## API surface
+
+### ExuluDefaultTools.agentic.retrieval.create.pipeline
+
+```typescript
+ExuluDefaultTools.agentic.retrieval.create.pipeline(opts: {
+  contexts: ExuluContext[];
+  memoryContext?: ExuluContext;
+  user?: User;
+  role?: string;
+  model?: LanguageModel;
+  instructions?: string;
+  preselected?: string[];
+  memoryItems?: VectorSearchChunkResult[];
+  projectScope?: ProjectScope;
+}): ExuluTool | undefined
+```
+
+Creates the agentic knowledge-search tool (`agentic_context_search`). The tool routes a user question across the supplied `contexts`, expands it into sub-queries, searches and reranks, and returns deduplicated passages. It integrates with memory and project-scoped items when those options are provided.
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  The knowledge contexts the tool may search. Their names appear in the tool description shown to the model.
+</ParamField>
+
+<ParamField path="memoryContext" type="ExuluContext">
+  Optional context used for memory retrieval (prior conversation summaries or user facts).
+</ParamField>
+
+<ParamField path="user" type="User">
+  Authenticated user record. Forwarded to access-control and budget attribution.
+</ParamField>
+
+<ParamField path="role" type="string">
+  Role ID for RBAC filtering within searched contexts.
+</ParamField>
+
+<ParamField path="model" type="LanguageModel">
+  AI SDK `LanguageModel` used by the routing and query-expansion phases.
+</ParamField>
+
+<ParamField path="instructions" type="string">
+  Additional instructions prepended to the tool description (admin-supplied guidance on when to use the tool).
+</ParamField>
+
+<ParamField path="preselected" type="string[]">
+  Global item IDs that are pinned into the result set regardless of semantic relevance.
+</ParamField>
+
+<ParamField path="memoryItems" type="VectorSearchChunkResult[]">
+  Pre-fetched memory chunks to include in the initial result set.
+</ParamField>
+
+<ParamField path="projectScope" type="ProjectScope">
+  When set, the tool also searches knowledge items attached to the named project.
+</ParamField>
+
+<ResponseField name="return" type="ExuluTool | undefined">
+  An `ExuluTool` ready for registration, or `undefined` when `agentic-retrieval` is not licensed.
+</ResponseField>
+
+## Example
+
+```typescript
+import { ExuluDefaultTools } from "@exulu/backend";
+
+// Inside your ExuluApp setup:
+const agenticSearch = ExuluDefaultTools.agentic.retrieval.create.pipeline({
+  contexts: [productDocsContext, faqContext],
+  user: req.user,
+  role: req.user.role?.id,
+  model: resolvedModel,
+});
+
+const tools = [
+  ...(agenticSearch ? [agenticSearch] : []),
+  myCustomTool,
+];
+```
+
+## Related
+
+- [ExuluTool — introduction](/developers/core/exulu-tool/introduction): how tools are defined and registered.
+- [ExuluContext — introduction](/developers/core/exulu-context/introduction): build the knowledge contexts passed here.

@@ -1,0 +1,83 @@
+---
+title: "Chat overview"
+description: "Start a conversation with an agent, and find your way around the chat screen."
+icon: "message-square"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+## Choose an agent
+
+Open **Chat** from the sidebar. If your organization has more than one agent, IMP shows the **Choose an agent** screen: "Pick the agent you want to talk to. You can switch at any time." Select an agent card to start.
+
+If only one agent is available — or an administrator has set a default agent — IMP skips the picker and takes you straight into a conversation.
+
+<Note>
+If you see **No agents available** ("You don't have access to any agents yet. Please contact your administrator."), an administrator needs to grant you access to at least one agent first.
+</Note>
+
+## The chat screen
+
+<Frame caption="The chat screen: app sidebar, conversation history rail, conversation column, and composer.">
+  <img src="/images/screens/chat-overview.png" alt="IMP chat screen showing the sidebar, the conversation history rail, a conversation with an agent, and the message composer" />
+</Frame>
+
+- **History rail** — your past conversations with this agent: a **New chat** button, a **Search chats** filter, and a **Recents** list. See [Conversations](/user-guide/chat/conversations).
+- **Header** — the agent's name and the conversation title. Click the title to rename it. A quiet usage chip (for example `9% · 12k`) shows how much of the model's context window this conversation uses; click it for a token and budget breakdown.
+- **⋯ menu** — **Share**, **Save as Routine**, **Model…**, **Usage**, and **Delete conversation**. Press <kbd>⌘</kbd>+<kbd>.</kbd> to open it from the keyboard.
+- **Conversation column** — messages stream in here. Agent replies can include citations, sources, reasoning steps, and tool results you can expand.
+- **Composer** — the message box at the bottom. It has exactly four controls: the **＋** button (the **Add to conversation** menu), the text field ("Ask me anything..."), a microphone (when [dictation](/user-guide/chat/dictation) is enabled), and the send button.
+
+## Send your first message
+
+<Steps>
+  <Step title="Type your message">
+    Click into the message box and type. Press <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line.
+  </Step>
+  <Step title="Send it">
+    Press <kbd>Enter</kbd> or click the send button. The conversation is created automatically with your first message — you don't need to set anything up.
+  </Step>
+  <Step title="Read the reply">
+    The answer streams in live. While the agent is responding, the send button becomes a stop button you can use to interrupt it.
+  </Step>
+</Steps>
+
+<Tip>
+After a reply, some agents show up to three follow-up suggestions above the message box. Click one to fill the message box with it — you can still edit before sending.
+</Tip>
+
+The line under the composer reminds you: "AI can make mistakes. Check important info."
+
+## The Add to conversation menu
+
+The **＋** button opens the **Add to conversation** menu, which holds everything you can bring into the chat:
+
+<Frame caption="The Add to conversation menu on the composer's ＋ button.">
+  <img src="/images/screens/chat-attach-menu.png" alt="IMP chat composer with the Add to conversation menu open, showing Add knowledge, Insert prompt, Session files, and Skills and tools entries" />
+</Frame>
+
+| Entry | What it does |
+| --- | --- |
+| **Add knowledge** | "Pin contexts or items for this chat" — see [Pinned knowledge and presets](/user-guide/chat/pinned-knowledge-and-presets). |
+| **Insert prompt** | "Use a template from the library" — see [Prompts in chat](/user-guide/chat/prompts-in-chat). |
+| **Session files** | "View and upload files for this session" — see [Attachments and session files](/user-guide/chat/attachments-and-session-files). |
+| **Skills & tools** | "Choose what the agent may use" — toggle individual capabilities on or off for this conversation. |
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Manage conversations" icon="history" href="/user-guide/chat/conversations">
+    Rename, search, share, and delete your chats.
+  </Card>
+  <Card title="Attach files" icon="folder-open" href="/user-guide/chat/attachments-and-session-files">
+    Upload files for the agent and download what it produces.
+  </Card>
+  <Card title="Dictate messages" icon="mic" href="/user-guide/chat/dictation">
+    Speak instead of typing.
+  </Card>
+  <Card title="Pin knowledge" icon="pin" href="/user-guide/chat/pinned-knowledge-and-presets">
+    Focus the agent on specific contexts and items.
+  </Card>
+</Columns>

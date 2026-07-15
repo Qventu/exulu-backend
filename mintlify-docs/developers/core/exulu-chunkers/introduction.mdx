@@ -1,0 +1,216 @@
+---
+title: "Introduction"
+description: "ExuluChunkers exposes three built-in text chunkers — SentenceChunker, MarkdownChunker, and RecursiveChunker — plus the defaultChunker used by ExuluContext when no custom chunker is provided."
+icon: "scissors"
+---
+
+`ExuluChunkers` is a namespace exported from `@exulu/backend` that groups the built-in text chunking implementations. Chunking is the step that splits an item's text into embeddable segments before embedding generation runs. [ExuluContext](/developers/core/exulu-context/introduction) handles this automatically using the `defaultChunker` when you configure an embedder model; you only need `ExuluChunkers` directly when you want to customise the chunking strategy.
+
+```typescript
+import { ExuluChunkers, defaultChunker } from "@exulu/backend";
+
+ExuluChunkers.sentence          // SentenceChunker class
+ExuluChunkers.markdown          // MarkdownChunker class (Enterprise Edition)
+ExuluChunkers.recursive.function  // RecursiveChunker class
+ExuluChunkers.recursive.rules     // RecursiveRules class
+```
+
+## Why chunking matters
+
+Embedding models have a maximum token input length (the `max_chunk_size` reported in LiteLLM's `/model/info` response). Text longer than this limit must be split before embedding. The split strategy also affects retrieval quality — chunks that are too long lose specificity; chunks that are too short lose context.
+
+A practical starting point: set `chunkSize` to the embedding model's `max_chunk_size` and observe retrieval quality. For 1 024-dimensional models with a 1 024-token limit, chunks of 512–1 024 tokens typically give good results. The optimal size depends on your content and query patterns, not on a universal rule.
+
+## The chunker contract
+
+All chunkers in `ExuluChunkers` and any custom chunker you write are expected to satisfy either:
+
+- The **callable interface** — the class is a callable function returning chunk objects from the underlying library, or
+- The **`ChunkerOperation` type** — a plain async function consumed by `ExuluContext`.
+
+When you assign a custom chunker to `ExuluContext`, you implement `ChunkerOperation`:
+
+```typescript
+import type { ChunkerOperation, ChunkerResponse } from "@exulu/backend";
+
+const myChunker: ChunkerOperation = async (item, maxChunkSize, utils) => {
+  // item   — the full Item record including id, name, content, description, etc.
+  // maxChunkSize — the token budget per chunk, from the embedder model's max_chunk_size
+  // utils  — { storage: ExuluStorage } for reading file content from S3
+
+  const text = typeof item.content === "string" ? item.content : "";
+  // ... your splitting logic ...
+  return {
+    item,
+    chunks: [
+      { content: "first segment", index: 0 },
+      { content: "second segment", index: 1, metadata: { page: 2 } },
+    ],
+  };
+};
+```
+
+`ChunkerResponse` is the return type — an object with the original `item` and an array of `chunks`:
+
+```typescript
+type ChunkerResponse = {
+  item: Item & { id: string };
+  chunks: {
+    content: string;   // Text to embed
+    index: number;     // 0-based position in the chunk array; must be contiguous after filtering
+    metadata?: Record<string, unknown>; // Stored in a JSONB column; any JSON-serializable value
+  }[];
+};
+```
+
+## The default chunker
+
+`defaultChunker` is the `ChunkerOperation` `ExuluContext` uses when you configure an `embedder` model but do not supply a `chunker`. It:
+
+1. Combines `item.name` and `item.content` (falling back to `item.description`) into a single text string.
+2. Runs `SentenceChunker.create({ chunkSize: maxChunkSize })` over that string.
+3. Filters out empty chunks and re-indexes to produce contiguous `0..n-1` indexes.
+
+```typescript
+import { defaultChunker } from "@exulu/backend";
+
+// Use it directly in a ChunkerOperation context:
+const myContext = new ExuluContext({
+  id: "docs",
+  embedder: { model: "text-embedding-3-small" },
+  // No chunker key — defaultChunker runs automatically
+  fields: [{ name: "content", type: "longtext", required: true }],
+  sources: [],
+});
+```
+
+For contexts whose items have structured or file-backed content, supply a custom `ChunkerOperation` instead.
+
+## Available chunkers
+
+### SentenceChunker
+
+Splits text at sentence boundaries while respecting a token limit per chunk. The default chunker inside `defaultChunker`. Supports overlap to preserve context across chunk boundaries.
+
+```typescript
+const chunker = await ExuluChunkers.sentence.create({
+  chunkSize: 512,
+  chunkOverlap: 50,
+});
+
+const chunks = await chunker("Long text to split into sentences...");
+// chunks: SentenceChunk[] — each has .text, .tokenCount, .startIndex, .endIndex
+```
+
+### MarkdownChunker
+
+An Enterprise Edition chunker optimised for markdown and document-converted content. It:
+
+- Converts markdown tables to numbered-list format for better embedding quality.
+- Splits at logical breakpoints (headers → paragraphs → sentences → whitespace) rather than pure token counts.
+- Prepends the active header hierarchy to each chunk so retrieval context is preserved.
+- Handles `<diagram>` tags by never splitting their contents.
+- Supports `<page_break page=N>` tags (inserted by the PDF processor) to track page numbers per chunk.
+
+```typescript
+const mdChunker = new ExuluChunkers.markdown();
+
+const chunks = await mdChunker.chunk(markdownText, 1024, optionalPrefix, {
+  pageBreakTags: true,
+});
+// chunks: { text: string; page: number }[]
+```
+
+`MarkdownChunker` does not implement `ChunkerOperation` directly — wrap it in an adapter when assigning to `ExuluContext.chunker`.
+
+### RecursiveChunker
+
+Hierarchically splits text using a configurable rule set: from paragraphs down to sentences, punctuation, words, and finally raw tokens. The default `RecursiveRules` levels are:
+
+1. Paragraphs — `\n\n`, `\r\n`, `\n`, `\r`
+2. Sentences — `. `, `! `, `? `
+3. Pauses — punctuation and bracket characters
+4. Words — whitespace split
+5. Tokens — raw token split
+
+```typescript
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 1024,
+});
+
+const chunks = await chunker("Document text...");
+// chunks: RecursiveChunk[] — each has .text, .tokenCount, .level, .startIndex, .endIndex
+```
+
+Customise the rule set:
+
+```typescript
+const rules = new ExuluChunkers.recursive.rules({
+  levels: [
+    { delimiters: ["\n\n"] },          // Paragraphs only
+    { delimiters: [". ", "! ", "? "] }, // Then sentences
+    { whitespace: true },               // Then words
+  ],
+});
+
+const chunker = await ExuluChunkers.recursive.function.create({
+  chunkSize: 512,
+  rules,
+  retainHeaders: true, // Prepend the active header hierarchy to each chunk
+});
+```
+
+## Choosing a chunker
+
+| Situation | Recommended chunker |
+|---|---|
+| Natural language content (articles, docs, Q&A) | `defaultChunker` or `SentenceChunker` |
+| Markdown files or PDF-converted documents with tables | `MarkdownChunker` (Enterprise Edition) |
+| Structured content with known delimiters | `RecursiveChunker` with custom rules |
+| File-backed items (PDFs, spreadsheets) | Custom `ChunkerOperation` that reads from `utils.storage` |
+
+## Integrating with ExuluContext
+
+Assign any `ChunkerOperation` to the `chunker` option on `ExuluContext`:
+
+```typescript
+import { ExuluContext, ExuluChunkers } from "@exulu/backend";
+import type { ChunkerOperation } from "@exulu/backend";
+
+const sentenceChunker: ChunkerOperation = async (item, maxChunkSize) => {
+  const text = [item.name, item.content].filter(Boolean).join("\n\n");
+  const chunker = await ExuluChunkers.sentence.create({ chunkSize: maxChunkSize, chunkOverlap: 64 });
+  const pieces = await chunker(String(text));
+  return {
+    item,
+    chunks: pieces
+      .map((c, index) => ({ content: c.text.trim(), index }))
+      .filter((c) => c.content.length > 0)
+      .map((c, index) => ({ ...c, index })),
+  };
+};
+
+const docsContext = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product docs.",
+  embedder: { model: "text-embedding-3-small" },
+  chunker: sentenceChunker,
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true },
+  ],
+  sources: [],
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-chunkers/configuration">
+    Every option for SentenceChunker, RecursiveChunker, MarkdownChunker, and RecursiveRules.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-chunkers/api-reference">
+    Method signatures, ChunkerOperation/ChunkerResponse types, and custom chunker guidance.
+  </Card>
+</CardGroup>

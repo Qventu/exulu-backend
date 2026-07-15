@@ -1,0 +1,114 @@
+---
+title: "ExuluDocumentProcessor"
+description: "Advanced multi-format document-to-markdown conversion with optional OCR and VLM page validation."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" />
+
+`ExuluDocumentProcessor` converts documents to structured markdown for ingestion into knowledge contexts. It supports multiple processor backends — `docling` (Python, best for complex PDFs), `liteparse` (JS, broad format support), `mistral` (OCR via LiteLLM proxy), and `officeparser` (JS, Office formats) — and optionally validates and corrects each page using a VLM pass.
+
+The `advanced-document-processing` EE entitlement is checked at runtime; calling `process` without a valid license throws immediately.
+
+## API surface
+
+### ExuluDocumentProcessor.process
+
+```typescript
+ExuluDocumentProcessor.process(opts: {
+  file: string | Buffer;
+  name: string;
+  config?: DocumentProcessorConfig;
+}): Promise<ProcessedDocument | undefined>
+```
+
+Processes a document and returns an array of per-page objects with the extracted markdown content.
+
+<ParamField path="file" type="string | Buffer" required>
+  The document to process. Pass a local file path, an HTTP/HTTPS URL (downloaded automatically), or a `Buffer` with the raw file bytes.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The file name including extension (e.g. `"report.pdf"`). The extension determines which code path handles the file; it is required even when `file` is a `Buffer`.
+</ParamField>
+
+<ParamField path="config.processor.name" type='"docling" | "liteparse" | "mistral" | "officeparser"' required>
+  The processing backend to use.
+</ParamField>
+
+<ParamField path="config.processor.model" type="string">
+  LiteLLM `model_name` for the `"mistral"` OCR backend. Defaults to `"mistral-ocr"`.
+</ParamField>
+
+<ParamField path="config.processor.maxPagesPerChunk" type="number">
+  Maximum pages per OCR request for the `"mistral"` backend. Defaults to `25` (safely below the 30-page Vertex AI limit). The PDF is split into chunks of this size before sending.
+</ParamField>
+
+<ParamField path="config.vlm.model" type="string">
+  LiteLLM `model_name` for the optional VLM validation pass (e.g. `"vertex-gemini-2.5-flash"`). Only supported when `processor.name` is `"docling"`. When set, pages containing tables or images are re-validated and corrected by the VLM.
+</ParamField>
+
+<ParamField path="config.vlm.concurrency" type="number">
+  Number of pages to validate in parallel. Required when `vlm.model` is set.
+</ParamField>
+
+<ParamField path="config.attribution" type="object">
+  Optional cost-attribution fields (`user`, `role`, `project`, `agent`, `routine`, `context`) forwarded to LiteLLM as spend tags for both OCR and VLM passes.
+</ParamField>
+
+<ParamField path="config.debugging.deleteTempFiles" type="boolean">
+  Set to `false` to keep the per-job temp directory on disk after processing. Defaults to `true`.
+</ParamField>
+
+<ResponseField name="return" type="Promise<ProcessedDocument | undefined>">
+
+  `ProcessedDocument` is `Array<{ page: number; content: string }>`. Each element is one page of the document, with final content (VLM-corrected when applicable).
+
+</ResponseField>
+
+### Supported file types by processor
+
+| Processor | Supported extensions |
+|---|---|
+| `docling` | `.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp` |
+| `liteparse` | `.pdf`, `.doc`, `.docx`, `.docm`, `.odt`, `.rtf`, `.ppt`, `.pptx`, `.pptm`, `.odp`, `.xls`, `.xlsx`, `.xlsm`, `.ods`, `.csv`, `.tsv` |
+| `mistral` | `.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp` |
+| `officeparser` | `.docx`, `.pptx`, `.xlsx`, `.odt`, `.odp`, `.ods`, `.pdf`, `.rtf`, `.csv`, `.md`, `.html` |
+
+## Example
+
+```typescript
+import { ExuluDocumentProcessor } from "@exulu/backend";
+import { readFileSync } from "fs";
+
+const buffer = readFileSync("./technical-manual.pdf");
+
+const pages = await ExuluDocumentProcessor.process({
+  file: buffer,
+  name: "technical-manual.pdf",
+  config: {
+    processor: { name: "docling" },
+    vlm: {
+      model: "vertex-gemini-2.5-flash",
+      concurrency: 5,
+    },
+  },
+});
+
+if (pages) {
+  const fullText = pages.map((p) => p.content).join("\n\n");
+  console.log(`Processed ${pages.length} pages`);
+}
+```
+
+## Notes
+
+- The `docling` backend runs Python and sets up a virtual environment automatically on first use via `ExuluPython.setup`. Python 3.10+ is required.
+- Pages are separated by `<!-- END_OF_PAGE -->` comments in the markdown stream written to disk, but the returned `ProcessedDocument` array already splits them per page.
+- Temporary files are created under `<cwd>/temp/<uuid>/` and deleted after each call unless `debugging.deleteTempFiles` is `false`.
+
+## Related
+
+- [ExuluPython](/developers/reference/exulu-python): manage the Python environment required by `docling`.
+- [Knowledge — pipeline](/building/knowledge/pipeline): how processed documents feed into knowledge contexts.
