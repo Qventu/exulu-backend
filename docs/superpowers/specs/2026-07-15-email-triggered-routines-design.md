@@ -69,7 +69,7 @@ Example target flow: *"Email arrives → classify: is it a spare-part request? �
     { "field": "subject", "pattern": "Ersatzteil|spare part" }
     // field ∈ from | subject | body | attachment_name
   ],
-  "filtered_run_retention": 200,                     // keep last X filtered rows for this trigger
+  "filtered_run_retention": 200,                     // keep last X filtered rows for this trigger; 0 = keep none
   "rate_limit_per_hour": 60,                         // per-trigger ceiling
   "sender_rate_limit_per_hour": 10                   // per-sender-per-trigger ceiling
 }
@@ -88,7 +88,7 @@ New columns (migration in init-db, gated by column-existence checks, per project
 - `trigger` (text): `'email' | 'schedule' | 'manual' | 'api'`. Stamped at enqueue. Fixes the existing bug where scheduled runs are stamped `api`; UI-initiated `runWorkflow` stamps `manual`, header/API calls stamp `api`. **Backfill: existing rows keep `trigger = NULL`** (displayed as "—"; guessing would be dishonest).
 - `trigger_metadata` (json): for email — `{ from, subject, message_id, filtered_reason?, failed_rule? }` (no body — it lives in the session's first message); for schedule — `{ cron }` copied at enqueue time from the scheduler.
 - `session` (text/uuid): the run's `agent_sessions` id.
-- `workflow` (uuid): explicit FK replacing label-substring filtering. One-time backfill parses existing labels (`workflow-run-<id>`). The `label` column keeps its format for compatibility.
+- `workflow` (uuid stored as text, indexed — no FK constraint, matching the codebase's schema conventions): explicit column replacing label-substring filtering. One-time backfill parses existing labels (`workflow-run-<id>`). The `label` column keeps its format for compatibility.
 - New composite index `(workflow, state, trigger, createdAt)` for the runs views; expression index on `(workflow, (trigger_metadata->>'message_id'))` for dedup.
 
 New states in `types/enums/jobs.ts` + the GraphQL enum:
@@ -209,9 +209,9 @@ Terminology: a **step** = one `UIMessage` in the routine's `steps_json`. Message
 ## 6. GraphQL API
 
 - `workflowTriggers(workflow: ID!): [WorkflowTrigger]` — read (routine read access).
-- `upsertWorkflowEmailTrigger(workflow: ID!, config: EmailTriggerConfigInput!, enabled: Boolean!): WorkflowTrigger` — generates `address` server-side on first save (unique, §3.1); validates regexes (length cap ≤ 200 chars + safe-pattern check) and allowlist entries; verifies `email_inbound.enabled`; captures `run_as_user`/`run_as_role` from the caller. Requires routine write access + `workflows: write`.
+- `upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger` — `config` is a JSON scalar validated server-side against the §3.1 shape (matches the codebase's JSON-scalar style); generates `address` server-side on first save (unique, §3.1); validates regexes (length cap ≤ 200 chars + safe-pattern check) and allowlist entries; verifies `email_inbound.enabled`; captures `run_as_user`/`run_as_role` from the caller. Requires routine write access + `workflows: write`.
 - `deleteWorkflowTrigger(id: ID!)`.
-- `routineRuns(filters: { workflow?, states?, triggers?, from?, to?, search?, needsAttention? }, page: Int = 1, limit: Int = 20): RoutineRunPage` — powers both runs views. Real-column filters (`workflow`, `state`, `trigger`, `createdAt`, backed by the §3.3 composite index), `search` matches session title, `needsAttention` = `state = waiting_approval`. Access control: rows restricted to routines the caller can read (`job_results` itself has no RBAC) — resolved as one access-filtered routine-id set, then a single indexed query (no per-row N+1). Returns items + total, joined routine name + session id + trigger metadata.
+- `routineRuns(page: Int = 1, limit: Int = 20, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage` (flattened args, matching the codebase's resolver style) — powers both runs views. Real-column filters (`workflow`, `state`, `trigger`, `createdAt`, backed by the §3.3 composite index), `search` matches session title, `needsAttention` = `state = waiting_approval`. Access control: rows restricted to routines the caller can read (`job_results` itself has no RBAC) — resolved as one access-filtered routine-id set, then a single indexed query (no per-row N+1). Returns items + total, joined routine name + session id + trigger metadata.
 - `cancelRoutineRun(id: ID!)`; `retryRoutineRun(id: ID!)` — available for `failed` and `cancelled` states only (a `waiting_approval` run is cancelled first if the admin wants a fresh start); resumes from the failed step index.
 - `emailInboundConfig` / `updateEmailInboundConfig` — super-admin; signing key write-only (never returned).
 - `routineRunsNeedingAttentionCount` — nav badge; polled (§7.3).
