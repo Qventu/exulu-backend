@@ -60,7 +60,7 @@ Returns up to two `new ExuluTool({ type: "function", ... })` instances. Tool ids
 
 **Schema building** (extends the `memory-tool.ts` type-switch over `context.fields`):
 
-- `text`/`longText`/`shortText`/`code`/`markdown` → `z.string()`; `number` → `z.number()`; `boolean` → `z.boolean()`; `json` → JSON-string with description; `enum` → case-insensitive preprocess against `enumValues`.
+- `text`/`longText`/`shortText`/`code`/`markdown` → `z.string()`; `number` → `z.number()`; `boolean` → `z.boolean()`; `json` → JSON-string with description; `enum` → permissive `z.string()` listing the allowed values in the description, canonicalized case-insensitively at execute time.
 - `date` → `z.string()` described as ISO-8601 (memory tool skips dates; KB items commonly need them).
 - **Skipped entirely:** `file` fields (see "File fields" below), `uuid` fields, and fields flagged `calculated: true` **or** `editable: false`. Note: verified that no backend write path enforces `calculated`/`editable` today (`calculated` is entirely unused; `editable` is UI metadata only, e.g. `transcriptions.ts` `raw_segments`/`post_processing`; the GraphQL input types include every field) — these tools are deliberately the first enforcement point, since an agent must never set processor-owned or non-editable fields. The generated `fts` column and processor `field` artifacts are never part of any schema.
 - **Create schema:** `name` required; `description`, `tags` (string array), `external_id` optional; custom fields required iff flagged `required`.
@@ -68,7 +68,7 @@ Returns up to two `new ExuluTool({ type: "function", ... })` instances. Tool ids
 
 **Create execute:**
 
-1. Canonicalize enum inputs (case-insensitive match, drop out-of-enum values — memory-tool pattern).
+1. Canonicalize enum inputs case-insensitively; unmatched values are rejected with a message listing the allowed values so the model self-corrects (stricter than the memory tool's silent drop — a dropped required enum would silently vanish from the write).
 2. Set `created_by = String(user.id)` (verified: `createItem` does not set it; `created_by` is a text column). Leave `rights_mode` unset so the column default (`configuration.defaultRightsMode ?? "private"`) applies.
 3. `context.createItem(item, exuluConfig, user?.id, user?.role?.id, /* upsert */ false, /* embeddings override */ undefined)` — the context's own `calculateVectors` / processor trigger config decides side effects.
 4. Report the new item id; if a BullMQ `job` id comes back, tell the model processing/embedding is queued.
@@ -76,7 +76,7 @@ Returns up to two `new ExuluTool({ type: "function", ... })` instances. Tool ids
 **Update execute:**
 
 1. Require `id` or `external_id`; resolve `external_id → row` via `context.getItem` (since `updateItem` throws without a resolved `id`, unlike `deleteItem`).
-2. **Row-level gate:** `checkRecordAccess(existingRow, "write", user)` — on denial return a refusal string (no throw). The not-found and access-denied refusals use the **same generic message** ("item not found or you don't have write access") so the tool can't be used to probe for the existence of rows the user can't see (`getItem` itself has no access control). Note `'write'` does not imply `'read'` in `checkRecordAccess`; results are cached 60s.
+2. **Row-level gate:** a new `checkItemWriteAccess(context, record, user)` helper (`src/utils/check-item-write-access.ts`) — on denial return a refusal string (no throw). It replicates the GraphQL layer's `validateWriteAccess` semantics (super_admin / admin-scope API bypass; `public` → allow; `private` → creator only, string-normalized; `users`/`roles`/`teams` → query the shared `rbac` table for a `rights: "write"` grant with `entity = getTableName(context.id)`). We can NOT use the existing `checkRecordAccess` here: it reads grants from an in-memory `record.RBAC` object, which context item rows never carry — their grants live only in the `rbac` table, so `checkRecordAccess` would always deny `users`/`roles`/`teams` items. The not-found and access-denied refusals use the **same generic message** ("item not found or you don't have write access") so the tool can't be used to probe for the existence of rows the user can't see (`getItem` itself has no access control).
 3. Merge only the provided fields onto `{ id }`, canonicalize enums, then `context.updateItem(patch, exuluConfig, user?.id, user?.role?.id)`.
 4. `updateItem` returns the **pre-update** record — re-fetch via `getItem` and return the fresh row summary (+ job id if queued).
 
@@ -138,7 +138,7 @@ Never-throw zod layer over the entry's `config` rows, copied from the retrieval 
 | Configured context no longer registered | Skipped at injection; tool never exists |
 | User lacks row-level write access on update | Tool returns a refusal message; no write |
 | Zod input mismatch | AI-SDK schema error → model retries with corrected args |
-| Out-of-enum value | Canonicalized case-insensitively or silently dropped (never persisted) |
+| Out-of-enum value | Canonicalized case-insensitively; unmatched values rejected with a message listing allowed values (never persisted) |
 | Postgres error (e.g. `external_id` unique conflict) | Caught; returned as tool-result string |
 | Async processor/embeddings | Job id reported to the model as queued work |
 
@@ -169,7 +169,7 @@ Frontend: follows existing editor conventions (no test infra there today); verif
 | `backend/src/templates/tools/memory-tool.ts` | The template: dynamic per-context write tool, schema from fields, enum canonicalization |
 | `backend/src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts` | Dynamic injection layer; execute wrapping (user/config spread into inputs) |
 | `backend/src/utils/enabled-tools.ts` | Agent tool-entry hydration; needs the explicit skip |
-| `backend/src/utils/check-record-access.ts` | Row-level write gate for updates |
+| `backend/src/graphql/mutations/index.ts` (`validateWriteAccess`) | Row-level write semantics the new `checkItemWriteAccess` helper replicates (rbac-table queries) |
 | `backend/ee/agentic-retrieval/pipeline/config.ts` | Defensive-zod config-parsing pattern |
 | `frontend/app/(application)/agents/edit/[id]/sections/knowledge.tsx` | UI home |
 | `frontend/.../components/knowledge-search/steps/knowledge-bases-step.tsx` | Checkbox-card multi-select pattern |
