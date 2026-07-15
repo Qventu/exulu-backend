@@ -62,7 +62,7 @@ Returns up to two `new ExuluTool({ type: "function", ... })` instances. Tool ids
 
 - `text`/`longText`/`shortText`/`code`/`markdown` → `z.string()`; `number` → `z.number()`; `boolean` → `z.boolean()`; `json` → JSON-string with description; `enum` → case-insensitive preprocess against `enumValues`.
 - `date` → `z.string()` described as ISO-8601 (memory tool skips dates; KB items commonly need them).
-- **Skipped entirely:** `file` fields (stored as `<name>_s3key`; uploads are out of scope), `uuid` fields, and fields flagged `calculated`. The generated `fts` column and processor `field` artifacts are never part of any schema.
+- **Skipped entirely:** `file` fields (see "File fields" below), `uuid` fields, and fields flagged `calculated: true` **or** `editable: false`. Note: verified that no backend write path enforces `calculated`/`editable` today (`calculated` is entirely unused; `editable` is UI metadata only, e.g. `transcriptions.ts` `raw_segments`/`post_processing`; the GraphQL input types include every field) — these tools are deliberately the first enforcement point, since an agent must never set processor-owned or non-editable fields. The generated `fts` column and processor `field` artifacts are never part of any schema.
 - **Create schema:** `name` required; `description`, `tags` (string array), `external_id` optional; custom fields required iff flagged `required`.
 - **Update schema:** `id` or `external_id` required (refine: at least one); every content field optional — partial patch, only provided keys are written. `external_id` is **lookup-only** on update (never written back); neither tool exposes a `rights_mode`/visibility input in v1.
 
@@ -81,6 +81,12 @@ Returns up to two `new ExuluTool({ type: "function", ... })` instances. Tool ids
 4. `updateItem` returns the **pre-update** record — re-fetch via `getItem` and return the fresh row summary (+ job id if queued).
 
 Both executes wrap everything in try/catch and return failures as `{ result: "…" }` strings so the model can self-correct; `user.id` (integer) is string-normalized wherever compared to `created_by` (text).
+
+### File fields (excluded in v1 — verified mechanics)
+
+A `file` field is a two-step affair: the item column `<name>_s3key` (plain text) only stores an S3 key string; the bytes must be uploaded to S3 **first** — the frontend does this via presigned PUT (`GET /s3/params` / `POST /s3/sign`, `src/uppy/index.ts`), and tools could do it via the `upload({name, data, type})` helper injected into tool inputs (`convert-exulu-tools-to-ai-sdk-tools.ts` ~502-577; only defined when `exuluConfig.fileUploads` S3 settings are complete). `allowedFileTypes` is client-side metadata, enforced nowhere server-side.
+
+v1 excludes file fields from both tool schemas for two reasons: (1) a chat agent has no file bytes to upload — wiring sandbox artifacts or session files into item fields is its own feature; (2) exposing `<name>_s3key` as a writable string would let the model link items to arbitrary S3 objects. The v2 path is clear if wanted later: accept a sandbox-artifact/session-file reference, copy it via the `upload` helper (which returns the durable `"<bucket>/<key>"`), and write that key to `<name>_s3key`.
 
 ### Config parsing: `parseKbEditorConfig` (co-located or sibling file)
 
@@ -141,7 +147,7 @@ Never-throw zod layer over the entry's `config` rows, copied from the retrieval 
 Backend unit tests (co-located `*.test.ts`, precedent: `migrate-agentic-retrieval-config.test.ts`):
 
 - `parseKbEditorConfig`: happy path, missing entry, malformed JSON, string-vs-array `tools`, value/default fallback.
-- Schema builder: required-on-create vs optional-on-update, enum handling, skipped field types (`file`/`uuid`/`calculated`), date-as-string, id/external_id refine on update.
+- Schema builder: required-on-create vs optional-on-update, enum handling, skipped fields (`file`/`uuid` types, `calculated: true`, `editable: false`), date-as-string, id/external_id refine on update.
 - Execute paths with a mocked context: `created_by` stamping, rights_mode left to default, permission denial on update, `external_id` resolution, fresh-row refetch after update, error-to-string behavior, embeddings override left undefined.
 
 Frontend: follows existing editor conventions (no test infra there today); verified manually via the editor + a chat write round-trip.
@@ -149,7 +155,7 @@ Frontend: follows existing editor conventions (no test infra there today); verif
 ## Out of scope (v1)
 
 - Delete tool (request was create/update only).
-- File-field writes / uploads.
+- File-field writes / uploads (see "File fields" section for verified mechanics and the v2 path).
 - Upsert semantics on create.
 - Item version history (updates overwrite in place — mitigated by approval default).
 - Bulk writes; one item per tool call.
