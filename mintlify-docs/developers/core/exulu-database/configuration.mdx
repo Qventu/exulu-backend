@@ -1,0 +1,221 @@
+---
+title: "Configuration"
+description: "Options for ExuluDatabase.init(), ExuluDatabase.update(), and the context table creation behaviour."
+icon: "settings"
+---
+
+`ExuluDatabase` has two entry points — `init()` and `update()` — that share the same options. Both are idempotent; call either on every boot without risk to existing data.
+
+## init() and update()
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+await ExuluDatabase.init({
+  contexts: ExuluContext[],
+  litellm?: boolean,          // default: true
+});
+
+await ExuluDatabase.update({
+  contexts: ExuluContext[],
+  litellm?: boolean,
+});
+```
+
+Both methods call the same underlying routine. `init()` communicates "setting up from scratch"; `update()` communicates "adding to an existing schema". Pick the name that best describes your intent — the behaviour is identical.
+
+## Options
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  Array of `ExuluContext` instances for which to create or verify database tables. Pass **all** contexts your application uses, not just new ones — the routine is idempotent and skips tables that already exist.
+</ParamField>
+
+<ParamField path="litellm" type="boolean" default="true">
+  When `true` (the default), also runs `initLitellmDb()`, which executes a guarded `prisma db push` against the database pointed to by `LITELLM_DATABASE_URL`. Set to `false` if you are not running the LiteLLM proxy, or if you manage the LiteLLM schema separately.
+</ParamField>
+
+## What init() creates
+
+### Core tables
+
+`init()` iterates over every known schema and either creates the table or adds any missing columns. The core schemas created or updated on every run include (plural table names as stored in Postgres):
+
+| Table | Purpose |
+|---|---|
+| `agents` | Agent configurations |
+| `agent_sessions` | Conversation sessions |
+| `agent_messages` | Chat messages |
+| `models` | LLM model configurations |
+| `roles` | RBAC role definitions |
+| `teams` | Team records |
+| `users` | User accounts (NextAuth-compatible) |
+| `accounts` | NextAuth OAuth account links |
+| `verification_token` | NextAuth email verification tokens |
+| `variables` | Encrypted variable storage |
+| `skills` | Skill definitions |
+| `workflow_templates` | Workflow definitions |
+| `statistics` | Usage statistics |
+| `projects` | Project records |
+| `job_results` | Background job results |
+| `prompt_library` | Saved prompts |
+| `context_presets` | Context preset configurations |
+| `entity_type_settings` | Entity layer configuration |
+| `prompt_favorites` | Favourited prompts |
+| `transcription_jobs` | Transcription job records |
+| `image_generations` | Image generation records |
+| `oauth_tokens` | OAuth token storage (keyed by `provider` + `user_id`) |
+| `shared_artifacts` | Shared artifact records |
+| `rbac` | Row-level RBAC entries |
+| `test_cases` | Eval test cases |
+| `eval_sets` | Eval set definitions |
+| `eval_runs` | Eval run results |
+| `feedback` | Session feedback records |
+| `platform_configurations` | Platform-wide settings |
+
+All core tables include `id` (UUID primary key), `createdAt`, and `updatedAt` timestamp columns.
+
+### Default roles
+
+Created only when absent:
+
+| Role name | Permissions |
+|---|---|
+| `admin` | Write on agents, API, workflows, variables, users, evals, budget management |
+| `default` | Write on agents; read on API, workflows, variables, users, evals |
+
+### Default admin user
+
+Created at `email: "admin@exulu.com"` with password `admin` (bcrypt-hashed), `super_admin: true`, and the `admin` role. Created only when no user with that email exists.
+
+### Default API key
+
+`init()` calls `generateApiKey("exulu", "api@exulu.com")` at the end of every run. The key is logged to stdout. It is persisted in the `users` table only on the **first call** — subsequent calls find the existing `api@exulu.com` user and return a freshly generated key that is **never stored**. See [API reference — persistence semantics](/developers/core/exulu-database/api-reference#persistence-semantics).
+
+### Per-context tables
+
+For each `ExuluContext` in the `contexts` array, `init()` calls three idempotent helpers:
+
+1. **Items table** — `context.tableExists()` returns false → `context.createItemsTable()`. The table name defaults to `{context.id}_items` and includes the context's field schema plus the standard `id`, `createdAt`, `updatedAt` columns.
+
+2. **Chunks table** — Only when `context.embedder` is configured. `context.chunksTableExists()` returns false → `context.createChunksTable()`. The chunks table stores the `content` text, an `embedding VECTOR(N)` column (where `N` is the model's `vectorDimensions`), `metadata JSONB`, and a foreign key to the items table.
+
+3. **Entity tables** — Calls `ensureEntityTables(context)`, which is a no-op when the entity layer is not configured on the context.
+
+<Warning>
+The `pgvector` column dimension is fixed at table creation time. Changing the embedding model after context tables exist requires manually recreating or migrating the chunks table. See [Self-Hosting — Database](/self-hosting/database) for the migration path.
+</Warning>
+
+## Adding a new context
+
+When you add a new context to an existing application, pass it alongside your existing contexts:
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+import { existingContext, newContext } from "./contexts";
+
+await ExuluDatabase.update({
+  contexts: [existingContext, newContext],
+});
+```
+
+The existing context's tables are skipped (already exist); only `newContext`'s tables are created.
+
+## LiteLLM schema
+
+When `litellm` is not `false`, `initLitellmDb()` runs `prisma db push` against `LITELLM_DATABASE_URL`. This keeps the LiteLLM proxy schema current without a separate migration step.
+
+Pass `litellm: false` when:
+
+- You are not running the LiteLLM proxy.
+- `LITELLM_DATABASE_URL` is not set.
+- You manage the LiteLLM schema outside of IMP's boot sequence.
+
+```typescript
+// Skip LiteLLM schema initialisation:
+await ExuluDatabase.init({
+  contexts: [myContext],
+  litellm: false,
+});
+```
+
+## Complete initdb example
+
+```typescript
+import { ExuluDatabase, ExuluContext } from "@exulu/backend";
+import { ExuluQueues } from "@exulu/backend";
+
+const embeddingsQueue = ExuluQueues.register(
+  "embeddings",
+  { worker: 5, queue: 10 },
+  20,
+  300,
+);
+
+const docsContext = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product documentation search.",
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(),
+  },
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true },
+  ],
+  sources: [],
+});
+
+const supportContext = new ExuluContext({
+  id: "support",
+  name: "Support tickets",
+  description: "Customer support conversations.",
+  fields: [
+    { name: "subject", type: "text", required: true },
+    { name: "body", type: "longtext", required: true },
+  ],
+  sources: [],
+});
+
+async function main() {
+  await ExuluDatabase.init({
+    contexts: [docsContext, supportContext],
+    litellm: true,
+  });
+
+  // Generate a dedicated API key for this application:
+  const { key } = await ExuluDatabase.api.key.generate(
+    "my-app-api",
+    "api@my-app.com",
+  );
+  console.log("Application API key (save this now):", key);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+## Environment variables
+
+`ExuluDatabase` reads two environment variables:
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string used by the Knex client. Format: `postgresql://user:password@host:port/database`.
+</ParamField>
+
+<ParamField path="NEXTAUTH_SECRET" type="string" required>
+  Secret used for bcrypt password hashing and encrypted variable storage. Generate with `openssl rand -base64 32`.
+</ParamField>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-database/api-reference">
+    Full method signatures and `api.key.generate()` persistence semantics.
+  </Card>
+  <Card title="Self-hosting — database" icon="server" href="/self-hosting/database">
+    Backups, the no-migration model, and the first-boot API key warning.
+  </Card>
+</CardGroup>

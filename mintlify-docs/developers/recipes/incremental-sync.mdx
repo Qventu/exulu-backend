@@ -1,0 +1,148 @@
+---
+title: "Incremental sync deep dive"
+description: "How IMP reconciles items returned by a source: external_id upsert semantics, hash-based change detection, and deletion handling."
+icon: "refresh-cw"
+---
+
+This recipe explains exactly what IMP does when `execute` returns items — covering upsert matching, change detection, and what happens to items that are no longer returned.
+
+**Prerequisite:** read [Data sources and sync](/developers/tutorials/data-sources-and-sync) first; this page goes deeper on the mechanics.
+
+## How the upsert works
+
+After `execute` returns its `ExuluItem[]`, IMP calls `context.createItem(item, config, user, role, upsert)` for each item, where `upsert` is `true` whenever the item carries `external_id` or `id`.
+
+The upsert is implemented in `ExuluContext.createItem` (`src/exulu/context.ts`, line 644–651):
+
+```typescript
+if (upsert) {
+  if (item.external_id) {
+    mutation.onConflict("external_id").merge();
+  } else if (item.id) {
+    mutation.onConflict("id").merge();
+  }
+}
+```
+
+The `external_id` column has a `UNIQUE` constraint (set at table-creation time), so `onConflict("external_id").merge()` is a true upsert: it inserts when no row with that `external_id` exists and updates all supplied fields when one does.
+
+| Item has `external_id` | Row exists in the table | Result |
+|---|---|---|
+| Yes | No | Row is **inserted** |
+| Yes | Yes | Row is **updated** (all supplied fields merged) |
+| No, but has `id` | Depends on `id` match | Insert or update by primary key |
+| Neither | — | Always **inserted** fresh (new UUID assigned) |
+
+The same upsert path runs whether the source fires via the admin UI, the queue worker, or a programmatic call to `source.execute`.
+
+## Hash-based change detection
+
+IMP does not compare old and new values automatically — that is the source's responsibility. The standard pattern is to store a content hash in a custom `content_hash` field and compare it before returning an item:
+
+```typescript
+// Inside execute, before building the return array:
+const existingItems = await myContext.getItems({
+  fields: ["external_id", "content_hash"],
+});
+const hashByExternalId = new Map(
+  existingItems
+    .filter((i) => i.external_id && i.content_hash)
+    .map((i) => [i.external_id as string, i.content_hash as string]),
+);
+
+const changed = apiItems.filter((apiItem) => {
+  const newHash = computeHash(apiItem);
+  return hashByExternalId.get(apiItem.id) !== newHash;
+});
+
+return changed.map((apiItem): ExuluItem => ({
+  external_id:  apiItem.id,
+  name:         apiItem.title,
+  content_hash: computeHash(apiItem),
+  // ... other fields
+}));
+```
+
+Items whose hash has not changed are simply omitted from the return value — the row in the database is untouched, and no processor or embedder job is enqueued for them.
+
+Add `content_hash` to the context's `fields` array so IMP creates the column:
+
+```typescript
+{ name: "content_hash", type: "shortText", calculated: true }
+```
+
+## Deletion handling
+
+**IMP does not delete items that a source stops returning.** When `execute` returns a set of items, IMP upserts them but performs no reconciliation against items already in the table that are absent from the current result. A row persists until it is deleted explicitly via the admin UI, the GraphQL mutation, or `context.deleteItem()`.
+
+For sources where items can disappear (a ticket is permanently erased, a document is removed from a bucket), the recommended pattern is an **archive flag**:
+
+1. Add an `active` boolean field to the context.
+2. In the source, after fetching the current set of external IDs from the API, query `getItems` for all rows, and return a synthetic item for each that is no longer present — with `active: false` and no content change — to mark it as inactive.
+3. Filter inactive items out of retrieval using item filters on the retrieval side.
+
+```typescript
+// Mark items no longer present in the source as inactive
+const currentIds = new Set(apiItems.map((i) => i.id));
+
+const archivedItems = existingItems
+  .filter((row) => row.external_id && !currentIds.has(row.external_id))
+  .map((row): ExuluItem => ({
+    external_id: row.external_id as string,
+    name:        row.name,
+    active:      false,
+  }));
+
+return [
+  ...changed.map(toExuluItem),
+  ...archivedItems,
+];
+```
+
+To hard-delete an item, call `context.deleteItem({ external_id: "…" })` from outside `execute`, or use the admin interface.
+
+## Watermark params
+
+Use the source's `params` to pass a watermark into `execute`:
+
+```typescript
+params: [
+  {
+    name: "start_time",
+    description: "ISO datetime — only fetch items updated after this time.",
+  },
+  {
+    name: "full_sync",
+    description: "Set to 'true' to bypass start_time and fetch everything.",
+    default: "false",
+  },
+],
+
+execute: async ({ start_time, full_sync }) => {
+  const since = full_sync === "true"
+    ? undefined
+    : (start_time ?? new Date(Date.now() - 25 * 60 * 60 * 1_000).toISOString());
+
+  const items = await fetchFromApi({ since });
+  return items.map(toExuluItem);
+},
+```
+
+The `start_time` param defaults to 25 hours ago when omitted, giving a one-hour overlap that catches items updated near the previous sync boundary. Pass `full_sync=true` in the admin dialog to rebuild from scratch.
+
+## Related recipes
+
+<CardGroup cols={2}>
+  <Card title="S3-backed context" icon="folder-open" href="/developers/recipes/s3-backed-context">
+    List an S3 bucket, hash files, and upsert items with file references.
+  </Card>
+  <Card title="API sync — ticketing" icon="ticket" href="/developers/recipes/api-sync-ticketing">
+    Paginated incremental fetch with retry/rate-limit hardening.
+  </Card>
+  <Card title="SQL source" icon="database" href="/developers/recipes/sql-source">
+    Query rows from an external database with an updated_at watermark.
+  </Card>
+  <Card title="Data sources and sync tutorial" icon="refresh-cw" href="/developers/tutorials/data-sources-and-sync">
+    The full tutorial that introduces sources and sync.
+  </Card>
+</CardGroup>

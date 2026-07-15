@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — knowledge item detail</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* layout: items table + detail panel */
+      #root .ws-body { display: flex; flex: 1; min-height: 0; }
+      #root .items-pane { flex: 1; overflow: hidden; display: flex; flex-direction: column; border-right: 1px solid var(--hair); }
+      #root .detail-pane { width: 520px; flex: none; overflow: hidden; display: flex; flex-direction: column; background: var(--surface); }
+
+      /* topbar */
+      #root .tb-left { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx-lo); }
+      #root .tb-sep { color: var(--tx-faint); margin: 0 4px; }
+      #root .tb-ctx { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+
+      /* workspace tabs */
+      #root .ws-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--hair); padding: 0 16px; }
+      #root .ws-tab { padding: 10px 14px; font-size: 13px; color: var(--tx-lo); cursor: default; }
+      #root .ws-tab.active { color: var(--tx-hi); font-weight: 500; border-bottom: 2px solid var(--ink); margin-bottom: -1px; }
+
+      /* items pane toolbar */
+      #root .items-toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--hair); }
+      #root .items-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 10px; font-size: 12.5px; color: var(--tx-faint); flex: 0 0 240px; }
+      #root .items-search svg { width: 13px; height: 13px; stroke-width: 1.5; flex: none; }
+      #root .items-filter { border: 1px solid var(--hair); padding: 6px 10px; font-size: 12px; color: var(--tx-lo); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+
+      /* items table rows */
+      #root .items-list { flex: 1; overflow: hidden; }
+      #root .items-head { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 80px; gap: 0; background: var(--surface-2); border-bottom: 1px solid var(--hair); padding: 7px 16px; font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); }
+      #root .items-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 80px; gap: 0; padding: 11px 16px; border-bottom: 1px solid var(--hair); font-size: 13px; color: var(--tx-mid); align-items: center; }
+      #root .items-row.active { background: var(--surface-2); }
+      #root .items-row-name { color: var(--tx-hi); font-weight: 500; font-size: 13px; }
+      #root .items-row-tags { display: flex; gap: 4px; }
+      #root .tag { background: var(--chip-soft); padding: 2px 7px; font-size: 11px; font-family: var(--font-mono); color: var(--ink); }
+      #root .items-count { font-size: 12px; color: var(--tx-faint); font-family: var(--font-mono); }
+      #root .items-footer { padding: 10px 16px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--tx-faint); display: flex; justify-content: space-between; }
+
+      /* detail panel */
+      #root .detail-topbar { padding: 12px 16px; border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; }
+      #root .detail-topbar-title { font-size: 13.5px; font-weight: 600; color: var(--tx-hi); }
+      #root .detail-topbar-actions { display: flex; gap: 8px; }
+      #root .detail-scroll { flex: 1; overflow: hidden; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+      /* status chip */
+      #root .status-strip { display: flex; align-items: center; gap: 10px; background: var(--chip-soft); border: 1px solid var(--chip); padding: 8px 12px; }
+      #root .status-ok-dot { width: 8px; height: 8px; background: var(--accent); flex: none; }
+      #root .status-label { font-size: 12.5px; font-weight: 500; color: var(--ink); }
+      #root .status-hint { font-size: 12px; color: var(--tx-lo); }
+
+      /* detail pipeline mini steps */
+      #root .mini-steps { display: flex; align-items: center; gap: 6px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--hair); font-size: 12px; color: var(--tx-lo); }
+      #root .mini-step { display: flex; align-items: center; gap: 4px; }
+      #root .mini-step svg { width: 12px; height: 12px; stroke-width: 1.5; color: var(--accent); }
+      #root .mini-step.pending svg { color: var(--tx-faint); }
+      #root .mini-arrow { color: var(--tx-faint); }
+
+      /* section groups */
+      #root .detail-section { display: flex; flex-direction: column; gap: 1px; }
+      #root .detail-section-hd { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); padding: 4px 0 6px; }
+      #root .detail-row { display: flex; align-items: baseline; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--hair); }
+      #root .detail-row:last-child { border-bottom: none; }
+      #root .detail-key { font-size: 12px; color: var(--tx-faint); width: 110px; flex: none; }
+      #root .detail-val { font-size: 13px; color: var(--tx-hi); flex: 1; }
+      #root .detail-val.empty { color: var(--tx-faint); font-style: italic; }
+      #root .detail-val.mono { font-family: var(--font-mono); font-size: 11.5px; }
+      #root .detail-tag-row { display: flex; gap: 4px; flex-wrap: wrap; }
+
+      /* chunk count badge */
+      #root .chunk-badge { background: var(--chip-soft); color: var(--ink); padding: 2px 8px; font-size: 11.5px; font-family: var(--font-mono); }
+
+      /* action row */
+      #root .detail-actions { display: flex; gap: 8px; padding-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="knowledge-item-detail"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>Knowledge</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span class="tb-left">
+                <span>Knowledge</span>
+                <span class="tb-sep">/</span>
+                <span class="tb-ctx">Product manuals</span>
+              </span>
+              <span style="display:flex;gap:8px">
+                <span class="imp-btn imp-btn-ink" style="font-size:12px;">+ New item</span>
+              </span>
+            </div>
+
+            <div class="ws-body">
+              <!-- items pane -->
+              <div class="items-pane">
+                <!-- tabs -->
+                <div class="ws-tabs">
+                  <div class="ws-tab active">Items</div>
+                  <div class="ws-tab">Pipeline</div>
+                  <div class="ws-tab">Entities</div>
+                </div>
+
+                <!-- toolbar -->
+                <div class="items-toolbar">
+                  <div class="items-search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+                    Search items by name…
+                  </div>
+                  <div class="items-filter">Filters</div>
+                  <div style="margin-left:auto;font-size:12px;color:var(--tx-faint);">Active</div>
+                </div>
+
+                <!-- table head -->
+                <div class="items-head">
+                  <span>Name</span>
+                  <span>Tags</span>
+                  <span>Updated</span>
+                  <span>Embeddings</span>
+                  <span>Processed</span>
+                </div>
+
+                <!-- table rows -->
+                <div class="items-list">
+                  <div class="items-row active">
+                    <span class="items-row-name">IEC 61439 Low-voltage switchgear</span>
+                    <span class="items-row-tags"><span class="tag">iec</span><span class="tag">electrical</span></span>
+                    <span style="font-size:12px;">2h ago</span>
+                    <span class="items-count">7 chunks</span>
+                    <span style="font-size:12px;">2 min ago</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Installation guide v4.2</span>
+                    <span class="items-row-tags"><span class="tag">install</span></span>
+                    <span style="font-size:12px;">3h ago</span>
+                    <span class="items-count">12 chunks</span>
+                    <span style="font-size:12px;">4 min ago</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Safety data sheet — Model CBM-2</span>
+                    <span class="items-row-tags"><span class="tag">safety</span></span>
+                    <span style="font-size:12px;">1d ago</span>
+                    <span class="items-count">4 chunks</span>
+                    <span style="font-size:12px;">1h ago</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Quick reference card 2026</span>
+                    <span></span>
+                    <span style="font-size:12px;">3d ago</span>
+                    <span class="items-count">2 chunks</span>
+                    <span style="font-size:12px;">1h ago</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Firmware release notes 3.1.2</span>
+                    <span class="items-row-tags"><span class="tag">firmware</span></span>
+                    <span style="font-size:12px;">1w ago</span>
+                    <span class="items-count">3 chunks</span>
+                    <span style="font-size:12px;">yesterday</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Wiring diagram — ECO series</span>
+                    <span class="items-row-tags"><span class="tag">diagram</span></span>
+                    <span style="font-size:12px;">4d ago</span>
+                    <span class="items-count">5 chunks</span>
+                    <span style="font-size:12px;">yesterday</span>
+                  </div>
+                  <div class="items-row">
+                    <span class="items-row-name">Maintenance checklist Q3</span>
+                    <span></span>
+                    <span style="font-size:12px;">2w ago</span>
+                    <span class="items-count">2 chunks</span>
+                    <span style="font-size:12px;">2 days ago</span>
+                  </div>
+                </div>
+
+                <!-- footer -->
+                <div class="items-footer">
+                  <span>Page 1 of 6</span>
+                  <span>0 of 7 selected · 1,284 total</span>
+                </div>
+              </div>
+
+              <!-- detail panel -->
+              <div class="detail-pane">
+                <div class="detail-topbar">
+                  <div class="detail-topbar-title">IEC 61439 Low-voltage switchgear</div>
+                  <div class="detail-topbar-actions">
+                    <span class="imp-btn imp-btn-ghost" style="font-size:11px;padding:4px 8px;">Edit</span>
+                    <span style="width:28px;height:28px;display:grid;place-items:center;color:var(--tx-lo);border:1px solid var(--hair);">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                    </span>
+                  </div>
+                </div>
+
+                <div class="detail-scroll">
+
+                  <!-- status -->
+                  <div class="status-strip">
+                    <div class="status-ok-dot"></div>
+                    <div>
+                      <div class="status-label">Ready to search</div>
+                      <div class="status-hint">Indexed and available to agents.</div>
+                    </div>
+                  </div>
+
+                  <!-- pipeline mini steps -->
+                  <div class="mini-steps">
+                    <div class="mini-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Ingested</div>
+                    <span class="mini-arrow">→</span>
+                    <div class="mini-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Processed</div>
+                    <span class="mini-arrow">→</span>
+                    <div class="mini-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Embedded</div>
+                    <span class="mini-arrow">→</span>
+                    <div class="mini-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Retrievable</div>
+                  </div>
+
+                  <!-- fields section -->
+                  <div class="detail-section">
+                    <div class="detail-section-hd">Fields</div>
+                    <div class="detail-row">
+                      <span class="detail-key">Name</span>
+                      <span class="detail-val">IEC 61439 Low-voltage switchgear</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-key">Description</span>
+                      <span class="detail-val" style="font-size:12.5px;line-height:1.4;">International standard for low-voltage switchgear and controlgear assemblies. Part 1: General rules.</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-key">Tags</span>
+                      <span class="detail-val">
+                        <span class="detail-tag-row">
+                          <span class="tag">iec</span>
+                          <span class="tag">electrical</span>
+                          <span class="tag">standards</span>
+                        </span>
+                      </span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-key">External ID</span>
+                      <span class="detail-val mono">DOC-IEC-61439-1</span>
+                    </div>
+                  </div>
+
+                  <!-- embeddings section -->
+                  <div class="detail-section">
+                    <div class="detail-section-hd">Embeddings <span class="chunk-badge" style="margin-left:6px;">7 chunks</span></div>
+                    <div class="detail-row">
+                      <span class="detail-key">Created</span>
+                      <span class="detail-val">2 min ago</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-key">Updated</span>
+                      <span class="detail-val">2 min ago</span>
+                    </div>
+                  </div>
+
+                  <!-- calculated section -->
+                  <div class="detail-section">
+                    <div class="detail-section-hd">Calculated</div>
+                    <div class="detail-row">
+                      <span class="detail-key">Last processed</span>
+                      <span class="detail-val">2 min ago</span>
+                    </div>
+                  </div>
+
+                  <!-- pipeline actions -->
+                  <div class="detail-actions">
+                    <span class="imp-btn imp-btn-ghost" style="font-size:12px;">Re-process</span>
+                    <span class="imp-btn imp-btn-ghost" style="font-size:12px;">Regenerate embeddings</span>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["knowledge-item-detail"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

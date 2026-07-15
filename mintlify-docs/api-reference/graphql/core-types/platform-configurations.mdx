@@ -1,0 +1,57 @@
+---
+title: "Platform configurations"
+description: "The platform_configuration type stores named platform-wide settings as key-value pairs."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+`platform_configuration` records hold runtime-editable platform settings. Each record binds a `config_key` string to a JSON `config_value`. Administrators manage these under platform settings. See [Administration](/administration/models) for product context.
+
+```graphql
+type platform_configuration {
+  config_key: String!
+  config_value: JSON!
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `config_key` | Unique string key identifying this setting (e.g. `"default_agent_id"`, `"max_session_length"`). |
+| `config_value` | Arbitrary JSON; may be a scalar, object, or array depending on the setting. |
+| `rights_mode` | `"public"` or `"private"`; controls read access to this config entry. |
+| `created_by` | Numeric ID of the administrator who created this entry. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  platform_configurationsPagination(
+    limit: 50
+    sort: { field: "config_key", direction: ASC }
+  ) {
+    items {
+      id
+      config_key
+      config_value
+      description
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

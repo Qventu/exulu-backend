@@ -13,6 +13,13 @@
       "headers": {
         "Authorization": "Bearer ${EXULU_TOKEN}"
       }
+    },
+    "21st": {
+      "type": "http",
+      "url": "https://21st.dev/api/mcp",
+      "headers": {
+        "x-api-key": "21st_sk_a3d12d6de6b118a09868faab43c2a1e6f16f36262f3a1315bb3357494a570877"
+      }
     }
   }
 }

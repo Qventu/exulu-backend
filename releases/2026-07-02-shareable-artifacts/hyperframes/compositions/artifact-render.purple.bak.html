@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1920, height=1080" />
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 1920px; height: 1080px; overflow: hidden; background: #F5F8FB; }
+    body { font-family: "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+    :root {
+      --primary: #7033FF;
+      --bg: #FDFDFD;
+      --fg: #000000;
+      --sidebar: #F5F8FB;
+      --muted: #F5F5F5;
+      --muted-fg: #525252;
+      --border: #E6E6EE;
+      --accent: #DBE9FF;
+      --accent-fg: #2264C8;
+    }
+
+    #scene {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+    }
+
+    /* ---- Hook ---- */
+    #hook {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--sidebar);
+    }
+    .hook-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin-bottom: 18px;
+    }
+    .hook-text {
+      font-size: 100px;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      color: var(--fg);
+      text-align: center;
+      line-height: 1.0;
+    }
+
+    /* ---- Browser chrome ---- */
+    #browser {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+      opacity: 0;
+    }
+    .browser-bar {
+      height: 52px;
+      background: #F0F0F0;
+      border-bottom: 1px solid #D8D8D8;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 14px;
+    }
+    .browser-dots {
+      display: flex;
+      gap: 7px;
+    }
+    .browser-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+    }
+    .browser-dot.red { background: #FF5F57; }
+    .browser-dot.yellow { background: #FEBC2E; }
+    .browser-dot.green { background: #28C840; }
+    .browser-url {
+      flex: 1;
+      max-width: 640px;
+      height: 34px;
+      background: #fff;
+      border: 1px solid #D0D0D0;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      font-size: 14px;
+      color: #333;
+      font-family: "Inter", system-ui, sans-serif;
+    }
+    .browser-url .lock {
+      color: #555;
+      flex-shrink: 0;
+    }
+    .browser-url .url-text {
+      color: #444;
+      font-size: 14px;
+    }
+    .browser-url .url-highlight {
+      color: #000;
+      font-weight: 500;
+    }
+
+    /* ---- Rendered HTML page ---- */
+    .html-page {
+      position: absolute;
+      top: 52px;
+      left: 0; right: 0; bottom: 0;
+      background: #fff;
+      padding: 56px 80px;
+      overflow: hidden;
+    }
+
+    /* Simulated report content */
+    .report-header {
+      margin-bottom: 40px;
+    }
+    .report-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .report-logo-mark {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      background: #7033FF;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .report-logo-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: #111;
+    }
+    .report-title {
+      font-size: 52px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #111;
+      margin-bottom: 10px;
+    }
+    .report-subtitle {
+      font-size: 20px;
+      color: #666;
+    }
+
+    /* Divider */
+    .report-divider {
+      height: 1px;
+      background: #E8E8E8;
+      margin: 36px 0;
+    }
+
+    /* Metrics row */
+    .metrics-row {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 48px;
+    }
+    .metric-card {
+      flex: 1;
+      padding: 24px;
+      border: 1px solid #EBEBEB;
+      border-radius: 10px;
+      background: #FAFAFA;
+    }
+    .metric-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 8px;
+    }
+    .metric-value {
+      font-size: 38px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: #111;
+    }
+    .metric-value.green { color: #16A34A; }
+    .metric-delta {
+      font-size: 14px;
+      color: #16A34A;
+      font-weight: 500;
+      margin-top: 4px;
+    }
+
+    /* Chart */
+    .chart-section {
+      display: flex;
+      gap: 60px;
+      align-items: flex-start;
+    }
+    .chart-wrap {
+      flex: 1;
+    }
+    .chart-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #111;
+      margin-bottom: 28px;
+    }
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 20px;
+      height: 200px;
+      padding-bottom: 32px;
+      border-bottom: 2px solid #E8E8E8;
+      position: relative;
+    }
+    .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      height: 100%;
+      justify-content: flex-end;
+    }
+    .bar {
+      width: 100%;
+      border-radius: 6px 6px 0 0;
+      background: #DBE9FF;
+      position: relative;
+      min-height: 4px;
+    }
+    .bar.highlight { background: #7033FF; }
+    .bar-label {
+      font-size: 13px;
+      color: #666;
+      font-weight: 500;
+    }
+    .bar-val {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 13px;
+      font-weight: 600;
+      color: #333;
+      white-space: nowrap;
+    }
+    .bar.highlight .bar-val { color: #7033FF; }
+
+    /* ---- "No login needed" badge ---- */
+    #no-login-badge {
+      position: absolute;
+      bottom: 48px;
+      left: 50%;
+      background: rgba(0,0,0,.78);
+      color: #fff;
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      padding: 14px 36px;
+      border-radius: 50px;
+      white-space: nowrap;
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="artifact-render" data-start="0" data-duration="7" data-width="1920" data-height="1080">
+
+    <div id="scene" class="clip" data-start="0" data-duration="7" data-track-index="0">
+
+      <!-- Hook -->
+      <div id="hook">
+        <div class="hook-label">HTML artifacts</div>
+        <div class="hook-text">Render inline</div>
+      </div>
+
+      <!-- Browser with rendered HTML -->
+      <div id="browser">
+        <!-- Browser chrome bar -->
+        <div class="browser-bar">
+          <div class="browser-dots">
+            <div class="browser-dot red"></div>
+            <div class="browser-dot yellow"></div>
+            <div class="browser-dot green"></div>
+          </div>
+          <div class="browser-url">
+            <svg class="lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span class="url-text"><span class="url-highlight">exulu.app</span>/artifacts/report</span>
+          </div>
+        </div>
+
+        <!-- Simulated rendered HTML report -->
+        <div class="html-page" id="html-page">
+          <div class="report-header">
+            <div class="report-logo">
+              <div class="report-logo-mark">A</div>
+              <div class="report-logo-name">Acme Corp</div>
+            </div>
+            <div class="report-title">Q4 Financial Report</div>
+            <div class="report-subtitle">Fiscal Year 2025 · Prepared by AI Assistant</div>
+          </div>
+
+          <div class="report-divider"></div>
+
+          <div class="metrics-row">
+            <div class="metric-card">
+              <div class="metric-label">Revenue</div>
+              <div class="metric-value">$4.2M</div>
+              <div class="metric-delta">↑ 23% vs Q3</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Gross Margin</div>
+              <div class="metric-value green">68%</div>
+              <div class="metric-delta">↑ 5pp improvement</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">New Customers</div>
+              <div class="metric-value">184</div>
+              <div class="metric-delta">↑ 41% YoY</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">NRR</div>
+              <div class="metric-value green">118%</div>
+              <div class="metric-delta">Best quarter yet</div>
+            </div>
+          </div>
+
+          <div class="chart-section">
+            <div class="chart-wrap">
+              <div class="chart-title">Quarterly Revenue</div>
+              <div class="bar-chart">
+                <div class="bar-col">
+                  <div class="bar" style="height:52%">
+                    <div class="bar-val">$2.1M</div>
+                  </div>
+                  <div class="bar-label">Q1</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar" style="height:68%">
+                    <div class="bar-val">$2.8M</div>
+                  </div>
+                  <div class="bar-label">Q2</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar" style="height:82%">
+                    <div class="bar-val">$3.4M</div>
+                  </div>
+                  <div class="bar-label">Q3</div>
+                </div>
+                <div class="bar-col">
+                  <div class="bar highlight" style="height:100%">
+                    <div class="bar-val">$4.2M</div>
+                  </div>
+                  <div class="bar-label">Q4</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div><!-- /html-page -->
+
+        <!-- No-login badge -->
+        <div id="no-login-badge">No login needed. Just the link.</div>
+      </div><!-- /browser -->
+
+    </div><!-- /scene -->
+  </div><!-- /root -->
+
+  <script>
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // Initial states
+    tl.set("#browser", { opacity: 0 }, 0);
+    tl.set("#html-page", { opacity: 0 }, 0);
+    tl.set("#no-login-badge", { opacity: 0 }, 0);
+
+    // ---- Hook entrance (t=0) ----
+    tl.from(".hook-label", { opacity: 0, y: 10, duration: 0.35, ease: "power3.out" }, 0.1);
+    tl.from(".hook-text", { opacity: 0, y: 22, duration: 0.5, ease: "power3.out" }, 0.25);
+
+    // ---- Hook fades out, browser fades in (t=1.7–2.2) ----
+    tl.to("#hook", { opacity: 0, duration: 0.4, ease: "power2.in" }, 1.7);
+    tl.to("#browser", { opacity: 1, duration: 0.45, ease: "power2.out" }, 2.0);
+
+    // ---- URL bar entrance (t=2.1) ----
+    tl.from(".browser-url", { opacity: 0, scale: 0.97, duration: 0.35, ease: "power3.out" }, 2.15);
+
+    // ---- HTML page reveals (t=2.5) ----
+    tl.to("#html-page", { opacity: 1, duration: 0.5, ease: "power2.out" }, 2.5);
+
+    // Report elements stagger in
+    tl.from(".report-header", { opacity: 0, y: 14, duration: 0.4, ease: "power3.out" }, 2.65);
+    tl.from(".metric-card", { opacity: 0, y: 10, duration: 0.35, ease: "power3.out", stagger: 0.07 }, 2.9);
+    tl.from(".chart-section", { opacity: 0, y: 10, duration: 0.4, ease: "power3.out" }, 3.25);
+
+    // Bars grow up (from height 0 to final height)
+    tl.from(".bar", { scaleY: 0, transformOrigin: "bottom center", duration: 0.5, ease: "power3.out", stagger: 0.08 }, 3.4);
+
+    // ---- Hold (600ms) at t=4.0 ----
+
+    // ---- "No login needed" badge (t=4.6) ----
+    tl.fromTo("#no-login-badge", { opacity: 0, xPercent: -50, y: 12 }, { opacity: 1, xPercent: -50, y: 0, duration: 0.4, ease: "power3.out" }, 4.6);
+
+    // ---- Payoff holds until end (loop rest: t=6.2–7.0 still) ----
+
+    window.__timelines["artifact-render"] = tl;
+  </script>
+</body>
+</html>

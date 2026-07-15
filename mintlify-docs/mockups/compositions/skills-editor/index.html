@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — skills editor</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* ── editor layout ── */
+      #root .editor-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+      /* ── file sidebar ── */
+      #root .file-sidebar { width: 220px; flex: none; border-right: 1px solid var(--hair); background: var(--surface); display: flex; flex-direction: column; }
+      #root .file-sidebar-hd { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; border-bottom: 1px solid var(--hair); }
+      #root .file-sidebar-label { font-size: 11px; font-weight: 500; color: var(--tx-lo); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+      #root .file-sidebar-actions { display: flex; gap: 4px; }
+      #root .icon-btn { width: 24px; height: 24px; display: grid; place-items: center; color: var(--tx-lo); cursor: default; }
+      #root .icon-btn svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .file-tree { flex: 1; overflow: hidden; padding: 6px 0; }
+      #root .tree-item { display: flex; align-items: center; gap: 6px; padding: 5px 14px; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .tree-item.active { background: var(--chip-soft); color: var(--tx-hi); font-weight: 500; }
+      #root .tree-item.folder { color: var(--tx-lo); font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .tree-item svg { width: 13px; height: 13px; stroke-width: 1.5; flex: none; color: var(--tx-faint); }
+      #root .tree-item.active svg { color: var(--accent); }
+      #root .file-sidebar-footer { border-top: 1px solid var(--hair); padding: 10px 14px; font-size: 11px; color: var(--tx-faint); font-family: var(--font-mono); }
+
+      /* ── version strip (right side of sidebar) ── */
+      #root .version-strip { width: 200px; flex: none; border-left: 1px solid var(--hair); background: var(--bg); display: flex; flex-direction: column; }
+      #root .version-strip-hd { padding: 12px 14px 8px; border-bottom: 1px solid var(--hair); font-size: 11px; font-weight: 500; color: var(--tx-lo); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+      #root .version-list { flex: 1; overflow: hidden; padding: 6px 0; }
+      #root .version-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 14px; font-size: 12.5px; color: var(--tx-mid); }
+      #root .version-item.current { background: var(--chip-soft); }
+      #root .version-label { font-family: var(--font-mono); font-size: 12px; color: var(--tx-hi); }
+      #root .version-meta { font-size: 11px; color: var(--tx-faint); }
+      #root .version-badge { display: inline-flex; align-items: center; padding: 2px 7px; background: var(--accent); color: #fff; font-size: 10px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+      #root .version-compare-row { display: flex; gap: 4px; padding: 6px 14px 0; font-size: 11px; color: var(--tx-faint); font-family: var(--font-mono); cursor: default; }
+
+      /* ── main editor pane ── */
+      #root .editor-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+      #root .editor-pane-hd { border-bottom: 1px solid var(--hair); padding: 10px 20px; display: flex; align-items: center; gap: 10px; background: var(--surface); }
+      #root .file-tab { display: flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 13px; font-family: var(--font-mono); color: var(--tx-lo); border: 1px solid transparent; }
+      #root .file-tab.active { color: var(--tx-hi); border-color: var(--hair); background: var(--bg); }
+      #root .file-tab .unsaved-dot { width: 6px; height: 6px; background: var(--accent); display: inline-block; }
+      #root .editor-scroll { flex: 1; overflow: hidden; padding: 24px 32px; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; color: var(--tx-mid); }
+      #root .editor-scroll .ln { color: var(--tx-faint); display: inline-block; width: 28px; text-align: right; margin-right: 16px; user-select: none; font-size: 12px; }
+      #root .code-hd { color: var(--accent); }
+      #root .code-bold { color: var(--tx-hi); font-weight: 600; }
+      #root .code-comment { color: var(--tx-faint); }
+      #root .code-kw { color: #6a8a6a; }
+      #root .editor-save-bar { background: var(--ink); color: #fff; padding: 9px 32px; display: flex; align-items: center; gap: 10px; font-size: 12px; font-family: var(--font-mono); }
+      #root .editor-save-bar-msg { flex: 1; color: rgba(255,255,255,0.5); }
+      #root .btn-save { background: var(--accent); color: #fff; padding: 6px 16px; font-size: 11.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; cursor: default; }
+      #root .btn-cancel { background: transparent; color: rgba(255,255,255,0.6); border: 1px solid rgba(255,255,255,0.2); padding: 6px 16px; font-size: 11.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; cursor: default; }
+
+      /* ── topbar extras ── */
+      #root .topbar-breadcrumb { font-size: 13px; color: var(--tx-lo); }
+      #root .topbar-breadcrumb-sep { color: var(--tx-faint); margin: 0 6px; }
+      #root .topbar-breadcrumb-cur { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .topbar-right { display: flex; align-items: center; gap: 8px; }
+      #root .version-chip { display: flex; align-items: center; gap: 6px; border: 1px solid var(--hair); padding: 4px 10px; font-size: 12px; font-family: var(--font-mono); color: var(--tx-mid); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="skills-editor"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home
+            </div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>Knowledge
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h8"/><path d="M8 12h4"/><path d="M8 18h2"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>Prompts
+            </div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>Skills
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>Routines
+            </div>
+          </aside>
+
+          <!-- main area -->
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span>
+                <span class="topbar-breadcrumb">Skills</span>
+                <span class="topbar-breadcrumb-sep">/</span>
+                <span class="topbar-breadcrumb-cur">weekly-report</span>
+              </span>
+              <span class="topbar-right">
+                <span class="version-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                  Version 4
+                </span>
+                <span class="imp-btn imp-btn-ghost">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>
+                  History
+                </span>
+                <span class="imp-btn imp-btn-ghost">Save version</span>
+                <span class="imp-btn imp-btn-ghost" style="opacity:0.4">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:13px;height:13px"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                </span>
+              </span>
+            </div>
+
+            <!-- editor body -->
+            <div class="editor-body">
+              <!-- file tree sidebar -->
+              <div class="file-sidebar">
+                <div class="file-sidebar-hd">
+                  <span class="file-sidebar-label">Files <span style="color:var(--tx-faint);font-size:11px">6</span></span>
+                  <span class="file-sidebar-actions">
+                    <span class="icon-btn" title="New file">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
+                    </span>
+                    <span class="icon-btn" title="New folder">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>
+                    </span>
+                  </span>
+                </div>
+                <div class="file-tree">
+                  <div class="tree-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    SKILL.md
+                  </div>
+                  <div class="tree-item" style="padding-left:14px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    generate-report.md
+                  </div>
+                  <div class="tree-item" style="padding-left:14px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    output-format.md
+                  </div>
+                  <div class="tree-item folder" style="padding-left:14px;margin-top:6px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                    examples/
+                  </div>
+                  <div class="tree-item" style="padding-left:28px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    q1-summary.md
+                  </div>
+                  <div class="tree-item" style="padding-left:28px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    q2-summary.md
+                  </div>
+                </div>
+                <div class="file-sidebar-footer">v4 · 6 files</div>
+              </div>
+
+              <!-- code editor -->
+              <div class="editor-pane">
+                <div class="editor-pane-hd">
+                  <div class="file-tab active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                    SKILL.md
+                    <span class="unsaved-dot"></span>
+                  </div>
+                  <div class="file-tab">generate-report.md</div>
+                </div>
+                <div class="editor-scroll">
+                  <div><span class="ln">1</span><span class="code-hd"># weekly-report</span></div>
+                  <div><span class="ln">2</span></div>
+                  <div><span class="ln">3</span><span class="code-bold">## Description</span></div>
+                  <div><span class="ln">4</span>Generates a structured weekly performance report from the last 7 days</div>
+                  <div><span class="ln">5</span>of activity data. Formats output as an executive-readable Markdown</div>
+                  <div><span class="ln">6</span>document with a headline summary, key metrics table, and action items.</div>
+                  <div><span class="ln">7</span></div>
+                  <div><span class="ln">8</span><span class="code-bold">## When to use</span></div>
+                  <div><span class="ln">9</span>Use this skill when asked to summarize the week, produce a weekly</div>
+                  <div><span class="ln">10</span>digest, or compile a performance overview.</div>
+                  <div><span class="ln">11</span></div>
+                  <div><span class="ln">12</span><span class="code-bold">## Output format</span></div>
+                  <div><span class="ln">13</span>See <span style="color:var(--accent)">output-format.md</span> for the required structure. Always include:</div>
+                  <div><span class="ln">14</span><span class="code-kw">- </span>Executive summary (3–5 sentences)</div>
+                  <div><span class="ln">15</span><span class="code-kw">- </span>Metrics table (impressions, conversions, cost)</div>
+                  <div><span class="ln">16</span><span class="code-kw">- </span>Top 3 wins</div>
+                  <div><span class="ln">17</span><span class="code-kw">- </span>Top 3 risks or blockers</div>
+                  <div><span class="ln">18</span><span class="code-kw">- </span>Recommended actions</div>
+                  <div><span class="ln">19</span></div>
+                  <div><span class="ln">20</span><span class="code-bold">## Examples</span></div>
+                  <div><span class="ln">21</span>Reference examples in <span style="color:var(--accent)">examples/</span> for tone and level of detail.</div>
+                  <div><span class="ln">22</span></div>
+                  <div><span class="ln">23</span><span class="code-comment"><!-- version note: tightened output-format ref in v4 --></span></div>
+                </div>
+                <div class="editor-save-bar">
+                  <span class="editor-save-bar-msg">Unsaved changes</span>
+                  <span class="btn-cancel">Discard</span>
+                  <span class="btn-save">Save</span>
+                </div>
+              </div>
+
+              <!-- version history panel -->
+              <div class="version-strip">
+                <div class="version-strip-hd">Version history</div>
+                <div class="version-list">
+                  <div class="version-item current">
+                    <span>
+                      <div class="version-label">v4</div>
+                      <div class="version-meta">Today, 09:14</div>
+                    </span>
+                    <span class="version-badge">Current</span>
+                  </div>
+                  <div class="version-item">
+                    <span>
+                      <div class="version-label">v3</div>
+                      <div class="version-meta">Yesterday, 16:22</div>
+                    </span>
+                  </div>
+                  <div class="version-item">
+                    <span>
+                      <div class="version-label">v2</div>
+                      <div class="version-meta" style="color:var(--tx-faint)">Tightened safety prompt</div>
+                      <div class="version-meta">Mon, 10:05</div>
+                    </span>
+                  </div>
+                  <div class="version-item">
+                    <span>
+                      <div class="version-label">v1</div>
+                      <div class="version-meta">Jul 8, 14:30</div>
+                    </span>
+                  </div>
+                </div>
+                <div class="version-compare-row">Compare versions →</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["skills-editor"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

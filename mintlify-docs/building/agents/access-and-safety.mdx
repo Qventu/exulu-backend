@@ -1,0 +1,58 @@
+---
+title: "Access"
+description: "Share agents with users, roles, and teams using RBAC sharing modes."
+icon: "shield"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+## Access control
+
+An agent's **Access** section in the [workbench](/building/agents/workbench) determines which users can open the agent in Chat. The RBAC control presents four mutually exclusive sharing modes.
+
+### Sharing modes
+
+| Mode | Who can chat with the agent |
+| --- | --- |
+| **Private** | Only you — the agent is hidden from everyone else's Chat picker. Good for agents under active development. |
+| **Users** | Specific users you select from the directory. The panel shows a user search; add as many as you need. A summary line reads "Shared with `{n}` users." |
+| **Roles** | All users who hold a specific role. The panel shows a role picker. A summary reads "Shared with `{n}` roles." |
+| **Public** | Every signed-in user in the organization sees the agent. |
+
+<Info>
+Team-scoped sharing ("Teams" mode) is available when your deployment has the RBAC teams feature enabled. Until that flag is active, the mode list shows only Private, Users, Roles, and Public.
+</Info>
+
+### Changing access
+
+<Steps>
+  <Step title="Open the Access section">
+    In the workbench, scroll to or click **Access** in the section navigation.
+  </Step>
+  <Step title="Select a mode">
+    Choose Private, Users, Roles, or Public.
+  </Step>
+  <Step title="Add users or roles">
+    If you chose Users, search and add each user. If you chose Roles, pick one or more roles. Public and Private require no further selection.
+  </Step>
+  <Step title="Save">
+    Click **Save** in the workbench header. The new sharing rules take effect immediately.
+  </Step>
+</Steps>
+
+### How access interacts with admin settings
+
+Administrators can also apply organization-wide defaults and override access controls from the Administration area. An agent set to Public still respects any global budget or model restrictions the administrator has configured.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Back to workbench" icon="settings" href="/building/agents/workbench">
+    Review all eight workbench sections.
+  </Card>
+  <Card title="Knowledge overview" icon="brain" href="/building/knowledge/overview">
+    Connect knowledge contexts to this agent.
+  </Card>
+</Columns>

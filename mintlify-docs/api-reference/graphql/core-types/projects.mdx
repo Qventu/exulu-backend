@@ -1,0 +1,63 @@
+---
+title: "Projects"
+description: "The project type represents a shared workspace that groups agents, knowledge, and sessions for a team."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+A `project` is a scoped collaboration space. Users work within projects to keep conversations, knowledge items, and agent configurations organised together. See [Projects overview](/user-guide/projects/overview) for product context.
+
+```graphql
+type project {
+  name: String!
+  description: String
+  image: String
+  project_items: JSON
+  custom_instructions: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `project_items` | JSON array of knowledge items (context references, files) attached to this project. |
+| `custom_instructions` | Markdown text injected as additional context into every session opened in this project. |
+| `rights_mode` | `"public"` or `"private"`; private projects are scoped via `RBAC`. |
+| `created_by` | Numeric ID of the user who created this project. |
+| `budget` | JSON budget envelope for cost limits scoped to this project. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  projectsPagination(
+    limit: 10
+    filters: [{ rights_mode: { eq: "public" } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      created_by
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

@@ -1,0 +1,47 @@
+---
+title: "Prompts in chat"
+description: "Insert a prompt template from the library, fill in its variables, and use composer shortcuts."
+icon: "clipboard-type"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Prompt templates are reusable instructions stored in your organization's prompt library. Instead of retyping the same request, insert a template into the message box and adjust it before sending. (Creating templates happens in the Building section — see [Prompts](/building/prompts).)
+
+## Insert a prompt template
+
+<Steps>
+  <Step title="Open the template picker">
+    Click **＋** in the composer and choose **Insert prompt** ("Use a template from the library"). The **Prompt templates** dialog opens.
+  </Step>
+  <Step title="Find a template">
+    Type into **Search prompt templates...** or browse by category in the left rail — categories come from the templates' tags, and **All templates** lists everything. Templates you use often sort to the top, with a "used N×" counter.
+  </Step>
+  <Step title="Check the preview">
+    Select a template to see its full text under **Preview**. Placeholders like `{{customer_name}}` are highlighted — you'll fill those in next.
+  </Step>
+  <Step title="Use it">
+    Click **Use template**. The template text is inserted into the message box, where you can still edit it before sending.
+  </Step>
+</Steps>
+
+## Fill in variables
+
+If a template contains `{{variable}}` placeholders, the dialog lists them under **Variables** with one input per placeholder. The preview updates live as you type. **Use template** stays disabled until every field is filled — the dialog reminds you: "Fill in all variables to continue".
+
+## Copy instead of inserting
+
+Click **Copy** in the template preview to put the filled-in text on your clipboard — useful when you want to use a template outside of chat.
+
+## Composer shortcuts
+
+Two characters trigger autocomplete menus while you type:
+
+- <code>/</code> — suggests the agent's **Skills** and **Tools** by name. Picking one inserts a highlighted mention, a precise way to ask the agent to use a specific capability. Capabilities you have switched off are greyed out and marked "off".
+- <code>@</code> — suggests this conversation's **Session files**, so you can point the agent at an exact file. See [Attachments and session files](/user-guide/chat/attachments-and-session-files).
+
+<Tip>
+Templates can also come to you: **Use prompt** on a template in the **Prompts** library opens chat with that template pre-inserted.
+</Tip>

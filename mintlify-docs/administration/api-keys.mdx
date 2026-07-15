@@ -1,0 +1,132 @@
+---
+title: "API keys and personal token"
+description: "Org-level API keys at /keys and your personal bearer token at /token — two separate credentials for different use cases."
+icon: "key"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="api (write) for org keys · api (read) for personal token" />
+
+IMP has two types of programmatic credentials, each on its own page. This article covers both.
+
+---
+
+## Org API keys (`/keys`)
+
+<RightsCallout right="api (write)" />
+
+Org API keys are long-lived service credentials for the organization. Use them to call the IMP API from scripts, integrations, or services — not for personal interactive use.
+
+### Scope
+
+Every key has one of two scopes:
+
+| Scope | What it allows |
+| --- | --- |
+| **Admin** | Full access. Currently acts as a super admin regardless of the selected role. A notice in the UI states: "Admin keys currently act as a super admin — the selected role does not restrict them yet." |
+| **Agents** | Read-only access to the agents on the key's allowlist. No access to other platform resources. |
+
+### Creating a key
+
+Click **Create key** in the page header. The create dialog asks for:
+
+| Field | What to enter |
+| --- | --- |
+| **Name** | A label for the key (e.g., "Production", "Development"). |
+| **Scope** | Admin or Agents. |
+| **Role** | (Admin scope) The role to associate with this key. Note: roles do not currently restrict admin keys. |
+| **Allowed agents** | (Agents scope) A list of specific agents this key can read. At least one is required. |
+
+After creation, the dialog shows **Your new API key** — a one-time reveal. Copy and store the key securely. You cannot view the full key value again after closing this dialog.
+
+<Warning>
+The full key value is shown only once at creation. If you lose it, delete the key and create a new one.
+</Warning>
+
+### Attribution
+
+Each key has optional attribution for cost tracking:
+
+- **Team** — attribute requests made with this key to a specific team.
+- **Project** — attribute requests to a specific project.
+
+Edit attribution from the key detail panel at any time.
+
+### Key detail
+
+Click any key row to open the detail panel:
+
+- **Identity** — key ID, the masked suffix (e.g., `sk_.../abcd`) that appears in logs, and the created date.
+- **Scope** — Admin or Agents, with the agent allowlist if applicable.
+- **Role** — the assigned role (for admin keys).
+- **Attribution** — team and project assignment.
+- **Activity** — last-used date, or "Never" if the key has not been used.
+- **Danger zone** — **Delete key…** with a confirmation that the key's requests stop working immediately.
+
+### Changing a key's role
+
+Open the key detail panel, click the role selector under **Role**, and pick a new role. A confirmation dialog summarizes the change.
+
+### Deleting a key
+
+In the key detail panel, click **Delete key…**. The confirmation states: "`{name}` will be deleted permanently. Requests using this key stop working immediately. This action cannot be undone."
+
+<Note>
+Looking for your personal token? See the [Personal token](#personal-token-token) section below, or navigate to `/token` in the sidebar.
+</Note>
+
+---
+
+## Personal token (`/token`) {#personal-token-token}
+
+<RightsCallout right="api (read)" />
+
+Your personal token is a short-lived JWT that identifies you. It is valid for the duration of your current session and expires when your session ends. Unlike org API keys, the personal token cannot be stored and reused across sessions.
+
+### Viewing the token
+
+Navigate to **Personal token** in the sidebar (under the Develop group). If you are signed in, your current bearer token is displayed. The panel shows:
+
+- **Token** — the full JWT value, with a **Copy token** button.
+- **Expires in** — how long until the token expires (displayed in hours or minutes as the expiry approaches, or "Expired — sign in again" if it has lapsed).
+- A security note: "This token acts as you. Keep it private."
+
+### Usage example
+
+The page includes a **Usage example (cURL)** code block:
+
+```bash
+curl https://your-imp-host/api/... \
+  -H "Authorization: Bearer <your-token>"
+```
+
+Use **Copy example** to copy the full snippet with your current token substituted in.
+
+### When the token expires
+
+If the token is expired, the page shows "Expired — sign in again" and a **Sign in again** button. After signing back in, the page shows a fresh token.
+
+### Difference from org API keys
+
+| | Org API key | Personal token |
+| --- | --- | --- |
+| **Lifetime** | Long-lived (until deleted) | Session-scoped (expires with your session) |
+| **Identity** | Acts as the org (or a role) | Acts as you personally |
+| **Storage** | Store securely for reuse | Do not store; re-fetch from this page per session |
+| **Use case** | Service integrations, scripts | Personal API exploration, one-off scripts |
+
+<Note>
+Need an org-level key? See the [Org API keys](#org-api-keys-keys) section above. See the [Developers](/developers/setup) section and [API reference](/api-reference/graphql/introduction) for authentication details and the full API surface.
+</Note>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Variables" icon="variable" href="/administration/variables">
+    Store secrets your integrations need alongside API keys.
+  </Card>
+  <Card title="Users & access" icon="users" href="/administration/users-access/overview">
+    Manage who has api (write) access to create org API keys.
+  </Card>
+</Columns>

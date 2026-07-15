@@ -1,0 +1,60 @@
+      <section class="feature" id="oauth-tools">
+        <h2>OAuth 2.0 for tools</h2>
+        <p class="one-liner">Connect your tools to Google, Slack, HubSpot — any OAuth provider — with one config property.</p>
+
+        <div class="slice">
+          <video src="./shorts/oauth-tools.mp4" autoplay loop muted playsinline></video>
+          <p>Give any tool access to Google, Slack, HubSpot — any OAuth provider — by adding one <code>oauth</code> block to its config: endpoints, client credentials, scopes. When someone runs the tool without a connected account, the agent replies with a connect link; once they authorize, the tool runs with a valid access token in <code>inputs.oauth.accessToken</code>.</p>
+          <p>Tokens are scoped per tool and per user, stored encrypted, and refreshed automatically. PKCE is on by default, and one platform <code>/oauth/callback</code> route completes the flow for every tool — no routes or token storage for you to build.</p>
+
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>new ExuluTool({
+  id: "hubspot_crm",
+  name: "HubSpot CRM",
+  type: "function",
+  oauth: {
+    authorizationUrl: "https://app.hubspot.com/oauth/authorize",
+    tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+    clientId: process.env.HUBSPOT_CLIENT_ID,
+    clientSecret: process.env.HUBSPOT_CLIENT_SECRET,
+    scopes: ["crm.objects.contacts.read"],
+  },
+  execute: async (inputs) => {
+    const token = inputs.oauth.accessToken; // always valid here
+  },
+});</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="image-widget">
+        <h2>In-chat image generation</h2>
+        <p class="one-liner">Generate, refine and pick images — without leaving the chat.</p>
+
+        <div class="slice">
+          <video src="./shorts/image-widget.mp4" autoplay loop muted playsinline></video>
+          <p>When the assistant calls the <code>image_generation</code> tool, a widget opens right in the conversation — no more guessing at a final image. Edit the prompt, switch models, set size, quality and count, attach reference images to edit existing pictures, and apply saved styles.</p>
+          <p>Generate as many variations as you like, then pick the ones that work and send them back with <em>Use these</em>. The agent only ever sees your selection, never the rejects.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="personal-prompt">
+        <h2>Personal system prompt</h2>
+        <p class="one-liner">Tell Exulu about yourself once — every conversation remembers.</p>
+
+        <div class="slice">
+          <video src="./shorts/personal-prompt.mp4" autoplay loop muted playsinline></video>
+          <p>Set a free-form personal prompt on the new <a href="#">Settings</a> page — your role, the languages you work in, how long you like answers — and every chat you start includes it, whichever agent you're talking to.</p>
+          <p>Shared agents stay shared while your conversations stay yours. Plain text, no length limit, editable any time.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="teams">
+        <h2>Teams</h2>
+        <p class="one-liner">Group users into teams — then share agents, projects and data team-wide.</p>
+
+        <div class="slice">
+          <video src="./shorts/teams.mp4" autoplay loop muted playsinline></video>
+          <p>Assign every user to a team — Engineering, Marketing, HR, whatever fits — straight from the users table. Super admins manage teams from the new <em>Manage teams</em> page.</p>
+          <p>Any resource can now be <em>Shared with Teams</em>, granting read or write access to whole teams the way roles work today. Teams carry no permissions of their own: roles keep governing abilities, teams define who works together and where usage is attributed.</p>
+        </div>
+      </section>

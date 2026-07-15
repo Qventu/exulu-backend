@@ -1,0 +1,169 @@
+---
+title: "Quickstart"
+description: "Deploy IMP with Docker Compose using the example repository."
+icon: "play"
+---
+
+This guide walks you through a production-ready deployment using the [exulu-example](https://github.com/Qventu/exulu-example) repository. Complete the [Requirements](/self-hosting/requirements) checklist before you begin.
+
+<Steps>
+
+### Clone the example repository
+
+```bash
+git clone git@github.com:Qventu/exulu-example.git
+cd exulu-example
+```
+
+### Create your environment file
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in the critical variables listed below. The file ships with comments that explain each one.
+
+**Authentication and security**
+
+| Variable | What to set |
+|---|---|
+| `NEXTAUTH_SECRET` | A random string (at least 32 chars). Generate one with `openssl rand -base64 32`. |
+| `LITELLM_MASTER_KEY` | The master key the backend and workers use to authenticate against the LiteLLM proxy. Choose a strong random value. |
+
+<Note>
+`INTERNAL_SECRET` is optional and is not present in the `.env.example` template. Set it only when you have internal service-to-service calls that use the `internal` request header; IMP does not require it for standard deployments.
+</Note>
+
+**npm registry access**
+
+<Note>
+`@exulu/backend` is published to the public npm registry — no token is required. The `NPM_TOKEN` build argument in the example repo's Dockerfiles is legacy plumbing and may be left empty or unset.
+</Note>
+
+**Postgres**
+
+| Variable | What to set |
+|---|---|
+| `POSTGRES_DB_HOST` | Hostname or IP of your Postgres server (e.g., `exulu-pgvector` when using the services compose file). |
+| `POSTGRES_DB_PORT` | `5432` |
+| `POSTGRES_DB_USER` | `postgres` |
+| `POSTGRES_DB_PASSWORD` | Your password |
+| `POSTGRES_DB_NAME` | Database name for IMP (e.g., `exulu`) |
+| `LITELLM_DATABASE_URL` | Connection string for the **separate** LiteLLM database — must be a different database than `POSTGRES_DB_NAME`. |
+
+**S3-compatible storage**
+
+| Variable | What to set |
+|---|---|
+| `COMPANION_S3_REGION` | Your bucket region (e.g., `eu-central-1`) |
+| `COMPANION_S3_KEY` | Access key ID |
+| `COMPANION_S3_SECRET` | Secret access key |
+| `COMPANION_S3_BUCKET` | Bucket name (must already exist) |
+| `COMPANION_S3_ENDPOINT` | Endpoint URL (set to `http://exulu-minio:9000` when using the MinIO container) |
+
+**Frontend and backend URLs**
+
+| Variable | What to set |
+|---|---|
+| `FRONTEND` | The public URL users open in their browser (e.g., `https://imp.example.com`) |
+| `BACKEND` | The public URL of the backend API — used client-side (e.g., `https://api.imp.example.com`) |
+| `NEXT_BACKEND` | The backend URL reachable from the frontend container's network. If the frontend container and backend container are on the same Docker network, use the container name: `http://exulu-backend:9001`. |
+| `NEXTAUTH_URL` | Same as `FRONTEND`. |
+
+<Note>
+For the LiteLLM proxy to work you also need to configure `config.litellm.yaml` with at least one model entry before starting the backend. Copy `config.litellm.yaml` from the repo and edit the `model_list` section to add your providers.
+</Note>
+
+### Start the infrastructure services
+
+Launch Postgres (with pgvector), Redis, and MinIO:
+
+```bash
+docker compose -f docker-compose.services.yml up -d
+```
+
+This starts three containers: `exulu-pgvector`, `exulu-redis`, and `exulu-minio`. Wait for the health checks to pass before proceeding.
+
+<Note>
+The services compose file mounts `./postgres/schema.sql` into the pgvector container's init directory. This file is referenced in the compose definition but may not exist in all repo checkouts. If Postgres fails to start, check whether `postgres/schema.sql` is present and create it as an empty file if needed (`mkdir -p postgres && touch postgres/schema.sql`).
+</Note>
+
+### Build and start the backend
+
+The backend has no published Docker image. Build it locally from your `exulu-example` checkout so your own configuration is baked in. `@exulu/backend` installs from the public npm registry — no token is needed.
+
+```bash
+docker compose -f docker-compose.backend.yml up -d --build
+```
+
+This builds the image and starts the `exulu-backend` container on ports `9001` and `4000`.
+
+<Warning>
+**Capture the first-boot log output before it scrolls away.** On the very first startup, `initdb` runs automatically and prints a one-time admin password and API key to stdout. You cannot retrieve the API key again after this point.
+
+```bash
+docker logs exulu-backend 2>&1 | grep -A 10 "admin"
+```
+
+The default admin credentials are `admin@exulu.com` / `admin`. **Change the password immediately after first login.** The API key printed to the log is the only copy — store it in your secrets manager now.
+
+`initdb` runs on **every** backend boot and logs a freshly generated key each time, but only the key from the **very first startup** is ever persisted. Keys logged on subsequent startups are never stored and will not work.
+</Warning>
+
+The `security_opt` flags (`seccomp:unconfined`, `apparmor:unconfined`) in the compose file are required for the skill sandbox (`bwrap`) to create user namespaces. Without them, sandboxed skill execution will fail with permission errors.
+
+### Start the worker (optional)
+
+Workers handle background jobs: knowledge ingestion, embeddings, evals, and routines. Skip this step if you do not need these features.
+
+```bash
+docker compose -f docker-compose.worker.yml up -d --build
+```
+
+The worker container starts on port `9002`. It connects to the LiteLLM proxy on port `4000` (the backend must be running first). Give the worker container at least 8 GB of memory — knowledge processing tasks can hold large document representations in memory. The Docker entrypoint does **not** set `NODE_OPTIONS` by default; set it yourself via the compose `environment` section:
+
+```yaml
+environment:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+```
+
+<Warning>
+`docker-compose.worker.yml` does not include an `env_file` entry (unlike the backend compose file). Outside Dokploy — where environment variables are injected by the platform — the worker will start without database and Redis credentials and crash on first use. Add the following to `docker-compose.worker.yml` under the worker service, or inject the variables another way:
+
+```yaml
+env_file:
+  - .env
+```
+</Warning>
+
+### Start the frontend
+
+```bash
+docker compose -f docker-compose.frontend.yml up -d
+```
+
+This pulls `ghcr.io/qventu/exulu-frontend:latest` and starts the container on port `3000`. No build step is needed.
+
+### Verify the deployment
+
+Check that all containers are running:
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+You should see `exulu-pgvector`, `exulu-redis`, `exulu-minio`, `exulu-backend`, `exulu-worker` (if started), and `exulu-frontend` all in `Up` status.
+
+Open your `FRONTEND` URL in a browser and log in with `admin@exulu.com` and the password from the first-boot log. Navigate to **Administration → Models** to verify that the LiteLLM proxy is reachable and your configured models appear.
+
+</Steps>
+
+## Production network note
+
+The backend and worker compose files attach to `dokploy-network`, an external Docker network used by [Dokploy](https://dokploy.com/). If you are not using Dokploy, create a shared network and update the `networks` section in both compose files to match your setup before running the commands above.
+
+## Next steps
+
+See the [service guides](/self-hosting/services/litellm) for customizing `config.litellm.yaml`, [SMTP and auth](/self-hosting/services/smtp-and-auth), and [observability](/self-hosting/services/observability), and the [environment variable reference](/self-hosting/environment-variables) for the full configuration surface.
+
+See [LiteLLM service](/self-hosting/services/litellm) for adding and managing model providers through the proxy.

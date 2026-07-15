@@ -1,0 +1,28 @@
+<article class="chapter" id="r-gdpr-export-delete" data-release="2026-05-29-spring-platform-release" aria-labelledby="r-gdpr-export-delete-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">02</span>
+      <span class="pill">May 29, 2026</span>
+      <span class="ch-name">The Spring Drop</span>
+    </div>
+    <h1 class="ch-title" id="r-gdpr-export-delete-h">GDPR export &amp; delete</h1>
+    <p class="ch-lede">Article 15 and Article 17, in two HTTP calls.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <figure class="demo"><video data-vid="2026-05-29-spring-platform-release__05-gdpr-export-delete.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Two super-admin endpoints cover data subject rights end to end. <code>GET /users/:id/data-export</code> streams a ZIP with the user's account data (auth secrets stripped), every session with its messages, feedback, prompt favorites, and tracking events — plus a README referencing DSGVO Art. 15.</p>
+          <p><code>DELETE /users/:id</code> erases that same footprint in one atomic database operation and sweeps the user's stored files from storage. Super-admins can't delete their own account, and deletion is final — no soft-delete, no recovery window.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Export — DSGVO Art. 15</div>
+<pre><code>curl -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42/data-export \
+     -o user-42-export.zip</code></pre>
+
+            <div class="snippet-label">Delete — DSGVO Art. 17</div>
+<pre><code>curl -X DELETE \
+     -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42</code></pre>
+          </div>
+        </div></section>
+</article>

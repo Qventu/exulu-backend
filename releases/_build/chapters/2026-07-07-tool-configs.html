@@ -1,0 +1,30 @@
+<article class="chapter" id="r-tool-configs" data-release="2026-07-07-tool-configs" aria-labelledby="r-tool-configs-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">09</span>
+      <span class="pill">July 7, 2026</span>
+      <span class="ch-name">Tool Configs</span>
+    </div>
+    <h1 class="ch-title" id="r-tool-configs-h">Your project, inside <em>your coding tools</em>.</h1>
+    <p class="ch-lede">Every Exulu project now hands you ready-to-use configs for Cowork, Claude Code, and continue.dev — plus a one-click project ID copy. Connect a tool in seconds, not a doc-hunting session.</p>
+  </header>
+  <section class="feature" id="r-tool-configs--tool-configs"><h2>One-click tool configs</h2>
+        <p class="one-liner">Point Cowork, Claude Code, and continue.dev at your project's models — no hand-copied URLs, no pasted tokens.</p>
+
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-tool-configs__tool-configs.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Open the ⋯ menu on any project to download ready-made configs for Cowork, Claude Code, and continue.dev — or grab the project ID with <strong>Copy ID</strong>. Each file arrives with your project's gateway URL and access token already filled in: drop it into the tool and you're connected.</p>
+          <p>The Claude Code <code>settings.json</code> defaults to the best available Opus model and lists every model your project can use. Because each tool routes through your project's gateway, budgets, rate limits, and cost reporting keep working no matter which editor the traffic comes from.</p>
+
+          <div class="snippet-label">The generated settings.json (Claude Code)</div>
+          <pre><code>{
+  "model": "claude-opus-4-8",
+  "availableModels": ["claude-opus-4-8", "claude-sonnet-4-6", …],
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://&lt;your-backend&gt;/litellm/&lt;project-id&gt;",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": 1
+  },
+  "apiKeyHelper": "echo &lt;your-token&gt;"
+}</code></pre>
+        </div></section>
+</article>

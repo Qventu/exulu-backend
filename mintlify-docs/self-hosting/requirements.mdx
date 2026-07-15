@@ -1,0 +1,84 @@
+---
+title: "Requirements"
+description: "Runtime, infrastructure, and license prerequisites for self-hosting IMP."
+icon: "list-checks"
+---
+
+This page lists every hard requirement before you start the quickstart. Skipping any of these will cause the deployment to fail at a specific step.
+
+## Node.js
+
+The backend requires Node.js **exactly `22.18.0`**. The `@exulu/backend` package includes a `preinstall` script that checks `process.version` and exits with a non-zero code if the version does not match:
+
+```bash
+node -e "if (process.version !== 'v22.18.0') { process.exit(1); }"
+```
+
+Use [nvm](https://github.com/nvm-sh/nvm) to pin the version. The example repo ships an `.nvmrc`. The Docker images (`Dockerfile.backend`, `Dockerfile.worker`) use `node:22.18.0-slim` explicitly.
+
+## Container base image
+
+Both the backend and worker Dockerfiles use `node:22.18.0-slim` (Debian-based). **Alpine Linux is not supported.** The ONNX runtime binaries that the knowledge-processing stack depends on are not published for Alpine. Switching to an Alpine base image will cause runtime errors during Python environment setup.
+
+## Postgres with pgvector
+
+IMP requires Postgres 13 or later with the `pgvector` extension. The example compose file uses the official `pgvector/pgvector:pg17` image, which ships with the extension pre-installed. On managed Postgres (AWS RDS, Azure, Google Cloud SQL), enable the `pgvector` extension yourself before first boot.
+
+## A second Postgres database for LiteLLM
+
+The LiteLLM proxy needs its own Postgres database for key management and spend tracking. Set `LITELLM_DATABASE_URL` to a connection string pointing to this separate database. It can be on the same Postgres server but must be a different database name.
+
+<Warning>
+Never set `LITELLM_DATABASE_URL` to the same database as the IMP application. The proxy runs schema migrations on startup and will attempt to drop tables that belong to the IMP schema.
+</Warning>
+
+## Redis 7
+
+Redis is required when you run workers. Without Redis, BullMQ cannot enqueue or dequeue background jobs (knowledge ingestion, evals, routines). The example compose file uses `redis:7`.
+
+If you deploy without workers (backend only), Redis is optional.
+
+## S3-compatible storage
+
+File uploads require an S3-compatible bucket. Supported targets include MinIO (local) and AWS S3 (production). The bucket must be created before you start the backend — IMP does not create buckets automatically.
+
+Supply the bucket details via the `COMPANION_S3_*` environment variables.
+
+## Version pins
+
+The following component versions are tested and pinned. Do not upgrade these without testing — the pins exist because upstream releases have broken compatibility.
+
+| Component | Pinned version | Source |
+|---|---|---|
+| Node.js | `22.18.0` (exact) | `backend/package.json` engines field |
+| `litellm[proxy]` | `1.85.1` | `backend/ee/python/requirements.txt` |
+| `prisma` (Python) | `0.15.0` | `backend/ee/python/requirements.txt` |
+| `torch` / `torchaudio` | `2.5.1` | `backend/ee/python/requirements.txt` |
+| pgvector image | `pgvector/pgvector:pg17` | `docker-compose.services.yml` |
+| MinIO image | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` | `docker-compose.services.yml` |
+| Redis image | `redis:7` | `docker-compose.services.yml` |
+
+### Notes on the Python pins
+
+- **`litellm[proxy]==1.85.1`** — the tested version for the embedded proxy. LiteLLM's API surface changes frequently; upgrade deliberately.
+- **`prisma==0.15.0`** — not included in `litellm[proxy]` at this version; pinned separately so the LiteLLM database integration works.
+- **`torch==2.5.1`** — pinned because `pyannote.audio` (used for speaker diarization in transcription) imports `torchaudio.AudioMetaData`, which was removed in torch 2.6+.
+- **`transformers>=4.48,<5`** — the 5.x line removed a kwarg that `pyannote.audio` 3.x still passes to `hf_hub_download()`.
+
+## GPU (optional — Whisper transcription only)
+
+The Whisper transcription server uses WhisperX with CUDA acceleration. Required only if you use the meeting transcription feature.
+
+- CUDA `12.4`
+- NVIDIA driver `≥ 550`
+- At least 8 GB VRAM recommended for the default model size
+
+## Hardware guidance
+
+| Service | Minimum | Notes |
+|---|---|---|
+| Backend | 2 vCPU, 2 GB RAM | LiteLLM proxy runs in the same process |
+| Worker | 2 vCPU, **8 GB RAM** | `--max-old-space-size=8192` is set in the start script; below 8 GB the Node.js heap will OOM on large documents |
+| Postgres | 2 vCPU, 4 GB RAM | Scale with the number of knowledge chunks |
+| Redis | 1 vCPU, 1 GB RAM | Queue depth is typically low |
+| MinIO | 1 vCPU, 1 GB RAM + storage | Size storage to your file upload volume |

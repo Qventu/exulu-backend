@@ -1,0 +1,94 @@
+---
+title: "ExuluAuthentication"
+description: "Unified authentication helper for API keys, session tokens, and internal service-to-service calls."
+---
+
+`ExuluAuthentication` wraps IMP's authentication logic in a single `authenticate` call. It resolves the caller's identity from whichever credential is present — an API key, a NextAuth session token, or an internal shared secret — and returns a normalized result object that includes the authenticated `User` on success or an error code and message on failure.
+
+Use `ExuluAuthentication` in custom Express routes or middleware that need to enforce the same authentication rules as the built-in IMP API.
+
+## API surface
+
+### ExuluAuthentication.authenticate
+
+```typescript
+ExuluAuthentication.authenticate(opts: {
+  apikey?: string;
+  authtoken?: any;
+  internalkey?: string;
+  db: Knex;
+}): Promise<{
+  error: boolean;
+  message?: string;
+  code?: number;
+  user?: User;
+}>
+```
+
+Exactly one of `apikey`, `authtoken`, or `internalkey` should be provided. The function evaluates them in this order: `internalkey` → `authtoken` → `apikey`. When none is supplied it returns `error: true` with code `401`.
+
+<ParamField path="apikey" type="string">
+  An IMP API key in the format `<value>/<name>`. The key prefix is compared against bcrypt-hashed entries in the `users` table where `type = "api"`.
+</ParamField>
+
+<ParamField path="authtoken" type="any">
+  A decoded NextAuth session object with at least an `email` field. The platform's middleware decodes the JWE Bearer token before calling `authenticate`; pass the decoded payload here.
+</ParamField>
+
+<ParamField path="internalkey" type="string">
+  A plaintext string compared against `process.env.INTERNAL_SECRET`. Intended for service-to-service calls (e.g. between the IMP server and the Uppy file upload service). Returns a synthetic internal user when matched.
+</ParamField>
+
+<ParamField path="db" type="Knex" required>
+  A Knex database connection. Obtain one from `postgresClient()`.
+</ParamField>
+
+<ResponseField name="error" type="boolean">
+  `true` when authentication failed.
+</ResponseField>
+
+<ResponseField name="message" type="string">
+  Human-readable reason for the failure (present when `error` is `true`).
+</ResponseField>
+
+<ResponseField name="code" type="number">
+  HTTP status code. Always present: `200` on success, `401` on all authentication failures.
+</ResponseField>
+
+<ResponseField name="user" type="User">
+  The authenticated user record, including hydrated `role`, `team`, and `project` relations (present when `error` is `false`).
+</ResponseField>
+
+## Example
+
+```typescript
+import { ExuluAuthentication, postgresClient } from "@exulu/backend";
+
+// In an Express route handler:
+app.get("/my-route", async (req, res) => {
+  const { db } = await postgresClient();
+  const apikey = req.headers["x-api-key"] as string | undefined;
+
+  const result = await ExuluAuthentication.authenticate({ apikey, db });
+
+  if (result.error) {
+    return res.status(result.code ?? 401).json({ message: result.message });
+  }
+
+  // result.user is the authenticated User
+  res.json({ hello: result.user?.email });
+});
+```
+
+## Authentication paths
+
+| Credential | Mechanism | User type |
+|---|---|---|
+| `internalkey` | Plaintext equality against `INTERNAL_SECRET` | Synthetic internal user |
+| `authtoken` | Email lookup in `users` table | Platform user (session) |
+| `apikey` | Bcrypt comparison against hashed keys in `users` (`type = "api"`) | API user |
+
+## Related
+
+- [Administration / API keys](/administration/api-keys): create and revoke API keys.
+- [`postgresClient`](/developers/reference/functions-and-types): obtain the `db` connection.

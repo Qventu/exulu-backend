@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agentic retrieval — vocabulary step</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 22px; font-size: 100px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+      #hook .sub { font-size: 36px; color: #525252; font-weight: 500; }
+
+      #app { display: grid; place-items: center; }
+      #sheet {
+        position: relative; width: 1120px; height: 940px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        padding: 40px 46px 32px; display: flex; flex-direction: column; overflow: hidden;
+      }
+      #sheet-title { font-size: 31px; font-weight: 600; }
+      #sheet-desc { margin-top: 8px; font-size: 21px; color: #525252; }
+      #step-pills { display: flex; gap: 8px; margin-top: 18px; padding-bottom: 24px; border-bottom: 1px solid #e7e7ee; }
+      .step-pill {
+        padding: 8px 17px; border-radius: 999px; font-size: 18.5px; font-weight: 500;
+        background: #f0f0f3; color: #8a8a93; white-space: nowrap; letter-spacing: -0.01em;
+      }
+      .step-pill.done { color: #1a1a1a; }
+      .step-pill.active { background: #7033ff; color: #fff; }
+      #sheet-body { flex: 1; padding-top: 24px; }
+
+      .block-title { font-size: 23px; font-weight: 600; }
+      .block-hint { margin-top: 4px; font-size: 18.5px; color: #525252; }
+
+      #glossary-rows { margin-top: 14px; display: grid; gap: 12px; }
+      .g-row { display: flex; gap: 12px; align-items: center; }
+      .g-box {
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fff;
+        padding: 12px 16px; font-size: 20px;
+      }
+      .g-term { width: 220px; font-weight: 600; }
+      .g-arrow { color: #8a8a93; font-size: 22px; }
+      .g-meaning { flex: 1; color: #1a1a1a; }
+
+      #ident-block { margin-top: 30px; }
+      .ident-card {
+        margin-top: 14px; border: 1px solid #e7e7ee; border-radius: 10px; background: #fff;
+        padding: 20px 24px; display: flex; align-items: center; gap: 18px;
+      }
+      .ident-name { font-size: 21px; font-weight: 600; width: 220px; }
+      .chip-row { display: flex; gap: 9px; flex: 1; }
+      .chip {
+        display: inline-flex; align-items: center; padding: 8px 16px; border-radius: 999px;
+        background: #edf1f5; font-size: 18.5px; font-weight: 500; color: #1a1a1a;
+        font-family: "JetBrains Mono", monospace; letter-spacing: 0;
+      }
+      .strategy {
+        padding: 8px 16px; border-radius: 999px; font-size: 17.5px; font-weight: 600; letter-spacing: 0;
+      }
+      .strategy.fuzzy { background: #e2ebff; color: #1e69dc; }
+      .strategy.exact { background: #ede6ff; color: #7033ff; }
+
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; font-family: "JetBrains Mono", monospace; letter-spacing: 0; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="vocabulary" data-start="0" data-width="1920" data-height="1080" data-duration="9.8">
+      <div id="bg" class="clip" data-start="0" data-duration="9.8" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Vocabulary</span>
+          <h1>Teach it your <em>domain language</em></h1>
+          <div class="sub">Glossary, product names, codes.</div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="2.0" data-duration="7.8" data-track-index="3" data-layout-allow-occlusion>
+        <div id="sheet">
+          <div id="sheet-title">Configure knowledge search</div>
+          <div id="sheet-desc">Give the assistant your domain language: abbreviations, product names, and how your documents are written.</div>
+          <div id="step-pills">
+            <span class="step-pill done">Sources</span>
+            <span class="step-pill done">Routing</span>
+            <span class="step-pill active">Vocabulary</span>
+            <span class="step-pill">Memory</span>
+            <span class="step-pill">Behavior</span>
+            <span class="step-pill">Review</span>
+          </div>
+          <div id="sheet-body">
+            <div id="glossary-block">
+              <div class="block-title">Glossary</div>
+              <div class="block-hint">Abbreviations and terms your documents use.</div>
+              <div id="glossary-rows">
+                <div class="g-row" id="g-row1">
+                  <span class="g-box g-term">FST</span>
+                  <span class="g-arrow">→</span>
+                  <span class="g-box g-meaning">Field bus controller</span>
+                </div>
+                <div class="g-row" id="g-row2">
+                  <span class="g-box g-term">E-40</span>
+                  <span class="g-arrow">→</span>
+                  <span class="g-box g-meaning">Door sensor fault code</span>
+                </div>
+              </div>
+            </div>
+
+            <div id="ident-block">
+              <div class="block-title">Names &amp; codes</div>
+              <div class="block-hint">Identifiers users mention that map to specific files — the assistant pins matching files when it spots one.</div>
+              <div class="ident-card" id="ident-1">
+                <span class="ident-name">Product names</span>
+                <span class="chip-row">
+                  <span class="chip">FST</span>
+                  <span class="chip">ECO</span>
+                  <span class="chip">CBM-2</span>
+                </span>
+                <span class="strategy fuzzy">Names &amp; titles (approximate)</span>
+              </div>
+              <div class="ident-card" id="ident-2">
+                <span class="ident-name">Standards</span>
+                <span class="chip-row">
+                  <span class="chip">DIN 8100</span>
+                  <span class="chip">EN 81-20</span>
+                </span>
+                <span class="strategy exact">Codes &amp; standards (exact)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.2" data-duration="2.6" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="b">Users say </span><span class="a">FST</span><span class="b"> — it finds the right manual.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.95);
+
+      tl.from("#sheet", { y: 30, opacity: 0, duration: 0.5, ease: "power2.out" }, 2.05);
+
+      /* staged reveal: glossary rows, then identifier sets */
+      tl.from("#g-row1", { y: 14, opacity: 0, duration: 0.35, ease: "power2.out" }, 3.0);
+      tl.from("#g-row2", { y: 14, opacity: 0, duration: 0.35, ease: "power2.out" }, 3.35);
+      tl.from("#ident-1", { y: 16, opacity: 0, duration: 0.4, ease: "power2.out" }, 4.3);
+      tl.from("#ident-2", { y: 16, opacity: 0, duration: 0.4, ease: "power2.out" }, 5.1);
+
+      /* breath 5.5 → 7.25 */
+
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 7.25);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 7.35);
+
+      window.__timelines["vocabulary"] = tl;
+    </script>
+  </body>
+</html>

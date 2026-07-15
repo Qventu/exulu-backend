@@ -1,0 +1,222 @@
+---
+title: "Environment variables"
+description: "Complete reference for every environment variable IMP reads, grouped by subsystem, with required status, component, and example values."
+icon: "settings"
+---
+
+This page is the authoritative reference for IMP environment variables. Variables are verified against the backend source (`src/` and `ee/`) and the frontend source. Variables in the example `.env` that do not match code-level names are called out explicitly.
+
+**Required?** means the backend throws or the feature silently fails at startup if the variable is absent. Optional means it is feature-gated or has a safe default.
+
+---
+
+## Core
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `NODE_ENV` | No | Server, Worker | `production` enables compiled dist; any other value enables dev mode. | `production` |
+| `PORT` | No | Server, Worker | HTTP listen port. Defaults to `9001` on the backend image, `9002` on the worker image. | `9001` |
+| `BACKEND` | Yes | Server, Frontend | Public URL of the backend API — used in OAuth callbacks and Recall webhooks. Must be reachable from the browser and from Recall's servers. | `https://api.imp.example.com` |
+| `NEXT_BACKEND` | Yes | Frontend | Backend URL reachable from within the frontend container's network. Use the container name when both run on the same Docker network. | `http://exulu-backend:9001` |
+| `NEXTAUTH_URL` | Yes | Frontend | Canonical public URL for NextAuth. Set to the same value as `FRONTEND`. | `https://imp.example.com` |
+| `NEXTAUTH_URL_INTERNAL` | No | Frontend | Backend URL for server-side NextAuth calls. Falls back to `NEXTAUTH_URL` if absent. | `http://exulu-backend:9001` |
+| `NEXTAUTH_SECRET` | Yes | Server, Frontend | **Must be identical in both.** Used to sign session JWTs (frontend) and verify them + encrypt stored secrets (backend). Generate with `openssl rand -base64 32`. | `3n/afQmVBq…` |
+| `AUTH_MODE` | No | Server, Frontend | Login mode. `password` (default) or `otp` (requires SMTP). Set in both environments with the same value. | `password` |
+| `INTERNAL_SECRET` | No | Server | Shared secret for internal service-to-service calls using the `internal` request header. Not required for standard deployments. | `some-internal-secret` |
+| `NPM_TOKEN` | No (legacy) | Server, Worker | Legacy Docker build argument retained in the example repo. `@exulu/backend` is published to the public npm registry — no token is required to install it. The build arg may be left empty or removed. | `npm_ku7I…` |
+| `EXULU_ENTERPRISE_LICENSE` | Yes (EE) | Server | Enterprise Edition license key. Required to unlock queue-backed workers and EE features. Must start with `EXULU_EE_`. | `EXULU_EE_t@G0+…` |
+
+### Consumer configuration
+
+`FRONTEND` is a deployment-convention variable used by consumer projects and templates (e.g. `exulu-example`) to supply the public frontend URL for invite and notification links. It is **not** read by `@exulu/backend` itself (`process.env.FRONTEND` does not appear in the backend source). Set it in whichever layer of your deployment config constructs those links.
+
+| Variable | Purpose | Example |
+|---|---|---|
+| `FRONTEND` | Public URL of the frontend. Used by consumer templates for invite/notification links. | `https://imp.example.com` |
+
+---
+
+## Postgres
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `POSTGRES_DB_HOST` | Yes | Server, Worker | Hostname or IP of the Postgres server. Use `exulu-pgvector` when both run on the same Docker network. | `exulu-pgvector` |
+| `POSTGRES_DB_PORT` | No | Server, Worker | Postgres port. Default: `5432`. | `5432` |
+| `POSTGRES_DB_USER` | Yes | Server, Worker | Postgres user. | `postgres` |
+| `POSTGRES_DB_PASSWORD` | Yes | Server, Worker | Postgres password. | `changeme` |
+| `POSTGRES_DB_NAME` | No | Server, Worker | Application database name. Created automatically if absent. Default: `exulu`. | `exulu` |
+| `POSTGRES_DB_SSL` | No | Server, Worker | Set to `true` to enable SSL (with `rejectUnauthorized: false`). | `false` |
+
+See [Postgres service](/self-hosting/services/postgres) for connection pool settings and `max_connections` requirements.
+
+---
+
+## Redis
+
+Redis is required for background workers (embeddings, evals, routines). If `REDIS_HOST` and `REDIS_PORT` are absent, the server starts without worker support.
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `REDIS_HOST` | Yes (workers) | Server, Worker | Redis hostname. | `exulu-redis` |
+| `REDIS_PORT` | Yes (workers) | Server, Worker | Redis port. Default: `6379`. | `6379` |
+| `REDIS_USER` | No | Server, Worker | Redis username. Default: `""` (empty; Redis 6+ treats an empty username as the `default` ACL user). | `default` |
+| `REDIS_PASSWORD` | No | Server, Worker | Redis password. Omit for unauthenticated Redis. | `changeme` |
+
+---
+
+## S3-compatible storage
+
+IMP uses an S3-compatible bucket for file uploads (via the Uppy companion proxy). MinIO is the recommended self-hosted option.
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `COMPANION_S3_REGION` | Yes | Server | Bucket region. For MinIO, set this to any value (e.g., `eu-central-1`). | `eu-central-1` |
+| `COMPANION_S3_KEY` | Yes | Server | S3 access key ID. | `minioadmin` |
+| `COMPANION_S3_SECRET` | Yes | Server | S3 secret access key. | `U4Hq9Xm9HqVV6EB` |
+| `COMPANION_S3_BUCKET` | Yes | Server | Bucket name. Must exist before the backend starts. | `exulu` |
+| `COMPANION_S3_ENDPOINT` | Yes | Server | Full endpoint URL. For MinIO inside Docker: `http://exulu-minio:9000`. | `http://exulu-minio:9000` |
+| `COMPANION_S3_PREFIX` | No | Server | Key prefix applied to all uploaded file paths. Useful when the bucket is shared with other services. Read via consumer config and Uppy upload paths. | `imp/` |
+
+<Note>
+The frontend also reads `COMPANION_S3_ENDPOINT` to construct upload URLs for the browser. Set it in both environments.
+</Note>
+
+See [S3 storage service](/self-hosting/services/s3-storage) for bucket creation and CORS configuration.
+
+---
+
+## LiteLLM
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `EXULU_USE_LITELLM` | No | Server | Set to `true` to start the LiteLLM supervisor. Required for model routing, embeddings, and budgets. | `true` |
+| `LITELLM_MASTER_KEY` | Yes (if enabled) | Server, Worker | Authentication key for the LiteLLM proxy. Backend throws at startup if `EXULU_USE_LITELLM=true` and this is absent. | `sk-01e8bf6d…` |
+| `LITELLM_DATABASE_URL` | No | Server | Postgres connection string for LiteLLM's **dedicated** database. Must be a different database from `POSTGRES_DB_NAME`. See [LiteLLM service](/self-hosting/services/litellm). | `postgres://postgres:pw@host:5432/litellm` |
+| `LITELLM_CONFIG_PATH` | No | Server | Path to `config.litellm.yaml`, relative to the working directory. Default: `./config.litellm.yaml`. | `./config.litellm.yaml` |
+| `LITELLM_HOST` | No | Server | Host the LiteLLM child process binds to. Default: `127.0.0.1`. Set to `0.0.0.0` to expose the proxy to worker containers on a separate host. | `127.0.0.1` |
+| `LITELLM_PORT` | No | Server | Port the LiteLLM child process listens on. Default: `4000`. | `4000` |
+
+---
+
+## Model providers
+
+These variables appear in `config.litellm.yaml` under `litellm_params` using LiteLLM's `os.environ/` interpolation syntax. Set them in the backend container environment so LiteLLM can read them at startup.
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `VERTEX_CREDENTIALS_PATH` | No | Server | Path to a Google Vertex AI service account JSON file, mounted into the container. | `./vertex-auth.json` |
+| `COHERE_API_KEY` | No | Server | Cohere API key, used when a reranker model references `os.environ/COHERE_API_KEY`. | `sk-cohere-…` |
+
+Add other provider API keys (OpenAI, Anthropic, Azure, etc.) the same way — expose them in the container environment and reference them from `config.litellm.yaml` with `os.environ/VARIABLE_NAME`.
+
+---
+
+## Transcription
+
+Transcription requires a running Whisper server. See [Whisper service](/self-hosting/services/whisper).
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `TRANSCRIPTION_SERVER` | No | Server | HTTP URL of the Whisper transcription server. Feature is off if absent. | `http://whisper-host:9876` |
+| `TRANSCRIPTION_MODEL` | No | Server | LiteLLM model name to use for LiteLLM-backed transcription (alternative to `TRANSCRIPTION_SERVER`). Requires `EXULU_USE_LITELLM=true`. | `whisper-1` |
+| `WHISPER_HOST` | No | Server | Whisper server host for the embedded supervisor (when running Whisper as a child process). Default: `127.0.0.1`. | `127.0.0.1` |
+| `WHISPER_PORT` | No | Server | Whisper server port. Default: `9876`. | `9876` |
+| `HF_AUTH_TOKEN` | No | Whisper container | HuggingFace access token. Enables speaker diarization (pyannote). Set in the Whisper container environment, not the backend. | `hf_abc123…` |
+| `TTS_MODEL` | No | Server | LiteLLM model name for text-to-speech. Requires `EXULU_USE_LITELLM=true`. | `tts-1` |
+| `TTS_VOICE` | No | Server | Voice ID for TTS. Required if `TTS_MODEL` is set. | `alloy` |
+
+---
+
+## Meetings (Recall)
+
+Meeting recording via Recall.ai is optional.
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `RECALL_API_KEY` | No | Server | Recall.ai API key. Feature is off if absent. | `token_abc…` |
+| `RECALL_REGION` | No | Server | Recall.ai region (`us`, `eu`, `ap`). | `eu` |
+| `RECALL_WORKSPACE_VERIFICATION_SECRET` | No | Server | Webhook verification secret from the Recall dashboard. | `whsec_…` |
+| `TOTAL_MAX_RECORDINGS_DURATION_PER_MONTH` | No | Server | Monthly cap on total recording minutes across all users (as a string). No limit if absent. | `1500` |
+
+---
+
+## SMTP
+
+There are two separate SMTP variable namespaces. See [SMTP and authentication](/self-hosting/services/smtp-and-auth) for the full explanation.
+
+**Backend variables** — used by the agent email tool (`SMTP_*`):
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `SMTP_HOST` | No | Server | SMTP server hostname. | `smtp.example.com` |
+| `SMTP_PORT` | No | Server | SMTP port. Default: `587`. | `587` |
+| `SMTP_SECURE` | No | Server | Set to `true` for implicit TLS (port 465). | `false` |
+| `SMTP_USER` | No | Server | SMTP username. | `user@example.com` |
+| `SMTP_PASSWORD` | No | Server | SMTP password. | `changeme` |
+| `SMTP_FROM` | No | Server | Default sender address for agent-sent emails. | `noreply@example.com` |
+
+<Warning>
+The shared `.env.example` in the example repo lists `SMTP_USERNAME`, `SMTP_SENDER_EMAIL`, and `SMTP_TLS`. These names do **not** match what the backend code reads. Use `SMTP_USER`, `SMTP_FROM`, and `SMTP_SECURE` in the backend container environment.
+</Warning>
+
+**Frontend variables** — used by NextAuth for OTP sign-in emails (`EMAIL_SERVER_*`):
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `EMAIL_SERVER_HOST` | No | Frontend | SMTP host for OTP code emails. | `smtp.example.com` |
+| `EMAIL_SERVER_PORT` | No | Frontend | SMTP port for OTP code emails. | `587` |
+| `EMAIL_SERVER_USER` | No | Frontend | SMTP username for OTP code emails. | `user@example.com` |
+| `EMAIL_SERVER_PASSWORD` | No | Frontend | SMTP password for OTP code emails. | `changeme` |
+| `EMAIL_FROM` | No | Frontend | Sender address for OTP code emails. | `noreply@example.com` |
+
+---
+
+## Telemetry
+
+OpenTelemetry export to SigNoz is optional. All three must be set for telemetry to initialise. See [Observability](/self-hosting/services/observability).
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `SIGNOZ_ACCESS_TOKEN` | No | Server | SigNoz API key. | `signoz_abc…` |
+| `SIGNOZ_TRACES_URL` | No | Server | OTLP HTTP traces endpoint. | `https://ingest.eu.signoz.cloud:443/v1/traces` |
+| `SIGNOZ_LOGS_URL` | No | Server | OTLP HTTP logs endpoint. | `https://ingest.eu.signoz.cloud:443/v1/logs` |
+
+---
+
+## Sandbox
+
+| Variable | Required? | Component | Purpose | Example |
+|---|---|---|---|---|
+| `EXULU_REQUIRE_SANDBOX` | No | Server, Worker | Set to `1` to throw at the first sandboxed skill invocation if the sandbox is unavailable, instead of falling back to degraded mode. Useful for production hardening. | `1` |
+
+---
+
+## Frontend-only variables
+
+The following variables are read exclusively by the frontend container. They do not appear in the backend source.
+
+| Variable | Required? | Purpose | Example |
+|---|---|---|---|
+| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (enables "Sign in with Google"). | `1234.apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret. | `GOCSPX-…` |
+| `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of email domains allowed to sign in. No restriction if absent. | `example.com,contractor.example.com` |
+| `FEEDBACK_ENABLED` | No | Enables the in-app feedback widget. | `true` |
+| `FEEDBACK_BACKEND` | No | Backend URL for the feedback service (separate IMP instance). | `https://feedback.imp.example.com` |
+| `FEEDBACK_TOKEN` | No | API token for the feedback service. | `tok_…` |
+
+---
+
+## Debug and internal variables
+
+These variables are read by the source but are not intended for operator configuration in normal deployments.
+
+| Variable | Component | Notes |
+|---|---|---|
+| `DEBUG` | Server | Stripped by the backend before passing the environment to the LiteLLM child process. Do not set `DEBUG` to a Node.js debug namespace pattern in the backend container — it will crash LiteLLM. |
+| `EXULU_VS_TIMING` | Server | Enables vector-search timing logs. Dev/debugging use only. |
+| `EXULU_ENTITY_EXTRACTION_MODEL` | Server | Overrides the entity extraction model. Advanced use; consult the operator guide for your deployment. |
+| `LITELLM_API_KEY` | LiteLLM UI | Read by the bundled LiteLLM admin UI JavaScript. Populated automatically by the supervisor; do not set manually. |
+| `LITELLM_UI_PATH` | Server | Internal: path where the LiteLLM UI is served. Set automatically. |
+| `SERVER_ROOT_PATH` | Server | Root path prefix when the backend is served under a subpath. Not required for standard deployments. |
+| `PUBLIC_API_BASE_URL` | Server | Alias for `BACKEND`, used in Recall callback URL resolution when `BACKEND` is absent. Prefer `BACKEND`. |
+| `NEXT_PUBLIC_AGENT_VISUALIZATION` | Server | Feature flag for agent visualization UI. Set to `true` to enable. |

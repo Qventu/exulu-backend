@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Context management — the honest context meter</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 22px; font-size: 96px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+      #hook .sub { font-size: 36px; color: #525252; font-weight: 500; }
+
+      /* ------------------------- app surface (2x scale) ----------------------- */
+      /* Real chat UI authored at 1x Tailwind pixel values inside a 960x540
+         viewport, scaled 2x to fill the canvas. */
+      #app-viewport {
+        position: absolute; top: 0; left: 0; width: 960px; height: 540px;
+        transform: scale(2); transform-origin: top left;
+        background: #fdfdfd;
+      }
+
+      /* header: flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 */
+      #chat-header {
+        height: 48px; display: flex; align-items: center; gap: 8px;
+        padding: 0 16px; border-bottom: 1px solid #e7e7ee; background: #fdfdfd;
+      }
+      .icon-btn {
+        width: 32px; height: 32px; border-radius: 6px; flex: none;
+        display: grid; place-items: center; color: #0a0a0a;
+      }
+      svg.lucide { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      #avatar {
+        width: 24px; height: 24px; border-radius: 50%; flex: none;
+        background: radial-gradient(circle at 30% 30%, #9a6bff, #7033ff);
+      }
+      .agent-name { font-size: 14px; line-height: 20px; font-weight: 500; flex: none; }
+      .slash { color: #525252; flex: none; }
+      .session-title { font-size: 14px; line-height: 20px; padding: 0 4px; border-radius: 6px; flex: none; }
+      /* CHIP recipe: items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground */
+      .chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        border: 1px solid #e7e7ee; border-radius: 999px;
+        padding: 2px 10px; font-size: 12px; line-height: 16px; color: #525252;
+        background: rgba(226, 235, 255, 0); flex: none;
+        font-family: inherit; letter-spacing: inherit;
+      }
+      #header-spacer { flex: 1; }
+
+      /* ------------------------------ popover --------------------------------- */
+      #chip-anchor { position: relative; flex: none; display: inline-flex; }
+      /* PopoverContent align="end" w-72 p-0: rounded-md border bg-popover shadow-md */
+      #popover {
+        position: absolute; top: calc(100% + 4px); right: 0; width: 288px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        z-index: 10; opacity: 0; visibility: hidden;
+        letter-spacing: -0.01em;
+      }
+      .pop-section { position: relative; padding: 12px; }
+      .pop-section + .pop-section { border-top: 1px solid #e7e7ee; }
+      .pop-label { font-size: 12px; line-height: 16px; font-weight: 500; color: #525252; }
+      .hl {
+        position: absolute; background: rgba(112, 51, 255, 0.07); opacity: 0;
+        pointer-events: none;
+      }
+      #hl-1 { inset: 2px; border-radius: 5px; }
+      #hl-2 { inset: -3px -6px; border-radius: 4px; }
+      #ctx-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        font-size: 12px; line-height: 16px; margin-top: 4px;
+      }
+      #ctx-row .pct { color: #0a0a0a; }
+      #ctx-row .frac { font-family: "JetBrains Mono", monospace; color: #525252; letter-spacing: 0; }
+      /* shadcn Progress: h-2 rounded-full overflow-hidden, track bg-muted, indicator bg-primary */
+      #progress {
+        margin-top: 8px; height: 8px; border-radius: 999px; overflow: hidden; background: #f5f5f5;
+      }
+      #progress-indicator {
+        width: 100%; height: 100%; background: #7033ff; transform: translateX(-62.3%);
+      }
+      .usage-row {
+        display: flex; align-items: center; justify-content: space-between;
+        font-size: 12px; line-height: 16px; margin-top: 8px;
+      }
+      .usage-row .k { color: #525252; }
+      .usage-row .v { color: #0a0a0a; }
+      #explainer { margin-top: 8px; padding-top: 4px; font-size: 12px; line-height: 16px; color: #525252; }
+
+      /* ------------------------------ chat thread ------------------------------ */
+      #thread { padding: 28px 170px 0; }
+      .msg-user {
+        margin-left: auto; max-width: 420px; width: fit-content;
+        background: #edf1f5; border-radius: 12px; padding: 10px 14px;
+        font-size: 14px; line-height: 20px; color: #52525b;
+      }
+      .msg-assistant {
+        margin-top: 20px; max-width: 560px;
+        font-size: 14px; line-height: 22px; color: #52525b;
+      }
+      .msg-assistant + .msg-user { margin-top: 20px; }
+
+      /* ------------------------------ cursor ---------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+      #click-ripple {
+        position: absolute; left: -26px; top: -22px; width: 72px; height: 72px;
+        border-radius: 50%; background: rgba(112, 51, 255, 0.25); transform: scale(0);
+      }
+
+      /* ------------------------------ caption --------------------------------- */
+      #caption { display: grid; place-items: end center; z-index: 25; }
+      #caption-card {
+        margin-bottom: 72px; padding: 20px 38px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 999px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1), 0 16px 40px -16px rgba(0, 0, 0, 0.18);
+        font-size: 31px; font-weight: 600; color: #1a1a1a; opacity: 0;
+      }
+      #caption-card .a { color: #7033ff; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; display: flex; align-items: center; gap: 12px;
+        padding: 26px 44px; background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 34px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+      #payoff-card .a { color: #7033ff; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.6"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.6" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Context management</span>
+          <h1>Meet the <em>honest</em> context meter.</h1>
+          <div class="sub">Real occupancy, not a running sum.</div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: caption + payoff veil intentionally overlay this UI -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.7" data-track-index="3" data-layout-allow-occlusion>
+        <div id="app-inner" style="position: absolute; inset: 0">
+          <div id="app-viewport">
+            <!-- chat header — chat-header.tsx "The Quiet Column" -->
+            <div id="chat-header">
+              <span class="icon-btn" aria-label="Conversation history">
+                <svg class="lucide" width="16" height="16" viewBox="0 0 24 24">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M12 7v5l4 2" />
+                </svg>
+              </span>
+              <span id="avatar"></span>
+              <span class="agent-name">Atlas</span>
+              <span class="slash">/</span>
+              <span class="session-title">Quarterly report analysis</span>
+
+              <span id="chip-anchor">
+                <button id="chip" type="button" class="chip" aria-label="Context usage 47% — view details">
+                  47% · 48.3K
+                </button>
+
+                <!-- UsagePopover — w-72 p-0 align="end" -->
+                <div id="popover" aria-label="Usage" data-layout-allow-overlap>
+                  <div class="pop-section" id="sec-context">
+                    <span class="hl" id="hl-1"></span>
+                    <div class="pop-label">Context window</div>
+                    <!-- ContextContentHeader: occupancy / contextWindow -->
+                    <div id="ctx-row">
+                      <span class="pct">37.7%</span>
+                      <span class="frac">48.3K / 128K</span>
+                    </div>
+                    <!-- shadcn Progress: full-width indicator translated left, clipped by the track -->
+                    <div id="progress" data-layout-allow-overflow><div id="progress-indicator"></div></div>
+                  </div>
+                  <div class="pop-section" id="sec-cumulative">
+                    <div class="pop-label" style="position: relative">
+                      <span class="hl" id="hl-2"></span>
+                      <span style="position: relative">Session usage (cumulative)</span>
+                    </div>
+                    <div class="usage-row"><span class="k">Total tokens</span><span class="v">612K</span></div>
+                    <div class="usage-row"><span class="k">Input</span><span class="v">540K</span></div>
+                    <div class="usage-row"><span class="k">Output</span><span class="v">58K</span></div>
+                    <div class="usage-row"><span class="k">Reasoning</span><span class="v">8.6K</span></div>
+                    <div class="usage-row"><span class="k">Cache</span><span class="v">210K</span></div>
+                    <div id="explainer">Tokens are the units AI usage is measured in — roughly ¾ of a word each.</div>
+                  </div>
+                </div>
+              </span>
+
+              <span id="header-spacer"></span>
+
+              <span class="chip" aria-label="Open session files">
+                <svg class="lucide" width="12" height="12" viewBox="0 0 24 24">
+                  <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />
+                </svg>
+                3 files
+              </span>
+              <span class="icon-btn" aria-label="Conversation actions">
+                <svg class="lucide" width="16" height="16" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="1" />
+                  <circle cx="19" cy="12" r="1" />
+                  <circle cx="5" cy="12" r="1" />
+                </svg>
+              </span>
+            </div>
+
+            <!-- chat thread, dimly visible below the header -->
+            <div id="thread">
+              <div class="msg-user">Compare Q3 and Q4 operating margins across our three business units.</div>
+              <div class="msg-assistant">
+                Q4 operating margin improved in two of the three units. Industrial rose from 11.2%
+                to 12.8% on better capacity utilization, Consumer held steady at 9.4%, and
+                Logistics slipped from 7.1% to 6.5% as freight costs climbed through November.
+              </div>
+              <div class="msg-user">Which line items drove the Industrial improvement?</div>
+            </div>
+          </div>
+
+          <div id="cursor">
+            <div id="click-ripple"></div>
+            <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+              <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="caption" class="clip" data-start="4.0" data-duration="3.1" data-track-index="4">
+        <div id="caption-card"><span class="a">Context</span>&nbsp;vs. cumulative — two different numbers.</div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.4" data-duration="2.2" data-track-index="5">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="b">No more phantom</span>
+          <span class="a">21M-token totals.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook: enter 0.05–0.5, hold 0.5–1.95 (≥1.4s), crossfade out */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.95);
+
+      /* app surface crossfades in */
+      tl.from("#app-inner", { opacity: 0, y: 18, duration: 0.4, ease: "power2.out" }, 1.95);
+
+      /* cursor glides to the usage chip (2.3–3.05) */
+      tl.set("#cursor", { x: 1210, y: 470 }, 2.2);
+      tl.to("#cursor", { opacity: 1, duration: 0.2, ease: "power1.out" }, 2.3);
+      tl.to("#cursor", { x: 728, y: 44, duration: 0.75, ease: "power2.inOut" }, 2.35);
+
+      /* hover tint (hover:bg-accent), then the one click at 3.1 */
+      tl.fromTo("#chip", { backgroundColor: "rgba(226, 235, 255, 0)" }, { backgroundColor: "rgba(226, 235, 255, 1)", duration: 0.15, ease: "power1.out" }, 3.0);
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.09, ease: "power1.in" }, 3.1);
+      tl.to("#cursor svg", { scale: 1, duration: 0.12, ease: "power1.out" }, 3.19);
+      tl.fromTo("#click-ripple", { scale: 0, opacity: 0.8 }, { scale: 1.5, opacity: 0, duration: 0.4, ease: "power2.out" }, 3.11);
+
+      /* popover opens 3.15–3.35 (scale 0.98→1 + fade, power2.out) */
+      tl.fromTo("#popover", { autoAlpha: 0, scale: 0.98, transformOrigin: "top right" }, { autoAlpha: 1, scale: 1, duration: 0.2, ease: "power2.out" }, 3.15);
+      tl.to("#chip", { backgroundColor: "rgba(226, 235, 255, 0)", duration: 0.3 }, 3.5);
+      tl.to("#cursor", { opacity: 0, duration: 0.25 }, 3.45);
+
+      /* breath: 3.35 → 4.1 popover holds completely still (750ms) */
+
+      /* highlight sweep: Context window section, then Session usage label */
+      tl.to("#hl-1", { opacity: 1, duration: 0.22, ease: "power1.out" }, 4.1);
+      tl.to("#hl-1", { opacity: 0, duration: 0.35, ease: "power1.in" }, 4.75);
+      tl.to("#hl-2", { opacity: 1, duration: 0.22, ease: "power1.out" }, 4.45);
+      tl.to("#hl-2", { opacity: 0, duration: 0.35, ease: "power1.in" }, 5.1);
+
+      /* caption: enter 4.1–4.5, hold 4.5–6.6 (2.1s), exit 6.6–7.0 */
+      tl.fromTo("#caption-card", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 4.1);
+      tl.to("#caption-card", { opacity: 0, y: -14, duration: 0.4, ease: "power2.in" }, 6.6);
+
+      /* breath: 7.0 → 7.6 still frame (600ms), then payoff */
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 7.6);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 7.65);
+
+      /* payoff settled by 8.05, holds 1.55s; last 600ms fully still */
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

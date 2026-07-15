@@ -1,0 +1,208 @@
+---
+title: "API reference"
+description: "Full signatures for ExuluDatabase.init(), ExuluDatabase.update(), and ExuluDatabase.api.key.generate(), including API key persistence semantics."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For what each method does and how to structure your initdb script, see [Configuration](/developers/core/exulu-database/configuration).
+
+## Import
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+```
+
+`ExuluDatabase` is a plain object — not a class instance. There is nothing to construct.
+
+---
+
+## ExuluDatabase.init()
+
+```typescript
+ExuluDatabase.init({
+  contexts: ExuluContext[];
+  litellm?: boolean;
+}): Promise<void>
+```
+
+Initialises or updates the IMP database schema. Idempotent — safe to call on every boot.
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  All `ExuluContext` instances registered in this application. IMP creates the items table (and chunks table when the context has an embedder) for any context whose tables do not yet exist.
+</ParamField>
+
+<ParamField path="litellm" type="boolean" default="true">
+  When `true`, also calls `initLitellmDb()` to push the LiteLLM proxy schema to the database at `LITELLM_DATABASE_URL`. Pass `false` to skip.
+</ParamField>
+
+What `init()` does on every call:
+
+1. Runs `up(db)` — creates or alters the ~26 core application tables.
+2. Calls `contextDatabases(contexts)` — creates missing items and chunks tables for each context.
+3. Inserts the `admin` role if absent.
+4. Inserts the `default` role if absent.
+5. Inserts the default admin user (`admin@exulu.com`) if absent.
+6. Calls `generateApiKey("exulu", "api@exulu.com")` and logs the result. The key is persisted only if no `api@exulu.com` user exists (first boot). See [persistence semantics](#persistence-semantics).
+7. Optionally calls `initLitellmDb()`.
+
+```typescript
+// Typical initdb script:
+import { ExuluDatabase } from "@exulu/backend";
+import { docsContext } from "./contexts";
+
+await ExuluDatabase.init({ contexts: [docsContext] });
+```
+
+---
+
+## ExuluDatabase.update()
+
+```typescript
+ExuluDatabase.update({
+  contexts: ExuluContext[];
+  litellm?: boolean;
+}): Promise<void>
+```
+
+Alias for `init()`. Identical behaviour. Use when adding contexts or upgrading an existing installation to make the intent explicit.
+
+```typescript
+// Adding a new context to an existing database:
+await ExuluDatabase.update({ contexts: [existingContext, newContext] });
+```
+
+---
+
+## ExuluDatabase.api.key.generate()
+
+```typescript
+ExuluDatabase.api.key.generate(
+  name: string,
+  email: string,
+): Promise<{ key: string }>
+```
+
+Creates an API user record and returns the plain-text API key. Calling this function is the only way to obtain the clear-text key — it is never stored in the database in recoverable form.
+
+<ParamField path="name" type="string" required>
+  Human-readable identifier for this API key. Used as the `name` column on the API user record and as the sanitized postfix in the key string: `sk_…/sanitized_name` (lowercased, spaces replaced with underscores).
+</ParamField>
+
+<ParamField path="email" type="string" required>
+  Email address for the API user record. Trimmed and lowercased before use. Used as the lookup key — if a user with this email already exists, the new key is returned but **not persisted** (see [persistence semantics](#persistence-semantics) below).
+</ParamField>
+
+<ResponseField name="key" type="string">
+  The generated plain-text API key. Format: `sk_{random}_{random}/{sanitized_name}`. Example: `sk_9x7h3j2k5l8_4m6n1p9q8r/my_app_api`.
+</ResponseField>
+
+### Key format
+
+The returned key has three parts:
+
+| Part | Example | Description |
+|---|---|---|
+| Prefix | `sk_` | Identifies the string as a secret key |
+| Random body | `9x7h3j2k5l8_4m6n1p9q8r` | Two segments of `Math.random().toString(36)`, joined with `_` |
+| Postfix | `/my_app_api` | Sanitized name, lowercased with spaces replaced by `_` |
+
+The database stores `{bcrypt_hash(plain_key)}/{sanitized_name}` in the `apikey` column. The hash uses 12 bcrypt salt rounds. IMP's authentication middleware extracts the postfix suffix to find the user record before verifying the hash.
+
+### Persistence semantics
+
+```typescript
+const existingUser = await db.from("users").where({ email }).first();
+if (!existingUser) {
+  // Insert new user with the hashed key — KEY IS PERSISTED
+  await db.from("users").insert({ ..., apikey: `${hash}/${postfix}` });
+} else {
+  // User already exists — KEY IS NOT PERSISTED
+  console.log("[EXULU] API user with that name already exists.");
+}
+// In both cases, return the plain-text key
+return { key: `${plainKey}${postfix}` };
+```
+
+The function always returns a valid-looking key. Only the key generated when no prior user with that `email` exists is stored and will authenticate. Keys returned for existing users are discarded and will fail authentication.
+
+<Warning>
+The first call with a given email address is the only one that persists the key. If you regenerate a key for an existing email, the new key will not work. To replace a key, delete the user record first and call `generate()` again.
+</Warning>
+
+### Example
+
+```typescript
+import { ExuluDatabase } from "@exulu/backend";
+
+// First call — key is persisted and will authenticate:
+const { key } = await ExuluDatabase.api.key.generate(
+  "my-app-api",
+  "api@my-app.com",
+);
+console.log(key); // sk_abc123_xyz456/my_app_api — SAVE THIS NOW
+
+// Second call with the same email — key is NOT persisted:
+const { key: key2 } = await ExuluDatabase.api.key.generate(
+  "my-app-api",
+  "api@my-app.com",
+);
+// key2 will not authenticate; key from the first call is still the valid one
+```
+
+### Generating multiple keys
+
+To provision keys for different services, use different email addresses:
+
+```typescript
+const keys = await Promise.all([
+  ExuluDatabase.api.key.generate("frontend", "api-frontend@my-app.com"),
+  ExuluDatabase.api.key.generate("backend",  "api-backend@my-app.com"),
+  ExuluDatabase.api.key.generate("mobile",   "api-mobile@my-app.com"),
+]);
+
+// Store all keys in your secrets manager before this script exits
+for (const { key } of keys) {
+  console.log(key);
+}
+```
+
+### The first-boot key
+
+`ExuluDatabase.init()` calls `generateApiKey("exulu", "api@exulu.com")` internally on every run and logs the result:
+
+```
+[EXULU] Default api key: sk_9x7h3j2k5l8_4m6n1p9q8r/exulu
+```
+
+Only the key logged on the **first boot** is persisted. Keys logged on subsequent boots are not stored and will not authenticate. Capture the key before log rotation or terminal scrollback clears it:
+
+```bash
+npm run utils:initdb 2>&1 | tee initdb.log
+grep "Default api key" initdb.log
+```
+
+For a dedicated application key with a stable email, call `ExuluDatabase.api.key.generate()` explicitly after `init()` in your initdb script — that key is tied to your email address and will not conflict with the default `api@exulu.com` entry.
+
+---
+
+## Context table helpers
+
+These methods are called by `ExuluDatabase.init()` internally via `ExuluContext`. You rarely need to invoke them directly; they are listed here for completeness and are documented on the [ExuluContext API reference](/developers/core/exulu-context/api-reference) page.
+
+| Method | Called by | Notes |
+|---|---|---|
+| `context.tableExists()` | `init()` | Returns `true` when the items table exists |
+| `context.createItemsTable()` | `init()` | Creates the items table from the context's field schema |
+| `context.chunksTableExists()` | `init()` | Returns `true` when the chunks table exists |
+| `context.createChunksTable()` | `init()` | Creates the chunks table with the correct `VECTOR(N)` dimension |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-database/configuration">
+    Options for `init()` / `update()`, the LiteLLM flag, and the complete initdb example.
+  </Card>
+  <Card title="Self-hosting — database" icon="server" href="/self-hosting/database">
+    The no-migration model, first-boot bootstrap, and database backup strategy.
+  </Card>
+</CardGroup>

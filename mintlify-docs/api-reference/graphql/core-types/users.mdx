@@ -1,0 +1,91 @@
+---
+title: "Users"
+description: "The user type represents a platform account — human user or API service account."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+The `user` type covers both human users signing in via the web UI and API service accounts. Each user carries authentication credentials, preference data, optional role and team assignments, and knowledge-embedding timestamps. See [Users & access](/administration/users-access/overview).
+
+```graphql
+type user {
+  id: Float
+  favourite_agents: JSON
+  favourite_projects: JSON
+  favourite_contexts: JSON
+  favourite_items: JSON
+  recently_viewed_items: JSON
+  firstname: String
+  name: String
+  lastname: String
+  email: String
+  temporary_token: String
+  type: String
+  profile_image: String
+  super_admin: Boolean
+  status: String
+  emailVerified: String
+  apikey: String
+  scope_mode: String
+  agent_ids: JSON
+  last_used: Date
+  password: String
+  anthropic_token: String
+  personal_system_prompt: String
+  role: String
+  team: String
+  project: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `type` | Account type: `"user"` for human accounts, `"api"` for service accounts. |
+| `super_admin` | When `true`, bypasses all role-based permission checks. |
+| `scope_mode` | Restricts which agents the user can open; `"all"` or `"assigned"` (limits to `agent_ids`). |
+| `agent_ids` | JSON array of agent IDs; only effective when `scope_mode` is `"assigned"`. |
+| `role` | ID string of the assigned `role` record. |
+| `team` | ID string of the assigned `team` record. |
+| `project` | ID string of the user's default project. |
+| `personal_system_prompt` | User-defined extra instructions injected into their sessions. |
+| `budget` | JSON budget envelope for per-user spending limits. |
+| `password` | Bcrypt hash; write-only — never returned by read queries. |
+| `apikey` | API key hash; write-only. Set an API key via the admin UI or `usersUpdateOneById`. |
+| `anthropic_token` | Personal Anthropic API key override; stored encrypted. |
+| `last_used` | Timestamp of the user's most recent authenticated request. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  usersPagination(
+    limit: 20
+    filters: [{ type: { eq: "user" }, status: { eq: "active" } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      email
+      type
+      role
+      team
+      super_admin
+      last_used
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

@@ -1,0 +1,23 @@
+<article class="chapter" id="r-sandbox-output-truncation" data-release="2026-07-08-platform-roundup" aria-labelledby="r-sandbox-output-truncation-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">25</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-sandbox-output-truncation-h">Sandbox output truncation: overflow-proof tool results</h1>
+    <p class="ch-lede"><code>cat</code> a 60-page PDF without killing the context.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>One oversized tool result used to overflow the context window and take the whole turn down with it, unrecoverably. Sandbox tool output is now capped at 25% of the agent's context window — a 128,000-character limit per call by default. Oversized output keeps its head and tail, and the omitted middle is replaced by a marker telling the agent exactly what was cut, plus the commands to fetch any specific section. File reads keep the top; error output keeps the tail, where the signal lives.</p>
+          <div class="snippet-label">What the agent sees instead of a context overflow</div>
+          <pre><code>[READFILE OUTPUT TRUNCATED: output was 412830 characters; showing first
+121600 and last 6400 characters (limit: 128000 = 25% of 128000-token
+context). 284830 characters omitted. To read specific sections use:
+  grep -n "pattern" &lt;file&gt;        # find specific text
+  sed -n '1,50p' &lt;file&gt;           # lines 1–50
+  head -n 100 &lt;file&gt;              # first 100 lines
+  tail -n 100 &lt;file&gt;              # last 100 lines
+  awk 'NR&gt;=10 &amp;&amp; NR&lt;=50' &lt;file&gt;   # lines 10–50]</code></pre>
+        </div></section>
+</article>

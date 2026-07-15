@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — command palette flow</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* — hook — */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; transform: translateY(10px); }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; transform: translateY(14px); }
+      #root .hook-headline .kbd { display: inline-block; font-family: var(--font-mono); font-size: 42px; border: 1.5px solid var(--hair); background: var(--surface); padding: 4px 14px; vertical-align: middle; margin: 0 4px; }
+
+      /* — stage — */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; transform: translateY(16px); }
+      #root .screen { position: absolute; inset: 0; }
+      #root .screen-b { opacity: 0; }
+
+      /* users page (screen A, replica of users-table) */
+      #root .tab-row { display: flex; gap: 0; padding: 0 28px; border-bottom: 1px solid var(--hair); }
+      #root .tab { padding: 10px 16px; font-size: 13px; color: var(--tx-lo); position: relative; }
+      #root .tab.active { color: var(--tx-hi); font-weight: 500; }
+      #root .tab.active::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--ink); }
+      #root .content { padding: 20px 28px; display: flex; flex-direction: column; gap: 12px; }
+      #root .toolbar { display: flex; align-items: center; gap: 8px; }
+      #root .search-field { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; width: 280px; }
+      #root .search-field svg { width: 14px; height: 14px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .search-text { font-size: 13px; color: var(--tx-faint); }
+      #root .users-table { --imp-cols: 2.4fr 1fr 1fr 1fr; }
+      #root .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--hair); padding: 2px 8px; font-size: 11.5px; color: var(--tx-mid); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .chip-dot { width: 6px; height: 6px; background: var(--accent); flex: none; }
+
+      /* agents page (screen B, same trimmed list as create-agent) */
+      #root .filter-select { display: flex; align-items: center; gap: 6px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 12px; font-size: 13px; color: var(--tx-mid); }
+      #root .select-arrow { color: var(--tx-faint); font-size: 10px; margin-left: 4px; }
+      #root .agents-table { --imp-cols: 2.4fr 1fr 1fr 1fr; }
+      #root .status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--tx-mid); }
+      #root .status-dot-on { width: 7px; height: 7px; background: var(--accent); flex: none; }
+      #root .status-dot-off { width: 7px; height: 7px; background: var(--hair); flex: none; }
+
+      /* ⌘K keycaps */
+      #root #keys { position: absolute; left: 50%; top: 50%; display: flex; gap: 10px; opacity: 0; }
+      #root #keys .keycap { font-family: var(--font-mono); font-size: 30px; color: var(--tx-hi); background: var(--surface); border: 1.5px solid var(--hair); box-shadow: 0 3px 0 var(--hair); padding: 12px 22px; }
+
+      /* command palette overlay */
+      #root .pal-scrim { position: absolute; inset: 0; background: rgba(27, 23, 20, 0.35); opacity: 0; }
+      #root #palette { position: absolute; left: 50%; top: 190px; width: 580px; margin-left: -290px; background: var(--surface); border: 1px solid var(--hair); opacity: 0; }
+      #root .pal-input { position: relative; display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--hair); }
+      #root .pal-input svg { width: 15px; height: 15px; stroke-width: 1.5; color: var(--tx-faint); flex: none; }
+      #root .pal-query { position: absolute; left: 43px; top: 50%; margin-top: -10px; font-size: 14.5px; color: var(--tx-hi); }
+      #root .pal-placeholder { font-size: 14.5px; color: var(--tx-faint); }
+      #root .type-wrap { position: relative; display: inline-block; }
+      #root .type-cover { position: absolute; inset: 0; background: var(--surface); transform-origin: 100% 50%; }
+      #root .pal-caret { display: inline-block; width: 1.5px; height: 17px; background: var(--tx-hi); vertical-align: -3px; margin-left: 1px; }
+      #root .pal-lists { position: relative; height: 332px; }
+      #root .pal-state { position: absolute; inset: 0; padding: 8px; display: flex; flex-direction: column; }
+      #root .pal-state-b { opacity: 0; }
+      #root .pal-group { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); padding: 10px 10px 6px; }
+      #root .pal-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; font-size: 13.5px; color: var(--tx-hi); }
+      #root .pal-row svg { width: 15px; height: 15px; stroke-width: 1.5; color: var(--tx-lo); flex: none; }
+      #root .pal-row .pal-suffix { font-size: 12px; color: var(--tx-faint); }
+      #root .pal-row.selected { background: var(--surface-2); }
+
+      /* payoff bar */
+      #root #payoff-bar { position: absolute; left: 50%; bottom: 56px; opacity: 0; background: var(--ink); color: #f4f5f2; padding: 18px 34px; font-size: 30px; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; }
+      #root #payoff-bar em { font-style: normal; color: var(--chip); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="command-palette"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.6"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.6" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Navigation</span>
+          <h1 class="hook-headline" id="hook-headline">Anywhere, press <span class="kbd">⌘</span><span class="kbd">K</span></h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the palette overlay intentionally dims the page -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.7" data-track-index="3" data-layout-allow-occlusion>
+        <div class="stage" id="stage">
+          <!-- screen A: Users & access -->
+          <!-- data-layout-allow-overlap: the palette scrim intentionally covers this screen -->
+          <div class="screen screen-a" id="screen-a" data-layout-allow-overlap>
+            <div class="imp-shell">
+              <aside class="imp-sidebar">
+                <div class="imp-wordmark">IMP</div>
+                <div class="imp-sidebar-group">Workspace</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+                <div class="imp-sidebar-group">Build</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents</div>
+                <div class="imp-sidebar-group">Administration</div>
+                <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Budgets</div>
+              </aside>
+              <div class="imp-main">
+                <div class="imp-topbar">
+                  <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Users &amp; access</span>
+                  <span class="imp-btn imp-btn-ink" style="display:flex;align-items:center;gap:6px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                    Add user
+                  </span>
+                </div>
+                <div class="imp-content" style="padding:0;display:flex;flex-direction:column;flex:1;min-height:0;">
+                  <div class="tab-row">
+                    <div class="tab active">Users</div>
+                    <div class="tab">Roles</div>
+                    <div class="tab">Teams</div>
+                  </div>
+                  <div class="content">
+                    <div class="toolbar">
+                      <div class="search-field">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <span class="search-text">Search by email…</span>
+                      </div>
+                    </div>
+                    <div class="imp-table users-table">
+                      <div class="imp-table-head"><span>User</span><span>Role</span><span>Teams</span><span class="imp-cell-end">Last active</span></div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar lime">MV</span><span><span class="imp-user-name">Maren Vogel</span><br /><span class="imp-user-mail">maren.vogel@example.com</span></span></span>
+                        <span><span class="chip"><span class="chip-dot"></span>Admin</span></span>
+                        <span>2 teams</span>
+                        <span class="imp-cell-end imp-cell-faint">2 min ago</span>
+                      </div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar soft">TS</span><span><span class="imp-user-name">Tobias Schreiber</span><br /><span class="imp-user-mail">tobias.schreiber@example.com</span></span></span>
+                        <span><span class="chip">Editor</span></span>
+                        <span>1 team</span>
+                        <span class="imp-cell-end imp-cell-faint">1 h ago</span>
+                      </div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar soft">AK</span><span><span class="imp-user-name">Anna Krause</span><br /><span class="imp-user-mail">anna.krause@example.com</span></span></span>
+                        <span><span class="chip">Member</span></span>
+                        <span>3 teams</span>
+                        <span class="imp-cell-end imp-cell-faint">yesterday</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ⌘K keycaps hint -->
+            <div id="keys">
+              <span class="keycap">⌘</span>
+              <span class="keycap">K</span>
+            </div>
+
+            <!-- palette overlay -->
+            <div class="pal-scrim" id="pal-scrim"></div>
+            <div id="palette">
+              <div class="pal-input">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <span class="pal-placeholder" id="pal-placeholder">Type a command or search…</span>
+                <span class="pal-query" id="pal-query" style="opacity:0;"><span class="type-wrap"><span>agents</span><span class="type-cover" id="pal-cover"></span></span><span class="pal-caret"></span></span>
+              </div>
+              <div class="pal-lists">
+                <!-- state A: empty query -->
+                <div class="pal-state pal-state-a" id="pal-state-a">
+                  <div class="pal-group">Recent</div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Budgets<span class="pal-suffix">— Administration</span></div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat<span class="pal-suffix">— Workspace</span></div>
+                  <div class="pal-group">Navigate</div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects<span class="pal-suffix">— Workspace</span></div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts<span class="pal-suffix">— Workspace</span></div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents<span class="pal-suffix">— Build</span></div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>Knowledge<span class="pal-suffix">— Build</span></div>
+                </div>
+                <!-- state B: query "agents" -->
+                <div class="pal-state pal-state-b" id="pal-state-b">
+                  <div class="pal-group">Navigate</div>
+                  <div class="pal-row selected" id="pal-hit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents<span class="pal-suffix">— Build</span></div>
+                  <div class="pal-group">Create</div>
+                  <div class="pal-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>New agent</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- screen B: Agents list (navigation target) -->
+          <div class="screen screen-b" id="screen-b">
+            <div class="imp-shell">
+              <aside class="imp-sidebar">
+                <div class="imp-wordmark">IMP</div>
+                <div class="imp-sidebar-group">Workspace</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+                <div class="imp-sidebar-group">Build</div>
+                <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents</div>
+                <div class="imp-sidebar-group">Administration</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Users</div>
+                <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>Budgets</div>
+              </aside>
+              <div class="imp-main">
+                <div class="imp-topbar">
+                  <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Agents</span>
+                  <span class="imp-btn imp-btn-ink" style="display:flex;align-items:center;gap:6px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/></svg>
+                    New agent
+                  </span>
+                </div>
+                <div class="imp-content" style="padding:0;display:flex;flex-direction:column;flex:1;min-height:0;">
+                  <div class="content">
+                    <div class="toolbar">
+                      <div class="search-field">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                        <span class="search-text">Search agents...</span>
+                      </div>
+                      <div class="filter-select">All statuses<span class="select-arrow">▾</span></div>
+                      <div class="filter-select">Last updated<span class="select-arrow">▾</span></div>
+                    </div>
+                    <div class="imp-table agents-table">
+                      <div class="imp-table-head"><span>Agent</span><span>Status</span><span>Category</span><span class="imp-cell-end">Last updated</span></div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar lime">SA</span><span><span class="imp-user-name">Support Assistant</span></span></span>
+                        <span class="status-pill"><span class="status-dot-on"></span>Active</span>
+                        <span><span class="imp-badge">support</span></span>
+                        <span class="imp-cell-end imp-cell-faint">just now</span>
+                      </div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar soft">RC</span><span><span class="imp-user-name">Research Copilot</span></span></span>
+                        <span class="status-pill"><span class="status-dot-on"></span>Active</span>
+                        <span><span class="imp-badge">research</span></span>
+                        <span class="imp-cell-end imp-cell-faint">2 h ago</span>
+                      </div>
+                      <div class="imp-row">
+                        <span class="imp-cell-user"><span class="imp-avatar soft">HQ</span><span><span class="imp-user-name">HR Questions</span></span></span>
+                        <span class="status-pill"><span class="status-dot-on"></span>Active</span>
+                        <span><span class="imp-badge">hr</span></span>
+                        <span class="imp-cell-end imp-cell-faint">yesterday</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.7" data-duration="1.9" data-track-index="4">
+        <div id="payoff-bar"><span>One palette. <em>Every page and action.</em></span></div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* 0.00-0.50 hook enters; holds until 1.9 */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.90-2.35 hook exits; users page rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.9);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.0);
+
+      /* 2.40-2.80 page sits still (orienting beat) */
+
+      /* 2.80-3.40 ⌘K keycaps pulse over the page */
+      tl.fromTo("#keys", { xPercent: -50, yPercent: -50, scale: 0.94, opacity: 0 }, { xPercent: -50, yPercent: -50, scale: 1, opacity: 1, duration: 0.24, ease: "power2.out" }, 2.8);
+      tl.to("#keys .keycap", { y: 3, duration: 0.1, ease: "power1.in", stagger: 0.05 }, 3.0);
+      tl.to("#keys .keycap", { y: 0, duration: 0.12, ease: "power1.out", stagger: 0.05 }, 3.1);
+      tl.to("#keys", { opacity: 0, scale: 0.96, duration: 0.2, ease: "power1.in" }, 3.35);
+
+      /* 3.55-3.90 palette opens (fade + scale 0.98→1 over dim) */
+      tl.to("#pal-scrim", { opacity: 1, duration: 0.24, ease: "power1.out" }, 3.55);
+      tl.fromTo("#palette", { opacity: 0, scale: 0.98 }, { opacity: 1, scale: 1, duration: 0.28, ease: "power2.out", transformOrigin: "50% 30%" }, 3.6);
+
+      /* 3.90-4.90 empty-query state holds (Recent + Navigate readable) */
+
+      /* 4.90-5.60 type "agents"; placeholder swaps for the query */
+      tl.to("#pal-placeholder", { opacity: 0, duration: 0.12, ease: "power1.out" }, 4.9);
+      tl.to("#pal-query", { opacity: 1, duration: 0.1, ease: "power1.out" }, 5.0);
+      tl.to("#pal-cover", { scaleX: 0, duration: 0.55, ease: "steps(6)" }, 5.05);
+
+      /* 5.35-5.75 results regroup: Navigate + Create for "agents" */
+      tl.to("#pal-state-a", { opacity: 0, duration: 0.2, ease: "power1.out" }, 5.4);
+      tl.to("#pal-state-b", { opacity: 1, duration: 0.25, ease: "power1.out" }, 5.5);
+
+      /* 5.75-6.45 results hold (first hit highlighted) */
+
+      /* 6.45-7.10 cursor glides to "Agents — Build" and clicks */
+      let t1 = impCursor(tl, { from: [1080, 760], to: [830, 300], at: 6.45, click: true, duration: 0.5 });
+      tl.to("#pal-hit", { backgroundColor: "#e4ddd0", duration: 0.12, ease: "power1.out" }, t1 - 0.28);
+
+      /* 7.15-7.65 palette closes; screens crossfade to Agents */
+      tl.to("#cur", { opacity: 0, duration: 0.16, ease: "power1.in" }, 7.15);
+      tl.to("#palette", { opacity: 0, scale: 0.985, duration: 0.2, ease: "power1.in" }, 7.15);
+      tl.to("#pal-scrim", { opacity: 0, duration: 0.22, ease: "power1.in" }, 7.2);
+      tl.to("#screen-a", { opacity: 0, duration: 0.3, ease: "power1.inOut" }, 7.3);
+      tl.to("#screen-b", { opacity: 1, duration: 0.35, ease: "power2.out" }, 7.4);
+
+      /* 7.75-8.15 payoff caption bar rises */
+      tl.fromTo("#payoff-bar", { xPercent: -50, y: 110, opacity: 0 }, { xPercent: -50, y: 0, opacity: 1, duration: 0.4, ease: "power2.out", immediateRender: false }, 7.8);
+
+      /* 8.15-9.60 settled hold */
+
+      window.__timelines["command-palette"] = tl;
+    </script>
+  </body>
+</html>

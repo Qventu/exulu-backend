@@ -1,0 +1,84 @@
+---
+title: "Reviewing and saving"
+description: "Name speakers on a diarized transcript, follow the audio timeline, and save it to Knowledge."
+icon: "check-square"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="Transcripts (a transcription backend or meeting bots must be configured)" />
+
+## Open a transcript for review
+
+When a transcript finishes processing it lands in the **Needs review** group on the Transcripts page. Click **Review** on the row to open the review sheet.
+
+The review sheet has two panels side by side:
+- **Speakers** — the speaker rename controls.
+- **Transcript** — the full diarized text.
+
+<Frame caption="The transcript review sheet: hover a segment to see the speaker and timestamp, then rename speakers by their detected label and save.">
+  <video autoPlay muted loop playsInline src="/videos/review-transcript.mp4" />
+</Frame>
+
+## Rename speakers
+
+The diarization pipeline assigns raw labels — `SPEAKER_00`, `SPEAKER_01`, and so on. The Speakers panel lists each label with a text field where you type the real name.
+
+<Steps>
+  <Step title="Identify the speakers">
+    Read the first few segments in the Transcript panel to match voices to labels.
+  </Step>
+  <Step title="Type the names">
+    Click into each speaker field in the Speakers panel and type the person's name. The placeholder reads "Type names to replace the raw labels". You can also keep a raw label by choosing "(keep raw label)".
+  </Step>
+  <Step title="Names update live">
+    As you type, every occurrence of that speaker label in the Transcript panel updates in real time.
+  </Step>
+</Steps>
+
+<Note>
+If speaker detection was disabled for this recording, all segments share one label. Type a single name to label the whole transcript ("Speaker detection was disabled for this recording, so all segments share one speaker.").
+</Note>
+
+## The transcript panel
+
+The Transcript panel shows every segment with its start and end timestamps and the speaker label. Segments are ordered chronologically.
+
+Scrolling through a long transcript, you can click any segment to jump the audio playback to that point (audio upload only).
+
+## Audio timeline
+
+For transcripts created from uploaded audio files, an audio playback bar appears at the bottom of the review sheet. It shows the waveform or a simple progress track, a play/pause button, and the current playback position. Click anywhere on the timeline to seek.
+
+<Note>
+Audio preview is not available for meeting recordings ("Audio preview isn't available for meeting recordings.").
+</Note>
+
+## Post-processing results
+
+If post-processing prompts were attached to the job (meeting recordings only), a **Post-processing** section appears below the Transcript panel. It lists each prompt and its result — or "Running…" / "Failed" if it has not finished yet. Click **Re-run** next to any entry to run it again.
+
+## Save to Knowledge
+
+When you are happy with the speaker names, click **Save changes**. IMP saves the transcript as an item in the built-in transcriptions knowledge context.
+
+<Info>
+Saving a transcript makes it available across IMP surfaces. You can pin it to a project's Files tab or add it to a chat session via the **Add knowledge** menu. This cross-surface flow connects the review sheet to the broader Knowledge system — see [Knowledge overview](/building/knowledge/overview) for how knowledge items work across the platform.
+</Info>
+
+After saving, the row moves to the **Saved** group. Reopening a saved transcript from the list lets you rename speakers again; clicking **Save changes** updates the existing knowledge item rather than creating a duplicate.
+
+## Discard a transcript
+
+Click **Discard** in the review sheet to cancel the job. The confirmation dialog warns: "The audio stays in your files; the transcription job will be cancelled." The uploaded audio file is kept in your file storage.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Record a meeting" icon="video" href="/user-guide/transcripts/recording-meetings">
+    Send a bot to join and record a live meeting.
+  </Card>
+  <Card title="Pin knowledge in chat" icon="pin" href="/user-guide/chat/pinned-knowledge-and-presets">
+    Add a saved transcript to a chat or project.
+  </Card>
+</Columns>

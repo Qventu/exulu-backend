@@ -1,0 +1,126 @@
+---
+title: "Introduction"
+description: "ExuluQueues is the singleton that registers BullMQ-backed queues for background work — embeddings, document processing, data-source syncs, and eval runs."
+icon: "layers"
+---
+
+`ExuluQueues` is exported as a singleton from `@exulu/backend`. It wraps BullMQ and Redis to provide rate-limited, concurrency-controlled background job queues. You register named queues against it, then pass the queue configuration into the parts of your app that need background work — the embedder inside an [ExuluContext](/developers/core/exulu-context/introduction), a context source, a context processor, or an ExuluEval runner.
+
+<Note>
+`ExuluQueues` requires an Enterprise Edition license. Calling `register()` without a valid `EXULU_ENTERPRISE_LICENSE` environment variable throws immediately.
+</Note>
+
+## What a queue gives you
+
+<CardGroup cols={2}>
+  <Card title="BullMQ / Redis" icon="database">
+    Each registered queue is a BullMQ `Queue` instance backed by Redis. Jobs persist across worker restarts.
+  </Card>
+  <Card title="Rate limiting" icon="gauge">
+    `ratelimit` caps how many jobs per second each worker processes — the right lever for embedding provider quotas.
+  </Card>
+  <Card title="Two concurrency tiers" icon="sliders">
+    `concurrency.worker` sets the per-process concurrency; `concurrency.queue` sets a global cap enforced by BullMQ across all worker processes.
+  </Card>
+  <Card title="Fail-fast startup" icon="shield-alert">
+    Lazy Redis connection with a hard 60-second startup timeout — IMP aborts rather than hanging silently when Redis is unreachable.
+  </Card>
+  <Card title="OpenTelemetry" icon="activity">
+    BullMQ-Otel instrumentation is wired automatically; job duration, queue depth, and error rates appear in your observability stack.
+  </Card>
+  <Card title="GraphQL surface" icon="braces">
+    Registered queue names populate `QueueEnum` in the GraphQL schema, exposing job inspection and management queries.
+  </Card>
+</CardGroup>
+
+## Minimal example
+
+```typescript
+import { ExuluQueues, ExuluContext } from "@exulu/backend";
+
+// Register once — typically in your initdb or app setup file.
+const embeddingsQueue = ExuluQueues.register(
+  "embeddings",
+  { worker: 5, queue: 10 },
+  10,   // ratelimit: 10 jobs per second
+  300,  // timeoutInSeconds: 5 minutes
+);
+
+// Pass to ExuluContext as an async queue config.
+const docsContext = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product documentation search.",
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(),
+  },
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true },
+  ],
+  sources: [],
+});
+```
+
+## How queues are consumed
+
+Registered queues surface in three places inside ExuluContext:
+
+| Consumer | Where the queue config goes |
+|---|---|
+| Embedder (`embedder.queue`) | The embedding worker calls `queue.use()` to get the BullMQ Queue and concurrency settings, then processes chunks against the embedding provider. |
+| Source (`source.config.queue`) | The source poller enqueues a sync job for each scheduled run; workers dequeue and call `source.execute`. |
+| Processor (`processor.config.queue`) | The processor worker dequeues items inserted with `trigger: "onInsert"` and calls `processor.execute`. |
+
+The [ExuluEval](/developers/core/exulu-eval/configuration) `queue` option uses the same `ExuluQueueConfig` shape — pass `ExuluQueues.register(...).use()` there too.
+
+Every registered queue name is injected into the GraphQL `QueueEnum` at boot time, enabling the IMP platform's job inspection UI without extra configuration.
+
+## Redis connection and fail-fast behaviour
+
+`register()` is synchronous and does not touch Redis immediately. The actual Redis connection is made lazily when `.use()` is first awaited. At that point:
+
+1. IMP checks that `REDIS_HOST` and `REDIS_PORT` are set. If either is missing, `.use()` throws before touching the network.
+2. A new BullMQ `Queue` is opened with `enableOfflineQueue: false`.
+3. `guardRedisStartup()` races `queue.waitUntilReady()` against a 60-second timeout. If Redis does not become reachable within 60 seconds, `.use()` rejects with a clear error that cites the configured address and the last surfaced connection error.
+4. On success, the queue is pushed into `ExuluQueues.queues` and returned. Subsequent calls to `.use()` for the same queue name skip the connection step and return the cached instance.
+
+Set the Redis target with environment variables (read once at import time):
+
+```bash
+REDIS_HOST=redis.internal
+REDIS_PORT=6379
+REDIS_PASSWORD=<optional>
+REDIS_USER=<optional>
+```
+
+## Concurrency and rate-limit sizing
+
+`register()` accepts two independent knobs:
+
+- **`concurrency.worker`** — how many jobs a single Node.js worker process runs in parallel. For I/O-bound work like API calls, 5–20 is typical. For CPU-heavy work, stay close to 1.
+- **`concurrency.queue`** — the global cap enforced by BullMQ via `setGlobalConcurrency`. Keeps total active jobs bounded even when you run multiple worker processes.
+- **`ratelimit`** — maximum jobs per second across a worker process. Set this to stay under your embedding provider's tokens-per-minute (TPM) quota.
+
+A rough sizing method for the embedder queue: divide your provider's TPM quota by the average token count per embedding request. For example, a 5 M TPM quota embedding 1 024-token batches supports roughly 5 000 000 ÷ 1 024 ≈ 4 882 requests per minute, or about 81 per second — set `ratelimit` to that value and choose `concurrency.queue` to match your desired burst depth.
+
+| Queue purpose | Typical `worker` | Typical `queue` | Typical timeout |
+|---|---|---|---|
+| Embedding (provider-rate-limited) | 5–10 | 10–50 | 3–5 min |
+| Document processing | 1–3 | 3–5 | 5–15 min |
+| Data-source sync | 1–2 | 1–2 | 15–60 min |
+| Eval runs | 2–5 | 5–20 | 5–10 min |
+
+Start conservative and scale up after observing queue depth in your telemetry.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-queues/configuration">
+    Every `register()` parameter and `ExuluQueueConfig` field.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-queues/api-reference">
+    `register()`, `queue()`, `.list`, and `.queues` — full signatures.
+  </Card>
+</CardGroup>

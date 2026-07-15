@@ -1,0 +1,206 @@
+<template id="personal-prompt-template">
+  <div data-composition-id="personal-prompt" data-width="1920" data-height="1080">
+    <div class="bg"></div>
+    <div class="glow"></div>
+    <div class="dotgrid"></div>
+    <div class="ghost" data-layout-allow-overflow>YOU</div>
+
+    <div class="stage">
+      <div class="copy">
+        <div class="chip">NEW · SETTINGS</div>
+        <h1 class="headline">Say it<br />once.</h1>
+        <p class="sub" id="pp-sub">Your preferences, honored<br />in every conversation.</p>
+        <p class="sub payoff" id="pp-payoff">On top of any agent's<br />instructions. Every chat.</p>
+        <div class="meta"><span class="meta-dot"></span>EXULU · JUNE 2026 RELEASE</div>
+      </div>
+
+      <div class="demo">
+        <div class="card" id="pp-card">
+          <div class="card-head">
+            <div class="card-title">Personal system prompt</div>
+            <div class="card-desc">Tell the assistant anything you'd like it to know about you across every conversation — your role, communication style, languages.</div>
+          </div>
+          <div class="card-body">
+            <div class="textarea" id="pp-ta">
+              <span class="w">I'm</span> <span class="w">a</span> <span class="w">backend</span>
+              <span class="w">engineer</span> <span class="w">working</span> <span class="w">in</span>
+              <span class="w">TypeScript.</span> <span class="w">Keep</span> <span class="w">responses</span>
+              <span class="w">concise</span> <span class="w">and</span> <span class="w">skip</span>
+              <span class="w">preamble.</span><span class="caret" id="pp-caret"></span>
+            </div>
+            <div class="actions">
+              <div class="save-btn" id="pp-save">Save</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="toast" id="pp-toast">
+          <span class="toast-ok">✓</span>
+          <div>
+            <div class="toast-title">Settings saved</div>
+            <div class="toast-sub">Your personal system prompt has been updated.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cursor" id="pp-cursor"></div>
+
+    <style>
+      [data-composition-id="personal-prompt"] {
+        position: relative; overflow: hidden;
+        font-family: 'Inter', system-ui, sans-serif;
+        letter-spacing: -0.025em; color: #000;
+      }
+      [data-composition-id="personal-prompt"] .bg {
+        position: absolute; inset: 0;
+        background: linear-gradient(120deg, #F5F8FB 0%, #FDFDFD 50%, #F5F8FB 100%);
+      }
+      [data-composition-id="personal-prompt"] .glow {
+        position: absolute; left: 30%; top: -380px; width: 1300px; height: 1000px;
+        background: radial-gradient(closest-side, rgba(112, 51, 255, 0.13), transparent 70%);
+      }
+      [data-composition-id="personal-prompt"] .dotgrid {
+        position: absolute; right: 0; bottom: 0; width: 800px; height: 540px;
+        background-image: radial-gradient(rgba(112, 51, 255, 0.30) 1.6px, transparent 1.6px);
+        background-size: 30px 30px; opacity: 0.30;
+        -webkit-mask-image: radial-gradient(closest-side at 80% 85%, #000, transparent);
+        mask-image: radial-gradient(closest-side at 80% 85%, #000, transparent);
+      }
+      [data-composition-id="personal-prompt"] .ghost {
+        position: absolute; left: -30px; top: -110px;
+        font-size: 340px; font-weight: 900; letter-spacing: -0.05em;
+        color: rgba(112, 51, 255, 0.08); white-space: nowrap;
+      }
+      [data-composition-id="personal-prompt"] .stage {
+        position: relative; width: 100%; height: 100%;
+        display: flex; align-items: center; gap: 70px;
+        padding: 90px 100px; box-sizing: border-box;
+      }
+      [data-composition-id="personal-prompt"] .copy {
+        width: 620px; flex-shrink: 0; display: flex; flex-direction: column; gap: 28px;
+        position: relative; height: 100%; justify-content: center;
+      }
+      [data-composition-id="personal-prompt"] .chip {
+        align-self: flex-start; background: #7033FF; color: #fff;
+        font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600;
+        letter-spacing: 0.12em; padding: 10px 20px; border-radius: 7px;
+      }
+      [data-composition-id="personal-prompt"] .headline {
+        margin: 0; font-size: 104px; font-weight: 800; line-height: 1.0; letter-spacing: -0.035em;
+      }
+      [data-composition-id="personal-prompt"] .sub {
+        margin: 0; font-size: 31px; line-height: 1.42; color: #525252; font-weight: 450;
+      }
+      [data-composition-id="personal-prompt"] .payoff { position: absolute; bottom: 168px; left: 0; opacity: 0; }
+      [data-composition-id="personal-prompt"] .meta {
+        position: absolute; bottom: 8px; left: 0;
+        display: flex; align-items: center; gap: 14px;
+        font-family: 'JetBrains Mono', monospace; font-size: 18px;
+        letter-spacing: 0.14em; color: #525252;
+      }
+      [data-composition-id="personal-prompt"] .meta-dot { width: 12px; height: 12px; background: #7033FF; border-radius: 3px; }
+      [data-composition-id="personal-prompt"] .demo {
+        position: relative; flex: 1; height: 100%;
+        display: flex; align-items: center; justify-content: flex-end;
+      }
+      [data-composition-id="personal-prompt"] .card {
+        width: 920px; background: #FDFDFD;
+        border: 1.5px solid #E7E7EE; border-radius: 12px;
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.13);
+      }
+      [data-composition-id="personal-prompt"] .card-head { padding: 30px 32px 0; }
+      [data-composition-id="personal-prompt"] .card-title { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; }
+      [data-composition-id="personal-prompt"] .card-desc {
+        font-size: 19.5px; line-height: 1.5; color: #525252; margin-top: 10px; max-width: 820px;
+      }
+      [data-composition-id="personal-prompt"] .card-body { padding: 24px 32px 30px; }
+      [data-composition-id="personal-prompt"] .textarea {
+        border: 1.5px solid #EBEBEB; border-radius: 8px; background: #FDFDFD;
+        padding: 20px 22px; min-height: 220px;
+        font-size: 22px; line-height: 1.65; color: #000;
+      }
+      [data-composition-id="personal-prompt"] .w { opacity: 0; }
+      [data-composition-id="personal-prompt"] .caret {
+        display: inline-block; width: 2.5px; height: 26px; background: #7033FF;
+        vertical-align: -4px; margin-left: 3px; opacity: 0;
+      }
+      [data-composition-id="personal-prompt"] .actions { display: flex; justify-content: flex-end; margin-top: 22px; }
+      [data-composition-id="personal-prompt"] .save-btn {
+        background: #7033FF; color: #fff; font-size: 20px; font-weight: 600;
+        padding: 13px 44px; border-radius: 8px;
+      }
+      [data-composition-id="personal-prompt"] .toast {
+        position: absolute; right: 0; bottom: 60px; width: 520px;
+        background: #FDFDFD; border: 1.5px solid #E7E7EE; border-radius: 10px;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16);
+        padding: 20px 24px; display: flex; gap: 16px; align-items: flex-start; opacity: 0;
+      }
+      [data-composition-id="personal-prompt"] .toast-ok {
+        width: 38px; height: 38px; border-radius: 50%; background: #4AC885; color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 800; font-size: 19px; flex-shrink: 0;
+      }
+      [data-composition-id="personal-prompt"] .toast-title { font-size: 21px; font-weight: 700; }
+      [data-composition-id="personal-prompt"] .toast-sub { font-size: 17.5px; color: #525252; margin-top: 4px; line-height: 1.4; }
+      [data-composition-id="personal-prompt"] .cursor {
+        position: absolute; width: 26px; height: 26px; border-radius: 50%;
+        background: rgba(26, 22, 37, 0.85); border: 2.5px solid #fff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); z-index: 30;
+        left: 1500px; top: 1000px; opacity: 0;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      (function () {
+        const R = '[data-composition-id="personal-prompt"] ';
+        const tl = gsap.timeline({ paused: true });
+
+        // ambient
+        tl.fromTo(R + ".glow", { y: -24 }, { y: 24, duration: 8, ease: "sine.inOut" }, 0);
+        tl.fromTo(R + ".ghost", { x: 24 }, { x: -20, duration: 8, ease: "none" }, 0);
+
+        // copy cascade
+        tl.fromTo(R + ".chip", { x: -40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 0.2);
+        tl.fromTo(R + ".headline", { y: 46, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "expo.out" }, 0.35);
+        tl.fromTo("#pp-sub", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power1.out" }, 0.6);
+        tl.fromTo(R + ".meta", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "sine.out" }, 0.7);
+
+        // settings card rises
+        tl.fromTo("#pp-card", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.65, ease: "power3.out" }, 1.05);
+
+        // typing: caret + word-by-word
+        tl.fromTo("#pp-caret", { opacity: 0 }, { opacity: 1, duration: 0.1, ease: "none" }, 1.6);
+        tl.to("#pp-caret", { opacity: 0.15, repeat: 7, yoyo: true, duration: 0.32, ease: "none" }, 1.7);
+        tl.fromTo(R + ".w", { opacity: 0 }, { opacity: 1, duration: 0.05, ease: "none", stagger: 0.14 }, 1.8);
+        tl.to("#pp-caret", { opacity: 0, duration: 0.2, ease: "sine.in" }, 4.35);
+        tl.set("#pp-caret", { visibility: "hidden" }, 4.55);
+
+        // cursor clicks save
+        tl.fromTo("#pp-cursor", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "sine.out" }, 3.7);
+        tl.to("#pp-cursor", { left: 1712, top: 722, duration: 0.5, ease: "power2.inOut" }, 3.75);
+        tl.to("#pp-cursor", { scale: 0.78, duration: 0.1, ease: "power2.in" }, 4.3);
+        tl.to("#pp-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 4.4);
+        tl.to("#pp-save", { scale: 0.95, duration: 0.1, ease: "power2.in" }, 4.3);
+        tl.to("#pp-save", { scale: 1, duration: 0.14, ease: "power2.out" }, 4.4);
+        tl.to("#pp-cursor", { opacity: 0, duration: 0.3, ease: "sine.in" }, 4.6);
+        tl.set("#pp-cursor", { visibility: "hidden" }, 4.9);
+
+        // toast
+        tl.fromTo("#pp-toast", { x: 70, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "back.out(1.5)" }, 4.5);
+
+        // payoff caption swap (breath: toast settles 5.0 -> swap 5.6)
+        tl.to("#pp-sub", { y: -16, opacity: 0, duration: 0.3, ease: "power2.in" }, 5.6);
+        tl.set("#pp-sub", { visibility: "hidden" }, 5.9);
+        tl.fromTo("#pp-payoff", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 5.75);
+
+        // graceful end for looping
+        tl.to(R + ".stage", { opacity: 0, duration: 0.35, ease: "power2.in" }, 7.65);
+
+        window.__timelines["personal-prompt"] = tl;
+      })();
+    </script>
+  </div>
+</template>

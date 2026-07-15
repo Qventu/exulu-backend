@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Connect your agent (Skills Library CLI)</title>
+  <style>
+    /* canonical release-page recipe — master page restyles everything */
+    :root {
+      --background: 43 33% 96%; --foreground: 30 16% 12%;
+      --primary: 86 55% 30%; --muted-foreground: 27 5% 40%;
+      --border: 39 27% 85%; --accent: 44 26% 92%; --accent-foreground: 33 7% 31%;
+      --code-surface: 184 17% 16%; --code-surface-foreground: 80 13% 95%;
+      --radius: 0rem;
+    }
+    body { margin: 0; font-family: 'Aspekta', 'Inter Tight', system-ui, sans-serif; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill { display: inline-block; padding: 4px 10px; background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); font-size: 12px; font-weight: 500; }
+    h1.hero { font-size: 56px; font-weight: 400; line-height: 1.05; margin: 24px 0 16px; letter-spacing: -0.03em; }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede { font-size: 20px; color: hsl(var(--muted-foreground)); max-width: 680px; }
+    .feature { margin-top: 96px; padding-top: 48px; border-top: 1px solid hsl(var(--border)); }
+    .feature h2 { font-size: 32px; font-weight: 400; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .feature .one-liner { color: hsl(var(--muted-foreground)); font-size: 18px; margin: 0 0 32px; }
+    .slice { margin-top: 24px; }
+    .slice video { width: 100%; aspect-ratio: 16 / 9; height: auto; border: 1px solid hsl(var(--border)); display: block; margin: 0 0 24px; }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice .fineprint { font-size: 14px; color: hsl(var(--muted-foreground)); }
+    .feature pre { font-family: 'RobotoMono', 'JetBrains Mono', monospace; font-size: 13.5px; background: hsl(var(--code-surface)); color: hsl(var(--code-surface-foreground)); padding: 20px 24px; overflow-x: auto; margin: 0; line-height: 1.55; }
+    .snippet-label { font-size: 12px; font-weight: 500; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.06em; margin: 32px 0 8px; }
+    footer { margin-top: 120px; padding-top: 32px; border-top: 1px solid hsl(var(--border)); font-size: 14px; color: hsl(var(--muted-foreground)); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Connect Your Agent</span>
+      <h1 class="hero">Your skills library, in <em>every coding agent</em>.</h1>
+      <p class="lede">One command connects Claude Code, OpenCode and 48+ other coding agents to your Exulu skills library. From then on your agent can list, install, update and publish skills itself — no browser round-trips, no copy-pasting skill files.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="connect-modal">
+        <h2>One line to connect</h2>
+        <p class="one-liner">The skills library hands you the command — your terminal does the rest.</p>
+        <div class="slice">
+          <video src="./shorts/connect-modal.mp4" autoplay loop muted playsinline></video>
+          <p>The Skills page has a new <strong>"Connect your agent"</strong> button. It opens a dialog with a single copy-ready command, pre-filled with your instance's address — run it in any terminal and your coding agent is wired to this Exulu instance. The dialog says exactly what will happen next: your agent asks which clients to install into, and whether to share one copy across them via symlinks.</p>
+          <p class="fineprint">You'll need an API key — create one in Settings. The key is stored locally with owner-only file permissions and is never passed on the command line.</p>
+          <div class="snippet-label">bash — the one-liner, with your instance's URL baked in</div>
+          <pre><code>curl -fsSL https://exulu.your-company.com/api/skills/install.sh | sh</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="install-script">
+        <h2>An installer that knows your agents</h2>
+        <p class="one-liner">Pick your clients once — existing ones come pre-selected.</p>
+        <div class="slice">
+          <video src="./shorts/install-script.mp4" autoplay loop muted playsinline></video>
+          <p>The script resolves your backend, asks for your API key, and then shows a multi-select of coding agents to install into — clients it finds on your machine are already ticked, and the cross-agent <strong>.agents/skills/</strong> standard is the default. Choose copies for maximum compatibility, or symlink mode to share one copy across every client with a single place to update.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="list-skills">
+        <h2>Ask your agent what's in the library</h2>
+        <p class="one-liner">"List exulu skills" — straight from the chat.</p>
+        <div class="slice">
+          <video src="./shorts/list-skills.mp4" autoplay loop muted playsinline></video>
+          <p>Once connected, the <strong>exulu-skills</strong> skill teaches your agent the library. Ask it to list skills and it returns every skill you can access on your instance — name, description, tags and current version — governed by the same access rules as the platform UI: you only see what you're allowed to see.</p>
+          <div class="snippet-label">The helper your agent calls under the hood</div>
+          <pre><code>exulu list                      # skills you can access
+exulu get &lt;name&gt;                # one skill's metadata
+exulu install &lt;name&gt;            # install into your agent clients
+exulu update [&lt;name&gt;]           # update all installed skills, or one
+exulu publish &lt;name&gt; &lt;dir&gt;      # publish a local skill folder
+exulu config                    # show backend / scope / clients</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="install-skill">
+        <h2>Install a skill without leaving the chat</h2>
+        <p class="one-liner">"install grill-me" — and it's in every client you connected.</p>
+        <div class="slice">
+          <video src="./shorts/install-skill.mp4" autoplay loop muted playsinline></video>
+          <p>Tell your agent to install a skill and it lands in all your connected client directories in one step — as copies, or as symlinks to a single shared source if you chose symlink mode. Each installed skill carries a marker file recording its name, version and source instance, so <strong>update</strong> later knows exactly what to refresh.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="publish-skill">
+        <h2>Publish your own skills back</h2>
+        <p class="one-liner">A skill folder on your machine becomes a versioned library entry.</p>
+        <div class="slice">
+          <video src="./shorts/publish-skill.mp4" autoplay loop muted playsinline></video>
+          <p>Built a skill locally? Ask your agent to publish it. The folder is zipped and pushed to the library — a new name creates version 1, publishing an existing name you own bumps the version. Your whole team can install it seconds later, from their own agents.</p>
+          <div class="snippet-label">REST — the registry behind it (same API the helper uses)</div>
+          <pre><code># list skills you can access
+curl -H "x-api-key: Bearer $EXULU_API_KEY" \
+  "$EXULU_BACKEND/skills/registry"
+
+# download one (latest or a pinned version)
+curl -H "x-api-key: Bearer $EXULU_API_KEY" \
+  "$EXULU_BACKEND/skills/registry/grill-me/download?version=latest"
+
+# publish a new version (zip body)
+curl -X POST -H "x-api-key: Bearer $EXULU_API_KEY" \
+  --data-binary @grill-me.zip \
+  "$EXULU_BACKEND/skills/registry/grill-me"</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 13, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

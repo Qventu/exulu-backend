@@ -1,0 +1,193 @@
+---
+title: "MCP"
+description: "Enable the IMP MCP server, understand what mounts at /mcp/:agent, and connect a generic MCP client."
+icon: "plug"
+---
+
+IMP can expose any agent as a Model Context Protocol (MCP) server. When `MCP.enabled: true`, the platform mounts a Streamable HTTP MCP endpoint at `/mcp/:agent` for each agent ID. External MCP clients — Claude Desktop, custom agents, or any MCP-compatible tool — can connect to these endpoints and call the agent's tools directly.
+
+## Prerequisites
+
+- Completed [Your first app](/developers/tutorials/first-app) — you have a working project with `src/exulu.ts`.
+- Read [ExuluMCP](/developers/reference/exulu-mcp) — the reference page for the underlying class.
+
+## What you will build
+
+A project with MCP enabled, an understanding of the endpoint layout and authentication model, and a working MCP client config that connects to an agent.
+
+<Steps>
+
+<Step title="Enable MCP in the app config">
+
+Set `MCP.enabled: true` in the config passed to `app.create()`. The `MCP` field is required — it does not have a default:
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+import { tools }    from "./tools/index";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region:   process.env.COMPANION_S3_REGION!,
+      s3key:      process.env.COMPANION_S3_KEY!,
+      s3secret:   process.env.COMPANION_S3_SECRET!,
+      s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    workers: { enabled: true },
+    MCP:     { enabled: true },  // mounts /mcp/:agent on all agents
+  },
+  contexts,
+  tools,
+});
+```
+
+No other configuration is required. `ExuluApp` calls `ExuluMCP.create()` internally during `app.express.init()`, mounting the route handlers before the server begins accepting connections.
+
+</Step>
+
+<Step title="Understand the endpoint layout">
+
+After the server starts, three routes are active for each agent:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/mcp/:agent` | Client-to-server messages: `initialize`, tool calls, list-tools |
+| `GET` | `/mcp/:agent` | Server-to-client notifications via SSE (server-sent events) |
+| `DELETE` | `/mcp/:agent` | Session termination |
+
+`:agent` is the agent's numeric or UUID ID from the IMP database — the same ID shown in the agent workbench URL. Sessions are tracked by the `mcp-session-id` header. The first `POST` to an endpoint without a session ID is treated as an `initialize` request; the response includes a `mcp-session-id` header the client must send on subsequent requests.
+
+**Built-in prompt tools** — in addition to the agent's enabled tools, every MCP server registers two built-in tools:
+
+- `getListOfPromptTemplates` — lists prompt templates assigned to the agent.
+- `getPromptTemplateDetails` — retrieves the full content of a template by ID.
+
+</Step>
+
+<Step title="Understand authentication">
+
+Every request to `/mcp/:agent` goes through IMP's standard authentication middleware before any MCP processing occurs:
+
+- **API key** — pass an API key in the `x-api-key` header. Obtain keys from **Administration → API keys**.
+- **Session token** — browser-based clients can use the platform's session cookie.
+
+Unauthenticated requests receive `401`. Requests for an agent the authenticated user cannot access receive `404`.
+
+There is no separate MCP-specific credential — the same API key that authenticates the REST and GraphQL APIs authenticates the MCP endpoint.
+
+</Step>
+
+<Step title="Connect a generic MCP client">
+
+Most MCP clients accept a JSON configuration block. To connect to an IMP agent, use:
+
+```json
+{
+  "mcpServers": {
+    "my-imp-agent": {
+      "type": "http",
+      "url": "http://localhost:9001/mcp/<agent-id>",
+      "headers": {
+        "x-api-key": "sk_your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+Replace `<agent-id>` with the agent's numeric ID from the workbench URL (for example, `42`) and `sk_your-api-key-here` with a key from **Administration → API keys**.
+
+For Claude Desktop specifically, add this block to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-imp-agent": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch", "http://localhost:9001/mcp/42"],
+      "env": {
+        "MCP_API_KEY": "sk_your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+Or, if your client supports direct HTTP transport (Streamable HTTP):
+
+```json
+{
+  "mcpServers": {
+    "imp-support-agent": {
+      "transport": "streamable-http",
+      "url": "https://imp.yourcompany.example.com/mcp/42",
+      "requestInit": {
+        "headers": {
+          "x-api-key": "sk_your-api-key-here"
+        }
+      }
+    }
+  }
+}
+```
+
+</Step>
+
+<Step title="Verify the connection">
+
+Start the server:
+
+```bash
+npm run dev:server
+```
+
+Send an `initialize` request to the MCP endpoint:
+
+```bash
+curl -X POST http://localhost:9001/mcp/<agent-id> \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk_your-api-key-here" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}},"id":1}'
+```
+
+A successful response includes `"result": { "protocolVersion": "...", "capabilities": { "tools": {} }, ... }` and a `mcp-session-id` header. Use that session ID on subsequent requests.
+
+Send a `tools/list` request to verify the agent's tools are exposed:
+
+```bash
+curl -X POST http://localhost:9001/mcp/<agent-id> \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk_your-api-key-here" \
+  -H "mcp-session-id: <session-id-from-initialize>" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'
+```
+
+The response lists all tools enabled for the agent plus the two built-in prompt tools.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- MCP enabled on the IMP app with `MCP.enabled: true`.
+- An understanding of the Streamable HTTP endpoint layout (`POST`/`GET`/`DELETE` at `/mcp/:agent`).
+- A generic MCP client config JSON that connects to an agent using `x-api-key` authentication.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluMCP" icon="plug" href="/developers/reference/exulu-mcp">
+    The ExuluMCP class reference — endpoints, session management, and built-in prompt tools.
+  </Card>
+  <Card title="Custom tools" icon="wrench" href="/developers/tutorials/custom-tools">
+    Add tools that are exposed through the MCP server.
+  </Card>
+  <Card title="API keys" icon="key" href="/administration/api-keys">
+    Create and manage API keys for MCP client authentication.
+  </Card>
+</CardGroup>

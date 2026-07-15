@@ -1,0 +1,62 @@
+---
+title: "Tool approvals"
+description: "Understand when IMP asks you to approve a tool call and what each option does."
+icon: "shield-check"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+When the agent wants to run a tool, IMP pauses and shows you an approval card. You stay in control of what runs in your name.
+
+<Frame caption="The tool approval card: the agent requests to run Email, you review the content, and choose Allow once — the agent proceeds and confirms the action.">
+  <video autoPlay muted loop playsInline src="/videos/approve-tool-call.mp4" />
+</Frame>
+
+## Why tools need approval
+
+Most tools require approval by default. This means every time the agent would call a tool, it asks first rather than running silently. You can see the tool name and a short preview of what it is about to do before you decide.
+
+Some tools — such as the image generation widget and certain internal context tools — have approval turned off by default and run without prompting. The tools you see in a conversation depend on what the agent's administrator has enabled.
+
+<Note>
+Tool parameters configured by an administrator are shown in the approval card for transparency, but you cannot edit them. Only the agent's administrator can change those settings.
+</Note>
+
+## The approval card
+
+When the agent requests to run a tool, a card appears inline in the conversation:
+
+**Run `{tool}`?**
+
+"The agent wants to run this tool. Review the request and choose how to proceed."
+
+Below the description, a monospace block previews the key input the tool will use (for example, a file path, a command, a URL, or a query). Three buttons follow:
+
+| Button | What it does |
+| --- | --- |
+| **Allow once** | Runs the tool a single time. The next time the agent wants to call the same tool, you are asked again. |
+| **Allow for this chat** | Runs the tool now and pre-approves it for the rest of this conversation. Future calls to the same tool proceed without another card. |
+| **Deny** | Blocks this specific call. The agent receives a denial response and may try a different approach or ask you to reconsider. |
+
+After you respond, the card collapses into a compact status line — "Approved: `{tool}`" or "Denied: `{tool}`" — so the conversation stays readable.
+
+## Reviewing what you have already approved
+
+Open **Skills & tools** from the **＋** menu in the composer. The **Approved for this chat** section lists every tool you have pre-approved in this conversation, with a **Revoke** button next to each one. Revoking a pre-approval means the agent will ask again the next time it wants to call that tool.
+
+<Tip>
+Use **Allow for this chat** when you expect the agent to call the same tool several times in one task — for example, reading multiple files or running several searches in a row. Use **Allow once** when you want to stay in the loop on each step.
+</Tip>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Skills and tools" icon="wrench" href="/user-guide/chat/overview#the-add-to-conversation-menu">
+    Enable or disable individual tools and skills for a conversation.
+  </Card>
+  <Card title="Context compaction" icon="archive" href="/user-guide/chat/context-compaction">
+    Keep the conversation within the model's context window.
+  </Card>
+</Columns>

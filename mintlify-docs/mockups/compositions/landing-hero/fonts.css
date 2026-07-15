@@ -1,0 +1,24 @@
+/* IMP mockup fonts — self-hosted, plain @font-face (no base64; that is only
+   needed for the release publish path). Aspekta substitute = Inter Tight,
+   same mapping as exulu-website/web/app/globals.css. */
+@font-face {
+  font-family: "Aspekta";
+  src: url("fonts/inter-tight-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Aspekta";
+  src: url("fonts/inter-tight-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "RobotoMono";
+  src: url("fonts/roboto-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}

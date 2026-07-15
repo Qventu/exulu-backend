@@ -1,0 +1,146 @@
+---
+title: "Operations"
+description: "Server/worker architecture, scaling workers, queue tuning, pm2 in containers, upgrades, and Dokploy network configuration."
+icon: "settings-2"
+---
+
+## Server and worker split
+
+IMP separates two process roles:
+
+| Role | Image | Entry point | What it does |
+|---|---|---|---|
+| **Server** (`exulu-backend`) | Built from `Dockerfile.backend` | `dist/server.js` | HTTP API, GraphQL, LiteLLM supervisor, real-time features |
+| **Worker** (`exulu-worker`) | Built from `Dockerfile.worker` | `dist/worker.js` | BullMQ job consumers: knowledge ingestion, embeddings, evals, routines |
+
+Workers are optional. You can run IMP without any worker containers, but background features (knowledge processing, eval runs, routine scheduling) will not function. The administration UI shows a warning banner when Redis / workers are not configured.
+
+A worker connects to the same Postgres and Redis instances as the server. It does **not** spawn its own LiteLLM process; it connects to the server's LiteLLM proxy on port `4000`.
+
+<Warning>
+`docker-compose.worker.yml` does not include an `env_file` entry. Outside Dokploy, the worker starts without database and Redis credentials and crashes immediately. Add the following to `docker-compose.worker.yml` under the worker service:
+
+```yaml
+env_file:
+  - .env
+```
+
+Or inject the required environment variables through another mechanism before starting the worker.
+</Warning>
+
+## Scaling workers
+
+To handle more concurrent background jobs, run more worker containers. Each worker container subscribes to the same BullMQ queue in Redis; BullMQ distributes jobs across all subscribed workers automatically.
+
+Each worker container subscribes to all configured queues by default. Queue scoping (subscribing a worker to only a subset of queues) is controlled by the `ExuluQueueConfig` passed to `createWorkers` — this is a code-level concern for custom deployments built on `@exulu/backend`.
+
+**Memory.** Give each worker container at least 8 GB. Knowledge processing holds large document representations in memory during chunking and embedding. Set the Node.js heap limit explicitly:
+
+```yaml
+# docker-compose.worker.yml
+services:
+  exulu-worker:
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=8192"
+```
+
+`start-worker.sh` does not set `NODE_OPTIONS` itself — the value above must come from the compose `environment` block or another injection mechanism.
+
+## Queue concurrency and timeouts
+
+Each queue is configured with:
+
+| Setting | Description |
+|---|---|
+| `concurrency.worker` | Number of jobs a single worker process handles concurrently. Default: `1`. |
+| `concurrency.queue` | Maximum number of simultaneously active jobs across all workers for this queue. |
+| `ratelimit` | Maximum jobs per second sent to a worker (BullMQ rate limiter). |
+| `timeoutInSeconds` | Job execution timeout. Default: 3 minutes. Long-running processor jobs should use a higher value. |
+
+These values are set in the `ExuluQueueConfig` objects you define when configuring `@exulu/backend`.
+
+### Sizing embedder queues to provider rate limits
+
+Embedding providers enforce token-per-minute or request-per-minute limits. Set `ratelimit` and `concurrency.worker` to stay within those limits.
+
+**Example:** a provider allows 5 million tokens per minute and your average chunk is 500 tokens.
+
+```
+max_chunks_per_minute = 5,000,000 / 500 = 10,000
+max_chunks_per_second = 10,000 / 60 ≈ 166
+```
+
+Set `ratelimit: 166` on the embedder queue. With a single worker at `concurrency.worker: 4`, each of the 4 concurrent slots can embed ~41 chunks per second before hitting the limit. Adjust based on observed latency and actual provider quota.
+
+## pm2 in containers
+
+Both the backend and worker run under pm2 inside the container:
+
+```
+Container PID 1: sh start-backend.sh
+  └─ pm2 daemon
+       └─ exulu-server (dist/server.js)
+```
+
+pm2 restarts the Node.js process automatically on crash. If the process crashes repeatedly and pm2 gives up, the container itself does not exit — you need to check `docker logs <container>` or the pm2 log stream to detect a crashed process.
+
+Useful commands when exec'd into a running container:
+
+```bash
+pm2 list                  # show process status
+pm2 logs exulu-server     # tail logs
+pm2 restart exulu-server  # manual restart
+```
+
+## Upgrade procedure
+
+<Steps>
+
+### Bump `@exulu/backend` in `package.json`
+
+In your fork or checkout of `exulu-example`, update the version of `@exulu/backend` to the target release.
+
+### Rebuild the images
+
+```bash
+docker compose -f docker-compose.backend.yml build
+docker compose -f docker-compose.worker.yml build
+```
+
+### Restart containers
+
+```bash
+docker compose -f docker-compose.backend.yml up -d
+docker compose -f docker-compose.worker.yml up -d
+```
+
+The start scripts run `initdb` on every boot. Any new tables or columns are added automatically on startup — there is nothing to run manually.
+
+### Verify
+
+Check the container logs for the `[EXULU] Database initialized.` log line. Check that pm2 shows the process as `online`.
+
+</Steps>
+
+<Note>
+Back up both Postgres databases before upgrading in production. `initdb` does not run destructive migrations, but it is good practice to have a clean snapshot before any software change.
+</Note>
+
+## Dokploy network
+
+The backend and worker compose files attach to `dokploy-network`, an external Docker network managed by [Dokploy](https://dokploy.com/). Dokploy creates this network automatically and injects environment variables into containers.
+
+If you are not using Dokploy, create your own shared network and update the `networks` section in both compose files:
+
+```bash
+docker network create imp-network
+```
+
+```yaml
+# In docker-compose.backend.yml and docker-compose.worker.yml
+networks:
+  imp-network:
+    external: true
+```
+
+Make sure all containers that need to communicate (backend, worker, Postgres, Redis, MinIO) are attached to the same network.

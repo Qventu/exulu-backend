@@ -1,0 +1,44 @@
+---
+title: "What is IMP?"
+description: "IMP is the Intelligence Management Platform — chat with agents over your organization's knowledge, build and govern those agents, and deploy on your own infrastructure."
+icon: "info"
+---
+
+IMP brings together three capabilities that usually require separate tools: a chat interface your whole organization uses, a build environment where specialists configure agents and knowledge, and governance controls that keep AI use safe, auditable, and within budget. Everything runs on infrastructure you control.
+
+<Frame caption="The Chat surface — where end users talk to agents.">
+  <img src="/images/screens/chat-overview.png" alt="IMP chat interface showing an active session with an agent" />
+</Frame>
+
+## The four surfaces
+
+<Columns cols={2}>
+  <Card title="Chat" icon="message-square">
+    Where end users talk to agents. Start a session, upload files, continue past conversations, organize work in projects, and transcribe meetings. No configuration required — you open it and start typing.
+  </Card>
+  <Card title="Building" icon="hammer">
+    Where power users create what everyone else uses. Configure agents, build knowledge contexts, write prompts and skills, define routines, and run evals.
+  </Card>
+  <Card title="Administration" icon="shield">
+    Where platform owners manage the deployment. Invite users, assign roles and teams, set budgets, choose which models are available, configure theming, and review usage analytics.
+  </Card>
+  <Card title="API and developer tools" icon="code">
+    Where developers integrate IMP into their own products. The `@exulu/backend` npm package, a GraphQL API, a REST API, and an interactive API explorer are all here.
+  </Card>
+</Columns>
+
+## The command palette
+
+Wherever you are in IMP, press <kbd>⌘</kbd>+<kbd>K</kbd> (or <kbd>Ctrl</kbd>+<kbd>K</kbd>) to open the command palette. It lists your recent pages, every destination you can navigate to, and create actions like "New agent" or "New project" — type to filter, select a result, and IMP takes you there immediately. The palette only shows what your permissions allow.
+
+<Frame caption="The command palette: press ⌘K anywhere, type to filter the Navigate and Create groups, and select a result to jump straight to that page.">
+  <video autoPlay muted loop playsInline src="/videos/command-palette.mp4" />
+</Frame>
+
+## Deployment models
+
+IMP runs either as a hosted service provided by Exulu or as a self-hosted deployment on your own servers and cloud infrastructure. Both use the same codebase. The self-hosted path gives you full control over where data is stored and processed — a key reason organizations choose IMP.
+
+<Note>
+If you are evaluating which deployment model fits your organization, see the [self-hosting architecture](/self-hosting/architecture) page for the infrastructure requirements and data-residency guarantees.
+</Note>

@@ -1,0 +1,92 @@
+---
+title: "Test cases"
+description: "Test cases define the conversation inputs and expected outputs that IMP replays when running an eval — manage them globally in the library or per set."
+icon: "list-checks"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="evals (read)" />
+
+## What test cases are
+
+A test case is a scripted conversation: one or more user messages (in order), an expected final output, and an optional description of what the case verifies. When an eval runs, IMP replays the conversation through the configured agent and scores the agent's final response against the expected output using the eval functions you chose.
+
+Each test case belongs to at most one eval set at a time. To reassign a case to a different set, remove it from its current set first (it becomes unassigned), then use **Add existing** in the target set to add it — the picker lists only unassigned cases.
+
+## The test case library
+
+Open **Test cases** via the **Test case library** button on the [Evals list page](/building/evals/overview), or navigate directly to `/evals/cases`.
+
+The library is the global list of every test case in the organization — not filtered by eval set. Use it to:
+
+- Create test cases before you have a set in mind.
+- Edit or delete cases across sets in one place.
+
+The toolbar has a name filter ("Filter by name…") that queries the server in real time.
+
+Each row shows:
+
+| Column | What it shows |
+| --- | --- |
+| **Name** | The test case name |
+| **Description** | Short description, or "—" if none |
+| **Messages** | Count of user messages in the case (e.g. "2 messages") |
+| **Updated** | Relative timestamp |
+| **Actions** | Row overflow: **Edit**, **Delete** |
+
+Click a row to open the test case editor inline.
+
+## Create a test case
+
+Click **New test case** (top-right of either the library page or the set's Test cases tab). The **Create test case** dialog opens with two tabs.
+
+### Basic info tab
+
+- **Name** (required) — a short, descriptive label. Example: "Customer Support — Refund Request".
+- **Description** — what this case tests (optional).
+- **Expected output** (required) — the expected final reply. This can be an exact phrase or a description of what the output should contain.
+
+### Conversation tab
+
+Build the conversation flow the agent will receive:
+
+1. Type a user message in the text field ("Type the user's message…") and press **Enter** to add it (Shift+Enter inserts a newline).
+2. A placeholder assistant response appears after each user message: "Placeholder, generated agent response will be added here when the test case is run…" — this is not editable; the agent fills it at run time.
+3. Add as many user messages as needed to simulate a multi-turn conversation.
+4. You can attach files to any message (images, PDFs, audio, spreadsheets). The agent must support the file types you attach.
+
+<Note>
+Name, at least one input message, and expected output are all required. The modal blocks submission with the message "Name, at least one input message, and expected output are required."
+</Note>
+
+## Test cases inside an eval set
+
+From the eval set detail page at `/evals/{id}`, switch to the **Test cases** tab to see and manage cases that belong to that set.
+
+The tab header shows a **`{n}`/500** count badge. The 500-case limit is a hard product cap.
+
+Two write-access actions are available:
+
+- **New case** — opens the test case modal pre-bound to this eval set. The new case is immediately added to the set.
+- **Add existing** — opens a picker ("Add existing test cases") that lists unassigned test cases (cases that don't yet belong to any set). Search by name, select one or more, then click **Add `{n}` test case(s)**. Cases that already belong to another set are not listed.
+
+Each case row shows the name, optional description, and two icon buttons (write access only):
+
+- **Edit** (pencil icon) — opens the test case editor for this case in context.
+- **Remove from set** (× icon) — removes the case from the set without deleting it. A confirm dialog clarifies: "The test case itself will not be deleted and can be added back later."
+
+## Delete a test case
+
+Deleting a test case from the library permanently removes it and detaches it from any set it belonged to. Use the **Delete** row action from the library or the per-row actions in the set's Test cases tab (the × removes from set, not the library — use the library for permanent deletion).
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Runs" icon="play" href="/building/evals/runs">
+    Configure and start eval runs against a set of test cases.
+  </Card>
+  <Card title="Evals overview" icon="book-check" href="/building/evals/overview">
+    Back to eval sets and the list page.
+  </Card>
+</Columns>

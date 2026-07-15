@@ -1,0 +1,59 @@
+---
+title: "Models"
+description: "Browse the read-only LiteLLM model catalog and open the LiteLLM admin UI for model management."
+icon: "cpu"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+## What the models page is
+
+The **Models** page (`/models`) is a read-only view of the models registered in IMP's LiteLLM proxy. It shows every model available to agents on this deployment: name, context window, supported modalities, cost per million tokens, status, and routing tags.
+
+This page does not let you add, edit, or remove models. Model management — adding providers, setting config.yaml entries, and enabling or disabling models — happens in LiteLLM, not in IMP.
+
+<Note>
+Model CRUD lives in LiteLLM. To add, configure, or remove a model, use the LiteLLM admin UI (see the **Open LiteLLM Admin UI** button at the top of the page) or edit LiteLLM's `config.yaml` on the host and restart the server. See the [LiteLLM service guide](/self-hosting/services/litellm) for details on the LiteLLM service configuration.
+</Note>
+
+## The catalog table
+
+The table lists every model returned by the LiteLLM proxy. Columns:
+
+| Column | What it shows |
+| --- | --- |
+| **Model** | The model's display name and provider. |
+| **Context (in / out)** | Max input tokens and max output tokens for the context window. |
+| **Modalities** | Capability chips: Vision, PDF, Audio, Tools. |
+| **Cost (in / out)** | Price per million tokens for input and output (e.g., "$3.00/M"). |
+| **Status** | Active or Inactive. |
+| **Tags** | Routing tags attached to the model in LiteLLM. |
+
+Use **Search models…** in the toolbar to filter the list by name in real time.
+
+## Model detail
+
+Click any row to open the model detail panel. It shows the full set of capabilities, the context window breakdown, cost details, upstream model name, routing tags, and the raw JSON from LiteLLM if you need it for debugging.
+
+## Opening LiteLLM admin UI
+
+The **Open LiteLLM Admin UI** button in the page header links to the LiteLLM proxy admin interface in a new tab. From there you can add models, modify provider settings, and manage LiteLLM-native budget controls.
+
+The URL is derived from the IMP backend configuration. If the button opens a blank page or a connection error, the LiteLLM admin port is not exposed on this deployment — contact your infrastructure team.
+
+## When the catalog is empty or errors
+
+If the LiteLLM proxy is unreachable from the IMP backend, the page shows an error state with a **Retry** button and a technical details accordion. If the proxy is healthy but no models are configured, the page shows: "No models configured — edit LiteLLM's config.yaml on the host and restart the server."
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Budgets" icon="wallet" href="/administration/budgets">
+    Set spending limits that apply when users run models.
+  </Card>
+  <Card title="Analytics" icon="bar-chart-3" href="/administration/analytics">
+    View token usage and spend across models and users.
+  </Card>
+</Columns>

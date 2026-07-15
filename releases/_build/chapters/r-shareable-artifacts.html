@@ -1,0 +1,55 @@
+<article class="chapter" id="r-shareable-artifacts" data-release="2026-07-02-shareable-artifacts" aria-labelledby="r-shareable-artifacts-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">15</span>
+      <span class="pill">July 2, 2026</span>
+      <span class="ch-name">Shareable Artifacts</span>
+    </div>
+    <h1 class="ch-title" id="r-shareable-artifacts-h">Every file your agent creates —<br><em>shareable in two clicks.</em></h1>
+    <p class="ch-lede">Agents build things: HTML pages, reports, spreadsheets, PDFs. Now you can turn any of those files into a shareable link right from the chat — public, password-protected, or scoped to your team.</p>
+  </header>
+  <section class="feature" id="r-shareable-artifacts--shareable-artifacts"><h2>Shareable Artifact Links</h2>
+        <p class="one-liner">Share any agent-created file in two clicks — with your choice of access control.</p>
+
+        <!-- Slice 1: Share from chat -->
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-02-shareable-artifacts__share-dialog.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+          <p>Every file row in the Session Files panel now has a share icon. Click it, pick an access mode, set an expiry, and hit <strong>Create link</strong> — the URL is copied to your clipboard and live immediately. The same dialog is available from file references in chat messages and from artifact links agents paste into their replies.</p>
+
+          <div class="access-modes">
+            <div class="mode-badge">
+              <div class="mode-dot green"></div>
+              Public — anyone with the URL
+            </div>
+            <div class="mode-badge">
+              <div class="mode-dot yellow"></div>
+              Password — gated by a secret
+            </div>
+            <div class="mode-badge">
+              <div class="mode-dot blue"></div>
+              Login required — scoped to Exulu users
+            </div>
+          </div>
+        </div>
+
+        <!-- Slice 2: HTML renders inline -->
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-02-shareable-artifacts__artifact-render.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+          <p>HTML artifacts render live in the browser — no login prompt, no download step — and run in a sandbox that keeps artifact scripts away from your Exulu session. Every other file type (Word, Excel, PDF, …) downloads automatically with the correct filename. Public links carry only the unguessable share name; password links send the credential as an <code style="font-family:'JetBrains Mono',monospace;font-size:14px;background:hsl(var(--accent));padding:1px 5px;border-radius:3px;">x-share-password</code> header — never in the URL or page HTML.</p>
+        </div>
+
+        <!-- REST API snippet -->
+        <div class="snippet-label">REST API — create a share link</div>
+        <pre><span class="c-keyword">curl</span> <span class="c-flag">-X POST</span> https://api.exulu.app/shared-artifacts \
+  <span class="c-flag">-H</span> <span class="c-str">"Authorization: Bearer $TOKEN"</span> \
+  <span class="c-flag">-d</span> <span class="c-str">'{
+    "s3key":     "uploads/q4-report.html",
+    "name":      "q4-report",
+    "auth_mode": "public",
+    "expires_at": "2026-08-01T00:00:00Z"
+  }'</span>
+<span class="c-muted"># → { "name": "q4-report" }</span>
+<span class="c-muted"># Shareable at: /artifacts/q4-report</span></pre></section>
+</article>

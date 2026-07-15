@@ -1,0 +1,199 @@
+---
+title: "Custom processors"
+description: "Transform items after ingestion: configure trigger, queue, and generateEmbeddings; write a filter that skips already-processed items; and build a PDF-to-structured-fields processor."
+icon: "workflow"
+---
+
+A processor runs after items are written to the context — it transforms raw data into a form the embedder can work with. This tutorial adds a processor to `support_tickets_context` that fetches PDF attachments from S3, extracts their text into a structured field, and then triggers embedding generation automatically.
+
+## Prerequisites
+
+- Completed [Data sources and sync](/developers/tutorials/data-sources-and-sync) — `support_tickets_context` has a data source.
+- Read [ExuluContext — configuration](/developers/core/exulu-context/configuration) — the Processor section.
+- Read [ExuluStorage](/developers/reference/exulu-storage) — you use `utils.storage` to fetch files.
+
+## When processors run
+
+A processor runs after an item is written to the context. The `trigger` value controls when:
+
+| Trigger | Runs when |
+|---|---|
+| `"onInsert"` | The item is created for the first time. |
+| `"onUpdate"` | An existing item is updated. |
+| `"always"` | Both on create and on update. |
+| `"manual"` | Only when called explicitly via `processField()`. |
+
+In the current IMP source, `onInsert`, `onUpdate`, and `always` all run on both writes — treat them as equivalent for write-triggered processing. Use `manual` when you want to control processing explicitly.
+
+When `generateEmbeddings: true` is set in the processor config, IMP triggers embedding generation automatically after `execute` returns a result. This is the standard pattern for PDF processing: the processor converts the file to text, returns the enriched item, and embeddings are generated from the new content.
+
+<Steps>
+
+<Step title="Add the attachment field and a processing-queue">
+
+First, ensure `support_tickets_context` has fields for the PDF S3 key and the extracted text. Then register a processor queue:
+
+```typescript src/contexts/index.ts
+const processorQueue = ExuluQueues.register(
+  "ticket_pdf_processor",
+  { worker: 2, queue: 4 }, // 2 parallel per process, 4 global max
+  2,                        // 2 documents per second
+  60 * 20,                  // 20-minute timeout per document
+);
+```
+
+Add these fields to the context:
+
+```typescript
+fields: [
+  { name: "body",           type: "longText" },
+  { name: "status",         type: "enum", enumValues: ["open", "pending", "solved", "closed"], index: true },
+  { name: "priority",       type: "enum", enumValues: ["low", "normal", "high", "urgent"],    index: true },
+  { name: "submitter",      type: "shortText" },
+  { name: "created_at",     type: "date" },
+  { name: "content_hash",   type: "shortText", calculated: true },
+  // File field for the raw attachment (uploaded via source or UI):
+  { name: "attachment",     type: "file", allowedFileTypes: [".pdf", ".txt"] },
+  // Calculated field written by the processor:
+  { name: "extracted_text", type: "longText", calculated: true },
+  // Hash of the processed content, used to skip re-processing:
+  { name: "processed_hash", type: "shortText", calculated: true },
+],
+```
+
+</Step>
+
+<Step title="Write the processor filter">
+
+The `filter` function is called before `execute`. Return the item to proceed, or return `null`/`undefined` to skip.
+
+A good filter skips items that have no attachment and items whose attachment has not changed since the last processing run:
+
+```typescript
+filter: async ({ item, utils }) => {
+  // Skip if there is no attachment to process
+  if (!item.attachment_s3key) {
+    console.log(`[processor] Skipping item ${item.external_id} — no attachment`);
+    return null;
+  }
+
+  // Skip if the processed hash matches the current attachment hash
+  // (means the processor already ran on this exact file)
+  if (item.processed_hash && item.processed_hash === item.content_hash) {
+    console.log(`[processor] Skipping item ${item.external_id} — already processed`);
+    return null;
+  }
+
+  return item;
+},
+```
+
+When `filter` returns `null`, the item is not processed. However, if `generateEmbeddings: true` is set, IMP still triggers embedding generation for that item — so existing embeddings remain up to date even when the processor is skipped.
+
+</Step>
+
+<Step title="Write the processor execute function">
+
+`execute` receives the item and `utils.storage`. Download the PDF via a presigned URL, extract its text, and return the enriched item:
+
+```typescript
+execute: async ({ item, utils }) => {
+  console.log(`[processor] Processing item ${item.external_id}`);
+
+  // Get a time-limited presigned URL for the stored PDF
+  const pdfUrl = await utils.storage.getPresignedUrl(item.attachment_s3key!);
+
+  // Fetch the file content
+  const response = await fetch(pdfUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download attachment for ${item.external_id}: ${response.status}`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  // Extract text — use your preferred PDF library here.
+  // This example uses a hypothetical extractPdfText helper.
+  const extracted = await extractPdfText(buffer);
+
+  // Upload the extracted text back to S3 for auditing / chunker use
+  const textKey = await utils.storage.uploadFile(
+    Buffer.from(extracted),
+    `tickets/${item.external_id}-extracted.txt`,
+    "text/plain",
+  );
+
+  return {
+    ...item,
+    extracted_text: extracted,
+    // Store the same hash we used in filter so the next run can skip this item
+    processed_hash: item.content_hash,
+  };
+},
+```
+
+The object returned from `execute` is persisted back to the items table with `last_processed_at` updated. Always spread `...item` so you do not lose fields the processor did not touch.
+
+</Step>
+
+<Step title="Attach the processor to the context">
+
+```typescript src/contexts/index.ts — supportTicketsContext
+processor: {
+  name: "PDF attachment extractor",
+  description: "Downloads PDF attachments from S3, extracts their text, and stores it in the extracted_text field. Embeddings are generated automatically after processing.",
+  config: {
+    trigger: "always",
+    queue: processorQueue.use(),
+    timeoutInSeconds: 60 * 20,  // 20 minutes — large PDFs can take time
+    generateEmbeddings: true,   // embedding runs automatically after execute() returns
+  },
+  filter: async ({ item }) => { /* ... as above ... */ },
+  execute: async ({ item, utils }) => { /* ... as above ... */ },
+},
+```
+
+With `generateEmbeddings: true` and `configuration.calculateVectors: "manual"`, the flow for a new ticket with an attachment is:
+
+```
+Source → createItem() → processor.execute() → embeddings generated
+```
+
+Items without attachments skip `execute` (via the filter) but still get embedding triggered (because `generateEmbeddings: true` applies even when the filter skips). This means embeddings are always generated from whatever content is on the item, whether or not a PDF was processed.
+
+</Step>
+
+<Step title="Test the processor">
+
+Add an item with a PDF attachment through the IMP UI (open the context, click **New item**, and upload a `.pdf` file to the attachment field). The processor will run on insert.
+
+To monitor progress, go to **Build → Knowledge → support_tickets_context → Pipeline → Processor → Jobs**. You will see the item's job in the queue, its status, and any errors.
+
+To trigger the processor in bulk on existing items that have not been processed yet:
+
+1. Go to **Pipeline → Processor**.
+2. Click **Trigger** to open the bulk-processing dialog.
+3. Filter to items with no `extracted_text` value and confirm.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- A processor queue sized for PDF processing (2 workers, 20-minute timeout).
+- A `filter` that skips items with no attachment and items whose content has not changed.
+- A `execute` function that fetches a PDF via presigned URL, extracts text, and returns the enriched item.
+- `generateEmbeddings: true` so embeddings run automatically after processing completes.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Queues and workers" icon="layers" href="/developers/tutorials/queues-and-workers">
+    Register embedder and processor queues sized to your rate limits.
+  </Card>
+  <Card title="ExuluContext — configuration" icon="settings" href="/developers/core/exulu-context/configuration">
+    Processor configuration reference — trigger values, queue, timeoutInSeconds.
+  </Card>
+  <Card title="ExuluStorage" icon="hard-drive" href="/developers/reference/exulu-storage">
+    getPresignedUrl and uploadFile signatures.
+  </Card>
+</CardGroup>

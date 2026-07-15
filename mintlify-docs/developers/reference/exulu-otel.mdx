@@ -1,0 +1,68 @@
+---
+title: "ExuluOtel"
+description: "OpenTelemetry SDK setup for traces and logs, pre-configured for SigNoz."
+---
+
+`ExuluOtel` bootstraps an OpenTelemetry `NodeSDK` instance pointed at a SigNoz ingest endpoint. It instruments all Node.js auto-instrumentable libraries (HTTP, database drivers, etc.) and sends both traces and logs via OTLP/HTTP with your access token attached.
+
+Call `ExuluOtel.create` once at the very start of your process (before any other imports that should be instrumented) and start the returned SDK. The SDK shuts down gracefully on `SIGTERM`.
+
+## API surface
+
+### ExuluOtel.create
+
+```typescript
+ExuluOtel.create(opts: {
+  SIGNOZ_ACCESS_TOKEN: string;
+  SIGNOZ_TRACES_URL: string;
+  SIGNOZ_LOGS_URL: string;
+}): NodeSDK
+```
+
+Creates and returns a configured `NodeSDK` instance. Does not start the SDK — call `.start()` on the returned object.
+
+<ParamField path="SIGNOZ_ACCESS_TOKEN" type="string" required>
+  SigNoz ingest token. Sent as the `signoz-access-token` header on all OTLP requests.
+</ParamField>
+
+<ParamField path="SIGNOZ_TRACES_URL" type="string" required>
+  OTLP/HTTP endpoint for traces (e.g. `https://ingest.eu.signoz.cloud:443/v1/traces`).
+</ParamField>
+
+<ParamField path="SIGNOZ_LOGS_URL" type="string" required>
+  OTLP/HTTP endpoint for logs (e.g. `https://ingest.eu.signoz.cloud:443/v1/logs`).
+</ParamField>
+
+<ResponseField name="return" type="NodeSDK">
+  An `@opentelemetry/sdk-node` `NodeSDK` instance ready for `.start()`. The instance registers a `SIGTERM` handler that calls `.shutdown()` and exits the process.
+</ResponseField>
+
+## Example
+
+```typescript
+// Must be the first import in your entry point
+import { ExuluOtel } from "@exulu/backend";
+
+const sdk = ExuluOtel.create({
+  SIGNOZ_ACCESS_TOKEN: process.env.SIGNOZ_ACCESS_TOKEN!,
+  SIGNOZ_TRACES_URL: process.env.SIGNOZ_TRACES_URL!,
+  SIGNOZ_LOGS_URL: process.env.SIGNOZ_LOGS_URL!,
+});
+
+sdk.start();
+
+// Now import and start the rest of your application
+import { ExuluApp } from "@exulu/backend";
+// ...
+```
+
+## Notes
+
+- `ExuluOtel` always sets the service name to `"Exulu"`. This is the value that appears as the service name in SigNoz.
+- Traces and logs use separate exporters but share the same access token.
+- The SDK uses `BatchLogRecordProcessor` — logs are buffered and flushed in batches, not on every log statement.
+- Do not call `ExuluOtel.create` more than once per process; multiple SDK instances will duplicate spans.
+
+## Related
+
+- [Self-hosting / Observability](/self-hosting/services/observability): configure SigNoz for your deployment.

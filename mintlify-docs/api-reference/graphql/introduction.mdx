@@ -1,0 +1,169 @@
+---
+title: "GraphQL API"
+description: "One GraphQL endpoint over every IMP resource — agents, sessions, knowledge, prompts, evals, routines — with a schema generated from your deployment."
+---
+
+IMP exposes a single GraphQL endpoint that covers every platform resource: agents, sessions, messages, users, roles, teams, projects, prompts, skills, evals, routine templates, transcription jobs, and every knowledge context you define. The schema is generated at boot from the platform's core tables plus your `ExuluContext` definitions, so two deployments never share exactly the same schema — but they always share the same patterns.
+
+<CardGroup cols={3}>
+  <Card title="Conventions" icon="list-checks" href="/api-reference/graphql/conventions">
+    The CRUD naming scheme, filters, sorting, pagination, and RBAC every type follows.
+  </Card>
+  <Card title="Dynamic types" icon="wand-sparkles" href="/api-reference/graphql/dynamic-types">
+    How each knowledge context becomes a full type family in your schema.
+  </Card>
+  <Card title="Vector search" icon="search" href="/api-reference/graphql/vector-search">
+    Semantic, hybrid, and full-text retrieval over context chunks.
+  </Card>
+</CardGroup>
+
+## Endpoint
+
+```text
+POST https://your-imp-host/graphql
+```
+
+There is one endpoint for queries and mutations. The API does **not** expose GraphQL subscriptions — streaming responses (agent runs, token streams) live on the [REST agent-run endpoint](/api-reference/rest/introduction) instead.
+
+## Authentication
+
+Every request to `/graphql` must be authenticated — including introspection queries. Two credentials are accepted:
+
+### API key
+
+Pass an org API key in the `x-api-key` or `exulu-api-key` header. Keys use the format `sk_xxx…/keyname` — the secret, a slash, and the key's name:
+
+```bash
+curl -X POST https://your-imp-host/graphql \
+  -H "x-api-key: sk_abc123.../production-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { agentsPagination(limit: 5) { items { id name } } }"}'
+```
+
+A `Bearer ` prefix on the header value is tolerated and stripped. Create and manage keys under [API keys](/administration/api-keys) in the admin area.
+
+### Session token
+
+Pass a NextAuth session JWT (HS256, signed with the deployment's `NEXTAUTH_SECRET`) as a bearer token. This is the token the IMP frontend uses, and the one you can copy from your [personal token page](/administration/api-keys#personal-token-token):
+
+```bash
+curl -X POST https://your-imp-host/graphql \
+  -H "Authorization: Bearer <session-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { agentsPagination(limit: 5) { items { id name } } }"}'
+```
+
+<Note>
+The two headers route on format: values containing a `/` are treated as API keys, values without one (JWTs are base64url and never contain `/`) are verified as session tokens. A session JWT sent via `x-api-key` therefore also works.
+</Note>
+
+<Info>
+Deployments can also set an `INTERNAL_SECRET` for service-to-service traffic, but that mechanism authenticates the file-upload endpoints (via the `internal-key` header), not `/graphql`. Use an API key for machine-to-machine GraphQL calls.
+</Info>
+
+## Explorer
+
+The fastest way to learn your deployment's actual schema is the embedded GraphiQL explorer at `/explorer` in the product UI. It authenticates with your session automatically and offers schema browsing, autocomplete, and inline documentation for every generated type — including your deployment's dynamic context types.
+
+Programmatic introspection works too, with either credential:
+
+```graphql
+query {
+  __type(name: "agent") {
+    fields {
+      name
+      type { name kind }
+    }
+  }
+}
+```
+
+## A first request
+
+```graphql
+query {
+  agentsPagination(limit: 5, page: 1) {
+    items {
+      id
+      name
+      description
+      modelName
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      hasNextPage
+    }
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "agentsPagination": {
+      "items": [
+        {
+          "id": "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10",
+          "name": "Research Assistant",
+          "description": "Answers questions over the product knowledge base",
+          "modelName": "claude-sonnet-4-5"
+        }
+      ],
+      "pageInfo": { "currentPage": 1, "pageCount": 1, "hasNextPage": false }
+    }
+  }
+}
+```
+
+## What is in the schema
+
+<AccordionGroup>
+  <Accordion title="Core entity types">
+    Platform tables that every deployment shares: `user`, `agent`, `agent_session`, `agent_message`, `project`, `team`, `role`, `skill`, `prompt_library_item`, `prompt_favorite`, `context_preset`, `model`, `variable`, `platform_configuration`, `entity_type_setting`, `feedback`, `eval_run`, `eval_set`, `test_case`, `workflow_template`, `job_result`, `tracking`, and `transcription_job`. Each gets the full CRUD operation set described in [Conventions](/api-reference/graphql/conventions). Some of these are only present on licensed deployments — see [license-gated tables](/api-reference/graphql/dynamic-types#license-gated-tables). See the [Core types](/api-reference/graphql/core-types/users) reference for per-entity field documentation.
+  </Accordion>
+  <Accordion title="Dynamic context types">
+    Every `ExuluContext` your backend registers generates an items type (`{context_id}_items`), input and filter types, the CRUD operation set, and knowledge-specific operations such as vector search and chunk management. See [Dynamic types](/api-reference/graphql/dynamic-types).
+  </Accordion>
+  <Accordion title="Platform queries and mutations">
+    Registry and operations fields that are not tied to one table: `providers`, `contexts`, `contextById`, `tools`, `toolCategories`, `evals`, `rerankers`, `litellmCatalog`, `jobs`, `queue`, `workflowSchedule`, `getUniquePromptTags`, `getUniqueSkillTags`, and `meetingRecordingUsage`; mutations like `runWorkflow`, `runEval`, `upsertWorkflowSchedule`, queue controls (`pauseQueue`, `resumeQueue`, `drainQueue`, `deleteJob`, `retryJob`), and the transcription job lifecycle (`transcriptionJobStart`, `transcriptionJobFinalize`, `transcriptionJobCancel`, `meetingBotStart`).
+  </Accordion>
+</AccordionGroup>
+
+This reference is generated against a core SDL (`api-reference/graphql/schema.graphql` in this documentation's repository) emitted from a default deployment with all licensed tables enabled and no contexts registered. Your deployment's schema is a superset of the patterns documented here; treat `/explorer` as the source of truth for exact names.
+
+## Errors
+
+Errors use the standard GraphQL response shape. Authentication failures reject the whole request; authorization failures surface per field:
+
+```json
+{
+  "errors": [
+    {
+      "message": "Record not found",
+      "path": ["agentById"]
+    }
+  ],
+  "data": null
+}
+```
+
+Messages you will commonly see:
+
+| Message | Meaning |
+| --- | --- |
+| `Record not found` | The resource does not exist, or row-level access rules hide it from you |
+| `Access control error: no role found or no access to entity type.` | Your role lacks read access to this entity type |
+| `Insufficient permissions to edit this record` | Write blocked by RBAC |
+| `Invalid token` | The session JWT failed verification |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Conventions" icon="list-checks" href="/api-reference/graphql/conventions">
+    Every operation and filter pattern, with worked examples.
+  </Card>
+  <Card title="Vector search" icon="search" href="/api-reference/graphql/vector-search">
+    Retrieval methods, cutoffs, and context expansion.
+  </Card>
+</CardGroup>

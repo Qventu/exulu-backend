@@ -1,0 +1,109 @@
+---
+title: "Budgets"
+description: "Set and manage spending limits per user, role, team, project, or agent — enforced by LiteLLM."
+icon: "wallet"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="budget_management (read)" />
+
+<Note>
+Budgets are enforced by LiteLLM, which is the authoritative source of truth for all budget data. IMP's Budgets page is a management interface that reads from and writes to LiteLLM's budget API. Reset dates are standardized UTC calendar boundaries (start of day, week, or month in UTC) set via LiteLLM budget endpoints.
+</Note>
+
+## What the budgets page is
+
+The **Budgets** page (`/budgets`) lets you set spending caps on any entity that consumes model tokens: individual users, roles, teams, projects, or agents. Budgets are expressed in USD and enforced at request time by the LiteLLM proxy — when an entity reaches its limit, further model requests are blocked until the period resets.
+
+<Frame caption="The Budgets page showing an At risk strip at the top and a budgets table below, with entity type tabs (Users, Roles, Teams, Projects, Agents, Routines) and per-row budget bars.">
+  <img src="/images/screens/budgets-overview.png" alt="IMP Budgets page. At the top, an 'At risk' strip shows two entities over budget. Below, entity type tabs show Users selected. A search field and a data table follow, with rows for each user showing a budget progress bar, the amount spent vs. the cap, and a reset date. An 'Edit' button appears on each row." />
+</Frame>
+
+## Entity types
+
+The page has a tab strip to switch between entity types:
+
+| Entity type | What gets a budget |
+| --- | --- |
+| **Users** | Individual users by email. |
+| **Roles** | Every user who holds the role shares the role's budget pool. |
+| **Teams** | Every user on the team shares the team's budget pool. |
+| **Projects** | Sessions inside a project count against the project's budget. |
+| **Agents** | Calls to a specific agent count against the agent's budget. |
+| **Routines** | Routine runs count against the routine's budget. |
+
+Use **Search `{type}` by name…** in the toolbar to filter within a type.
+
+## Budgets at risk
+
+The **Budgets at risk** strip appears at the top of the page when one or more entities are over or near their budget. Each item shows the entity type, name, and the percentage consumed (e.g., "User · alice@example.com is over budget (104%)"). Clicking an item scrolls to that row in the table.
+
+When all entities are within their limits, the strip shows "All budgets on track."
+
+## Budget editor
+
+<Frame caption="Editing a budget: Edit on a row opens the budget editor — raise the cap, click Save budget, and the row's budget bar updates.">
+  <video autoPlay muted loop playsInline src="/videos/set-budget.mp4" />
+</Frame>
+
+Click **Edit** on any row (or **Set** if no budget exists yet) to open the budget editor. The editor fields are:
+
+| Field | What it sets |
+| --- | --- |
+| **Budget (USD)** | The spending cap in US dollars for the period. |
+| **Reset period** | Daily, Weekly, or Monthly. |
+| **Reset date** | The specific UTC calendar boundary when the period begins. Defaults to the start of the current day, week, or month. Pick a different date to shift the window. |
+
+The editor also shows the **Current status** of the budget if one is already set: the amount spent so far, the cap, and the projected spend by reset.
+
+Click **Save budget** to commit. Click **Remove** to delete the budget and let the entity spend freely until a new one is set (a confirmation dialog describes the effect).
+
+### Bulk apply
+
+Select multiple rows with the checkboxes in the table. The selection bar offers **Set budget for `{count}` `{type}`** which opens the budget editor in bulk mode. The same amount, reset period, and reset date are applied to every selected entity. Partial failures are reported per-item.
+
+## Default budget policy
+
+The **Default budget policy** link (shown as a summary line above the table, e.g., "Per user: $20.00 / Monthly") opens a dialog that sets organization-wide defaults:
+
+**Default per-user budget section:**
+
+- **Enable a global per-user budget** — toggle to activate the default.
+- **Default budget (USD)** — the amount applied automatically to new users who have no explicit budget.
+- **Reset period** — Daily, Weekly, or Monthly.
+
+**Visibility section:**
+
+- **Show budget status to users** — when enabled, users see a **Budget `{percent}`%** chip in the application's top bar.
+- **Budget display** — choose whether users see the exact amount spent ("Exact amount ($)") or only a percentage ("Percentage only").
+
+Click **Save** to apply. Changes take effect for new budget checks immediately; existing budget records for individual users are not retroactively changed by the default.
+
+<Note>
+The audit trail for policy changes is not yet available — who changed the policy and when is not recorded. This is a known gap.
+</Note>
+
+## How budgets reset
+
+Budgets reset at the UTC calendar boundary set in the editor:
+
+- **Daily** — start of the UTC day (00:00 UTC).
+- **Weekly** — start of the UTC week (Monday 00:00 UTC).
+- **Monthly** — start of the UTC month (first of the month, 00:00 UTC).
+
+Custom reset dates set an explicit boundary within the chosen period. All resets are managed by LiteLLM.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Users & access" icon="users" href="/administration/users-access/overview">
+    Assign roles and teams that budgets apply to.
+  </Card>
+  <Card title="Analytics" icon="bar-chart-3" href="/administration/analytics">
+    View spend trends that drive budget consumption.
+  </Card>
+  <Card title="Budgets in chat" icon="circle-dollar-sign" href="/user-guide/chat/budgets-in-chat">
+    How users see their budget in the chat interface.
+  </Card>
+</Columns>

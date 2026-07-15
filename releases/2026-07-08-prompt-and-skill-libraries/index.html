@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Prompts and skills, versioned and shared.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Libraries</span>
+      <h1 class="hero">Prompts and skills, <em>versioned</em> and shared.</h1>
+      <p class="lede">Two shared libraries turn one-off prompt craft and agent skills into governed company assets: searchable, templated, RBAC-shared, and under full version control with visual diffs and rollback.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="skill-ide">
+        <h2>Skill editor mini-IDE</h2>
+        <p class="one-liner">Build agent skills like a code project — files, versions and Cmd+S, right in the browser.</p>
+        <div class="slice">
+          <video src="./shorts/skill-ide.mp4" poster="./shorts/skill-ide-poster.png" autoplay loop muted playsinline></video>
+          <p><code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/skills/[skillId]</code> is now a full-bleed mini-IDE, not a form page. A collapsible file sidebar carries a real tree — create file or folder, rename, delete — and the editor pane opens <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.md</code> files in a markdown editor while every other extension (scripts, JSON, configs) opens in a plain monospace textarea. Skills are code, and the editor treats them that way.</p>
+          <p>The header shows the mono file path, an <strong>"Unsaved"</strong> badge while dirty, and a <strong>Save</strong> button that stays disabled until you actually change something. <strong>Cmd/Ctrl+S saves</strong> — a real window-level binding that no-ops when the file is clean or read-only — and a <strong>"File saved"</strong> toast confirms it. Full file management is one right-click or kebab away; folder deletes warn that <strong>"The folder and all its contents will be removed from the current version. This cannot be undone."</strong></p>
+          <p>Guard rails keep the work safe. Switching files with unsaved edits raises <strong>"Discard unsaved changes?"</strong> and leaving the route is intercepted by the shared unsaved-changes guard. <strong>"Save version"</strong> (the top bar's purple button) snapshots the current state into a new slot, and the History sheet opens a file-level diff. Without write access the whole surface degrades gracefully to a <strong>"Read-only"</strong> badge: every file stays browsable, but Save and the file operations disappear.</p>
+          <div class="snippet-label">Cmd+S is a plain REST flow — script the same save from anywhere</div>
+          <pre><code>POST /skills/{skillId}/sign
+{ "filePath": "SKILL.md", "contentType": "text/markdown" }
+
+# → { "key": "skills/{skillId}/v2/SKILL.md",
+#     "url": "&lt;presigned PUT URL&gt;", "method": "PUT" }
+
+PUT &lt;presigned PUT URL&gt;
+Content-Type: text/markdown
+
+&lt;new SKILL.md content&gt;</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-variables">
+        <h2>Variable-fill for templated prompts</h2>
+        <p class="one-liner">One prompt library for the whole org — templates carry the blanks; anyone fills them in seconds.</p>
+        <div class="slice">
+          <video src="./shorts/prompt-variables.mp4" poster="./shorts/prompt-variables-poster.png" autoplay loop muted playsinline></video>
+          <p>Prompts in the library can carry <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{{variable}}</code> placeholders — double-braced, letters, numbers, and underscores only. Clicking <strong>"Use prompt"</strong> on a templated prompt no longer copies the raw template; it opens a variable-fill dialog with one labeled field per detected variable (unique names, alphabetically sorted; <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">report_name</code> becomes "Report Name"). The <strong>"Copy to clipboard"</strong> submit stays disabled until every field has non-whitespace input — no half-filled templates on the clipboard.</p>
+          <p>On submit, every <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{{key}}</code> is swapped for the typed value, the filled text lands on the clipboard, and <strong>"Prompt copied to clipboard."</strong> fires. Every "Use prompt" now counts: the copy path increments <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">usage_count</code> — previously only chat insertion did — so "Used N times" and the "Most used" sort finally reflect real usage. Prompts without variables skip the dialog: straight copy, toast, and count.</p>
+          <p>The editor hints the syntax live: <strong>"Use {syntax} for dynamic content. Variable names can contain letters, numbers, and underscores."</strong>, a <strong>"Detected variables:"</strong> chip row while typing, and an <strong>"Invalid variable names: {names}. Use letters, numbers, and underscores only."</strong> error on save. The same fill flow lives in the chat composer's prompt selector — pick a templated prompt in chat and you get the identical fields inline, inserting the filled text into the message box. And in the document view, variables render as safe secondary chips, retiring the legacy regex-highlighted markup that was a stored-XSS surface for shared prompts.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-versions">
+        <h2>Prompt version history</h2>
+        <p class="one-liner">Every prompt keeps its history — see exactly what changed, roll back anytime.</p>
+        <div class="slice">
+          <video src="./shorts/prompt-versions.mp4" poster="./shorts/prompt-versions-poster.png" autoplay loop muted playsinline></video>
+          <p>Every prompt now ends in a <strong>"Version history"</strong> section: a current-version badge, a version count, and rows newest-first, each showing a mono <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">vN</code> badge, a <strong>"Latest"</strong> badge on the newest snapshot, the edit's change message as the title line (fallback <strong>"Untitled change"</strong>), the author, and a relative timestamp. Beyond three versions, the rest collapse behind <strong>"Show all"</strong>.</p>
+          <p>Each row's <strong>"Compare"</strong> action opens the <strong>"Compare versions"</strong> modal — <strong>"View the differences between prompt versions."</strong> — with a side-by-side red/green content diff and word-level highlights. Both sides are pickable: any version against any other, including the live <strong>"Current"</strong> state. When name, description or tags differ, a <strong>"Metadata changes"</strong> summary lists them above the content diff; identical content shows <strong>"No content changes between these versions."</strong></p>
+          <p>Each row's <strong>"Restore"</strong> action — write-gated, so it doesn't render without write access — opens a confirmation that snapshots your current state into history first (<strong>"Current version will be preserved"</strong>), previews exactly what will roll back, and takes an optional <strong>"Restoration note (optional)"</strong> before rolling name, description, content and tags back; the success toast reads <strong>"Version restored"</strong>. History stays clean by design: consecutive edits by the same author within five minutes squash into one entry, and the timeline keeps the most recent 50 versions.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-versions">
+        <h2>Skill versioning with per-file diffs</h2>
+        <p class="one-liner">Skills, under version control — know exactly what changed, file by file.</p>
+        <div class="slice">
+          <video src="./shorts/skill-versions.mp4" poster="./shorts/skill-versions-poster.png" autoplay loop muted playsinline></video>
+          <p>Skills are versioned file bundles with real change management. The editor top bar's one purple <strong>"Save version"</strong> button opens a label dialog — <strong>"Snapshot the current state into a new version slot. You keep editing the next version."</strong> — then copies every file of the current version into the next slot and appends it to the skill's history. The version history sheet lists snapshots newest-first, the current version pinned on top with a "Current" tag; its empty state reads <strong>"No previous versions yet"</strong> / <strong>"Save a version to snapshot the current state."</strong></p>
+          <p>The <strong>"Compare versions"</strong> modal — <strong>"View file-level differences between two skill versions."</strong> — pairs From/To version selects with a per-file list. Added, removed and modified files carry status icons; clicking a modified file reveals a split red/green diff with word-level highlights, while removed files show as an all-red unified view. Unchanged files are filtered out server-side, so the list is only what actually moved between the two versions.</p>
+          <p>Any version's full bundle downloads as a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.zip</code> with folder structure preserved plus a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">version.txt</code> — take a skill into Claude Code or any other tool. Below the <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">md</code> breakpoint the compare modal becomes a full-screen takeover, the file list a horizontal chip strip, and diffs render unified instead of split.</p>
+          <div class="snippet-label">Snapshots and diffs are plain REST — script them</div>
+          <pre><code>POST /skills/:skillId/version
+{ "label": "Tightened safety prompt" }
+# → { "newVersion": 4, "fileCount": 12 }
+
+GET /skills/:skillId/diff?fromVersion=3&amp;toVersion=4
+# → { "fromVersion": 3, "toVersion": 4,
+#     "files": [ { "path": "reference.md",
+#                  "status": "modified", "diff": "..." } ] }</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="prompts-library">
+        <h2>Find any prompt in three keystrokes</h2>
+        <p class="one-liner">The whole prompt library on one screen — search, sort, filter, and the document always open.</p>
+        <div class="slice">
+          <p>The new <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/prompts</code> page is a split view: a slim, paginated list on the left and the full prompt document always open on the right. Search is server-side and debounced at 300 ms (placeholder <strong>"Search prompts…"</strong>, by name), and sorting is five-way — <strong>"Recently updated"</strong>, <strong>"Recently created"</strong>, <strong>"Most favorited"</strong>, <strong>"Most used"</strong>, <strong>"Alphabetical"</strong>.</p>
+          <p>A <strong>"Filters"</strong> popover stacks a <strong>"Favorites only"</strong> switch with tag and agent pickers, each active filter landing as a removable chip above the list, and <strong>"Reset"</strong> clears them all. Fifty prompts per page with a live footer — <strong>"1–50 of 132"</strong> — and two single-key shortcuts: <strong>"/"</strong> jumps to search, and <strong>"N"</strong> opens a new prompt for users with write access.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-detail">
+        <h2>Every prompt is one click to use and one link to share</h2>
+        <p class="one-liner">Use it, star it, send the link — every prompt has a full shareable page.</p>
+        <div class="slice">
+          <p>The detail pane leads with a <strong>"Use prompt"</strong> button that copies the content to the clipboard — <strong>"Prompt copied to clipboard."</strong> — and, fixing a long-standing gap, now actually increments the prompt's <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">usage_count</code>, so <strong>"Used # times"</strong> and the "Most used" sort finally mean something. A star toggle adds the prompt to your favorites (<strong>"Added to favorites."</strong>).</p>
+          <p>The overflow menu carries <strong>"Copy content"</strong>, <strong>"Copy link"</strong>, and Delete; "Copy link" puts <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">…/prompts/&lt;id&gt;</code> on the clipboard (<strong>"Link copied to clipboard."</strong>), because every prompt now has a full shareable page at <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/prompts/[id]</code> — with a <strong>"Back to prompts"</strong> link, working Edit, and a post-delete redirect. The meta line reads out the whole picture: <strong>"Created by {name}"</strong>, a relative time, an access badge, <strong>"Used {#} times"</strong>, and <strong>"{#} favorites"</strong>.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-editor">
+        <h2>Write once, template forever</h2>
+        <p class="one-liner">One modal for content, variables, and access — content, sharing, and change notes in a single pass.</p>
+        <div class="slice">
+          <p>The editor modal is sectioned into <strong>"Essentials"</strong>, <strong>"Organize"</strong>, and <strong>"Sharing &amp; access"</strong>. A toggle flips the content field between <strong>"Plain text"</strong> and <strong>"Rich text"</strong> (a live-preview markdown editor), while <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{{variable}}</code> tokens are detected as you type and listed under <strong>"Detected variables:"</strong>. Tags are capped at five (<strong>"Up to 5 tags. Use them as folders (e.g. \"marketing\", \"support\")."</strong>), prompts can be assigned to agents (<strong>"Assigned prompts appear as recommendations in chat."</strong>), and RBAC sharing covers private, specific users, roles, teams, or public.</p>
+          <p>On edit, a change-notes field — <strong>"What changed? (optional)"</strong> with the hint <strong>"A short note helps teammates understand what changed in this version."</strong> — feeds the version history. History building is pure and predictable: an entry is appended only when content, name, description, or tags actually changed; consecutive edits by the same user within five minutes are squashed into one; and the timeline is capped at the last 50 versions.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skills-library">
+        <h2>Browse skills like files, not like folklore</h2>
+        <p class="one-liner">A library, not a maze — the same split view, with the skill you're inspecting docked open.</p>
+        <div class="slice">
+          <p><code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/skills</code> gets the same split-view treatment: debounced (300 ms) server-side search (<strong>"Search skills"</strong>), a <strong>"Filters"</strong> popover of tags with removable chips, and a docked detail panel so the skill you're inspecting stays open while you scan the list. Multiple tags AND together — a skill must carry every selected tag.</p>
+          <p>Pagination shows <strong>"1–50 of 132"</strong> at 50 per page, a count label sits in the toolbar, and <strong>"N"</strong> opens the create dialog from anywhere on the page. Below the <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">lg</code> breakpoint the detail lifts from a docked panel into a sheet; with nothing selected it reads <strong>"Select a skill to preview"</strong>. The page header sets the frame: <strong>"Skills"</strong> — <strong>"Reusable skill packages your agents can load."</strong></p>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-detail">
+        <h2>Know what a skill does before an agent loads it</h2>
+        <p class="one-liner">Read it before you run it — the real SKILL.md, versions, access, and a portable .zip export.</p>
+        <div class="slice">
+          <p>Select a skill and the panel shows the actual <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">SKILL.md</code>, clamped to the first 15 lines with a <strong>"Show {count} more lines"</strong> expander — and a warning when it's absent: <strong>"SKILL.md not found"</strong> / <strong>"Open the editor to create SKILL.md and document this skill."</strong> Below it sit inline-editable tags, a compact version history (current version pinned, last three prior versions, <strong>"View all &amp; compare"</strong> deep-linking into the editor), access control, and a stats footer of <strong>"Versions"</strong> and <strong>"Uses"</strong> — with a tooltip that defines the metric: <strong>"How many times this skill has been loaded by an agent."</strong> The header overflow menu adds <strong>"Download as .zip"</strong> and <strong>"Copy skill ID"</strong>.</p>
+          <p>The download is a real REST surface, not a UI-only affordance — any authenticated client can export a skill version as a zip with the folder structure preserved plus a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">version.txt</code> manifest. Omit the version from the query string and it defaults to the skill's current version server-side.</p>
+          <div class="snippet-label">REST — export any skill version as a portable .zip</div>
+          <pre><code># Export any skill version as a portable .zip:
+curl -H "Authorization: Bearer $JWT" \
+  "$EXULU_BACKEND/skills/$SKILL_ID/download?version=3" \
+  --output data-analysis-v3.zip
+# → folder structure preserved + version.txt
+#   (Skill / Skill id / Version / Files / Exported at)</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="create-skill">
+        <h2>From zero to editable skill in one dialog</h2>
+        <p class="one-liner">Start blank or bring a bundle — a skill is shareable the moment it exists.</p>
+        <div class="slice">
+          <p>The <strong>"New skill"</strong> dialog offers two tabs: <strong>"Create blank"</strong> and <strong>"Create from upload"</strong>. Blank creates the record and seeds a templated <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">SKILL.md</code> before dropping you straight into the editor (<strong>"Create &amp; open"</strong>); upload takes a drag-and-drop bundle — the <strong>".zip (full skill folder) or single .md file"</strong> introduced in the May release — stages it to S3 via a presigned URL, and extracts it into version 1. A wrong file type is caught with <strong>"Only .zip and .md files are supported"</strong>.</p>
+          <p>Name, description, comma-separated tags, and RBAC access are all set in the same dialog, so a skill is shareable the moment it exists. What's new here is the redesigned dialog itself — tabs, a proper dropzone, and real RBAC control replacing the mislabeled select that used to silently drop the access payload.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

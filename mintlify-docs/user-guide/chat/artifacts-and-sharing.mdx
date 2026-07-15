@@ -1,0 +1,80 @@
+---
+title: "Artifacts and sharing"
+description: "Turn any file the agent produces into a shareable link, and manage or revoke those links."
+icon: "share-2"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Files that the agent writes to the session — documents, spreadsheets, generated images, HTML pages — can be turned into shareable links without leaving the chat. The recipient gets a direct URL; they do not need an IMP account unless you choose the login-required access mode.
+
+<Frame caption="Creating a shareable link for a session file: set a name, choose an expiry, pick the access mode, and copy the link.">
+  <video autoPlay muted loop playsInline src="/videos/share-artifact.mp4" />
+</Frame>
+
+## Open the share dialog
+
+In the **Session files** panel, each file row has a **Share** action. Click it to open the **Share file** dialog.
+
+If you have previously created links for a file, the dialog opens to a list of existing links. If the file has no links yet, it opens directly to the creation form.
+
+## Create a shareable link
+
+<Steps>
+  <Step title="Name the link">
+    The **Link name** field is prefilled with a URL-safe slug derived from the file name. Change it to something more memorable if needed. The name becomes part of the URL: `<your-domain>/artifacts/<name>`.
+  </Step>
+  <Step title="Set an expiry">
+    Choose **1 day**, **7 days** (default), **30 days**, or **No expiry**. After the expiry date, the link returns an expired response and can no longer be accessed.
+  </Step>
+  <Step title="Choose the access mode">
+    Three modes are available:
+
+    | Mode | Who can open it |
+    | --- | --- |
+    | **Public** | Anyone with the link — no sign-in required. The unguessable name is the access control. |
+    | **Password** | Anyone who provides the correct password at the prompt. |
+    | **Logged-in users** | IMP users who are signed in and have been granted access (private by default; you can extend it to specific users, roles, or teams). |
+  </Step>
+  <Step title="Create the link">
+    Click **Create link**. The URL is copied to your clipboard automatically. The success view shows **Link created** — "Your shareable link is ready and has been copied to your clipboard." — and a copyable URL field.
+  </Step>
+</Steps>
+
+## The artifact viewer
+
+When someone opens a link at `/artifacts/<name>`:
+
+- **HTML files** render inline in the browser in a sandboxed iframe. Scripts and popups are allowed; top-level navigation is not.
+- **All other file types** (Word, Excel, PDF, images…) trigger an automatic download.
+
+If the link has expired, the viewer shows "This link has expired". If access is denied, the viewer shows "You don't have access to this artifact".
+
+## Manage and revoke links
+
+Open the **Share** action on the file again. The dialog lists every link created for that file with:
+
+- The link name and URL
+- The access mode (Public / Password / Login required)
+- The expiry status (for example, "7d left" or "Expired")
+
+To revoke a link, click the trash icon next to it. The icon turns red on the first click to confirm; click again within three seconds to delete. Once deleted, the link is gone and anyone who had it will get a not-found response.
+
+To create an additional link with different settings, click **New link** in the dialog footer.
+
+<Tip>
+HTML artifacts produced by the agent — such as charts, dashboards, or formatted reports — render as live pages in the viewer, not as code. If the agent writes an HTML file you want to share as a live preview, use the Public mode so recipients can open it without signing in.
+</Tip>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Attachments and session files" icon="folder-open" href="/user-guide/chat/attachments-and-session-files">
+    Upload files for the agent and view what it produces.
+  </Card>
+  <Card title="Image generation" icon="image" href="/user-guide/chat/image-generation">
+    Generate images inside the chat and share them.
+  </Card>
+</Columns>

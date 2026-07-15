@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Analytics &amp; Leaderboards</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Analytics</span>
+      <h1 class="hero">Know where every dollar <em>goes</em>.</h1>
+      <p class="lede">Cost and usage analytics you can actually act on: a ranked spend leaderboard by agent, team, user or project; a daily trend you can read at a glance; and a URL-driven lens so any cost view is one link away.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="spend-leaderboard">
+        <h2>Spend leaderboard</h2>
+        <p class="one-liner">Who is burning the budget? Now you can see.</p>
+        <div class="slice">
+          <video src="./shorts/spend-leaderboard.mp4" poster="./shorts/spend-leaderboard-poster.png" autoplay loop muted playsinline></video>
+          <p>The <strong>Breakdown</strong> card splits the active measure — spend, by default — by a page-level dimension picker. A single <strong>"Split by:"</strong> <code>Select</code> in the page header re-scopes the whole card across <strong>Agents</strong>, <strong>Users</strong>, <strong>Projects</strong>, <strong>Teams</strong>, <strong>Roles</strong> and <strong>Routines</strong>. Because it lives in the header, next to the range picker, the scope is reachable at a glance regardless of which card has focus. Switch Agents to Teams and the leaderboard below re-ranks — new names, new magnitudes, new bars — and the description crossfades from <strong>"Agents · by spend"</strong> to <strong>"Teams · by spend"</strong>.</p>
+          <p>The leaderboard is the successor to the legacy <code>Leaderboard</code>: a top-10 <code>&lt;ol&gt;</code> where each row keys off a stable id (no display-name collisions), draws a proportional purple bar with the <code>bg-primary/10</code> token — width is <code>value / topValue</code>, so rank 1 is always full width — and marks the top three by rank numeral plus a subtle medal tint. Color is never the only carrier of meaning; the numeral is. Values are measure-aware: spend renders as USD currency (<code>$1,204.50</code>), tokens and requests as plain locale numbers, and the unit label under each value follows the measure.</p>
+          <p>A header toggle flips the same top-10 slice between two views — <strong>List</strong>, the leaderboard, and <strong>Share</strong>, a recharts donut on the <code>--chart-1..10</code> ramp with a color-keyed legend so slice identity is never hover-only. LiteLLM tags carry only stable ids, so the top-10 ids are hydrated to human names via six <code>*_BY_IDS</code> GraphQL queries — Postgres is the source of truth for names, and an unresolved id falls back to the raw id string.</p>
+          <div class="snippet-label">GraphQL — Tag ids carry no names — the leaderboard hydrates them from Postgres on switch:</div>
+          <pre><code>query GetTeamsByIds {
+  teamsPagination(page: 1, limit: 200) {
+    items {
+      id
+      name
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="trend-chart">
+        <h2>Trend chart</h2>
+        <p class="one-liner">Every dollar, every day, at a glance.</p>
+        <div class="slice">
+          <video src="./shorts/trend-chart.mp4" poster="./shorts/trend-chart-poster.png" autoplay loop muted playsinline></video>
+          <p>One card, titled <strong>"Trend"</strong>, plots the selected measure per day across the lens window — a monotone recharts <code>AreaChart</code> whose live description, <strong>"Daily {measure} across the selected range."</strong>, names the active measure so the y-axis flip is never silent. The measure control is a single segmented <strong>Tabs</strong> — <strong>Spend</strong> (USD currency), <strong>Tokens</strong> (prompt + completion), <strong>Requests</strong> (successful) — the only in-region scope control after the legacy <code>LensType</code> Select retired.</p>
+          <p>The switch never refetches. LiteLLM's daily rows carry <code>spend</code>, <code>prompt_tokens</code>/<code>completion_tokens</code> and <code>successful_requests</code> explicitly, so selecting a measure is a field projection over the already-loaded window — the area re-draws instantly to the new series with no network round-trip. The y-axis unit follows the measure automatically, currency for Spend and plain locale counts for Tokens and Requests, and measure is URL-backed (<code>?measure=tokens</code>): the URL is the single source of truth, so a switch is deep-linkable and drives both the trend card and the breakdown card beside it in one <code>router.replace</code>.</p>
+          <p>The card owns its own states through <code>ChartCard</code>: a layout-mirroring skeleton while the first window loads, an inline error with a <strong>Retry</strong> button (<strong>"We couldn't load this chart."</strong>), and a quiet empty state (<strong>"No activity in this window"</strong>) when the window has zero total. Motion respects <code>prefers-reduced-motion</code> — under reduce, the area swaps with no tween.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="date-range-lens">
+        <h2>Date-range lens</h2>
+        <p class="one-liner">Bookmark the exact cost view. Send it to anyone.</p>
+        <div class="slice">
+          <video src="./shorts/date-range-lens.mp4" poster="./shorts/date-range-lens-poster.png" autoplay loop muted playsinline></video>
+          <p>The whole analytics view is URL-driven, so any view is a shareable link. The range row is a segmented Tabs <code>[24h · 7d · 14d · 30d]</code> (default <strong>14d</strong>), and a custom window is entered from the date-pill's calendar. Picking any two dates flips the lens to a custom range and drops the active preset; the popover closes and the whole page — KPIs, Trend, Breakdown — recomputes off that one window via <code>resolveWindow</code>.</p>
+          <p>The lens is the URL. <code>lensToSearchParams</code> serializes the window into sorted query params — <code>router.replace</code> writes it without scrolling and <code>useSearchParams</code> reads it back, so there's no local state to drift. Copy the URL and the exact window travels with it: the date range, the measure, the dimension and the breakdown view are all part of the lens, so a shared link reproduces not just the date window but the full analytical framing.</p>
+          <p>A custom range is capped at 30 days (<code>MAX_RANGE_DAYS</code>). Picking an end more than 30 days past the start is blocked with the toast <strong>"Date range too large"</strong> / <strong>"Please select a date range of 30 days or less."</strong>, and days beyond the cap are disabled in the calendar. A deep-linked <code>?range=custom</code> that exceeds 30 days is reset on load to the last 14 days with a one-shot toast. Legacy <code>?type=AGENT_RUN</code>-style URLs still resolve — remapped to the equivalent <code>dimension</code> with a quiet "Filter updated" toast — and the URL canonicalizes on the next replace.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="csv-export">
+        <h2>Every breakdown, one spreadsheet away</h2>
+        <p class="one-liner">Export exactly the slice on screen as an entity-by-day pivot.</p>
+        <div class="slice">
+          <p>The Breakdown card's <strong>"Export CSV"</strong> button (aria label "Export the current breakdown as a CSV file") downloads exactly the slice on screen as an entity-by-day pivot: the top 10 entities as rows, one zero-filled column per day in the window, and a trailing <strong>Total</strong> — so the header reads <code>Entity, 2026-07-01, 2026-07-02, …, Total</code>. Empty days are present and zero-filled, not skipped.</p>
+          <p>Row labels are the hydrated human names, not the raw LiteLLM tag ids; spend cells keep six decimals while token and request cells stay integers, and the file is written with a leading UTF-8 BOM so Excel opens UTF-8 cleanly. The download is named <code>analytics-{dimension}-{measure}-{start}-{end}.csv</code> — e.g. <code>analytics-agents-spend-2026-06-25-2026-07-09.csv</code> — and the button is disabled while data is loading or when there are zero rows.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="share-view">
+        <h2>See the split, not just the ranking</h2>
+        <p class="one-liner">The same top-10 slice, either as a leaderboard or a proportional ring.</p>
+        <div class="slice">
+          <p>The Breakdown card carries a two-button toggle in its header — a ranked <strong>"List"</strong> (aria "List view") and a <strong>"Share"</strong> donut (aria "Share view") — so the same top-10 slice reads either as an ordered leaderboard or as a proportional ring. The Share view draws a recharts donut plus a color-keyed legend below it, where each row shows the entity name, its value, and its share of the total as a whole-number percent (<code>· {pct}%</code>); slices under 5% drop their inline label to stay legible.</p>
+          <p>Spend is formatted as USD currency and token/request measures as plain locale numbers, and the ring honors <code>prefers-reduced-motion</code> by dropping the slice tween. The view choice writes <code>lens.view</code>, so it too is a URL param — the whole slice on screen, list or share, reflects the current lens.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="name-hydration">
+        <h2>LiteLLM tags carry ids; you see names</h2>
+        <p class="one-liner">Every breakdown row is reconciled against Postgres names before you ever see it.</p>
+        <div class="slice">
+          <p>Analytics is 100% LiteLLM-driven, and LiteLLM tags carry only stable ids — so every breakdown row arrives as <code>agent_id_…</code>, <code>user_id_…</code>, and the like, and the frontend reconciles those ids against Postgres names before you ever see them. The card takes the top-10 ids for the active dimension and fires the matching by-ids GraphQL query — one per dimension, six in total — then maps each id to a human label. A user falls back name → "firstname lastname" → email → id, so a row is never a bare id if a name exists.</p>
+          <p>Both the ranked list and the CSV export read from that same hydrated map, so the names you see on screen are the names in the file. Alongside all of this, the Spend / Tokens / Requests KPI strip announced this morning now sits above a fully hydrated, exportable breakdown.</p>
+          <div class="snippet-label">GraphQL — the literal id→name reconciliation the card fires for the active dimension:</div>
+          <pre><code>query GetUsersByIds($ids: [ID!]!) {
+  userByIds(ids: $ids) {
+    id
+    name
+    firstname
+    lastname
+    email
+  }
+}</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

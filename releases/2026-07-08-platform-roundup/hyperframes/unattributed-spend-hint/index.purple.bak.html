@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Unattributed spend hint on KPI cards</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 0; font-size: 104px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ----------------------------- app surface ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #app-card {
+        position: relative; width: 1780px;
+        background: #fdfdfd; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+      }
+      #window-bar {
+        height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 26px;
+        border-bottom: 1px solid #e7e7ee; background: #f7f8fa;
+      }
+      #window-bar .dot { width: 16px; height: 16px; border-radius: 50%; }
+      #app-main { padding: 42px 48px 48px; }
+
+      /* PageHeader — h1 text-2xl font-semibold tracking-tight + text-sm muted description */
+      #page-header { display: flex; align-items: flex-start; justify-content: space-between; }
+      #page-title { font-size: 38px; font-weight: 600; letter-spacing: -0.03em; }
+      #page-desc { margin-top: 9px; font-size: 22px; color: #525252; }
+      #btn-new-chat {
+        display: inline-flex; align-items: center; gap: 10px; height: 54px; padding: 0 26px;
+        border-radius: 8px; background: #7033ff; color: #fff; font-size: 21px; font-weight: 500;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16);
+      }
+
+      /* WidgetSection — h2 text-lg font-medium tracking-tight */
+      #vitals-title { margin-top: 44px; font-size: 29px; font-weight: 500; letter-spacing: -0.02em; }
+
+      /* StatCard grid — grid grid-cols-2 gap-4 md:grid-cols-4 */
+      #vitals-grid { margin-top: 22px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 26px; }
+      .stat-card {
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 10px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        padding: 26px;
+      }
+      #card-spend { position: relative; z-index: 2; }
+      /* label — text-sm font-medium text-muted-foreground */
+      .stat-label { font-size: 22px; font-weight: 500; color: #525252; }
+      /* value — text-3xl font-bold tracking-tight text-foreground */
+      .stat-value { margin-top: 13px; font-size: 48px; font-weight: 700; letter-spacing: -0.03em; color: #000; font-variant-numeric: tabular-nums; }
+      /* delta — flex items-center gap-1 text-xs font-medium text-muted-foreground */
+      .stat-delta { margin-top: 13px; display: flex; align-items: center; gap: 6px; font-size: 19px; font-weight: 500; color: #525252; font-variant-numeric: tabular-nums; }
+      .stat-delta svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+      /* caption — text-xs text-muted-foreground/70 */
+      .stat-caption { margin-top: 5px; font-size: 19px; color: rgba(82, 82, 82, 0.7); font-variant-numeric: tabular-nums; }
+      /* hint (the new line) — text-xs text-muted-foreground/50 */
+      .stat-hint { margin-top: 5px; font-size: 19px; color: rgba(82, 82, 82, 0.5); font-variant-numeric: tabular-nums; opacity: 0; }
+
+      svg.ic { width: 1em; height: 1em; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="8.9">
+      <div id="bg" class="clip" data-start="0" data-duration="8.9" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">KPI cards</span>
+          <h1>Spend, <em>fully accounted</em></h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="1.7" data-duration="7.2" data-track-index="3" data-layout-allow-occlusion>
+        <div id="app-card">
+          <div id="window-bar">
+            <span class="dot" style="background: #f26b60"></span>
+            <span class="dot" style="background: #f5bf4f"></span>
+            <span class="dot" style="background: #5fc454"></span>
+          </div>
+          <div id="app-main">
+            <div id="page-header">
+              <div>
+                <div id="page-title">Home</div>
+                <div id="page-desc">Where you left off, and what needs you.</div>
+              </div>
+              <span id="btn-new-chat">
+                <svg class="ic" style="font-size: 22px" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                New chat
+              </span>
+            </div>
+
+            <div id="vitals-title">Last 24 hours</div>
+
+            <div id="vitals-grid">
+              <div class="stat-card dim-card" id="card-sessions">
+                <div class="stat-label">Sessions</div>
+                <div class="stat-value">38</div>
+                <div class="stat-delta">
+                  <svg viewBox="0 0 24 24"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></svg>
+                  +4.2%
+                </div>
+                <div class="stat-caption">vs 7-day avg: 36</div>
+              </div>
+
+              <div class="stat-card" id="card-spend">
+                <div class="stat-label">Spend</div>
+                <div class="stat-value">$106.42</div>
+                <div class="stat-delta">
+                  <svg viewBox="0 0 24 24"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></svg>
+                  +8.3%
+                </div>
+                <div class="stat-caption">vs 7-day avg: $98.31</div>
+                <div class="stat-hint" id="spend-hint">+ $12.34 unattributed</div>
+              </div>
+
+              <div class="stat-card dim-card" id="card-tokens">
+                <div class="stat-label">Tokens</div>
+                <div class="stat-value">1,284,502</div>
+                <div class="stat-delta">
+                  <svg viewBox="0 0 24 24"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></svg>
+                  +6.1%
+                </div>
+                <div class="stat-caption">vs 7-day avg: 1,210,884</div>
+              </div>
+
+              <div class="stat-card dim-card" id="card-runs">
+                <div class="stat-label">Routine runs</div>
+                <div class="stat-value">12</div>
+                <div class="stat-delta">
+                  <svg viewBox="0 0 24 24"><path d="M16 17h6v-6"/><path d="m22 17-8.5-8.5-5 5L2 7"/></svg>
+                  &minus;7.7%
+                </div>
+                <div class="stat-caption">vs 7-day avg: 13</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="5.9" data-duration="3.0" data-track-index="4">
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">The gap tagged totals miss</span>
+          <span class="b"> &mdash; now visible.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook: enters 0.08–0.48, holds still 0.48–1.70 (1.22s ≥ 1.0s short-phrase floor) */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.4, ease: "power2.out" }, 0.08);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.7);
+
+      /* crossfade to Home: card, section title, then 4 StatCards stagger 80ms */
+      tl.from("#app-card", { y: 28, opacity: 0, duration: 0.5, ease: "power2.out" }, 1.85);
+      tl.from("#vitals-title", { y: 14, opacity: 0, duration: 0.35, ease: "power1.out" }, 1.98);
+      tl.from(".stat-card", { y: 18, opacity: 0, duration: 0.4, ease: "power3.out", stagger: 0.08 }, 2.05);
+
+      /* spotlight: Spend card scales to 1.03, siblings dim to 60% (settles 3.40) */
+      tl.to("#card-spend", { scale: 1.03, duration: 0.55, ease: "power2.inOut" }, 2.85);
+      tl.to(".dim-card", { opacity: 0.6, duration: 0.55, ease: "power2.inOut" }, 2.85);
+
+      /* beat 3.40–3.65, then THE state change: the hint line fades in */
+      tl.fromTo("#spend-hint", { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" }, 3.65);
+
+      /* hint holds still 4.05–5.55 (1.5s), then 600ms+ breath before the payoff */
+
+      /* payoff: enters 6.10–6.65, then fully still to 8.90 (2.25s ≥ 1.8s sentence floor,
+         last 600ms+ is the loop's resting frame) */
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 6.1);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 6.2);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

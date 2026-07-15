@@ -1,0 +1,72 @@
+---
+title: "Agents overview"
+description: "Manage your organization's agent list: create, search, duplicate, and open the workbench."
+icon: "bot"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+## What agents are
+
+An agent is a configured AI assistant your organization makes available for chat. Each agent has a name, model, set of instructions, optional knowledge contexts, and tools — all set in the [workbench](/building/agents/workbench). End users see and interact with whichever agents they have been granted access to; builders create and iterate on them here.
+
+## The agents list
+
+Open **Agents** from the sidebar under the Build group. The page shows every agent your account can read.
+
+The toolbar has three controls:
+
+- **Search** — type into "Search agents…" to filter by name in real time. The list narrows as you type; clearing the field shows all agents again.
+- **Status filter** — a dropdown (default "All") lets you narrow to **Active** or **Inactive** agents.
+- **Sort** — choose how rows are ordered: "Last updated" (default), "Newest", "Name A→Z", or "Name Z→A".
+
+Each row shows the agent's avatar (or initial monogram), name, active/inactive status dot, category label, and when it was last updated. Click a row to open the agent detail panel; click **Edit** in that panel to enter the workbench.
+
+<Note>
+If you see an empty list with "No agents yet", an administrator has not created any agents — or you only have access to agents that have been explicitly shared with you, and none have been yet.
+</Note>
+
+## Create an agent
+
+<Frame caption="Creating an agent: New agent opens the Create a new agent dialog — name it, confirm the model, and IMP takes you to the workbench Basics section.">
+  <video autoPlay muted loop playsInline src="/videos/create-agent.mp4" />
+</Frame>
+
+Click **New agent** in the top-right of the page (only visible with agents write permission).
+
+The **Create a new agent** dialog asks for three things:
+
+1. **Name** (required) — the display name users see in the agent picker. The field shows a live monogram preview as you type.
+2. **Model** — a searchable model selector pre-selects the organization default. Pick any model available on this deployment.
+3. **Instructions** (optional) — a short prompt you can set now and refine later in the workbench.
+
+Click **Create Agent**. IMP creates the agent and takes you straight to the [workbench](/building/agents/workbench) to complete configuration.
+
+<Tip>
+You can also open the create dialog from the command palette: navigate to `/agents?new=1`.
+</Tip>
+
+## Duplicate an agent
+
+Open the detail panel for any agent and choose **Duplicate** from the overflow menu (⋯). IMP creates a copy of the agent — with the same instructions, tools, and settings — and takes you to the new agent's workbench. Renaming it and adjusting configuration is the fastest way to spin up a variant of an existing agent.
+
+You can also duplicate from inside the workbench itself (see [Workbench](/building/agents/workbench)).
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Configure an agent" icon="settings" href="/building/agents/workbench">
+    All eight workbench sections: instructions, knowledge, tools, access, and more.
+  </Card>
+  <Card title="Tools and skills" icon="wrench" href="/building/agents/tools-and-skills">
+    Enable and configure per-tool parameters and skills.
+  </Card>
+  <Card title="Access" icon="shield" href="/building/agents/access-and-safety">
+    Share agents with users, roles, and teams.
+  </Card>
+  <Card title="Knowledge overview" icon="brain" href="/building/knowledge/overview">
+    What contexts are and how agents retrieve from them.
+  </Card>
+</Columns>

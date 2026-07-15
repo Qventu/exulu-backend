@@ -1,0 +1,304 @@
+<template id="teams-template">
+  <div data-composition-id="teams" data-width="1920" data-height="1080">
+    <div class="bg"></div>
+    <div class="glow"></div>
+    <div class="dotgrid"></div>
+    <div class="ghost" data-layout-allow-overflow>TEAMS</div>
+
+    <div class="stage">
+      <div class="copy">
+        <div class="chip">NEW · ADMIN</div>
+        <h1 class="headline">Teams.</h1>
+        <p class="sub" id="tm-sub">Group your people. Share<br />everything they need.</p>
+        <p class="sub payoff" id="tm-payoff">Share with teams, like you<br />share with roles.</p>
+        <div class="meta"><span class="meta-dot"></span>EXULU · JUNE 2026 RELEASE</div>
+      </div>
+
+      <div class="demo">
+        <div class="table-card" id="tm-card">
+          <div class="toolbar">
+            <div class="search">Filter users...</div>
+            <div class="btn-outline">Manage teams</div>
+            <div class="btn-primary">+ Add User</div>
+          </div>
+          <div class="thead">
+            <span class="col-user">User</span><span class="col-role">Role</span><span class="col-team">Team</span>
+          </div>
+          <div class="trow" id="tm-row1">
+            <span class="col-user"><span class="avatar a1">DM</span>
+              <span class="uinfo"><span class="uname">Dana Meyer</span><span class="umail">dana@acme.com</span></span></span>
+            <span class="col-role"><span class="badge">default</span></span>
+            <span class="col-team">
+              <span class="tsel" id="tm-sel1">
+                <span class="tsel-label" id="tm-sel1-empty">Select team...</span>
+                <span class="tsel-label picked" id="tm-sel1-picked"><span class="pick-check">✓</span>Engineering</span>
+                <span class="chev">▾</span>
+              </span>
+            </span>
+          </div>
+          <div class="trow">
+            <span class="col-user"><span class="avatar a2">JT</span>
+              <span class="uinfo"><span class="uname">Jonas Tran</span><span class="umail">jonas@acme.com</span></span></span>
+            <span class="col-role"><span class="badge">default</span></span>
+            <span class="col-team"><span class="tsel"><span class="tsel-label">Marketing</span><span class="chev">▾</span></span></span>
+          </div>
+          <div class="trow">
+            <span class="col-user"><span class="avatar a3">SK</span>
+              <span class="uinfo"><span class="uname">Sara Kim</span><span class="umail">sara@acme.com</span></span></span>
+            <span class="col-role"><span class="badge admin">admin</span></span>
+            <span class="col-team"><span class="tsel"><span class="tsel-label">Select team...</span><span class="chev">▾</span></span></span>
+          </div>
+
+          <div class="popover" id="tm-pop">
+            <div class="pop-search">Search teams...</div>
+            <div class="pop-item" id="tm-opt1">
+              <span class="pop-name">Engineering</span>
+              <span class="pop-desc">Product &amp; platform</span>
+            </div>
+            <div class="pop-item">
+              <span class="pop-name">Marketing</span>
+              <span class="pop-desc">Growth &amp; content</span>
+            </div>
+            <div class="pop-item">
+              <span class="pop-name">HR</span>
+              <span class="pop-desc">People operations</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="share-card" id="tm-share">
+          <div class="share-title">Visibility</div>
+          <div class="share-mode"><span class="bld">🏢</span>Shared with Teams</div>
+          <div class="share-row">
+            <span class="share-team">Engineering</span>
+            <span class="share-perm">Read</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cursor" id="tm-cursor"></div>
+
+    <style>
+      [data-composition-id="teams"] {
+        position: relative; overflow: hidden;
+        font-family: 'Inter', system-ui, sans-serif;
+        letter-spacing: -0.025em; color: #000;
+      }
+      [data-composition-id="teams"] .bg {
+        position: absolute; inset: 0;
+        background: linear-gradient(160deg, #F5F8FB 0%, #FDFDFD 55%, #F5F5F5 100%);
+      }
+      [data-composition-id="teams"] .glow {
+        position: absolute; right: -200px; bottom: -340px; width: 1300px; height: 1000px;
+        background: radial-gradient(closest-side, rgba(112, 51, 255, 0.13), transparent 70%);
+      }
+      [data-composition-id="teams"] .dotgrid {
+        position: absolute; left: 0; top: 0; width: 860px; height: 560px;
+        background-image: radial-gradient(rgba(112, 51, 255, 0.30) 1.6px, transparent 1.6px);
+        background-size: 30px 30px; opacity: 0.30;
+        -webkit-mask-image: radial-gradient(closest-side at 20% 20%, #000, transparent);
+        mask-image: radial-gradient(closest-side at 20% 20%, #000, transparent);
+      }
+      [data-composition-id="teams"] .ghost {
+        position: absolute; right: -60px; bottom: -90px;
+        font-size: 300px; font-weight: 900; letter-spacing: -0.05em;
+        color: rgba(112, 51, 255, 0.09); white-space: nowrap;
+      }
+      [data-composition-id="teams"] .stage {
+        position: relative; width: 100%; height: 100%;
+        display: flex; align-items: center; gap: 70px;
+        padding: 90px 100px; box-sizing: border-box;
+      }
+      [data-composition-id="teams"] .copy {
+        width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 28px;
+        position: relative; height: 100%; justify-content: center;
+      }
+      [data-composition-id="teams"] .chip {
+        align-self: flex-start; background: #7033FF; color: #fff;
+        font-family: 'JetBrains Mono', monospace; font-size: 19px; font-weight: 600;
+        letter-spacing: 0.12em; padding: 10px 20px; border-radius: 7px;
+      }
+      [data-composition-id="teams"] .headline {
+        margin: 0; font-size: 120px; font-weight: 800; line-height: 1.0; letter-spacing: -0.035em;
+      }
+      [data-composition-id="teams"] .sub {
+        margin: 0; font-size: 31px; line-height: 1.42; color: #525252; font-weight: 450;
+      }
+      [data-composition-id="teams"] .payoff { position: absolute; bottom: 168px; left: 0; opacity: 0; }
+      [data-composition-id="teams"] .meta {
+        position: absolute; bottom: 8px; left: 0;
+        display: flex; align-items: center; gap: 14px;
+        font-family: 'JetBrains Mono', monospace; font-size: 18px;
+        letter-spacing: 0.14em; color: #525252;
+      }
+      [data-composition-id="teams"] .meta-dot { width: 12px; height: 12px; background: #7033FF; border-radius: 3px; }
+      [data-composition-id="teams"] .demo { position: relative; flex: 1; height: 100%; }
+      [data-composition-id="teams"] .table-card {
+        position: absolute; top: 150px; right: 0; width: 1010px;
+        background: #FDFDFD; border: 1.5px solid #E7E7EE; border-radius: 12px;
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.13);
+      }
+      [data-composition-id="teams"] .toolbar {
+        display: flex; gap: 14px; align-items: center;
+        padding: 18px 22px; border-bottom: 1.5px solid #E7E7EE;
+      }
+      [data-composition-id="teams"] .search {
+        flex: 1; border: 1.5px solid #EBEBEB; border-radius: 7px;
+        padding: 11px 16px; font-size: 18px; color: #525252; background: #FDFDFD;
+      }
+      [data-composition-id="teams"] .btn-outline {
+        border: 1.5px solid #E7E7EE; border-radius: 7px; background: #FDFDFD;
+        padding: 11px 20px; font-size: 18px; font-weight: 550;
+      }
+      [data-composition-id="teams"] .btn-primary {
+        background: #7033FF; color: #fff; border-radius: 7px;
+        padding: 11px 20px; font-size: 18px; font-weight: 600;
+      }
+      [data-composition-id="teams"] .thead, [data-composition-id="teams"] .trow {
+        display: flex; align-items: center; padding: 0 22px;
+      }
+      [data-composition-id="teams"] .thead {
+        height: 52px; font-size: 16.5px; font-weight: 600; color: #525252;
+        border-bottom: 1.5px solid #E7E7EE; background: #F5F5F5;
+      }
+      [data-composition-id="teams"] .trow { height: 84px; border-bottom: 1.5px solid #E7E7EE; }
+      [data-composition-id="teams"] .trow:last-of-type { border-bottom: none; }
+      [data-composition-id="teams"] .col-user { flex: 1.5; display: flex; align-items: center; gap: 16px; }
+      [data-composition-id="teams"] .col-role { flex: 0.7; }
+      [data-composition-id="teams"] .col-team { flex: 1.1; }
+      [data-composition-id="teams"] .avatar {
+        width: 48px; height: 48px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px; font-weight: 700; flex-shrink: 0;
+      }
+      [data-composition-id="teams"] .a1 { background: #E2EBFF; color: #1E69DC; }
+      [data-composition-id="teams"] .a2 { background: #F3E8FF; color: #7033FF; }
+      [data-composition-id="teams"] .a3 { background: #D8F8E5; color: #15803D; }
+      [data-composition-id="teams"] .uinfo { display: flex; flex-direction: column; gap: 2px; }
+      [data-composition-id="teams"] .uname { font-size: 19.5px; font-weight: 600; }
+      [data-composition-id="teams"] .umail { font-size: 16px; color: #525252; }
+      [data-composition-id="teams"] .badge {
+        border: 1.5px solid #E7E7EE; border-radius: 999px; background: #F5F5F5;
+        font-family: 'JetBrains Mono', monospace; font-size: 15px; padding: 6px 16px; color: #525252;
+      }
+      [data-composition-id="teams"] .badge.admin { background: #E2EBFF; color: #1E69DC; border-color: #C7D9FF; }
+      [data-composition-id="teams"] .tsel {
+        position: relative; display: flex; align-items: center; justify-content: space-between;
+        border: 1.5px solid #EBEBEB; border-radius: 7px; background: #FDFDFD;
+        padding: 11px 16px; font-size: 18px; width: 240px; box-sizing: border-box;
+      }
+      [data-composition-id="teams"] .tsel-label { color: #525252; white-space: nowrap; }
+      [data-composition-id="teams"] .tsel-label.picked {
+        position: absolute; left: 16px; color: #000; font-weight: 600; opacity: 0;
+        display: flex; align-items: center; gap: 9px;
+      }
+      [data-composition-id="teams"] .pick-check { color: #7033FF; font-weight: 800; }
+      [data-composition-id="teams"] .chev { color: #525252; font-size: 14px; }
+      [data-composition-id="teams"] .popover {
+        position: absolute; top: 242px; right: 22px; width: 330px;
+        background: #FDFDFD; border: 1.5px solid #E7E7EE; border-radius: 10px;
+        box-shadow: 0 16px 44px rgba(0, 0, 0, 0.18); z-index: 10;
+        padding: 8px; opacity: 0;
+      }
+      [data-composition-id="teams"] .pop-search {
+        border-bottom: 1.5px solid #E7E7EE; padding: 12px 14px;
+        font-size: 17px; color: #525252; margin-bottom: 6px;
+      }
+      [data-composition-id="teams"] .pop-item {
+        display: flex; flex-direction: column; gap: 2px;
+        padding: 11px 14px; border-radius: 7px;
+      }
+      [data-composition-id="teams"] .pop-name { font-size: 18.5px; font-weight: 600; }
+      [data-composition-id="teams"] .pop-desc { font-size: 15.5px; color: #525252; }
+      [data-composition-id="teams"] .share-card {
+        position: absolute; right: 40px; bottom: 70px; width: 460px;
+        background: #FDFDFD; border: 1.5px solid #E7E7EE; border-radius: 10px;
+        box-shadow: 0 16px 44px rgba(0, 0, 0, 0.16); z-index: 11;
+        padding: 22px 24px; opacity: 0;
+      }
+      [data-composition-id="teams"] .share-title {
+        font-family: 'JetBrains Mono', monospace; font-size: 15px;
+        letter-spacing: 0.12em; color: #525252; text-transform: uppercase;
+      }
+      [data-composition-id="teams"] .share-mode {
+        display: flex; align-items: center; gap: 12px;
+        font-size: 21px; font-weight: 700; margin-top: 10px;
+      }
+      [data-composition-id="teams"] .share-row {
+        display: flex; align-items: center; justify-content: space-between;
+        border: 1.5px solid #E7E7EE; border-radius: 8px; padding: 13px 16px; margin-top: 14px;
+      }
+      [data-composition-id="teams"] .share-team { font-size: 18.5px; font-weight: 600; }
+      [data-composition-id="teams"] .share-perm {
+        font-family: 'JetBrains Mono', monospace; font-size: 15px;
+        background: #E2EBFF; color: #1657B8; border-radius: 6px; padding: 5px 13px;
+      }
+      [data-composition-id="teams"] .cursor {
+        position: absolute; width: 26px; height: 26px; border-radius: 50%;
+        background: rgba(26, 22, 37, 0.85); border: 2.5px solid #fff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); z-index: 30;
+        left: 1500px; top: 1000px; opacity: 0;
+      }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      (function () {
+        const R = '[data-composition-id="teams"] ';
+        const tl = gsap.timeline({ paused: true });
+
+        // ambient
+        tl.fromTo(R + ".glow", { scale: 0.94 }, { scale: 1.05, duration: 9, ease: "sine.inOut" }, 0);
+        tl.fromTo(R + ".ghost", { x: 26 }, { x: -22, duration: 9, ease: "none" }, 0);
+
+        // copy cascade
+        tl.fromTo(R + ".chip", { y: -30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "back.out(1.6)" }, 0.2);
+        tl.fromTo(R + ".headline", { x: -80, opacity: 0 }, { x: 0, opacity: 1, duration: 0.75, ease: "expo.out" }, 0.35);
+        tl.fromTo("#tm-sub", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power1.out" }, 0.6);
+        tl.fromTo(R + ".meta", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "sine.out" }, 0.7);
+
+        // table card enters, rows cascade
+        tl.fromTo("#tm-card", { x: 130, opacity: 0 }, { x: 0, opacity: 1, duration: 0.75, ease: "power3.out" }, 1.05);
+        tl.fromTo(R + ".trow", { x: 34, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power2.out", stagger: 0.11 }, 1.45);
+
+        // cursor opens the team selector on row 1
+        tl.fromTo("#tm-cursor", { opacity: 0 }, { opacity: 1, duration: 0.22, ease: "sine.out" }, 2.1);
+        tl.to("#tm-cursor", { left: 1700, top: 467, duration: 0.5, ease: "power2.inOut" }, 2.15);
+        tl.to("#tm-cursor", { scale: 0.78, duration: 0.1, ease: "power2.in" }, 2.7);
+        tl.to("#tm-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 2.8);
+        tl.fromTo("#tm-pop", { y: -14, opacity: 0, scale: 0.98 },
+          { y: 0, opacity: 1, scale: 1, duration: 0.35, ease: "power3.out" }, 2.85);
+
+        // pick Engineering
+        tl.to("#tm-cursor", { left: 1620, top: 600, duration: 0.4, ease: "power2.inOut" }, 3.35);
+        tl.to("#tm-cursor", { scale: 0.78, duration: 0.1, ease: "power2.in" }, 3.8);
+        tl.to("#tm-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 3.9);
+        tl.fromTo("#tm-opt1", { backgroundColor: "rgba(226,235,255,0)" },
+          { backgroundColor: "rgba(226,235,255,1)", duration: 0.18, ease: "sine.out" }, 3.85);
+        tl.to("#tm-pop", { y: -10, opacity: 0, duration: 0.25, ease: "power2.in" }, 4.1);
+        tl.set("#tm-pop", { visibility: "hidden" }, 4.35);
+        tl.to("#tm-sel1-empty", { opacity: 0, duration: 0.15, ease: "power2.in" }, 4.15);
+        tl.fromTo("#tm-sel1-picked", { opacity: 0, scale: 0.92 },
+          { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(1.9)" }, 4.3);
+        tl.fromTo("#tm-sel1", { borderColor: "#EBEBEB" }, { borderColor: "#7033FF", duration: 0.3, ease: "sine.out" }, 4.3);
+        tl.to("#tm-cursor", { opacity: 0, duration: 0.3, ease: "sine.in" }, 4.45);
+        tl.set("#tm-cursor", { visibility: "hidden" }, 4.75);
+
+        // passive payoff morph: shared-with-teams card
+        tl.fromTo("#tm-share", { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, 5.3);
+
+        // payoff caption swap (share card settles 5.85 -> swap 6.5)
+        tl.to("#tm-sub", { y: -16, opacity: 0, duration: 0.3, ease: "power2.in" }, 6.5);
+        tl.set("#tm-sub", { visibility: "hidden" }, 6.8);
+        tl.fromTo("#tm-payoff", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power3.out" }, 6.65);
+
+        // graceful end for looping
+        tl.to(R + ".stage", { opacity: 0, duration: 0.35, ease: "power2.in" }, 8.65);
+
+        window.__timelines["teams"] = tl;
+      })();
+    </script>
+  </div>
+</template>

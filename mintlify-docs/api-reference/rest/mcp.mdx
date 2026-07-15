@@ -1,0 +1,174 @@
+---
+title: "MCP endpoint"
+description: "Streamable HTTP MCP endpoint for exposing IMP agents to Claude Desktop, Cursor, Continue.dev, and any MCP-compatible client."
+---
+
+IMP implements the [Model Context Protocol](https://modelcontextprotocol.io) (MCP) Streamable HTTP transport. When `MCP.enabled: true` in your app config, each agent is reachable as a standalone MCP server at `/mcp/:agent`.
+
+## Prerequisites
+
+MCP must be enabled in the `ExuluApp` config before the endpoint becomes active. See [MCP tutorial](/developers/tutorials/mcp) for setup instructions and the [ExuluMCP reference](/developers/reference/exulu-mcp) for class-level documentation.
+
+## Endpoints
+
+Three routes implement the Streamable HTTP transport:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/mcp/:agent` | Client-to-server messages (`initialize`, `tools/list`, `tools/call`, etc.) |
+| `GET` | `/mcp/:agent` | Server-to-client notifications over SSE |
+| `DELETE` | `/mcp/:agent` | Terminate the MCP session |
+
+`:agent` is the agent's numeric or UUID identifier as shown in the workbench URL.
+
+## Sessions
+
+Send the first `POST` without a `mcp-session-id` header. The `initialize` handshake returns a `mcp-session-id` value in the response header. Include that value on every subsequent request for the same session:
+
+```text
+mcp-session-id: <value returned by initialize>
+```
+
+Sessions are not persisted to disk — they live in process memory. Restarting the backend invalidates all active MCP sessions.
+
+## Authentication
+
+Every request to `/mcp/:agent` passes through IMP's standard authentication middleware before any MCP processing:
+
+- **API key** — set `x-api-key: sk_<secret>/<keyname>`.
+- **Bearer JWT** — set `Authorization: Bearer <session-token>`.
+
+Unauthenticated requests receive `401`. Requests where the authenticated caller does not have access to the agent also receive `401`. Requests for an agent that does not exist receive `404`.
+
+## Worked example — raw HTTP
+
+### 1. Initialize
+
+```bash
+curl -X POST https://your-imp-host:9001/mcp/42 \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk_abc123.../my-key" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {}
+    },
+    "id": 1
+  }'
+```
+
+The response includes a `mcp-session-id` header. Copy it for subsequent calls.
+
+### 2. List tools
+
+```bash
+curl -X POST https://your-imp-host:9001/mcp/42 \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: sk_abc123.../my-key" \
+  -H "mcp-session-id: <session-id-from-initialize>" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'
+```
+
+The response lists every tool enabled for the agent, plus two built-in prompt tools: `getListOfPromptTemplates` and `getPromptTemplateDetails`.
+
+### 3. Terminate session
+
+```bash
+curl -X DELETE https://your-imp-host:9001/mcp/42 \
+  -H "x-api-key: sk_abc123.../my-key" \
+  -H "mcp-session-id: <session-id>"
+```
+
+## Client configuration examples
+
+### Generic MCP client (Streamable HTTP)
+
+```json
+{
+  "mcpServers": {
+    "my-imp-agent": {
+      "type": "streamable-http",
+      "url": "https://your-imp-host:9001/mcp/42",
+      "headers": {
+        "x-api-key": "sk_abc123.../my-key"
+      }
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-imp-agent": {
+      "type": "streamable-http",
+      "url": "https://your-imp-host:9001/mcp/42",
+      "headers": {
+        "x-api-key": "sk_abc123.../my-key"
+      }
+    }
+  }
+}
+```
+
+Older Claude Desktop builds that require a STDIO proxy can use:
+
+```json
+{
+  "mcpServers": {
+    "my-imp-agent": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch", "https://your-imp-host:9001/mcp/42"],
+      "env": {
+        "MCP_API_KEY": "sk_abc123.../my-key"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Open **Settings → MCP** and add a new server entry:
+
+```json
+{
+  "mcpServers": {
+    "imp-agent": {
+      "url": "https://your-imp-host:9001/mcp/42",
+      "headers": { "x-api-key": "sk_abc123.../my-key" }
+    }
+  }
+}
+```
+
+## Error codes
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or invalid credentials, or the authenticated caller does not have access to the requested agent. |
+| `404` | Agent ID not found. |
+| `400` | Malformed JSON-RPC message or invalid session ID. |
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="MCP tutorial" icon="graduation-cap" href="/developers/tutorials/mcp">
+    Step-by-step guide to enabling and testing MCP in your project.
+  </Card>
+  <Card title="ExuluMCP reference" icon="plug" href="/developers/reference/exulu-mcp">
+    Class-level documentation for ExuluMCP including session management internals.
+  </Card>
+  <Card title="LiteLLM gateway" icon="wand-sparkles" href="/api-reference/rest/gateways-litellm">
+    OpenAI-compatible model pass-through for raw model calls and embeddings.
+  </Card>
+  <Card title="API keys" icon="key" href="/administration/api-keys">
+    Create and manage API keys for MCP client authentication.
+  </Card>
+</CardGroup>

@@ -1,0 +1,89 @@
+<article class="chapter" id="r-agentic-retrieval" data-release="2026-07-07-agentic-retrieval" aria-labelledby="r-agentic-retrieval-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">10</span>
+      <span class="pill">July 7, 2026</span>
+      <span class="ch-name">Agentic Retrieval</span>
+    </div>
+    <h1 class="ch-title" id="r-agentic-retrieval-h">Agentic Retrieval, <em>rebuilt around you</em>.</h1>
+    <p class="ch-lede">The retrieval engine behind knowledge search is now a deterministic four-phase pipeline — understand, search, rerank, verify against memory — and every part of it is configurable from a guided, plain-language wizard in the agent editor. No JSON, no guesswork: say what your sources hold, how your users talk, and how thorough you want answers to be.</p>
+  </header>
+  <section class="feature" id="r-agentic-retrieval--wizard"><h2>A guided setup, not a settings dump</h2>
+        <p class="one-liner">A summary card shows the whole configuration at a glance; a six-step wizard edits it in plain language.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-agentic-retrieval__wizard-open.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>The <strong>Agentic retrieval</strong> card in the agent editor now shows a one-line digest of your whole setup — <em>"4 knowledge bases · 3 routing rules · memory on"</em> — with buttons that jump straight into the right step of the new wizard: <strong>Sources → Routing → Vocabulary → Memory → Behavior → Review</strong>. It opens automatically the first time you enable the tool.</p>
+          <p>Every control comes with a one-sentence explanation and a concrete example, so you answer questions about your content — no retrieval jargon required. And if any single step of a search fails, the rest still runs and answers still come back.</p>
+        </div></section>
+<section class="feature" id="r-agentic-retrieval--sources"><h2>Sources — say what each knowledge base holds</h2>
+        <p class="one-liner">Each knowledge base gets a content profile, and the pipeline searches it the way that content wants to be searched.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-agentic-retrieval__sources.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>For every knowledge base you enable, answer one question — <strong>"What's in it?"</strong> — and search adapts to match:</p>
+          <ul>
+            <li><strong>Documents &amp; manuals</strong> — searched thoroughly with query expansion; matching passages bring up to seven neighboring sections with them (up to 100 passages).</li>
+            <li><strong>Conversations &amp; tickets</strong> — matched by names and keywords first, because titles and participants matter more than prose (up to 20 passages).</li>
+            <li><strong>Structured records</strong> — searched directly by keywords; best for database rows and short entries (up to 20 passages).</li>
+          </ul>
+          <p>An optional <em>"When should the assistant look here?"</em> note per source feeds routing, and per-source overrides are there when you need them. No more search that reads a support ticket like a PDF manual.</p>
+        </div></section>
+<section class="feature" id="r-agentic-retrieval--routing"><h2>Routing — the right sources first</h2>
+        <p class="one-liner">Describe kinds of questions in plain language and point them at primary and backup sources.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-agentic-retrieval__routing.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>A routing rule is a label, a plain-language description ("Questions about products, error codes, installation or specifications."), sources to <strong>search first</strong>, and backups to check when the first search looks weak. Each question is matched against your descriptions and routed accordingly — backup results merge in only when the main ones score poorly.</p>
+          <p>No rules configured? Every enabled knowledge base is searched for every question — a fine default. Rules buy speed and focus, and explicit requests ("check the regulations") always win over classification.</p>
+        </div></section>
+<section class="feature" id="r-agentic-retrieval--vocabulary"><h2>Vocabulary — teach it your domain language</h2>
+        <p class="one-liner">Users don't phrase questions the way documents are written. This step closes that gap.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-agentic-retrieval__vocabulary.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Four tools, all optional, all compounding:</p>
+          <ul>
+            <li><strong>Glossary</strong> — abbreviations your documents use (<em>FST → field bus controller</em>), so a user's shorthand still finds the formally-worded manual.</li>
+            <li><strong>Names &amp; codes</strong> — product names match approximately (<em>FST, ECO, CBM-2</em>); standards and error codes match exactly (<em>DIN 8100, EN 81-20</em>). Mentioned files are pinned into the search and boosted in ranking.</li>
+            <li><strong>Describe your documents</strong> — tell it how your corpus is written, so expanded searches sound like your documents.</li>
+            <li><strong>Query rewrites</strong> (advanced) — systematic find→replace on the question, for wording differences too mechanical to leave to the model.</li>
+          </ul>
+        </div></section>
+<section class="feature" id="r-agentic-retrieval--memory"><h2>Memory — curated knowledge that participates in retrieval</h2>
+        <p class="one-liner">Four toggles control how the agent's curated memory entries shape answers.</p>
+        <div class="slice">
+          <div class="toggle-list">
+            <div class="toggle-row">
+              <span class="toggle-dot"></span>
+              <span><p class="t-label">Use memory during retrieval</p><p class="t-hint">Relevant memory entries are offered to the assistant alongside document results — as citable results.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot off"></span>
+              <span><p class="t-label">Let verified memory override documents</p><p class="t-hint">When a curated entry directly answers the question, the answer leads with it. Strictly gated to high-confidence, authoritative entries — a stray note can't hijack an answer.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot off"></span>
+              <span><p class="t-label">Follow file hints in memory</p><p class="t-hint">Memory notes like "always check X first" pin those files into the search.</p></span>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-dot"></span>
+              <span><p class="t-label">Expand queries with memory &amp; glossary</p><p class="t-hint">Adds synonyms and expansions from memory and your glossary to the search.</p></span>
+            </div>
+          </div>
+          <p>This is how correction loops work: when a document is outdated or an answer needs a caveat, one curated memory entry fixes it — no re-ingesting the corpus. Agents without a memory knowledge base see a pointer to the memory picker instead of dead toggles.</p>
+        </div></section>
+<section class="feature" id="r-agentic-retrieval--behavior"><h2>Behavior — production-grade tuning without code</h2>
+        <p class="one-liner">The dials that decide answer quality, speed, and cost — each explained in a sentence.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-07-agentic-retrieval__behavior.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>The essentials sit up front: the <strong>reranker</strong> (re-scores results for relevance; strongly recommended, but optional), how many results to hand the assistant (more means broader context, slower and costlier answers), and a slider for how readily backup sources kick in.</p>
+          <p>Behind <strong>Advanced</strong>: score boosts for pinned files and identifier matches, the page window for "page 12"-style references, query variations per source, a utility model that runs retrieval's internal calls on a cheaper model than the agent's own, access gates, debug logging, and a cap on agent steps per message.</p>
+
+          <div class="snippet-label">What the wizard writes (agent tool config, excerpt)</div>
+          <pre><code>"routing": { "rules": [ { "label": "Technical questions",
+    "description": "Products, error codes, installation…",
+    "main": ["product_manuals"], "fallback": ["support_tickets"] } ] },
+"vocabulary": {
+  "glossary":    [ { "term": "FST", "meaning": "Field bus controller" } ],
+  "identifiers": [ { "name": "Standards", "examples": ["DIN 8100"],
+                     "strategy": "exact", "contexts": ["regulations"] } ] },
+"tuning": { "topK": 5, "fallbackThreshold": 0.95, "pinBoost": 0.15 }</code></pre>
+        </div></section>
+</article>

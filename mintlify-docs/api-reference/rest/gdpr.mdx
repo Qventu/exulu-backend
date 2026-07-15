@@ -1,0 +1,95 @@
+---
+title: "GDPR / DSGVO operator endpoints"
+description: "Data-subject access and erasure endpoints for platform operators. Both require super_admin."
+---
+
+IMP provides two operator endpoints for fulfilling data-subject requests under GDPR (Art. 15 — access, Art. 17 — erasure) and the equivalent DSGVO provisions. Both endpoints are restricted to `super_admin` and are not surfaced anywhere in the platform UI — they are intentionally API-only so that fulfilment steps are auditable and controlled.
+
+<Note>
+Self-export is allowed: a `super_admin` may export their own data. Self-delete is **not** allowed: an admin cannot delete their own account through this endpoint to prevent accidental loss of the last admin.
+</Note>
+
+## Export user data — `GET /users/{id}/data-export`
+
+Returns a ZIP archive containing every personal-data record held for the target user. The archive includes:
+
+| File | Contents |
+|---|---|
+| `README.txt` | Human-readable summary of the export contents and stripped-field list. |
+| `user_data.json` | Account row — sensitive fields (password hash, API key hash, `temporary_token`, `anthropic_token`) stripped. |
+| `sessions.json` | All chat sessions with every message inlined. |
+| `feedback.json` | Feedback entries submitted by the user. |
+| `prompt_favorites.json` | Saved prompt favourites. |
+| `tracking.json` | Usage tracking entries. |
+
+### Request
+
+```bash
+curl -X GET "https://your-imp-host:9001/users/42/data-export" \
+  -H "x-api-key: sk_abc123.../admin-key" \
+  --output user-42-export.zip
+```
+
+### Response
+
+`200 application/zip` — the export archive.
+
+### Error responses
+
+| Status | Cause |
+|---|---|
+| `400` | `id` is not a valid integer. |
+| `401` | Not authenticated. |
+| `403` | Caller is not `super_admin`. |
+| `404` | No user found with the given ID. |
+
+## Delete user — `DELETE /users/{id}`
+
+Hard-deletes the target user and all personally identifiable data in a single database transaction. The following records are removed atomically:
+
+- Messages and agent sessions.
+- Feedback, prompt favourites, and usage tracking.
+- RBAC entries (role assignments, team memberships, project access).
+- The users row itself.
+
+After the transaction commits, S3 objects stored under `user_{id}/` are deleted in a best-effort sweep. S3 failures are logged but do not roll back the database transaction; the user record is gone regardless.
+
+### Request
+
+```bash
+curl -X DELETE "https://your-imp-host:9001/users/42" \
+  -H "x-api-key: sk_abc123.../admin-key"
+```
+
+### Response
+
+`204 No Content` on success.
+
+### Error responses
+
+| Status | Cause |
+|---|---|
+| `400` | `id` is not a valid integer. |
+| `401` | Not authenticated. |
+| `403` | Caller is not `super_admin`, or caller attempted to delete their own account. |
+| `404` | No user found with the given ID. |
+
+## Recommended workflow
+
+1. Receive a data-subject request (access or erasure).
+2. Find the user's numeric ID from the admin user list or database.
+3. For **access requests** — call `GET /users/{id}/data-export` and send the resulting ZIP to the data subject.
+4. For **erasure requests** — verify no legal hold applies, then call `DELETE /users/{id}`. Retain the HTTP 204 response timestamp for your compliance record.
+
+Both operations are logged in the standard server log under the authenticated admin's identity.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Users and access" icon="users" href="/administration/users-access/overview">
+    Managing users, roles, and teams in the admin area.
+  </Card>
+  <Card title="REST introduction" icon="book-open" href="/api-reference/rest/introduction">
+    Authentication details and endpoint overview.
+  </Card>
+</CardGroup>

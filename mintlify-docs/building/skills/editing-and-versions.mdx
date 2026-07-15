@@ -1,0 +1,131 @@
+---
+title: "Editing and versions"
+description: "Use the file-tree editor to add files, edit content, save version snapshots, and compare diffs between versions."
+icon: "file-code"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+<Frame caption="The skill editor: file tree on the left, SKILL.md open in the main pane — edit the skill definition, then Save version to snapshot it.">
+  <video autoPlay muted loop playsInline src="/videos/edit-skill.mp4" />
+</Frame>
+
+## Opening the editor
+
+From the skills list, click any row to open the detail panel, then click **Open editor**. You land in the file-tree editor at the current version.
+
+The topbar shows:
+
+- **Breadcrumb** — Skills / \{skill name\}
+- **Version chip** — the version number you are editing (e.g. "Version 4")
+- **History** — opens the version history panel
+- **Save version** — snapshots the current state into a new version slot
+- **More actions** — overflow menu with Copy skill ID, Refresh, Expand/Collapse files
+
+## The file tree
+
+The left sidebar lists every file in the skill package. `SKILL.md` always appears at the top. Other files and folders appear below it.
+
+**Toolbar actions (above the tree):**
+
+- **New file** (document-plus icon) — opens the "New file" dialog. Enter a file name; use `.md` for Markdown. Nested paths are not supported in the dialog — create the folder first, then the file.
+- **New folder** (folder-plus icon) — opens the "New folder" dialog.
+
+**Right-click or row overflow** on any file or folder:
+
+- **New file** / **New folder** — creates inside that folder.
+- **Rename** — in-place rename dialog.
+- **Delete** — confirms before deleting. Deleting a folder removes it and all contents.
+
+<Warning>
+Deletions and renames apply to the _current working version_, not a separate branch. They take effect immediately when you save the file; if you navigate away without saving, the tree change is discarded.
+</Warning>
+
+## Editing files
+
+Click any file in the tree to open it in the main editor pane. The pane header shows a tab for the active file with an unsaved-changes dot (●) when there are edits.
+
+Edit the content directly in the pane. The editor supports plain text and Markdown. There is no rich-text or preview mode — all files render as raw text.
+
+**Save a file** — click **Save** in the save bar at the bottom. The save bar appears as soon as you make any change. Click **Discard** to revert to the last saved state of that file.
+
+<Note>
+Saving a file saves that file's content but does not create a new version snapshot. A version is only created when you click **Save version** in the topbar. You can save many files before snapshotting.
+</Note>
+
+## SKILL.md
+
+Every skill must have a `SKILL.md` at the package root. This file is the manifest — agents read it first and use it as the authoritative description of what the skill does. Write it as you would a concise, unambiguous instruction set.
+
+Recommended structure:
+
+```markdown
+# skill-name
+
+## Description
+What this skill does and what kind of output it produces.
+
+## When to use
+Conditions or phrases that should trigger this skill.
+
+## Output format
+Required structure for responses.
+
+## Examples
+Point to example files in this package.
+```
+
+The skill detail panel previews `SKILL.md` content directly — the first few hundred characters appear without opening the editor.
+
+## Version history
+
+Click **History** in the topbar to open the version history panel on the right side.
+
+The panel lists all saved versions, newest first:
+
+| Column | What it shows |
+| --- | --- |
+| Version label | `v{n}` (e.g. "v4") |
+| Label | The optional label set when the version was saved (e.g. "Tightened safety prompt") |
+| Timestamp | When the version was saved |
+| Current badge | Shown on the active version |
+
+**Save a version snapshot**
+
+Click **Save version** in the topbar. A dialog opens:
+
+- **Label** (optional) — a short note like "Tightened safety prompt" or "Added examples". Shown in the history panel.
+- The dialog shows: "Snapshots v`{current}`; you keep editing as v`{next}`."
+
+Click **Save version**. The current state is locked as a snapshot; you continue editing on the next version number.
+
+## Compare versions (diff)
+
+From the version history panel, select two versions to compare:
+
+1. Click **Compare** next to any version row.
+2. In the compare modal, pick "From" and "To" versions using the dropdowns.
+3. The file list shows which files changed, with a count ("3 changed · 2 unchanged").
+4. Click any file to see a line-by-line diff: lines added in the later version are highlighted green, lines removed are highlighted red.
+5. Files added in the later version show "File added in v`{n}`"; files removed show "File removed in v`{n}`".
+
+<Tip>
+Skill versions are read-only snapshots for comparison. There is no one-click revert: to roll back, open the old version in the diff view, manually copy the file contents you want, and paste them into the current editor. Save a new version after you finish.
+</Tip>
+
+## Read-only mode
+
+If you open a skill you have read access to but not write access, the editor shows a **Read-only** indicator in the topbar. The file tree and editor pane are visible but all create, delete, rename, and save actions are disabled. The "Read-only" label appears in the file tabs.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Connect your agent" icon="terminal" href="/building/skills/connect-your-agent">
+    Install this skill into a local coding agent with one command.
+  </Card>
+  <Card title="Skills overview" icon="sparkles" href="/building/skills/overview">
+    Create a new skill or browse the library.
+  </Card>
+</Columns>

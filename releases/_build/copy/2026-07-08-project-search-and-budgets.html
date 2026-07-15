@@ -1,0 +1,60 @@
+      <section class="feature" id="project-search">
+        <h2>Project knowledge, now agentic</h2>
+        <p class="one-liner">Attach a project — its pins and sources flow through the full four-phase pipeline, not a side door.</p>
+        <div class="slice">
+          <video src="./shorts/project-search-toggle.mp4" poster="./shorts/project-search-toggle-poster.png" autoplay loop muted playsinline></video>
+          <p>Attach a project to a chat and its pinned items and sources are searched through the same <strong>understand → search → rerank → verify-against-memory</strong> pipeline as the agent's own knowledge. The old flat project search — ten results, no reranking, its own approval prompt — is gone. Zero setup: agents without knowledge search get a pipeline scoped to the project automatically; agents that already search see the project appear as one more source.</p>
+          <p>One switch — <strong>"Search attached project items"</strong>, on by default — controls it per agent. Project custom instructions now steer retrieval too, and turning the switch off turns all of it off.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="mechanics">
+        <h2>Project retrieval mechanics</h2>
+        <p class="one-liner">Pins, scoped sources, one pipeline — a project may add scope, but it never narrows what an agent already searches.</p>
+        <div class="slice">
+          <p>Attaching a project only ever <strong>widens</strong> retrieval — nothing the agent could already find becomes unreachable.</p>
+          <ul>
+            <li><strong>Pins, not filters</strong> — items in sources the agent already searches get a relevance boost; the rest of the knowledge base stays reachable.</li>
+            <li><strong>Scoped sources</strong> — items outside the agent's configuration are searched with a hard filter to exactly the project's items.</li>
+            <li><strong>Searched first</strong> — project sources are always treated as main sources; attaching a project is itself a relevance signal.</li>
+            <li><strong>Whole contexts work</strong> — a context attached without item ids now searches the full context.</li>
+          </ul>
+          <p class="fineprint">The four phases are unchanged — the <a href="../2026-07-07-agentic-retrieval/index.html">July 7 page</a> walks through them. Self-hosters: project retrieval runs on the agentic-retrieval pipeline, which requires the EE license.</p>
+          <div class="snippet-label">Agent tool config — the two settings this release touches</div>
+          <pre><code>[
+  { "name": "project_search", "variable": "true", "type": "boolean" },
+  { "name": "max_steps",      "variable": "3",    "type": "number"  }
+]</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="step-budgets">
+        <h2>Two budgets, decoupled</h2>
+        <p class="one-liner">Retrieval calls no longer eat the turn budget — cap them separately, right on the agent.</p>
+        <div class="slice">
+          <video src="./shorts/max-tool-steps.mp4" poster="./shorts/max-tool-steps-poster.png" autoplay loop muted playsinline></video>
+          <p>One limit used to cap everything: set knowledge searches to 3 and the agent had three steps for its entire turn — sometimes forced into a final answer before it had even searched. Now there are two knobs, and each caps exactly what it says.</p>
+          <p><strong>"Max tool steps per message"</strong> caps all tool steps on one message — bash, files, search, integrations — with 0 falling back to the platform default of 10. <strong>"Max knowledge searches per message"</strong> caps only retrieval: once spent, the search tool quietly drops out while every other tool keeps running. Existing configs keep working unchanged, and API traffic behaves exactly like chat.</p>
+          <div class="snippet-label">GraphQL — the budget is a plain agent field</div>
+          <pre><code>mutation UpdateAgentEditor($id: ID!, $max_tool_steps: Float) {
+  agentsUpdateOneById(
+    input: { max_tool_steps: $max_tool_steps }
+    id: $id
+  ) {
+    item {
+      id
+      name
+      max_tool_steps
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="final-step">
+        <h2>Final-step hardening</h2>
+        <p class="one-liner">Budget-exhausted turns end in prose — a real answer, or an honest account of where the agent got to.</p>
+        <div class="slice">
+          <p>When an agent runs out of tool steps, the turn now reliably ends in plain prose — never raw tool-call syntax or machine-shaped fragments. The agent gives a real answer if it has one; otherwise it says honestly that it hit the step limit, summarizes what it found, and names what remains. Either way, you get something readable.</p>
+        </div>
+      </section>

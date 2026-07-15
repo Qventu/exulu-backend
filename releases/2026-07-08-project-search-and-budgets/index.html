@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Project Search &amp; Step Budgets (Agentic Retrieval, part 2)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · July 8, 2026 · Agentic Retrieval, part 2</span>
+      <h1 class="hero">Projects in the pipeline. Budgets, <em>decoupled</em>.</h1>
+      <p class="lede">Part 2 of the <a href="../2026-07-07-agentic-retrieval/index.html">July 7 Agentic Retrieval release</a> — a shorter drop that finishes the job. Attach a project to a chat and its pinned items and sources now travel the same four-phase retrieval pipeline as everything else. And the knob that caps knowledge searches no longer eats the agent's whole turn: tool steps and retrieval calls are two separate budgets.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="project-search">
+        <h2>Project knowledge, now agentic</h2>
+        <p class="one-liner">Attach a project — its pins and sources flow through the full four-phase pipeline, not a side door.</p>
+        <div class="slice">
+          <video src="./shorts/project-search-toggle.mp4" poster="./shorts/project-search-toggle-poster.png" autoplay loop muted playsinline></video>
+          <p>Until now, project items were searched by a legacy side-channel tool: one flat hybrid search per context, capped at ten results, no reranking, no query expansion — and its own approval prompt. That tool is gone. Project knowledge now travels the same <strong>understand → search → rerank → verify-against-memory</strong> pipeline from part 1, so a spec pinned to a project is found with the same accuracy as any knowledge base the agent owns.</p>
+          <p>It works with zero setup, whichever kind of agent the chat runs on. An agent <em>without</em> knowledge search configured gets a pipeline instance injected automatically, scoped to the project. An agent <em>with</em> the search tool sees the project become an additional source inside its one configured pipeline — same routing rules, same vocabulary, same reranker.</p>
+          <p>One new switch on the wizard's Behavior step — <strong>"Search attached project items"</strong>, on by default — controls the whole behavior per agent. And project custom instructions, which used to be stored but never reached the model, now feed the pipeline's routing. They're gated at execute time on that same switch, so turning it off genuinely turns all of it off.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="mechanics">
+        <h2>Project retrieval mechanics</h2>
+        <p class="one-liner">Pins, scoped sources, one pipeline — a project may add scope, but it never narrows what an agent already searches.</p>
+        <div class="slice">
+          <p>The invariant behind the design: attaching a project can only <strong>widen</strong> retrieval. Items living in sources the agent already searches become rerank <strong>pins</strong> — a relevance boost, never a filter, so the rest of the knowledge base stays reachable. Items in contexts outside the agent's configuration are added as <strong>item-scoped sources</strong>, searched with a hard filter to exactly the project's items. A bare context entry means the whole context — which, incidentally, used to silently return nothing and now works. And project-referenced sources are always routed as main sources: attaching a project is itself a relevance signal, so those sources are searched immediately rather than waiting on a weak first pass.</p>
+          <ul>
+            <li><strong>Legacy tool deleted</strong> — the per-project side-channel search (and its approval prompt) is gone; the pipeline tool needs no approval.</li>
+            <li><strong>Pins vs scoped sources</strong> — already-searched sources get boosts; new contexts get item-scoped searches.</li>
+            <li><strong>Always-main routing</strong> — project sources skip the backup queue.</li>
+            <li><strong>Whole-context entries fixed</strong> — a context attached without item ids now searches the full context.</li>
+            <li><strong>Project instructions live</strong> — <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">custom_instructions</code> now reach the pipeline's routing, gated on the switch.</li>
+          </ul>
+          <p class="fineprint">The four phases themselves are unchanged from part 1 — the <a href="../2026-07-07-agentic-retrieval/index.html">July 7 page</a> walks through them. Note for self-hosters: project retrieval now runs on the agentic-retrieval pipeline, which requires the EE license.</p>
+          <div class="snippet-label">What the wizard writes (agentic_context_search tool config — the two entries this release touches, of 13)</div>
+          <pre><code>[
+  { "name": "project_search", "variable": "true", "type": "boolean" },
+  { "name": "max_steps",      "variable": "3",    "type": "number"  }
+]</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="step-budgets">
+        <h2>Two budgets, decoupled</h2>
+        <p class="one-liner">Retrieval calls no longer eat the turn budget — cap them separately, right on the agent.</p>
+        <div class="slice">
+          <video src="./shorts/max-tool-steps.mp4" poster="./shorts/max-tool-steps-poster.png" autoplay loop muted playsinline></video>
+          <p>Before this release, the wizard's step limit bled into the whole turn's budget: a retrieval cap of 3 meant the agent got three steps for <em>everything</em>. We hit this in production testing — two bash calls in, the agent was forced into a final answer before it had even searched. Now there are two separate knobs, and each caps exactly what it says.</p>
+          <p><strong>"Max tool steps per message"</strong> is a new number field in the agent editor's Chat experience section. It caps all tool steps an agent may take on one message — bash, files, knowledge search, integrations — with 0 falling back to the platform default of 10. It's a plain agent field, so it travels with the agent everywhere.</p>
+          <p>The wizard's old limit is relabeled <strong>"Max knowledge searches per message"</strong> and now caps only agentic-retrieval calls. Once the search budget is spent, the search tool is silently dropped from the active tool set — every other tool keeps running until the turn budget is reached. The guard is enforced at every provider and gateway site, so API traffic behaves exactly like chat. Existing configs keep working unchanged; they just stop capping the whole turn.</p>
+          <div class="snippet-label">GraphQL — the budget is a plain agent field</div>
+          <pre><code>mutation UpdateAgentEditor($id: ID!, $max_tool_steps: Float) {
+  agentsUpdateOneById(
+    input: { max_tool_steps: $max_tool_steps }
+    id: $id
+  ) {
+    item {
+      id
+      name
+      max_tool_steps
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="final-step">
+        <h2>Final-step hardening</h2>
+        <p class="one-liner">Budget-exhausted turns end in prose — a real answer, or an honest account of where the agent got to.</p>
+        <div class="slice">
+          <p>When an agent runs out of tool steps, Exulu forces a final plain-text answer: tools are stripped and the turn's tool history is flattened into text. In production testing we caught a model imitating the <em>flattening itself</em> — the history rendered tool calls as <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">[called tool bash: {...}]</code>, and the model's "answer" was a new line in exactly that bracket format instead of prose.</p>
+          <p>The flattened history is now written as plain prose — "Earlier, the assistant ran the bash tool with input: …" — so no copyable call-syntax template remains anywhere in the final step's context. The final-step instruction is equally explicit: answer in normal prose, never output tool-call syntax or bracketed lines, and if the step limit was reached, say so honestly, summarize progress, and name what remains. The guard is three layers deep — tool choice forced off, active tools emptied, prose-flattened history with the explicit instruction — each layer added after the previous one failed in production testing.</p>
+          <p>The result: a turn that hits its budget reliably ends in a real answer, or an honest "I hit the step limit, here's where I got to" — never machine-shaped noise.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026 · Agentic Retrieval, part 2</span>
+      <span><a href="../2026-07-07-agentic-retrieval/index.html">Part 1 — Agentic Retrieval</a> &nbsp;·&nbsp; <a href="https://docs.exulu.com">Read the docs →</a></span>
+    </footer>
+  </div>
+</body>
+</html>

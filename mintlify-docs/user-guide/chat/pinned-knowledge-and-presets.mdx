@@ -1,0 +1,66 @@
+---
+title: "Pinned knowledge and presets"
+description: "Pin knowledge contexts or single items to a conversation, and save selections you reuse as named presets."
+icon: "pin"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Pinning knowledge tells the agent where to look. Pin a whole context (for example an HR handbook) or individual items (specific documents) to a conversation, and the agent's searches focus on what you pinned. The terms *context* and *item* are defined in [Core concepts](/get-started/concepts).
+
+## Pin knowledge to a conversation
+
+<Frame caption="Pinning knowledge: ＋ → Add knowledge opens the Add Context & Items picker — select an item and it appears as a chip above the composer.">
+  <video autoPlay muted loop playsInline src="/videos/pin-knowledge.mp4" />
+</Frame>
+
+<Steps>
+  <Step title="Open the knowledge picker">
+    Click **＋** in the composer and choose **Add knowledge** ("Pin contexts or items for this chat").
+  </Step>
+  <Step title="Pick contexts or items">
+    Browse or search the contexts you have access to. Select a whole context to pin everything in it, or open a context and pick individual items.
+  </Step>
+  <Step title="Check the chips">
+    Pinned contexts and items appear as chips under the message box. Click a chip's **×** to unpin it. The pins stay with the conversation — they apply to every message you send in it.
+  </Step>
+</Steps>
+
+<Note>
+Some agents run with a managed context: "This agent only searches contexts and items you add to this session." With such an agent, pinning isn't optional focus — it defines everything the agent can search, so pin before you ask.
+</Note>
+
+## Save a selection as a context preset
+
+If you pin the same combination repeatedly, save it once:
+
+<Steps>
+  <Step title="Save the current selection">
+    With your contexts and items pinned, click **Save context preset** at the end of the chip row. The **Save as context preset** dialog opens.
+  </Step>
+  <Step title="Name and describe it">
+    Give the preset a **Name** (required — for example "Customer Support Knowledge Base") and optionally a **Description** ("Describe when to use this preset...") and **Tags**.
+  </Step>
+  <Step title="Save">
+    Click **Save preset**. You'll find it in the presets tab of the **Add knowledge** dialog from now on.
+  </Step>
+</Steps>
+
+## Apply a preset
+
+Open **＋ → Add knowledge**, switch to the presets tab, and apply a preset. Applying replaces the conversation's current pins with the preset's selection, and a preset chip appears at the start of the chip row.
+
+If you then pin or unpin something, the chip shows "modified":
+
+- **Update preset** saves your changed selection back into the preset (only shown if the preset is yours or shared with you for editing).
+- The **×** on the preset chip deselects the preset without touching your current pins.
+
+## Share a preset
+
+Presets are private by default ("Using default permissions (private to you)"). To share one, open **Sharing & permissions** in the preset's save or edit dialog and choose who can view and use it — specific users, roles, or teams.
+
+<Tip>
+Shared presets are how a team standardizes on the "right" knowledge for a job: one person curates the selection, everyone else applies it with two clicks.
+</Tip>

@@ -1,0 +1,104 @@
+---
+title: "Whisper transcription server"
+description: "GPU-accelerated speech-to-text for IMP's meeting transcription feature. Optional — only required if you use transcription."
+icon: "mic"
+---
+
+IMP's meeting transcription feature sends audio to an external Whisper server running [WhisperX](https://github.com/m-bain/whisperX) with optional speaker diarization via [pyannote.audio](https://github.com/pyannote/pyannote-audio). The server is optional — skip this setup if you do not use transcription.
+
+## How it fits in
+
+The backend sends transcription jobs to `TRANSCRIPTION_SERVER` via HTTP. The Whisper server fetches audio from a URL, transcribes it on the GPU, and returns a JSON transcript with speaker labels (when diarization is enabled).
+
+## Prerequisites
+
+1. An NVIDIA GPU with driver >= 550 (supports CUDA 12.4).
+2. Docker with the **NVIDIA Container Toolkit** installed.
+
+Verify:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+```
+
+If that prints your GPU, you are set. Install guide: [docs.nvidia.com/datacenter/cloud-native/container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+
+## Setup
+
+The Docker image is built locally from `@exulu/backend`:
+
+```bash
+# From the exulu-example repo or the docker/whisper directory
+cp .env.example .env
+# Edit .env — set HF_AUTH_TOKEN if you want speaker diarization
+docker compose build              # ~10–20 min on first build
+docker compose up -d
+docker compose logs -f            # watch for "[EXULU-WHISPER] Ready."
+```
+
+**First start downloads the ~3 GB `large-v3` model** into the HuggingFace cache on your host. Subsequent starts are fast because the model is cached.
+
+The container is marked healthy only after the model has finished loading. The health check has a `start_period` of **1200 seconds** (20 minutes) to accommodate the initial download.
+
+## Speaker diarization (optional)
+
+Diarization identifies who spoke each segment. It requires:
+
+1. A HuggingFace account and access token (`HF_AUTH_TOKEN`).
+2. Accepting both pyannote model licences on HuggingFace:
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+
+Without the token and accepted licences, every segment is returned with `speaker: "unknown"`. The logs print the exact licence URLs to accept.
+
+Confirm diarization is working:
+
+```bash
+curl http://localhost:9876/healthz
+# {"ok":true,"device":"cuda","model":"large-v3","gpu":{...},"diarization":true}
+```
+
+## Pointing IMP at the server
+
+Set `TRANSCRIPTION_SERVER` on the backend to the Whisper server's URL:
+
+```ini
+TRANSCRIPTION_SERVER=http://<whisper-host>:9876
+```
+
+## Configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `HF_AUTH_TOKEN` | — | HuggingFace access token. Enables speaker diarization. |
+| `WHISPER_MODEL` | `large-v3` | Model ID. Smaller models (`medium`, `small`, `base`) are faster but less accurate. |
+| `WHISPER_DEVICE` | `auto` | `auto`, `cuda`, or `cpu`. `auto` picks CUDA when available. |
+| `WHISPER_BATCH_SIZE` | `4` | Inference batch size. Reduce if you run out of VRAM. |
+| `WHISPER_PORT` | `9876` | Published host port. |
+| `HF_CACHE_DIR` | `~/.cache/huggingface` | Host path for the model cache. Set to an absolute path when running compose under `sudo`. |
+| `EXULU_VERSION` | `latest` | Pin the `@exulu/backend` version to match the rest of your deployment. |
+
+## Docker image details
+
+| Property | Value |
+|---|---|
+| Base image | `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04` |
+| Node version | exactly `22.18.0` (hard-pinned in `@exulu/backend`) |
+| Port | `9876` |
+| Health check | `GET /healthz`, `start_period: 1200s` |
+
+The image uses the cuDNN runtime flavour (not the plain CUDA runtime) because `faster-whisper`'s ctranslate2 backend requires cuDNN at runtime. Using the plain CUDA runtime image results in a `libcudnn … not found` crash on the first transcription job.
+
+## CPU fallback
+
+If you do not have an NVIDIA GPU, set `WHISPER_DEVICE=cpu`. The container will run without the `--gpus all` flag and transcription will work, but performance on `large-v3` is roughly real-time or worse. Use a smaller `WHISPER_MODEL` (e.g. `small` or `medium`) for acceptable CPU throughput.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `pull access denied for exulu-whisper` | Image not built. Run `docker compose build` first. |
+| `libcudnn... not found` on first job | Host driver too old (needs >= 550) or NVIDIA Container Toolkit not installed. |
+| `"device":"cpu"` on a GPU host | Container cannot see the GPU. Check toolkit install and the `deploy.resources` block in `docker-compose.yml`. |
+| `"diarization":false` | `HF_AUTH_TOKEN` missing or invalid, or pyannote licences not accepted. |
+| Model re-downloads on every start | Cache mount path mismatch. Set `HF_CACHE_DIR` to an absolute path in `.env`. |

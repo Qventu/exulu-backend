@@ -1,0 +1,78 @@
+---
+title: "Introduction"
+description: "ExuluApp is the entry point of every IMP backend: it registers contexts, providers, tools, and evals, boots the HTTP server, and starts background workers."
+icon: "layers"
+---
+
+`ExuluApp` is the central class of an IMP backend. You instantiate it once, call the async `create()` method with your configuration and components, and then use the resulting instance to start the Express HTTP server and the BullMQ worker process. Everything the platform serves — agents, knowledge contexts, tools, evals, the MCP endpoint — is registered through this one object.
+
+## When to use it
+
+Every IMP backend has exactly one `ExuluApp`. In the recommended [three-file structure](/developers/getting-started), `src/exulu.ts` creates the instance and exports the `create()` promise, while `src/server.ts` and `src/worker.ts` both await it before starting their process. You never construct a second instance; after `create()` resolves, the instance is also stored in an internal singleton so platform internals can reach it.
+
+## Minimal example
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: true },
+    telemetry: { enabled: false },
+  },
+  contexts: {},
+  tools: [],
+});
+
+const server = await app.express.init();
+server.listen(9001, () => {
+  console.log("IMP backend listening on :9001");
+});
+```
+
+`create()` returns a promise that resolves to the initialized `ExuluApp`. `express.init()` registers the GraphQL and REST routes, sets up authentication middleware, and returns the Express application you listen on.
+
+## What create() does
+
+When you call `app.create()`, IMP:
+
+1. **Merges built-in contexts** — the platform's internal contexts (currently `transcriptions`) are merged after your custom contexts, so built-ins always win on key collision. A warning is logged if you define a context named `transcriptions`.
+2. **Registers 19 default providers** — Anthropic (Claude Sonnet 4, Claude Sonnet 4.5, Claude Opus 4), OpenAI (GPT-5, GPT-5 Mini, GPT-5 Pro, GPT-5 Codex, GPT-5 Nano, GPT-4.1, GPT-4.1 Mini, GPT-4o, GPT-4o Mini), Google Vertex (Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Pro, Llama Scout 4), and Cerebras (GPT-OSS 120B, Llama 3 8B, Llama 3.3 70B). Anything you pass in `providers` is appended alongside the defaults.
+3. **Loads built-in tools** — todo, question, Perplexity, and email tools, plus the image-generation widget tool when LiteLLM is enabled and S3 file uploads are configured.
+4. **Registers default evals** — when Redis is configured (`REDIS_HOST` + `REDIS_PORT`), the built-in LLM-as-judge eval is merged with any evals you pass. Without Redis, no evals are registered at all — including yours.
+5. **Validates IDs** — every context, tool, and provider ID must start with a letter or underscore, use only letters, digits, and underscores, and be at most 80 characters. Treat 5 characters as the practical minimum. `create()` throws immediately on a violation.
+6. **Checks the queue license** — if queues are registered without a valid `EXULU_ENTERPRISE_LICENSE`, `create()` throws. When Redis is reachable, the `eval_runs` queue is registered automatically.
+7. **Probes system dependencies** — checks for the `pandoc`, `soffice`, and `pdftoppm` binaries and the globally installed `docx` npm package. By default `create()` throws when one is missing; set `requireSystemDependencies: false` to downgrade to a warning.
+
+## What the instance manages
+
+| Component | Passed via | Read back with |
+|---|---|---|
+| Contexts | `contexts` (record of `ExuluContext`) | `app.context(id)`, `app.contexts` |
+| Providers | `providers` (array of `ExuluProvider`) | `app.provider(id)`, `app.providers` |
+| Agents | `agents` (code-defined) + database | `await app.agent(id)`, `await app.agents()` |
+| Tools | `tools` (array of `ExuluTool`) | `app.tool(id)`, `app.tools()` |
+| Evals | `evals` (array of `ExuluEval`) | Registered for eval runs |
+
+Contexts are covered in depth in [ExuluContext](/developers/core/exulu-context/introduction). Tools are covered in [ExuluTool](/developers/core/exulu-tool/introduction) and providers in [ExuluProvider](/developers/core/exulu-provider/introduction).
+
+## Server and worker processes
+
+The same `ExuluApp` instance powers two separate processes:
+
+- **Server** — `await app.express.init()` builds the Express application with all GraphQL and REST routes. When `EXULU_USE_LITELLM=true` it also starts the LiteLLM proxy supervisor, and when `config.MCP.enabled` is `true` it mounts the MCP endpoints under `/mcp/:agent`.
+- **Worker** — `await app.bullmq.workers.create()` connects to Redis and starts BullMQ workers for embeddings, processors, context sources, evals, and routines. This requires an Enterprise Edition license.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-app/configuration">
+    Every create() option and the full ExuluConfig reference.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-app/api-reference">
+    Every public method and property with signatures and examples.
+  </Card>
+</CardGroup>

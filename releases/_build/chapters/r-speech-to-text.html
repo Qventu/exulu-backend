@@ -1,0 +1,45 @@
+<article class="chapter" id="r-speech-to-text" data-release="2026-05-24-speech-to-text" aria-labelledby="r-speech-to-text-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">01</span>
+      <span class="pill">May 24, 2026</span>
+      <span class="ch-name">Speech-to-Text</span>
+    </div>
+    <h1 class="ch-title" id="r-speech-to-text-h">Speak instead of <em>type</em>.</h1>
+    <p class="ch-lede">Speak instead of type. Speech-to-text now lives next to the send button in
+          every chat — record, review, send.</p>
+  </header>
+  <section class="feature" id="r-speech-to-text--speech-to-text"><h2>Speech-to-text in chat</h2>
+  <p class="one-liner">Talk to your agent — we'll type it for you.</p>
+
+  <div class="slice">
+    <figure class="demo"><video data-vid="2026-05-24-speech-to-text__speech-to-text.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+
+    <p>
+      A mic button now sits next to send in every chat. Click to record, click
+      again to stop — the transcript is appended to whatever you've already
+      typed. Nothing autosends: you review the wording and press send yourself.
+    </p>
+
+    <p>
+      Language is detected automatically, and an optional
+      <code class="inline">language</code> hint improves accuracy on short
+      clips. Recordings up to 25 MB are accepted — roughly 25 minutes of audio.
+    </p>
+
+    <div class="snippet-label">From the API</div>
+    <pre><span class="c"># POST a recording, get text back</span>
+curl -X POST <span class="s">"$EXULU_BACKEND/transcribe"</span> \
+  -H <span class="s">"Authorization: Bearer $TOKEN"</span> \
+  -F <span class="s">"file=@recording.webm"</span> \
+  -F <span class="s">"language=en"</span>
+
+<span class="c"># → { "text": "What's the status of the Q4 launch?" }</span></pre>
+
+    <div class="flag-note">
+      Available when <code>EXULU_USE_LITELLM=true</code> and
+      <code>TRANSCRIPTION_MODEL</code> is set. The mic button hides itself when
+      the feature isn't enabled on a deployment.
+    </div>
+  </div></section>
+</article>

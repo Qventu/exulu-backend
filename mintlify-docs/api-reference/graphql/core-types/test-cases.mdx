@@ -1,0 +1,66 @@
+---
+title: "Test cases"
+description: "The test_case type stores a single evaluation scenario — input messages, expected output, and expected tool usage."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Test cases require an Enterprise Edition license (`evals` entitlement).
+
+A `test_case` defines one scenario in an evaluation: the messages to send, the output you expect the agent to produce, and the tools or knowledge sources you expect it to invoke. See [Evals overview](/building/evals/overview).
+
+```graphql
+type test_case {
+  name: String!
+  description: String
+  inputs: JSON!
+  expected_output: String!
+  expected_tools: JSON
+  expected_knowledge_sources: JSON
+  expected_agent_tools: JSON
+  eval_set_id: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `inputs` | JSON array of `UIMessage` objects (role + content) representing the conversation to replay against the agent. |
+| `expected_output` | Free-text string the eval function compares against the agent's actual response. |
+| `expected_tools` | JSON string array of tool IDs expected to be called (e.g. `["get_weather"]`). |
+| `expected_knowledge_sources` | JSON string array of context IDs expected to be retrieved from during the response. |
+| `expected_agent_tools` | JSON string array of agent-level tool identifiers expected to be invoked. |
+| `eval_set_id` | Optional ID string of the parent `eval_set`; a test case can belong to one set. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  test_casesPagination(
+    limit: 20
+    filters: [{ eval_set_id: { eq: "evalset-789" } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      expected_output
+      expected_tools
+      eval_set_id
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

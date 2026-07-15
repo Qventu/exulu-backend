@@ -1,0 +1,11 @@
+{
+  "name": "feedback-detail-replay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.7.44 preview",
+    "check": "npx --yes hyperframes@0.7.44 lint && npx --yes hyperframes@0.7.44 validate && npx --yes hyperframes@0.7.44 inspect",
+    "render": "npx --yes hyperframes@0.7.44 render",
+    "publish": "npx --yes hyperframes@0.7.44 publish"
+  }
+}

@@ -1,0 +1,112 @@
+<article class="chapter" id="r-context-management" data-release="2026-07-08-context-management" aria-labelledby="r-context-management-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">19</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Context Management</span>
+    </div>
+    <h1 class="ch-title" id="r-context-management-h">The context wall <em>comes down</em>.</h1>
+    <p class="ch-lede">Long sessions used to die at the model's context limit — phantom token totals, raw provider errors, work lost mid-thought. Exulu now measures real context occupancy, compacts history on your terms, and offloads oversized content automatically — for every model, on every surface. You watch it happen, and you steer it.</p>
+  </header>
+  <section class="feature" id="r-context-management--meter"><h2>The honest context meter</h2>
+        <p class="one-liner">Context occupancy and lifetime spend are finally two different numbers — no more phantom 21M-token readings.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-context-management__context-meter.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>The usage chip in the chat header now shows real context occupancy — how full the model's window actually is — instead of adding up every turn's tokens, which could report 21 million tokens against a 128K model. Click it and the popover separates the two ideas: <strong>Context window</strong>, with a progress bar for what the model sees right now, and <strong>Session usage (cumulative)</strong> for what the conversation has spent in total.</p>
+          <p>The 80% warning color keys off real occupancy, so amber means something again — and switching a session to a smaller model tightens the meter automatically.</p>
+        </div></section>
+<section class="feature" id="r-context-management--compaction"><h2>Compact, don't restart</h2>
+        <p class="one-liner">One click summarizes older history into a checkpoint — steerable, visible, and nothing is deleted.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-context-management__steerable-compaction.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>When a conversation approaches its context limit, an amber banner offers <strong>Compact conversation</strong>. One click summarizes older history into a checkpoint while recent messages stay verbatim — and you can steer it first (<em>"keep the exact figures from the service reports"</em>) so the summary preserves exactly what you'll need later.</p>
+          <p>Nothing is deleted: the full history stays in your thread behind an expandable divider — <em>"Summary (78K → 2.2K tokens)"</em> — and the meter drops on the spot. The same endpoint is available over REST, so API integrations can compact sessions too.</p>
+
+          <div class="snippet-label">Compact any session over REST</div>
+          <pre><code>curl -X POST "$BACKEND/agents/litellm/compact/$AGENT_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Session: $SESSION_ID" -H "User: $USER_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"steer": "keep the exact figures from the service reports"}'
+# → { "checkpoint": { …UIMessage with metadata.compaction… },
+#     "occupancyEstimate": 8400, "originalTokens": 78031, "summaryTokens": 2210 }</code></pre>
+        </div></section>
+<section class="feature" id="r-context-management--hard-stop"><h2>A hard stop before the model breaks</h2>
+        <p class="one-liner">At 95% the composer blocks — and the server enforces the same limit on its own.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-context-management__hard-limit-block.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>At 95% of the usable window, the chat stops accepting input before the next request can fail: the banner switches to <em>"Context limit reached"</em>, the composer disables, and the fix stays one click away — <strong>Compact conversation</strong> is right there in the banner.</p>
+          <p>The server enforces the same limit before every model call, so API callers get a structured 413 instead of a provider crash. Provider context-length errors that slip through mid-stream are rewritten to the same recoverable code — you'll never see a raw context error again.</p>
+
+          <div class="snippet-label">What the run route returns instead of a provider crash</div>
+          <pre><code>HTTP/1.1 413
+
+{
+  "code": "CONTEXT_COMPACTION_REQUIRED",
+  "message": "This conversation no longer fits the model's context window (~99,862 of 102,400 usable tokens). Compact the conversation to continue.",
+  "occupancy": 99862,
+  "usableWindow": 102400,
+  "contextWindow": 128000
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-context-management--offload"><h2>Tool outputs: capped, saved in full, paged back</h2>
+        <p class="one-liner">An 84,000-token web search no longer eats the conversation.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-context-management__tool-output-offload.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Every tool result — built-ins, MCP servers, agents-as-tools, web search — is now capped at 10% of the context window, between 4K and 25K tokens (agentic retrieval, which already bounds itself, is exempt). Results under the cap pass through untouched. Over it, the full output is saved as a session file — visible in the Session files panel — and the model receives a short preview plus a pointer to the file.</p>
+          <p>The agent pages the rest with <code>read_session_file</code>, a new tool that reads any session file by line range — 250 lines at a time by default — so it works through stored output on its own instead of asking you to repeat yourself. Nothing is thrown away.</p>
+
+          <div class="snippet-label">What the model receives instead of 84K tokens</div>
+          <pre><code>{
+  "truncated": true,
+  "notice": "Tool output truncated: ~84,213 tokens (limit 20,000). The FULL output is saved as session file \"tool-output-web_search-a1b2c3d4.txt\" — call read_session_file with { filename: \"tool-output-web_search-a1b2c3d4.txt\", offset, limit } to read specific line ranges.",
+  "sessionFile": "tool-output-web_search-a1b2c3d4.txt",
+  "preview": "…first ~4,000 characters kept inline…"
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-context-management--uploads"><h2>Large uploads become retrievable corpora</h2>
+        <p class="one-liner">Upload as much as you like — each turn only pays for the parts the agent actually needs.</p>
+        <div class="slice">
+          <p>Big uploads used to be ballast: extracted document text rode along on every turn until requests failed. Now oversized extractions keep their first ~4,000 characters inline, followed by a notice the model understands:</p>
+          <div class="notice-inline">[Document "&lt;filename&gt;" truncated: ~184,000 tokens. The full extracted text is saved as session file "&lt;name&gt;" — read specific parts with read_session_file (offset/limit).]</div>
+          <p>The full text is stored as a session file, and the agent pages the parts it needs with <code>read_session_file</code>. A big upload becomes a corpus the agent queries on demand — and nothing you uploaded is ever lost.</p>
+        </div></section>
+<section class="feature" id="r-context-management--in-flight"><h2>Guards while the agent is working</h2>
+        <p class="one-liner">The turn that explodes mid-flight is handled too — silently, on every surface.</p>
+        <div class="slice">
+          <p>An agent can blow its budget inside a single turn — a step loop calling tool after tool until the results no longer fit. An in-flight guard now catches that: older tool results collapse into short stubs pointing at their stored session files, the two most recent stay intact, and the turn keeps going. No failed request, no interruption — everything collapsed stays readable via <code>read_session_file</code>.</p>
+          <p>The OpenAI-compatible gateway gets the same protection: oversized requests return a proper OpenAI-style error instead of a provider crash. Continue.dev, Cowork, routines — every surface benefits without changing a line.</p>
+
+          <div class="snippet-label">Gateway pre-check — OpenAI-compatible, no provider crash</div>
+          <pre><code>HTTP/1.1 400
+
+{
+  "error": {
+    "message": "This request is ~131,072 tokens, which exceeds the model's usable context window (102,400 tokens). Reduce the conversation history.",
+    "type": "invalid_request_error",
+    "code": "context_length_exceeded"
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-context-management--budget"><h2>One budget, every model</h2>
+        <p class="one-liner">Every number on this page comes from one module — mirrored byte-for-byte on client and server.</p>
+        <div class="slice">
+          <p>Exulu now resolves each model's real context window at runtime — from the model catalog or the provider's own declaration — instead of assuming 128K for everything. Pin a session to a smaller model and every guard on this page tightens automatically.</p>
+          <p>Client and server derive every threshold from the same formulas, so the meter, the banner, and the server gate can never disagree — and occupancy re-anchors on the provider's real usage report each turn, so estimates don't drift. Long sessions now send the model a complete, ordered history bounded by the latest checkpoint, never an arbitrary subset.</p>
+
+          <table class="spec-table">
+            <thead>
+              <tr><th>Threshold</th><th>Formula</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Output reserve</td><td class="formula">min(32K, 20% of window)</td><td>Space kept free for the model's reply</td></tr>
+              <tr><td>Usable window</td><td class="formula">window − reserve</td><td>What conversations budget against</td></tr>
+              <tr><td>Warn</td><td class="formula">80% of usable</td><td>Amber banner; compaction offered</td></tr>
+              <tr><td>Block</td><td class="formula">95% of usable</td><td>Composer blocks; server returns 413</td></tr>
+              <tr><td>Tool-output cap</td><td class="formula">min(25K, max(4K, 10% of window))</td><td>Per-result inline limit before offload</td></tr>
+              <tr><td>Compaction tail</td><td class="formula">10% of usable</td><td>Recent messages kept verbatim</td></tr>
+              <tr><td>Summary budget</td><td class="formula">min(8K, 5% of usable)</td><td>Maximum size of a checkpoint summary</td></tr>
+            </tbody>
+          </table>
+        </div></section>
+</article>

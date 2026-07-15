@@ -1,0 +1,73 @@
+---
+title: "Models"
+description: "The model type represents a configured LLM endpoint with its provider binding, rate limits, and budget controls."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+A `model` record defines one LLM connection available to agents on the platform. It points to a provider by name, carries the auth variable for credentials, and optionally enforces rate and cost limits per budget window. See [Models](/administration/models) for product context.
+
+```graphql
+type model {
+  name: String!
+  description: String
+  provider: String!
+  authvariable: String
+  active: Boolean
+  requests_per_window: Float
+  window_seconds: Float
+  token_budget: Float
+  cost_budget_usd: Float
+  budget_window: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `provider` | Internal provider slug (e.g. `"anthropic"`, `"azure_openai"`); matches the LiteLLM provider ID. |
+| `authvariable` | Name of the `variable` record that holds the API key or credential for this model. |
+| `requests_per_window` | Maximum number of requests allowed per `window_seconds`; `null` means unlimited. |
+| `window_seconds` | Duration in seconds for the rate-limit window (e.g. `60` for per-minute limiting). |
+| `token_budget` | Maximum cumulative tokens per `budget_window`; `null` means unlimited. |
+| `cost_budget_usd` | Maximum cumulative cost in USD per `budget_window`; `null` means unlimited. |
+| `budget_window` | Calendar boundary for budget resets: `"daily"`, `"weekly"`, `"monthly"`, or `"yearly"`. |
+| `rights_mode` | `"public"` or `"private"`; controls which users can assign this model to agents. |
+| `created_by` | Numeric ID of the creating user. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  modelsPagination(
+    limit: 20
+    filters: [{ active: { eq: true } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      provider
+      active
+      token_budget
+      cost_budget_usd
+      budget_window
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

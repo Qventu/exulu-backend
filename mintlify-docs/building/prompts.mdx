@@ -1,0 +1,131 @@
+---
+title: "Prompts"
+description: "Create, organize, and version prompt templates your team reuses across chat, agents, and the prompt library."
+icon: "clipboard-type"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+## What prompts are
+
+A prompt is a reusable instruction fragment stored in the organization's prompt library. Instead of typing the same request each time, you write it once — optionally with `{variable}` placeholders for the parts that change — and anyone who can read the library can apply it in seconds.
+
+Prompts can be personal or shared across the organization via tags (which act as folders), and each edit creates a version you can diff and restore.
+
+## Where prompts surface
+
+Prompts appear in four places in IMP:
+
+| Surface | How it works |
+| --- | --- |
+| **Prompt library** (`/prompts`) | Browse, create, and manage all prompts in your organization. The main authoring surface described on this page. |
+| **Chat composer** | Click **＋** → **Insert prompt** to open the prompt picker and insert a template into the message box. See [Prompts in chat](/user-guide/chat/prompts-in-chat). |
+| **Agent editor** | Assign prompts to an agent in the workbench ("Prompt templates" section). Assigned prompts appear as recommendations when users chat with that agent. |
+| **Prompt browser** | A filterable dialog that opens from the composer picker or from "Use prompt" on a prompt detail. |
+
+## The prompt library
+
+Open **Prompts** from the sidebar under the Build group. The library shows every prompt you have read access to.
+
+The toolbar offers several controls for finding prompts:
+
+- **Search** — type into "Search prompts…" to filter by name in real time.
+- **Tags** — click a tag in the left rail to filter to that folder. **All prompts** lists everything.
+- **Favorites** — toggle "Favorites only" to see only prompts you have starred.
+- **Sort** — order by "Recently updated" (default), "Recently created", "Most used", "Most favorited", or "Alphabetical".
+
+Each row shows the prompt name, tag badges, variable count (e.g. "2 vars"), usage count, and a star to mark as favorite. Click a row to open the detail panel on the right.
+
+<Note>
+If you see "No prompts to show", either no prompts have been created yet or your account only has access to prompts you have been explicitly shared. Ask a teammate with write access to create one or share existing prompts with you.
+</Note>
+
+## Create a prompt
+
+Click **New prompt** in the top-right. The editor dialog opens with four sections:
+
+**Essentials**
+
+- **Name** (required) — the display name. Use sentence case, e.g. "Customer support template".
+- **Content** (required) — the full prompt text. Use `{variable_name}` syntax for dynamic fields; the editor detects variables automatically and shows them under "Detected variables:".
+- **Change message** (optional) — a short note like "Fixed typo, added safety check" that appears in version history.
+- **Rich text / Plain text** toggle — switch between a styled editor and raw text.
+
+**Organize**
+
+- **Tags** — up to the configured maximum (typically 10). Tags act as folders in the left rail. Use names like "marketing", "support", or "legal".
+- **Description** — a short explanation surfaced in the prompt picker.
+
+**Sharing & access** — control who can see and edit the prompt (Private, Public, or explicit user/team/role grants).
+
+**Assigned agents** — select which agents surface this prompt as a recommendation in chat. Assigned prompts appear in the "Prompt templates" section of the agent editor and as suggestions in the chat composer.
+
+Click **Create prompt**. IMP saves the prompt and opens the detail panel.
+
+## Edit a prompt
+
+Open the detail panel for any prompt and click **Edit** (or the pencil icon). The same editor dialog opens, pre-filled with the current content. Adding a change message when editing helps teammates understand what changed.
+
+Each save creates a new version automatically. You do not need to explicitly snapshot — version history tracks every change.
+
+## Version history and diffs
+
+The **Version history** panel in the detail view lists every version of the prompt, newest first, with the change message (or "Untitled change" if none was provided) and timestamp. Up to the most recent few versions are shown with a **Show all** link for the full list.
+
+**Compare two versions**
+
+1. Click **Compare** on any version row. The compare dialog opens.
+2. Choose the "From" and "To" versions using the dropdowns.
+3. The diff shows metadata changes (name, description, tags) and a line-by-line content diff with additions in green and removals in red.
+
+**Restore a version**
+
+1. Click **Restore** on a version row.
+2. A dialog shows a preview of what will be restored and a "Restoration note" field (optional but recommended).
+3. IMP snapshots your current content as a new version first, then applies the restored content. No history is deleted.
+
+<Tip>
+Restoring preserves the full audit trail. If you restore v3 and then want to go back to the state just before the restore, that state is saved as the most recent version before the restored one.
+</Tip>
+
+## Variables
+
+Use `{variable_name}` in prompt content to create dynamic placeholders. Variable names may contain letters, numbers, and underscores — no spaces or special characters.
+
+When a user applies a prompt that has variables, IMP opens the **Fill in variables** dialog, which lists one text field per placeholder. The editor shows "Detected variables:" in real time as you type, so you can verify names before saving.
+
+Example: `You are helping {customer_name} with their {issue}. Be concise and professional.`
+
+## Favorites
+
+Star any prompt by clicking the star icon on a row or in the detail panel ("Add to favorites"). Starred prompts appear at the top of the **Browse prompts** dialog in chat and can be filtered to in the library with "Favorites only".
+
+## Assign a prompt to an agent
+
+Prompts assigned to an agent appear as recommendations when users chat with that agent — the agent's prompt picker surfaces them first.
+
+Two ways to assign:
+
+1. **From the prompt editor** — open Edit and add agents in the "Assigned agents" field.
+2. **From the agent workbench** — open the agent's "Prompt templates" section and add prompts from there.
+
+Changes sync both ways.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Prompts in chat" icon="message-square" href="/user-guide/chat/prompts-in-chat">
+    Insert a prompt template in a conversation, fill variables, and use composer shortcuts.
+  </Card>
+  <Card title="Skills overview" icon="sparkles" href="/building/skills/overview">
+    Package reusable instruction sets your agents load at runtime.
+  </Card>
+  <Card title="Agent workbench" icon="settings" href="/building/agents/workbench">
+    Assign prompts and configure agent behavior from one place.
+  </Card>
+  <Card title="Routines overview" icon="clipboard-list" href="/building/routines/overview">
+    Turn a saved conversation into an automated routine.
+  </Card>
+</Columns>

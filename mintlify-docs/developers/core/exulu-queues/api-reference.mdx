@@ -1,0 +1,257 @@
+---
+title: "API reference"
+description: "Every public method and property on the ExuluQueues singleton: register(), queue(), .list, and .queues."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For configuration options, see [Configuration](/developers/core/exulu-queues/configuration).
+
+## Singleton import
+
+```typescript
+import { ExuluQueues } from "@exulu/backend";
+```
+
+`ExuluQueues` is a singleton instance of the internal `ExuluQueues` class. There is no constructor to call.
+
+## Methods
+
+### register()
+
+Registers a queue and returns a `{ use }` handle. Synchronous — does not connect to Redis.
+
+```typescript
+ExuluQueues.register(
+  name: string,
+  concurrency: { worker: number; queue: number },
+  ratelimit?: number,   // default 1
+  timeoutInSeconds?: number, // default 180
+): {
+  use: () => Promise<ExuluQueueConfig>;
+}
+```
+
+<ParamField path="name" type="string" required>
+  Queue name. Must be unique in the application. Used as the BullMQ queue name and as the key in `ExuluQueues.list`. Also populates the GraphQL `QueueEnum` at boot.
+</ParamField>
+
+<ParamField path="concurrency.worker" type="number" required>
+  Per-process worker concurrency. Passed to BullMQ `Worker({ concurrency })`.
+</ParamField>
+
+<ParamField path="concurrency.queue" type="number" required>
+  Global concurrency cap across all workers, set via `queue.setGlobalConcurrency()`. BullMQ enforces this in Redis.
+</ParamField>
+
+<ParamField path="ratelimit" type="number" default="1">
+  Maximum jobs per second per worker process. Stored here and applied as a BullMQ worker rate limiter.
+</ParamField>
+
+<ParamField path="timeoutInSeconds" type="number" default="180">
+  Maximum job execution time. Workers use this as their lock duration.
+</ParamField>
+
+<ResponseField name="use" type="() => Promise<ExuluQueueConfig>">
+  Calling `.use()` connects to Redis (lazily, on first call) and returns the live `ExuluQueueConfig`. Subsequent calls for the same name return the cached queue instance.
+</ResponseField>
+
+```typescript
+const embeddingsQueue = ExuluQueues.register(
+  "embeddings",
+  { worker: 5, queue: 10 },
+  20,  // 20 jobs/sec
+  300, // 5 min timeout
+);
+
+// Later — typically inside ExuluContext or app setup:
+const config = await embeddingsQueue.use();
+await config.queue.add("embed_chunk", { itemId: "item-abc", chunkIndex: 0 });
+```
+
+<Warning>
+`register()` throws immediately if `EXULU_ENTERPRISE_LICENSE` is not set or does not include the `queues` entitlement.
+</Warning>
+
+---
+
+### queue()
+
+Retrieves the live queue config for a previously initialized queue (one where `.use()` has been called).
+
+```typescript
+ExuluQueues.queue(name: string):
+  | {
+      queue: Queue;
+      ratelimit: number;
+      concurrency: { worker: number; queue: number };
+    }
+  | undefined
+```
+
+<ParamField path="name" type="string" required>
+  Queue name as passed to `register()`.
+</ParamField>
+
+Returns `undefined` if the queue has never been initialized (`.use()` never awaited). Returns the live entry from `ExuluQueues.queues` if found.
+
+```typescript
+const entry = ExuluQueues.queue("embeddings");
+if (entry) {
+  const counts = await entry.queue.getJobCounts();
+  console.log(counts); // { waiting: 12, active: 5, completed: 1000, failed: 2 }
+}
+```
+
+## Properties
+
+### list
+
+```typescript
+ExuluQueues.list: Map<
+  string,
+  {
+    name: string;
+    concurrency: { worker: number; queue: number };
+    ratelimit: number;
+    timeoutInSeconds: number;
+    use: () => Promise<ExuluQueueConfig>;
+  }
+>
+```
+
+A `Map` keyed by queue name, populated synchronously by every `register()` call regardless of whether the queue has connected to Redis. Use this to enumerate all registered queues, for example when building queue selection UIs or verifying that expected queues are registered.
+
+```typescript
+for (const [name, entry] of ExuluQueues.list) {
+  console.log(name, entry.concurrency, entry.ratelimit);
+}
+
+// Check if a specific queue was registered:
+const hasEmbeddings = ExuluQueues.list.has("embeddings");
+```
+
+---
+
+### queues
+
+```typescript
+ExuluQueues.queues: Array<{
+  queue: Queue;
+  ratelimit: number;
+  concurrency: { worker: number; queue: number };
+  timeoutInSeconds: number;
+}>
+```
+
+Array of initialized queue configs — entries appear here only after `.use()` has been awaited for each queue. Used internally by IMP to create workers at `app.create()` time and to drive the GraphQL job inspection resolvers.
+
+```typescript
+// Inspect all live queues:
+for (const entry of ExuluQueues.queues) {
+  const counts = await entry.queue.getJobCounts();
+  console.log(entry.queue.name, counts);
+}
+```
+
+## ExuluQueueConfig
+
+The object returned by `.use()`:
+
+```typescript
+type ExuluQueueConfig = {
+  queue: Queue;               // BullMQ Queue instance
+  ratelimit: number;          // Jobs per second
+  timeoutInSeconds?: number;  // Job timeout (default 180)
+  concurrency: {
+    worker: number;
+    queue: number;
+  };
+  retries?: number;           // Retry count — set by caller
+  backoff?: {
+    type: "exponential" | "linear";
+    delay: number;            // Milliseconds
+  };
+};
+```
+
+### queue — BullMQ Queue API
+
+The `queue` property is a fully functional BullMQ `Queue`. Commonly used methods:
+
+```typescript
+const config = await myQueue.use();
+const q = config.queue;
+
+// Add a job
+await q.add("job-name", { data: "..." });
+
+// Add with options
+await q.add("job-name", { data: "..." }, {
+  delay: 5_000,         // Start after 5 seconds
+  attempts: 3,
+  backoff: { type: "exponential", delay: 1_000 },
+  priority: 1,          // Lower number = higher priority
+});
+
+// Inspect
+const counts = await q.getJobCounts();
+// { waiting, active, completed, failed, delayed, paused }
+
+const failedJobs = await q.getFailed();
+const activeJobs  = await q.getActive();
+
+// Global concurrency (read and update at runtime)
+const current = await q.getGlobalConcurrency();
+await q.setGlobalConcurrency(20);
+
+// Lifecycle
+await q.pause();
+await q.resume();
+await q.drain();   // Remove all waiting jobs
+
+// Clean old completed/failed jobs
+await q.clean(24 * 3600 * 1_000, 100, "completed"); // older than 24 h, max 100
+await q.clean(7  * 24 * 3600 * 1_000, 0,   "failed");    // all failed > 7 days
+
+// Close on graceful shutdown
+await q.close();
+```
+
+## GraphQL integration
+
+Every queue name registered before `app.create()` is injected into the `QueueEnum` in the GraphQL schema:
+
+```graphql
+enum QueueEnum {
+  embeddings
+  doc_processing
+  eval_runs
+}
+```
+
+This enum is used by the platform's job management queries and mutations:
+
+```graphql
+query {
+  queue(queue: embeddings) { waiting active completed failed }
+}
+
+mutation {
+  drainQueue(queue: embeddings) { success }
+  pauseQueue(queue: embeddings) { success }
+  resumeQueue(queue: embeddings) { success }
+}
+```
+
+Queues registered after `app.create()` are not reflected in the schema for the current process lifetime — register all queues before calling `app.create()`.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-queues/configuration">
+    `register()` parameters, rate-limit sizing, and configuration examples.
+  </Card>
+  <Card title="ExuluContext" icon="layers" href="/developers/core/exulu-context/introduction">
+    Pass `ExuluQueueConfig` to an embedder, source, or processor.
+  </Card>
+</CardGroup>

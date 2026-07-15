@@ -1,0 +1,125 @@
+---
+title: "Containers"
+description: "How the IMP backend and worker Docker images are built, what system packages they include, and why the sandbox requires relaxed container security options."
+icon: "box"
+---
+
+IMP does not publish a pre-built backend image. You build it locally from the `exulu-example` repository with your own configuration. `@exulu/backend` installs from the public npm registry during the build — no token is required.
+
+## Base image
+
+Both the backend and worker use `node:22.18.0-slim` (Debian). Alpine is not supported — the ONNX runtime dependencies used by document processing are not available in Alpine.
+
+## System packages
+
+The `apt-get` layer in both Dockerfiles installs:
+
+| Package | Why it is needed |
+|---|---|
+| `python3`, `python3-pip`, `python3-venv` | Python venv for LiteLLM and the Whisper transcription pipeline |
+| `tesseract-ocr` | OCR fallback for image-based PDFs when no LLM OCR model is configured |
+| `poppler-utils` | PDF rendering (`pdfinfo`, `pdftoppm`) for the document processor |
+| `pandoc` | Converts DOCX and other formats to plain text during document ingestion |
+| `libreoffice` | Converts Office formats (`.doc`, `.pptx`, `.xlsx`) to PDF before processing |
+| `ripgrep` | Fast file search used by the built-in code-search skill |
+| `bubblewrap` | User-namespace sandbox for skill execution (see [Skill sandbox](#skill-sandbox)) |
+| `socat` | Unix socket relay used during skill sandbox setup |
+
+OpenGL/GLib libraries (`libgl1`, `libglib2.0-0`, `libgomp1`, etc.) are also installed as runtime requirements for `libreoffice` and document-processing libraries.
+
+## Global npm packages
+
+Both images run:
+
+```bash
+npm install -g pm2 tsx docx
+```
+
+- `pm2` — process manager that runs the backend/worker as a supervised daemon inside the container.
+- `tsx` — used in dev mode (`NODE_ENV=dev`) to run TypeScript directly.
+- `docx` — required by the built-in DOCX skill at runtime; skill scripts `require('docx')` from the global `node_modules`.
+
+## Python venv
+
+After `npm ci`, both Dockerfiles run:
+
+```bash
+npx @exulu/backend setup-python
+```
+
+This creates a Python virtual environment at `ee/python/.venv` and installs LiteLLM, WhisperX, and other Python dependencies. The venv is bundled into the image — no internet access is required at container startup.
+
+## Ports
+
+| Container | Port | Purpose |
+|---|---|---|
+| `exulu-backend` | `9001` | HTTP API and GraphQL |
+| `exulu-backend` | `4000` | LiteLLM proxy (also published so workers can reach it) |
+
+<Note>
+The worker container does **not** expose an HTTP endpoint. Port `9002` is defined as `ENV PORT` and `EXPOSE 9002` in `Dockerfile.worker` and is read by the `PORT` variable, but the worker process (`worker.ts`) never binds an HTTP server — it only creates BullMQ workers. Do not probe `exulu-worker:9002` for health; the worker has no HTTP listener.
+</Note>
+
+## Start scripts
+
+On container startup, the `CMD` calls `start-backend.sh` or `start-worker.sh`. Both scripts:
+
+1. Run `npm run utils:initdb` — idempotent database initialisation (see [Database](/self-hosting/database)).
+2. Build the TypeScript dist (production mode only).
+3. Check whether a pm2 process named `exulu-server` / `exulu-worker` is already running; restart it if so, start it fresh if not.
+4. Tail pm2 logs.
+
+In `NODE_ENV=dev` the scripts skip the pm2 path and invoke `tsx watch` directly.
+
+<Note>
+`start-worker.sh` does **not** set `NODE_OPTIONS`. To raise the V8 heap limit for memory-intensive knowledge processing, add it to the compose `environment` block yourself:
+
+```yaml
+environment:
+  NODE_OPTIONS: "--max-old-space-size=8192"
+```
+
+8 GB is the recommended minimum for the worker.
+</Note>
+
+## Skill sandbox
+
+IMP uses [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) to run skill bash commands inside a user-namespace container. This is the same isolation primitive used by Flatpak.
+
+`bwrap` needs to call `unshare(CLONE_NEWUSER)` and `mount()`. Docker's default seccomp profile **and** the default AppArmor profile on Ubuntu 23.10+ / 24.04+ hosts both block these syscalls. The result: `bwrap` cannot create user namespaces, and sandboxed skill execution fails.
+
+Both `docker-compose.backend.yml` and `docker-compose.worker.yml` include:
+
+```yaml
+security_opt:
+  - seccomp:unconfined
+  - apparmor:unconfined
+```
+
+This drops Docker's syscall filter and AppArmor label from the container. `bwrap` then enforces its own sandbox — it is defense-in-depth rather than defense-in-depth-removed. The IMP container itself has no elevated capabilities; only `bwrap` inside it can perform the namespace operations it needs, and only for the duration of a skill invocation.
+
+**What this means for your security posture:**
+
+- The container runs without a seccomp filter. Any Linux kernel syscall is reachable from inside the container process. This is the same posture as many development containers that need `ptrace` or `perf`.
+- `bwrap` still creates its own sandbox for each skill call: read-only bind mounts, a private `/tmp`, no network access to the host.
+- If you operate in a hardened environment where `seccomp:unconfined` is not acceptable, you can write a custom seccomp profile that allows only `unshare` and `clone` with the `CLONE_NEWUSER` flag, and apply that profile instead.
+
+### Disabling the sandbox
+
+By default, if `bwrap` cannot create namespaces, IMP degrades gracefully: skill bash commands run without kernel sandboxing, but the JS-layer file restrictions still apply. To make this degradation a hard failure instead, set:
+
+```ini
+EXULU_REQUIRE_SANDBOX=1
+```
+
+With this variable set, the backend throws at the first sandboxed skill invocation if the sandbox probe fails, rather than continuing in degraded mode.
+
+## Health checks
+
+IMP's backend container does **not** configure a Docker health check. The only HTTP route that is always available is `/` (the root path), which returns `200 OK`. You can use this path for an external health probe:
+
+```bash
+curl -f http://localhost:9001/
+```
+
+See [Troubleshooting](/self-hosting/troubleshooting) for guidance on diagnosing a container that starts but does not behave correctly.

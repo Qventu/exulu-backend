@@ -1,0 +1,55 @@
+---
+title: "Editions"
+description: "IMP ships in two editions: Community Edition (CE) and Enterprise Edition (EE). This page explains what each includes and how to activate EE."
+icon: "layers"
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx";
+
+IMP is open-core. The Community Edition is source-available and covers the full platform — chat, building, administration, and the API. The Enterprise Edition adds capabilities gated behind a license flag; it is activated with a single environment variable.
+
+<Note>
+All edition boundaries documented here are verified against `backend/ee/entitlements.ts`, which is the authoritative source of truth. The license check at runtime enables every EE flag simultaneously when a valid `EXULU_ENTERPRISE_LICENSE` key is present.
+</Note>
+
+## Feature comparison
+
+| Feature | CE | EE |
+|---|---|---|
+| Chat, sessions, projects, transcripts | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| Agents — create, configure, deploy | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| Knowledge contexts, items, embeddings | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| Prompts and skills | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| GraphQL and REST API | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| Multi-provider model support | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| Basic user management | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| OpenTelemetry observability | <EditionBadge edition="ce" /> | <EditionBadge edition="ee" /> |
+| **Role-based access control (RBAC)** — roles, teams, fine-grained permissions (`rbac`) | — | <EditionBadge edition="ee" /> |
+| **Queue management** — BullMQ dashboard, rate limits, priority queues (`queues`) | — | <EditionBadge edition="ee" /> |
+| **Evals** — test cases, LLM-as-a-judge, regression tracking (`evals`) | — | <EditionBadge edition="ee" /> |
+| **Routines** — save conversations as templates, schedule execution (`template-conversations`) | — | <EditionBadge edition="ee" /> |
+| **Agent feedback** — thumbs up/down, comments, feedback datasets (`agent-feedback`) | — | <EditionBadge edition="ee" /> |
+| **Advanced document processing** — OCR, table extraction, complex formats (`advanced-document-processing`) | — | <EditionBadge edition="ee" /> |
+| **Advanced markdown chunker** — structure-preserving chunking for technical content (`advanced-markdown-chunker`) | — | <EditionBadge edition="ee" /> |
+| **Agentic retrieval** — iterative multi-strategy search (`agentic-retrieval`) | — | <EditionBadge edition="ee" /> |
+| **Multi-agent tooling** — agent-to-agent delegation and routing (`multi-agent-tooling`) | — | <EditionBadge edition="ee" /> |
+| **Custom branding** — logo, colors, white-label theming (`custom-branding`) | — | <EditionBadge edition="ee" /> |
+| **Rate limits** — per-user and per-team request throttling (`rate-limits`) | — | <EditionBadge edition="ee" /> |
+
+## Activating Enterprise Edition
+
+Set the following environment variable on your IMP backend before starting the server:
+
+```bash
+EXULU_ENTERPRISE_LICENSE=EXULU_EE_your_license_key_here
+```
+
+Once the server starts with a valid key, all EE flags are enabled. There is no per-feature activation — it is all or nothing.
+
+<Tip>
+To verify which flags are active on a running deployment, check the server startup logs or call the `/health` endpoint (behavior varies by deployment version).
+</Tip>
+
+## Getting a license
+
+Contact Exulu at [exulu.com/contact](https://exulu.com/contact) to request an Enterprise license. Licenses are per deployment; the key must match the environment it is issued for.

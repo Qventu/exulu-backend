@@ -1,0 +1,217 @@
+---
+title: "Queues and workers"
+description: "Register BullMQ queues sized to your provider's rate limit, scope a worker process to specific queues, and understand memory requirements."
+icon: "layers"
+---
+
+IMP's background work — embedding generation, document processing, data-source syncs, and eval runs — all run on BullMQ queues backed by Redis. This tutorial shows you how to size queues to a rate limit, register them in code, and scope a worker process to a subset of queues in production.
+
+## Prerequisites
+
+- Completed [Your first app](/developers/tutorials/first-app) — you have a working project with `src/worker.ts`.
+- Read [ExuluQueues — introduction](/developers/core/exulu-queues/introduction) and [ExuluQueues — configuration](/developers/core/exulu-queues/configuration).
+- Redis running and reachable (set `REDIS_HOST` + `REDIS_PORT`).
+
+<Note>
+`ExuluQueues` requires an Enterprise Edition license. `register()` throws immediately without a valid `EXULU_ENTERPRISE_LICENSE` environment variable.
+</Note>
+
+## What you will build
+
+- A sized embedder queue for a 2 M TPM embedding provider.
+- A processor queue for document conversion jobs.
+- A worker process scoped to only the embedder queue (so you can scale embedder workers independently).
+
+<Steps>
+
+<Step title="Understand the sizing formula">
+
+The `ratelimit` parameter limits how many jobs a single worker process dispatches per second. For embedding queues, the right value comes from your provider's tokens-per-minute (TPM) quota:
+
+```
+ratelimit = provider_TPM ÷ avg_tokens_per_request ÷ 60
+```
+
+Example — a provider with a **2 M TPM** quota embedding **1 024-token** chunks:
+
+```
+2_000_000 ÷ 1_024 ÷ 60 ≈ 32.6 → set ratelimit: 30 (leave a 10% margin)
+```
+
+For `concurrency.queue`, pick a number that represents the burst depth you want in Redis. A conservative starting point is `ratelimit × 2` (enough to keep the queue fed):
+
+```
+concurrency.queue: 60   (30 jobs/sec × 2-second look-ahead)
+```
+
+For `concurrency.worker`, use the number of parallel I/O operations you want per process. Embedding calls are network-bound, so 5–10 is typical:
+
+```
+concurrency.worker: 8
+```
+
+<Warning>
+`ratelimit` is per-process. If you run multiple worker processes, the effective rate is `ratelimit × number_of_processes`. Use `concurrency.queue` to cap total active jobs globally and bound the combined rate.
+</Warning>
+
+</Step>
+
+<Step title="Register the queues">
+
+Register all queues in `src/contexts/index.ts` (or a dedicated `src/queues.ts` file). Queues must be registered before the context or eval that references them is constructed:
+
+```typescript src/queues.ts
+import { ExuluQueues } from "@exulu/backend";
+
+// Embedder queue — 2 M TPM provider, 1 024-token chunks
+// 2_000_000 ÷ 1_024 ÷ 60 ≈ 32.6 → use 30 for safety
+export const embeddingsQueue = ExuluQueues.register(
+  "ticket_embeddings",
+  { worker: 8, queue: 60 }, // 8 parallel per process, 60 global max
+  30,                        // 30 jobs per second
+  300,                       // 5-minute timeout per embedding batch
+);
+
+// Processor queue — CPU-bound document conversion
+export const processorQueue = ExuluQueues.register(
+  "ticket_pdf_processor",
+  { worker: 2, queue: 4 },  // 2 parallel per process, 4 global max
+  2,                         // 2 documents per second
+  60 * 20,                   // 20-minute timeout per document
+);
+
+// Source sync queue — one sync at a time
+export const syncQueue = ExuluQueues.register(
+  "ticket_api_sync",
+  { worker: 1, queue: 1 },
+  1,
+  60 * 30,                   // 30-minute timeout for full sync runs
+);
+```
+
+Pass the queue to the context by calling `.use()`:
+
+```typescript src/contexts/index.ts
+import { embeddingsQueue, processorQueue, syncQueue } from "../queues";
+
+export const supportTicketsContext = new ExuluContext({
+  // ...
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(), // Promise<ExuluQueueConfig>
+  },
+  sources: [{
+    // ...
+    config: {
+      queue: syncQueue.use(),
+      // ...
+    },
+  }],
+  processor: {
+    // ...
+    config: {
+      queue: processorQueue.use(),
+      // ...
+    },
+  },
+});
+```
+
+`.use()` connects to Redis lazily on first await — the call itself is synchronous and returns a `Promise<ExuluQueueConfig>`. Passing the promise (not the awaited value) to the context lets IMP wire it up when the worker starts.
+
+</Step>
+
+<Step title="Scope a worker to specific queues">
+
+By default, `app.bullmq.workers.create()` starts workers for every registered queue. For production deployments, you often want separate containers for separate queue types — for example, high-memory document processors on beefy nodes and many small embedder workers on lighter ones.
+
+Pass queue names to `workers.create()` to restrict processing to a subset:
+
+```typescript src/worker.ts (embedder worker)
+import { app, ready } from "./exulu";
+
+await ready;
+
+// This process handles only the embedder queue
+await app.bullmq.workers.create(["ticket_embeddings"]);
+```
+
+```typescript src/worker-processor.ts (processor worker)
+import { app, ready } from "./exulu";
+
+await ready;
+
+// This process handles only the processor queue
+await app.bullmq.workers.create(["ticket_pdf_processor"]);
+```
+
+Add corresponding scripts to `package.json`:
+
+```json
+{
+  "scripts": {
+    "dev:worker":           "tsx watch src/worker.ts",
+    "dev:worker-processor": "tsx watch src/worker-processor.ts",
+    "start:worker":         "node dist/worker.js",
+    "start:worker-processor": "node dist/worker-processor.js"
+  }
+}
+```
+
+In your tsup config, add the processor worker as an entry:
+
+```typescript tsup.config.ts
+entry: {
+  server:           "./src/server.ts",
+  worker:           "./src/worker.ts",
+  "worker-processor": "./src/worker-processor.ts",
+},
+```
+
+</Step>
+
+<Step title="Memory guidance">
+
+PDF processing and embedding generation both use significant memory. As a starting point:
+
+| Worker type | Recommended container memory |
+|---|---|
+| Embedder only | 512 MB–1 GB |
+| Source sync only | 256 MB–512 MB |
+| Document processor | 2 GB–8 GB (depends on PDF size and the processing library) |
+
+Document processing workers that load large PDFs or run OCR models can use 4–8 GB. Allocate accordingly in your container scheduler. See [Operations](/self-hosting/operations) for container sizing recommendations.
+
+Set `concurrency.worker: 1` for document processing workers if memory is constrained — running two large-PDF jobs in parallel doubles peak usage.
+
+</Step>
+
+<Step title="Verify queue health">
+
+After starting your worker, registered queue names appear in the IMP admin interface under **Build → Knowledge → [context] → Pipeline → [stage] → Jobs**. You can also inspect queue depths, drain queues, and retry failed jobs from there.
+
+Every registered queue name is injected into the GraphQL `QueueEnum` at boot, making queue state queryable via the platform's API without additional configuration.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- A sized embedder queue based on a TPM quota formula.
+- Separate queues for embedding, processing, and sync.
+- A worker entry point scoped to a single queue type, ready for independent horizontal scaling.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluQueues — configuration" icon="settings" href="/developers/core/exulu-queues/configuration">
+    Every register() parameter, the ExuluQueueConfig shape, and rate-limit sizing examples.
+  </Card>
+  <Card title="Operations" icon="server" href="/self-hosting/operations">
+    Container sizing, memory guidance, and production deployment patterns.
+  </Card>
+  <Card title="Custom processors" icon="workflow" href="/developers/tutorials/custom-processors">
+    Attach a processor queue to a context and configure generateEmbeddings.
+  </Card>
+</CardGroup>

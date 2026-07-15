@@ -1,0 +1,114 @@
+---
+title: "Theme"
+description: "White-label IMP for your organization: edit CSS variables, preview changes live, then publish to all users."
+icon: "palette"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="super admin" flags="none" />
+
+## What the theme studio is
+
+The **Theme** page (`/configuration`) — labelled "Theme" in the sidebar — is the white-label configuration surface for IMP. It lets you override the platform's CSS variables (colors, typography, shapes) for both light and dark modes, see a live preview before publishing, and roll out changes to all users at once.
+
+Changes you make here apply immediately to every user the next time they load the application. You publish when ready; the draft stays local to your session until then.
+
+<Frame caption="The Theme studio: edit CSS variables, see changes reflected instantly in the live preview, then publish to all users.">
+  <video autoPlay muted loop playsInline src="/videos/white-label-theme.mp4" />
+</Frame>
+
+## Variable editor
+
+The left pane is a grouped CSS variable editor. Variables are organized into groups:
+
+| Group | What it controls |
+| --- | --- |
+| **Brand** | Primary color, light variant, dark variant — the accent used for buttons, links, and active states. |
+| **Surfaces** | Background and card surface colors. |
+| **Text** | Text color hierarchy (high, mid, low, faint). |
+| **Sidebar** | Sidebar-specific color overrides. |
+| **Semantic** | Status colors: warning, destructive, success. |
+| **Charts** | Colors used in data visualizations. |
+| **Shape & typography** | Border radius, font size base, and font family overrides. |
+| **Custom** | Any variables you add that are not part of the stock theme. |
+
+### Filtering the editor
+
+- **Filter variables…** — type to narrow the list to matching variable names.
+- **Modified only** — show only variables you have changed from the stock default.
+- **Light / Dark mode toggle** — switch the editor between the light-mode and dark-mode variable sets. Both are edited independently; the preview follows the active mode.
+
+### Resetting individual tokens
+
+Each variable row has a **Reset to default** button (⟳ icon). Clicking it removes your override and restores the stock value for that variable, without affecting other overrides.
+
+Each modified row shows a **Modified** badge to make it easy to scan your changes.
+
+## Live preview
+
+The right pane shows a static preview of the IMP application rendered with your current draft overrides. It updates as you edit. The preview has its own light/dark toggle that can diverge from the editor's active mode — useful for checking contrast in both modes while editing only one.
+
+On narrow viewports the preview moves to a bottom sheet, opened with the **Preview** button in the header.
+
+## Import and export
+
+Use the overflow menu (⋯) in the page header to access import and export:
+
+### Import CSS
+
+**Import CSS…** opens a dialog where you paste a complete CSS theme with `:root` and `.dark` blocks:
+
+```css
+:root {
+  --primary: 142 76% 36%;
+}
+
+.dark {
+  --primary: 142 76% 42%;
+}
+```
+
+IMP parses the blocks, reports how many light and dark variables were detected, and merges them into your draft. Nothing changes for users until you publish. A summary shows the count of merged variables and activates the **Modified only** filter so you can review what came in.
+
+### Export CSS
+
+**Export CSS** copies the published (stored) theme as a CSS stylesheet to your clipboard. The export reflects what is live for users, not the current draft — the label says "Generated CSS (published theme)" to make this explicit.
+
+## Raw configuration view
+
+**Show raw configuration** in the overflow menu reveals a raw view panel below the editor with two blocks:
+
+- **Stored configuration (JSON)** — the JSON representation of the published overrides, with copy button.
+- **Generated CSS (published theme)** — the full stylesheet of the live theme, with copy button.
+
+These reflect the stored/published state, not the draft.
+
+## Publish
+
+When your draft differs from the stored theme, the **Publish theme** button in the page header becomes active (otherwise it is disabled). An "Unsaved changes" indicator appears next to the button.
+
+Click **Publish theme** to open a confirmation dialog:
+
+> Publish this theme? — `{N}` light / `{M}` dark overrides — this applies to every user.
+
+Confirm to publish. The change goes live immediately for you; other users get it the next time they load the application. A success message appears: "Theme published — it's live for you now — other users get it the next time they load the app."
+
+## Reset to defaults
+
+**Reset to defaults…** in the overflow menu removes all overrides and publishes the stock theme immediately. The confirmation dialog states the count of overrides being removed and that the reset is immediate.
+
+<Warning>
+Resetting to defaults publishes the stock theme to all users instantly and removes all your custom overrides. This cannot be undone except by re-applying your overrides manually (use Export CSS before resetting if you want to preserve your work).
+</Warning>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Variables" icon="variable" href="/administration/variables">
+    Store configuration values referenced by agents and integrations.
+  </Card>
+  <Card title="Users & access" icon="users" href="/administration/users-access/overview">
+    Manage who can access the platform you are theming.
+  </Card>
+</Columns>

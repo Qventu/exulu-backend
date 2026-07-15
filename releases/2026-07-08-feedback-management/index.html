@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Feedback Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Feedback</span>
+      <h1 class="hero">Turn every thumbs-down into a <em>fix</em>.</h1>
+      <p class="lede">The new /feedback console gives admins one governed place to triage what users said about agent answers: filter thousands of ratings to the one that matters, then open the whole conversation behind it and jump straight to the session.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="feedback-triage">
+        <h2>Feedback triage</h2>
+        <p class="one-liner">Every thumbs-down, in one place.</p>
+        <div class="slice">
+          <video src="./shorts/feedback-triage.mp4" poster="./shorts/feedback-triage-poster.png" autoplay loop muted playsinline></video>
+          <p>The <code>/feedback</code> console is the admin review surface for everything users rated about agent responses. It leads with a quiet one-line verdict in the page header — <strong>"{percent}% positive · {negative} negative"</strong> — and a full data table of ratings: a thumbs chip per row (ThumbsUp on <code>success/10</code> for positive, ThumbsDown on <code>destructive/10</code> for negative), the feedback preview, agent, user, and a relative date.</p>
+          <p>The toolbar slices thousands of ratings down to the one that matters. A single click on the <strong>Negative</strong> segment of the Type control (<strong>All · Negative · Positive</strong>) narrows the list to just the thumbs-down rows — the same <code>score: { eq: 0 }</code> filter the summary's negative link-button applies. Alongside it: a debounced <strong>"Search feedback…"</strong> box (300ms) and two async <strong>"Filter by agent"</strong> / <strong>"Filter by user"</strong> comboboxes, all composing into one server-side query. Any active filter reveals a <strong>Reset</strong>, and changing any filter resets to page 1.</p>
+          <div class="snippet-label">GraphQL — the Negative tab is just a filter on one query — pull it from the API the same way:</div>
+          <pre><code>query GetFeedback($page: Int!, $limit: Int!, $filters: [FilterFeedback]) {
+  feedbackPagination(page: $page, limit: $limit, filters: $filters) {
+    pageInfo { itemCount pageCount }
+    items { id score description agent user createdAt }
+  }
+}
+# filters: [{ score: { eq: 0 } }]   ← the Negative tab</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="feedback-detail-replay">
+        <h2>Feedback detail &amp; replay</h2>
+        <p class="one-liner">See the whole conversation behind the rating.</p>
+        <div class="slice">
+          <video src="./shorts/feedback-detail-replay.mp4" poster="./shorts/feedback-detail-replay-poster.png" autoplay loop muted playsinline></video>
+          <p>Click any feedback row and a detail Sheet slides in from the right, reconstructing the whole interaction behind the rating. The header carries a round type chip and the <strong>"Negative feedback"</strong> / <strong>"Positive feedback"</strong> label with a <code>RelativeTime</code>; a two-column meta grid lists <strong>User</strong>, <strong>Agent</strong>, and <strong>Session</strong> — each next to a copy-id button — and an <strong>Open in Chat</strong> button links straight to <code>/chat/{agent}/{session}</code> to continue or correct the thread.</p>
+          <p>The payoff is the <strong>Conversation</strong> section: the full session transcript rendered by the <em>real</em> chat <code>MessageRenderer</code> — the same component the live chat uses — mounted read-only. User messages sit right-aligned in a <code>bg-secondary</code> bubble; assistant replies render left-aligned as plain body text. Tool calls, reasoning blocks, citations, and todo lists all render exactly as they did in the session; you just can't edit or regenerate. Above it, the author's <strong>Feedback</strong> comment sits in its own muted block.</p>
+          <div class="snippet-label">GraphQL — the replay is one query — pull the session transcript, render it in the real chat UI:</div>
+          <pre><code>query GetAgentSessionMessages(
+  $page: Int!
+  $limit: Int!
+  $filters: [FilterAgent_message]
+) {
+  agent_messagesPagination(page: $page, limit: $limit, filters: $filters) {
+    items {
+      id
+      session
+      content
+      createdAt
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="summary-stat">
+        <h2>The health of every answer, in one line</h2>
+        <p class="one-liner">A percent-positive / negative-count split that reads the whole corpus, not just the page.</p>
+        <div class="slice">
+          <p>The console leads with a quiet one-line verdict in the page header — <strong>"{percent}% positive · {negative} negative"</strong> — that reads the whole corpus, not just the page you're on. The two counts come from a pair of count-only <code>GET_FEEDBACK</code> probes (<code>limit: 1</code>, reading <code>pageInfo.itemCount</code> for <code>score: 1</code> and <code>score: 0</code>) that poll every 30 seconds, so the split stays current as new thumbs land, and the header simply renders nothing until there is at least one rating to summarise.</p>
+          <p>The negative number is itself a link-button: clicking it drops you straight into the negatives (<code>onSelectType("negative")</code>), because a review console should make the thing you actually need to fix one click away. The whole list runs <code>cache-and-network</code> with a 30s poll, so the page is live without a manual refresh.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="feedback-list">
+        <h2>Names, not ids — and delete fifty at once</h2>
+        <p class="one-liner">The list hydrates raw ids into real names, then lets reviewers clear ratings in bulk.</p>
+        <div class="slice">
+          <p>The list solves the "raw id" problem the backend still hands it: for each visible page it batches one <code>GET_AGENTS_BY_IDS</code> and one <code>GET_USERS_BY_IDS</code> call and maps every author and agent id to a real name — users composed from name, then firstname/lastname, then email, then id — with the raw id kept only as an honest last-resort fallback. The layout is responsive by breakpoint: a full data table at <code>md+</code> (<strong>Type · Feedback · Agent · User · Date</strong> with a select column) collapses below <code>md</code> into a tap-friendly card list, each card a ≥44 px hit target with a thumbs icon, two-line preview, and relative time.</p>
+          <p>Reviewers can multi-select across the page and clear ratings in bulk: the selection bar's <strong>"Delete {count}"</strong> opens a confirm dialog — <strong>"Delete {count} feedback items?"</strong> / <strong>"This permanently removes {count} feedback records. The chat sessions themselves are not affected. This cannot be undone."</strong> — before firing one delete per row and toasting <strong>"Deleted {count} feedback items"</strong>. Checkbox clicks stop propagation, so toggling selection never opens the detail panel.</p>
+          <div class="snippet-label">GraphQL — the console's only write op — every bulk and single delete funnels through it:</div>
+          <pre><code>mutation DeleteFeedback($id: ID!) {
+  feedbackRemoveOneById(id: $id) {
+    id
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="rbac-console">
+        <h2>An admin surface that fails closed</h2>
+        <p class="one-liner">The gate is enforced on the server, not hidden in the client.</p>
+        <div class="slice">
+          <p><code>/feedback</code> is an admin review console, and the gate is enforced on the server, not hidden in the client: a server <code>layout.tsx</code> wraps the client page in <code>guardRoute("feedback")</code>, so an account without the right is served the shared <code>&lt;AccessDenied/&gt;</code> primitive server-side rather than a flash of guarded content. The requirement is declared once in <code>nav-config.ts</code> and reused by both the sidebar and the guard, honouring the "nav-hidden must imply route-guarded" rule.</p>
+          <p>Today that requirement is <strong>super_admin</strong>, with a <code>TODO</code> in the config to flip to a dedicated <code>feedback</code> role key when the backend role-model ships. Denial is transparent by design: <code>AccessDenied</code> names the missing right instead of silently bouncing anyone. This console is the review end of a loop that already starts in chat — the 👍/👎 trajectory feedback shipped in <strong>chat-quality-of-life</strong> and the thumbs-down that deactivates the offending source (<strong>chat-trust-and-control</strong>) are where ratings are created; <code>/feedback</code> is simply where an admin triages what those interactions produced.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

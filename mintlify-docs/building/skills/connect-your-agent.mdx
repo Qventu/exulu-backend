@@ -1,0 +1,88 @@
+---
+title: "Connect your agent"
+description: "Run the one-line install command to connect a local coding agent to your IMP instance and install skills locally."
+icon: "terminal"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+## What "Connect your agent" does
+
+IMP can serve skills to a local coding agent — Claude Code, OpenCode, and others — so the agent can install them into its local toolchain. The "Connect your agent" dialog gives you a single shell command that points the agent at your IMP instance.
+
+<Frame caption="The Connect your agent dialog: copy the one-line install command and run it in your terminal to connect your coding agent.">
+  <video autoPlay muted loop playsInline src="/videos/connect-agent.mp4" />
+</Frame>
+
+When the command runs, the agent asks you:
+
+- Which clients to install into (Claude Code, OpenCode, and others that are detected on your machine)
+- Whether to share one copy of the skill files across clients via symlinks (saves disk space when you use multiple agents)
+
+You need an API key to authenticate. Create one on the [**API keys**](/administration/api-keys) page (`/keys`, in the **Develop** sidebar group) before running the command.
+
+## Opening the dialog
+
+From the skills list (`/skills`), click **Connect your agent** in the top-right area of the toolbar. The **Connect your agent** dialog opens.
+
+## The install command
+
+The dialog shows the install command in a monospace code block:
+
+```sh
+curl -fsSL https://{your-instance}/api/skills/install.sh | sh
+```
+
+The URL is your IMP instance's origin — whatever domain or hostname your organization uses. The dialog derives this from `window.location.origin` client-side, so it always shows the correct URL for the instance you are logged into.
+
+Click the **Copy command** button (or the copy icon next to the code block) to put the command on your clipboard.
+
+<Note>
+The install script is served from your own IMP instance, not from a third-party server. Inspect `/api/skills/install.sh` in your browser if you want to review it before running.
+</Note>
+
+## Run the command
+
+<Steps>
+  <Step title="Copy the command">
+    Open the **Connect your agent** dialog and click **Copy command**.
+  </Step>
+  <Step title="Open your terminal">
+    Open a terminal in your development environment — the same machine where your coding agent (Claude Code, OpenCode, etc.) is installed.
+  </Step>
+  <Step title="Paste and run">
+    Paste the command and press Enter. The script downloads and runs the IMP skill installer.
+  </Step>
+  <Step title="Follow the prompts">
+    The installer asks which client(s) to target and whether to use symlinks. Provide your API key when prompted.
+  </Step>
+</Steps>
+
+After the installer finishes, the skill or skills you selected are available to the coding agent as MCP tools or context files, depending on the client.
+
+## API key
+
+The install script requires an API key to authenticate against your IMP instance. Create a dedicated key on the [**API keys**](/administration/api-keys) page (`/keys` in the **Develop** sidebar group):
+
+1. Navigate to **API keys** in the sidebar.
+2. Click **Create key**, give it a name (e.g. "Claude Code"), choose the **Agents** scope, and select the agents this key may access.
+3. Copy the key immediately — it is shown only once.
+
+Paste the key into the installer prompt when asked.
+
+<Note>
+The installer's prompt mentions `/token` (your personal token). That also works but ties the agent to your personal session. A dedicated org API key from the **API keys** page is recommended so you can revoke the agent's access independently.
+</Note>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Skills overview" icon="sparkles" href="/building/skills/overview">
+    Browse, create, and manage skill packages.
+  </Card>
+  <Card title="Editing and versions" icon="file-code" href="/building/skills/editing-and-versions">
+    Edit skill files and save version snapshots.
+  </Card>
+</Columns>

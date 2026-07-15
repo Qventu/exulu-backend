@@ -1,0 +1,21 @@
+      <section class="feature" id="tool-configs">
+        <h2>One-click tool configs</h2>
+        <p class="one-liner">Point Cowork, Claude Code, and continue.dev at your project's models — no hand-copied URLs, no pasted tokens.</p>
+
+        <div class="slice">
+          <video src="./shorts/tool-configs.mp4" poster="./shorts/tool-configs-poster.png" autoplay loop muted playsinline></video>
+          <p>Open the ⋯ menu on any project to download ready-made configs for Cowork, Claude Code, and continue.dev — or grab the project ID with <strong>Copy ID</strong>. Each file arrives with your project's gateway URL and access token already filled in: drop it into the tool and you're connected.</p>
+          <p>The Claude Code <code>settings.json</code> defaults to the best available Opus model and lists every model your project can use. Because each tool routes through your project's gateway, budgets, rate limits, and cost reporting keep working no matter which editor the traffic comes from.</p>
+
+          <div class="snippet-label">The generated settings.json (Claude Code)</div>
+          <pre><code>{
+  "model": "claude-opus-4-8",
+  "availableModels": ["claude-opus-4-8", "claude-sonnet-4-6", …],
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://&lt;your-backend&gt;/litellm/&lt;project-id&gt;",
+    "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": 1
+  },
+  "apiKeyHelper": "echo &lt;your-token&gt;"
+}</code></pre>
+        </div>
+      </section>

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agent Evals — results matrix (cases × runs)</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin: 30px auto 0; max-width: 980px;
+        font-size: 96px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.06;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ----------------------------- matrix card ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #card {
+        width: 1120px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+      }
+      #grid {
+        display: grid;
+        grid-template-columns: 240px 60px 1fr 1fr 1fr;
+        grid-template-rows: 112px 60px repeat(5, 60px);
+        width: 100%;
+      }
+      .cell { position: relative; border-right: 1px solid #e7e7ee; border-bottom: 1px solid #e7e7ee; }
+      .cell.last-col { border-right: none; }
+      .cell.last-row { border-bottom: none; }
+      .cell.avg-row { border-bottom: 5px solid #e7e7ee; }
+
+      /* header row */
+      .case-head { display: flex; align-items: center; padding: 0 18px; font-size: 15px; color: #525252; }
+      .rail-head { background: #fafafa; display: grid; place-items: center; }
+      .rail-btn {
+        width: 52px; padding: 6px 3px; border-radius: 6px; overflow: hidden;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        color: #525252; text-align: center;
+      }
+      .rail-btn .rail-label { font-size: 11.5px; line-height: 1.18; letter-spacing: -0.01em; }
+      .lane-head { display: flex; flex-direction: column; }
+      .lane-meta {
+        height: 52px; background: #fafafa; border-bottom: 1px solid #e7e7ee;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        text-align: center;
+      }
+      .lane-meta .run-name { font-size: 16px; font-weight: 600; color: #000; line-height: 17px; }
+      .lane-meta .run-date { font-size: 13px; color: #525252; line-height: 15px; margin-top: 1px; }
+      .lane-meta .run-agent { font-size: 13px; color: #525252; line-height: 15px; }
+      .lane-menu { height: 60px; background: #fbfbfb; display: grid; place-items: center; }
+      .menu-btn { width: 34px; height: 34px; border-radius: 6px; display: grid; place-items: center; color: #525252; }
+
+      /* striped (rail body + not-in-run) */
+      .striped {
+        background-color: #fbfbfb;
+        background-image: repeating-linear-gradient(
+          45deg,
+          rgba(82, 82, 82, 0.3) 0px,
+          rgba(82, 82, 82, 0.3) 1px,
+          transparent 1px,
+          transparent 10px
+        );
+      }
+
+      /* case column */
+      .case-cell { display: flex; flex-direction: column; justify-content: center; padding: 0 16px; }
+      .case-name { font-size: 16px; font-weight: 500; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .case-id { font-size: 14px; color: #525252; line-height: 17px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+      .avg-label { background: #f5f5f5; display: flex; align-items: center; padding: 0 18px; font-size: 19px; font-weight: 700; }
+
+      /* lane cells + stacked states */
+      .st {
+        position: absolute; inset: 0;
+        display: flex; align-items: center; justify-content: center; gap: 7px;
+      }
+      .h0 { opacity: 0; }
+      .score { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .stat-label { font-size: 15px; }
+      .c-green { color: #16a34a; }
+      .c-amber { color: #d97706; }
+      .c-red { color: #e54b50; }
+      .c-blue { color: #2563eb; }
+      .c-muted { color: #525252; }
+      .dash { font-size: 15px; color: #525252; }
+      .icon { flex: none; display: block; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; }
+      #payoff-line {
+        margin-bottom: 96px; font-size: 36px; font-weight: 600; color: #1a1a1a;
+        letter-spacing: -0.02em;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.5"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Agent Evals</span>
+          <h1>Every run, every case, <em>side by side</em>.</h1>
+        </div>
+      </div>
+
+      <div id="app" class="clip" data-start="1.9" data-duration="7.6" data-track-index="3">
+        <div id="card">
+          <div id="grid">
+            <!-- header row -->
+            <div class="cell case-head">Test case</div>
+            <div class="cell rail-head">
+              <div class="rail-btn" data-layout-ignore>
+                <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+                <span class="rail-label">Show older runs</span>
+              </div>
+            </div>
+            <div class="cell lane-head">
+              <div class="lane-meta">
+                <div class="run-name">Prompt v1</div>
+                <div class="run-date">Jul 6, 2026 · 09:12</div>
+                <div class="run-agent">Support agent</div>
+              </div>
+              <div class="lane-menu">
+                <div class="menu-btn">
+                  <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="cell lane-head">
+              <div class="lane-meta">
+                <div class="run-name">Prompt v2</div>
+                <div class="run-date">Jul 7, 2026 · 14:30</div>
+                <div class="run-agent">Support agent</div>
+              </div>
+              <div class="lane-menu">
+                <div class="menu-btn">
+                  <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="cell lane-head last-col">
+              <div class="lane-meta">
+                <div class="run-name">Prompt v3</div>
+                <div class="run-date">Jul 8, 2026 · 09:00</div>
+                <div class="run-agent">Support agent</div>
+              </div>
+              <div class="lane-menu">
+                <div class="menu-btn">
+                  <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </div>
+              </div>
+            </div>
+
+            <!-- average row -->
+            <div class="cell avg-row avg-label">Average</div>
+            <div class="cell avg-row striped"></div>
+            <div class="cell avg-row"><div class="st"><span class="score c-amber">67.6</span></div></div>
+            <div class="cell avg-row"><div class="st"><span class="score c-green">85.6</span></div></div>
+            <div class="cell avg-row last-col">
+              <div class="st" id="avg-1"><span class="score c-green">92.0</span></div>
+              <div class="st h0" id="avg-2"><span class="score c-green">83.3</span></div>
+              <div class="st h0" id="avg-3"><span class="score c-green">84.8</span></div>
+              <div class="st h0" id="avg-4"><span class="score c-amber">77.4</span></div>
+              <div class="st h0" id="avg-5"><span class="score c-green">80.2</span></div>
+            </div>
+
+            <!-- case 1 -->
+            <div class="cell case-cell">
+              <div class="case-name">Refund policy question</div>
+              <div class="case-id">1f4c9a2e-77b0-4…</div>
+            </div>
+            <div class="cell striped"></div>
+            <div class="cell"><div class="st"><span class="score c-amber">78.0</span></div></div>
+            <div class="cell"><div class="st"><span class="score c-green">84.0</span></div></div>
+            <div class="cell last-col"><div class="st"><span class="score c-green">92.0</span></div></div>
+
+            <!-- case 2 -->
+            <div class="cell case-cell">
+              <div class="case-name">Multi-step order lookup</div>
+              <div class="case-id">8a21d5c3-0e94-4…</div>
+            </div>
+            <div class="cell striped"></div>
+            <div class="cell"><div class="st"><span class="score c-green">85.5</span></div></div>
+            <div class="cell"><div class="st"><span class="score c-green">88.5</span></div></div>
+            <div class="cell last-col">
+              <div class="st c-blue" id="c2-running">
+                <svg class="icon" id="sp2" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span class="stat-label">Running</span>
+              </div>
+              <div class="st h0" id="c2-score"><span class="score c-amber">74.5</span></div>
+            </div>
+
+            <!-- case 3 -->
+            <div class="cell case-cell">
+              <div class="case-name">Password reset flow</div>
+              <div class="case-id">c93b7f10-52aa-4…</div>
+            </div>
+            <div class="cell striped"></div>
+            <div class="cell striped"><div class="st"><span class="dash">—</span></div></div>
+            <div class="cell"><div class="st"><span class="score c-amber">79.0</span></div></div>
+            <div class="cell last-col">
+              <div class="st c-blue" id="c3-running">
+                <svg class="icon" id="sp3" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span class="stat-label">Running</span>
+              </div>
+              <div class="st h0" id="c3-score"><span class="score c-green">88.0</span></div>
+            </div>
+
+            <!-- case 4 -->
+            <div class="cell case-cell">
+              <div class="case-name">Ambiguous shipping query</div>
+              <div class="case-id">4d6e02b8-b1c7-4…</div>
+            </div>
+            <div class="cell striped"></div>
+            <div class="cell"><div class="st"><span class="score c-amber">62.0</span></div></div>
+            <div class="cell"><div class="st"><span class="score c-green">91.0</span></div></div>
+            <div class="cell last-col">
+              <div class="st c-muted" id="c4-waiting">
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span class="stat-label">Waiting</span>
+              </div>
+              <div class="st h0 c-blue" id="c4-running">
+                <svg class="icon" id="sp4" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span class="stat-label">Running</span>
+              </div>
+              <div class="st h0" id="c4-score"><span class="score c-red">55.0</span></div>
+            </div>
+
+            <!-- case 5 -->
+            <div class="cell case-cell last-row">
+              <div class="case-name">Escalation handoff</div>
+              <div class="case-id">72f8e4a1-9d35-4…</div>
+            </div>
+            <div class="cell striped last-row"></div>
+            <div class="cell last-row"><div class="st"><span class="score c-red">45.0</span></div></div>
+            <div class="cell last-row">
+              <div class="st c-muted">
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span class="stat-label">Not started</span>
+              </div>
+            </div>
+            <div class="cell last-col last-row">
+              <div class="st c-muted" id="c5-waiting">
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span class="stat-label">Waiting</span>
+              </div>
+              <div class="st h0 c-blue" id="c5-running">
+                <svg class="icon" id="sp5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span class="stat-label">Running</span>
+              </div>
+              <div class="st h0" id="c5-score"><span class="score c-green">91.5</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="6.6" data-duration="2.9" data-track-index="4">
+        <div id="payoff-line">Scores land live — colored against your pass threshold.</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* -- hook: enters 0.00–0.40, holds static to 1.90 ------------------------ */
+      tl.from(".pill", { y: 24, opacity: 0, duration: 0.32, ease: "power2.out" }, 0.03);
+      tl.from("#hook h1", { y: 36, opacity: 0, duration: 0.32, ease: "power3.out" }, 0.08);
+
+      /* -- 1.90–2.40: hook crossfades out, matrix card fades in ---------------- */
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.4, ease: "power2.in" }, 1.9);
+      tl.fromTo("#card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" }, 1.9);
+
+      /* -- spinners: ~1s/turn, linear; each stops after its cell flips ---------- */
+      tl.fromTo("#sp2", { rotation: 0 }, { rotation: 288, duration: 0.8, ease: "none", transformOrigin: "50% 50%" }, 1.9);
+      tl.fromTo("#sp3", { rotation: 0 }, { rotation: 468, duration: 1.3, ease: "none", transformOrigin: "50% 50%" }, 1.9);
+      tl.fromTo("#sp4", { rotation: 0 }, { rotation: 324, duration: 0.9, ease: "none", transformOrigin: "50% 50%" }, 3.0);
+      tl.fromTo("#sp5", { rotation: 0 }, { rotation: 324, duration: 0.9, ease: "none", transformOrigin: "50% 50%" }, 4.4);
+
+      /* -- 2.40: case-2 Running → 74.5 (amber); Average 92.0 → 83.3 ------------- */
+      tl.to("#c2-running", { opacity: 0, duration: 0.2, ease: "power2.out" }, 2.4);
+      tl.to("#c2-score", { opacity: 1, duration: 0.2, ease: "power2.out" }, 2.4);
+      tl.to("#avg-1", { opacity: 0, duration: 0.18, ease: "power2.out" }, 2.4);
+      tl.to("#avg-2", { opacity: 1, duration: 0.18, ease: "power2.out" }, 2.4);
+
+      /* -- 3.00: case-3 → 88.0 (green); case-4 Waiting → Running; Avg → 84.8 --- */
+      tl.to("#c3-running", { opacity: 0, duration: 0.2, ease: "power2.out" }, 3.0);
+      tl.to("#c3-score", { opacity: 1, duration: 0.2, ease: "power2.out" }, 3.0);
+      tl.to("#c4-waiting", { opacity: 0, duration: 0.2, ease: "power2.out" }, 3.0);
+      tl.to("#c4-running", { opacity: 1, duration: 0.2, ease: "power2.out" }, 3.0);
+      tl.to("#avg-2", { opacity: 0, duration: 0.18, ease: "power2.out" }, 3.0);
+      tl.to("#avg-3", { opacity: 1, duration: 0.18, ease: "power2.out" }, 3.0);
+
+      /* -- 3.70: case-4 → 55.0 (red); Average → 77.4, recolors green → amber --- */
+      tl.to("#c4-running", { opacity: 0, duration: 0.2, ease: "power2.out" }, 3.7);
+      tl.to("#c4-score", { opacity: 1, duration: 0.2, ease: "power2.out" }, 3.7);
+      tl.to("#avg-3", { opacity: 0, duration: 0.18, ease: "power2.out" }, 3.7);
+      tl.to("#avg-4", { opacity: 1, duration: 0.18, ease: "power2.out" }, 3.7);
+
+      /* -- 4.40: case-5 Waiting → Running (breath — nothing else moves) -------- */
+      tl.to("#c5-waiting", { opacity: 0, duration: 0.2, ease: "power2.out" }, 4.4);
+      tl.to("#c5-running", { opacity: 1, duration: 0.2, ease: "power2.out" }, 4.4);
+
+      /* -- 5.10: case-5 → 91.5 (green); Average → 80.2, recolors amber → green - */
+      tl.to("#c5-running", { opacity: 0, duration: 0.2, ease: "power2.out" }, 5.1);
+      tl.to("#c5-score", { opacity: 1, duration: 0.2, ease: "power2.out" }, 5.1);
+      tl.to("#avg-4", { opacity: 0, duration: 0.18, ease: "power2.out" }, 5.1);
+      tl.to("#avg-5", { opacity: 1, duration: 0.18, ease: "power2.out" }, 5.1);
+
+      /* -- 5.70–6.60: finished lane holds completely still (900ms) ------------- */
+
+      /* -- 6.60–7.00: payoff lower-third enters; still 7.00 → 9.50 -------------- */
+      tl.fromTo("#payoff-line", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 6.6);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
