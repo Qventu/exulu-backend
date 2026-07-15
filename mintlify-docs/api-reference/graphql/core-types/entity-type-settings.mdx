@@ -1,0 +1,57 @@
+---
+title: "Entity type settings"
+description: "The entity_type_setting type controls per-context-type behaviours such as which entity categories are active for a knowledge context."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+`entity_type_setting` records configure category-level knobs for knowledge contexts. Each record binds a context slug to a named category and toggles whether that category is active. See [Knowledge overview](/building/knowledge/overview) for product-level context.
+
+```graphql
+type entity_type_setting {
+  context: String
+  name: String
+  description: String
+  active: Boolean
+  status: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `context` | Slug of the `ExuluContext` this setting belongs to. |
+| `name` | The entity category name within that context (e.g. `"article"`, `"ticket"`). |
+| `active` | When `false`, items of this entity type are excluded from indexing and retrieval. |
+| `status` | Internal status string; used by the processing pipeline to track context-level state. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  entity_type_settingsPagination(
+    limit: 20
+    filters: [{ context: { eq: "product-docs" } }]
+  ) {
+    items {
+      id
+      context
+      name
+      active
+      status
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

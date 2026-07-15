@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Context management — tool-output offload</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .mono { font-family: "JetBrains Mono", monospace; letter-spacing: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin: 30px 0 0; font-size: 96px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.06; max-width: 1520px; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ----------------------------- app surface ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #app-card {
+        position: relative; width: 1560px; height: 960px;
+        background: #fdfdfd; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+      }
+      #window-bar {
+        height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 24px;
+        border-bottom: 1px solid #e7e7ee; background: #f7f8fa;
+      }
+      #window-bar .dot { width: 15px; height: 15px; border-radius: 50%; }
+
+      /* chat header — agent name / session title left, files chip right */
+      #chat-header {
+        height: 62px; display: flex; align-items: center; justify-content: space-between;
+        padding: 0 30px; border-bottom: 1px solid #e7e7ee;
+      }
+      #chat-header .left { display: flex; align-items: center; gap: 13px; min-width: 0; }
+      #avatar {
+        width: 38px; height: 38px; border-radius: 50%; background: #7033ff; color: #fff;
+        display: grid; place-items: center; font-size: 16px; font-weight: 600; flex: none;
+      }
+      .agent-name { font-size: 22px; font-weight: 500; }
+      .crumb-sep { color: #8a8a93; font-size: 22px; }
+      .session-title { font-size: 22px; color: #1a1a1a; }
+      #files-chip {
+        display: inline-flex; align-items: center; gap: 8px;
+        border: 1px solid #e7e7ee; border-radius: 999px; padding: 6px 18px;
+        font-size: 19px; color: #525252; background: transparent;
+      }
+      #files-swap { position: relative; width: 66px; height: 27px; }
+      #files-swap span { position: absolute; left: 0; top: 0; white-space: nowrap; }
+      #files-1 { opacity: 0; }
+
+      /* chat column */
+      #chat-body { width: 1160px; margin: 0 auto; padding-top: 16px; }
+      #user-msg {
+        margin-left: auto; width: fit-content; max-width: 900px;
+        background: #edf1f5; border-radius: 12px; padding: 13px 24px;
+        font-size: 22px; color: #1a1a1a;
+      }
+
+      /* ------------------------- tool execution cards -------------------------- */
+      .tool-card {
+        margin-top: 15px; border: 1px solid #e7e7ee; border-radius: 10px;
+        background: #fcfcfc; overflow: hidden;
+      }
+      .tc-head { display: flex; align-items: center; gap: 13px; padding: 10px 16px; }
+      .tc-icon {
+        width: 32px; height: 32px; border-radius: 7px; background: rgba(112, 51, 255, 0.1);
+        display: grid; place-items: center; color: #7033ff; flex: none;
+      }
+      .tc-name { font-size: 19px; font-weight: 500; color: #1a1a1a; }
+      .tc-preview { font-size: 18px; color: #525252; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+      .tc-meta { font-size: 18px; color: #525252; white-space: nowrap; margin-left: auto; }
+      .tc-chev { color: #525252; flex: none; transform: rotate(180deg); }
+      .tc-body { border-top: 1px solid #e7e7ee; background: #f6f6f8; padding: 13px 16px; }
+      .tc-label {
+        font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+        color: #525252; margin-bottom: 6px;
+      }
+      .tc-pre {
+        font-family: "JetBrains Mono", monospace; letter-spacing: 0; font-size: 18px;
+        line-height: 1.5; color: #1a1a1a; background: rgba(253, 253, 253, 0.85);
+        border: 1px solid #e7e7ee; border-radius: 7px; padding: 13px 14px;
+        white-space: pre-wrap; word-break: break-word;
+      }
+
+      /* card 1 — web_search: stream window collapses to preview + notice */
+      #streamzone { position: relative; height: 84px; overflow: hidden; }
+      #ticker { position: absolute; left: 0; top: 0; white-space: pre; color: #525252; opacity: 0; }
+      #preview-lines {
+        position: absolute; inset: 0; color: #525252; white-space: pre; overflow: hidden;
+        -webkit-mask-image: linear-gradient(180deg, #000 25%, transparent 98%);
+        mask-image: linear-gradient(180deg, #000 25%, transparent 98%);
+      }
+      #notice { margin-top: 10px; height: 81px; overflow: hidden; }
+      #notice .file { color: #7033ff; font-weight: 500; position: relative; white-space: nowrap; }
+      #notice .file .sweep {
+        position: absolute; left: 0; right: 0; bottom: -3px; height: 3px;
+        background: #7033ff; border-radius: 2px; transform-origin: left center;
+      }
+
+      /* card 2 — read_session_file: output section expands in */
+      #out2-wrap { height: 242px; overflow: hidden; }
+      #out2-inner { padding-top: 12px; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { display: grid; place-items: end center; z-index: 30; }
+      #payoff-veil {
+        position: absolute; inset: 0;
+        background: linear-gradient(to top, rgba(253, 253, 253, 0.94) 22%, rgba(253, 253, 253, 0) 60%);
+        opacity: 0;
+      }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+
+      svg.ic { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="tool-output-offload"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.5"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.35" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Context management</span>
+          <h1>An 84,000-token tool output? <em>Handled.</em></h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: the payoff veil intentionally dims this UI -->
+      <div id="app" class="clip" data-start="1.95" data-duration="7.55" data-track-index="3" data-layout-allow-occlusion>
+        <div id="app-card">
+          <div id="window-bar">
+            <span class="dot" style="background: #f26b60"></span>
+            <span class="dot" style="background: #f5bf4f"></span>
+            <span class="dot" style="background: #5fc454"></span>
+          </div>
+
+          <div id="chat-header">
+            <div class="left">
+              <span id="avatar"><span id="avatar-txt">SA</span></span>
+              <span class="agent-name">Support Assistant</span>
+              <span class="crumb-sep">/</span>
+              <span class="session-title">Vendor security review</span>
+            </div>
+            <span id="files-chip">
+              <svg class="ic" width="20" height="20" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+              <span id="files-swap">
+                <span id="files-1">2 files</span>
+                <span id="files-2">3 files</span>
+              </span>
+            </span>
+          </div>
+
+          <div id="chat-body">
+            <div id="user-msg">Check this month's vendor security advisories — what applies to us?</div>
+
+            <!-- card 1: web_search -->
+            <div class="tool-card" id="card1">
+              <div class="tc-head">
+                <span class="tc-icon">
+                  <svg class="ic" width="19" height="19" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                </span>
+                <span class="tc-name mono">web_search</span>
+                <span class="tc-preview mono">vendor security advisories June 2026</span>
+                <span class="tc-meta mono" id="token-counter">~84,213 tokens</span>
+                <svg class="ic tc-chev" width="20" height="20" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+              <div class="tc-body">
+                <div class="tc-label">Output</div>
+                <div class="tc-pre"><div id="streamzone" data-layout-allow-overflow><div id="ticker" data-layout-allow-overlap>{"title":"OpenSSL Security Advisory [24 Jun 2026]","source":"openssl.org"}
+{"title":"RHSA-2026:4118 — Important: openssl security update","source":"redhat.com"}
+{"title":"CVE-2026-30841 — libxml2: heap overflow in parser","source":"nvd.nist.gov"}
+{"title":"USN-7412-1: PostgreSQL vulnerabilities","source":"ubuntu.com"}
+{"title":"GHSA-9qxr-4h7v — undici: request smuggling","source":"github.com"}
+{"title":"node-forge ASN.1 parsing advisory","source":"snyk.io"}
+{"title":"Grafana: SSRF in datasource proxy","source":"grafana.com"}
+{"title":"CVE-2026-29774 — nginx HTTP/3 stream reuse","source":"nginx.org"}
+{"title":"Django security releases: 5.2.3 and 5.1.7","source":"djangoproject.com"}
+{"title":"Kubernetes: CVE-2026-3170 kubelet DoS","source":"kubernetes.io"}
+{"title":"Redis: Lua sandbox escape advisory","source":"redis.io"}
+{"title":"DSA-5921-1: chromium security update","source":"debian.org"}
+{"title":"Envoy: header map overflow CVE-2026-31022","source":"envoyproxy.io"}
+{"title":"OpenSSH 10.1 release notes — security fixes","source":"openssh.com"}
+{"title":"Vault: audit-log disclosure HCSEC-2026-11","source":"hashicorp.com"}
+{"title":"curl: CVE-2026-27310 cookie path bypass","source":"curl.se"}
+{"title":"RustSec: RUSTSEC-2026-0142 in ring","source":"rustsec.org"}
+{"title":"Elastic stack 9.1.3 security update","source":"elastic.co"}
+{"title":"Amazon Linux ALAS-2026-2201: kernel","source":"alas.aws.amazon.com"}
+{"title":"PHP 8.4.9 released — two CVEs fixed","source":"php.net"}
+{"title":"Jenkins security advisory 2026-06-17","source":"jenkins.io"}
+{"title":"GitLab critical release 18.1.1","source":"about.gitlab.com"}
+{"title":"Traefik: path normalization advisory","source":"traefik.io"}
+{"title":"Node.js June 2026 security releases","source":"nodejs.org"}</div><div id="preview-lines">{"query":"vendor security advisories June 2026","totalResults":312,"results":[
+  {"title":"OpenSSL Security Advisory [24 Jun 2026]","url":"https://openssl.org/
+   news/secadv/20260624.txt","snippet":"Severity: High. Issue summary: A timing…</div></div><div id="notice">Tool output truncated: ~84,213 tokens (limit 20,000). The FULL output is saved as session file "<span class="file">tool-output-web_search-a1b2c3d4.txt<i class="sweep"></i></span>" — call read_session_file with { filename: "tool-output-web_search-a1b2c3d4.txt", offset, limit } to read specific line ranges.</div></div>
+              </div>
+            </div>
+
+            <!-- card 2: read_session_file -->
+            <div class="tool-card" id="card2">
+              <div class="tc-head">
+                <span class="tc-icon">
+                  <svg class="ic" width="19" height="19" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                </span>
+                <span class="tc-name mono">read_session_file</span>
+                <span class="tc-preview mono">tool-output-web_search-a1b2c3d4.txt</span>
+                <svg class="ic tc-chev" width="20" height="20" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>
+              </div>
+              <div class="tc-body">
+                <div class="tc-label">Input</div>
+                <div class="tc-pre">{ "filename": "tool-output-web_search-a1b2c3d4.txt", "offset": 1200, "limit": 80 }</div>
+                <div id="out2-wrap">
+                  <div id="out2-inner">
+                    <div class="tc-label">Output</div>
+                    <div class="tc-pre">{
+  "content": "…80 lines of the stored output…",
+  "totalLines": 5312,
+  "offset": 1200,
+  "linesReturned": 80
+}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-overlap: the payoff card + veil deliberately float over the dimmed UI -->
+      <div id="payoff" class="clip" data-start="6.8" data-duration="2.7" data-track-index="4" data-layout-allow-overlap>
+        <div id="payoff-veil"></div>
+        <div id="payoff-card">
+          <span class="a">Capped in context. Saved in full.</span>
+          <span class="b">Paged on demand.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ------------------------------- hook ---------------------------------- */
+      tl.from("#hook-inner", { y: 36, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.9);
+
+      /* --------------------- app enters, stream state armed ------------------- */
+      /* CSS holds the END state; arm the streaming start state at clip start.    */
+      /* Stream window = collapsed window (84) + gap (10) + notice (81) so the    */
+      /* card height stays constant through the collapse.                         */
+      tl.set("#streamzone", { height: 175 }, 2.0);
+      tl.set("#ticker", { opacity: 1 }, 2.0);
+      tl.set("#preview-lines", { opacity: 0 }, 2.0);
+      tl.set("#notice", { height: 0, marginTop: 0, opacity: 0 }, 2.0);
+      tl.set("#notice .sweep", { scaleX: 0 }, 2.0);
+      tl.set("#card2", { opacity: 0 }, 2.0);
+      tl.set("#out2-wrap", { height: 0, opacity: 0 }, 2.0);
+      tl.set("#files-1", { opacity: 1 }, 2.0);
+      tl.set("#files-2", { opacity: 0 }, 2.0);
+
+      tl.from("#app-card", { y: 30, opacity: 0, duration: 0.5, ease: "power2.out" }, 2.0);
+
+      /* output streams in fast — ticker scroll + token counter running up */
+      tl.fromTo("#ticker", { y: 0 }, { y: -400, duration: 0.95, ease: "none" }, 2.0);
+      const counter = { v: 0 };
+      tl.to(counter, {
+        v: 84213, duration: 0.7, ease: "power1.in",
+        onUpdate: () => {
+          document.getElementById("token-counter").textContent =
+            "~" + Math.round(counter.v).toLocaleString("en-US") + " tokens";
+        },
+      }, 2.1);
+
+      /* ------------------- the guard fires: collapse to notice ----------------- */
+      tl.to("#streamzone", { height: 84, duration: 0.4, ease: "power2.inOut" }, 2.95);
+      tl.to("#notice", { height: 81, marginTop: 10, duration: 0.4, ease: "power2.inOut" }, 2.95);
+      tl.to("#ticker", { opacity: 0, duration: 0.25, ease: "power1.in" }, 2.95);
+      tl.to("#preview-lines", { opacity: 1, duration: 0.3, ease: "power1.out" }, 3.1);
+      tl.to("#notice", { opacity: 1, duration: 0.35, ease: "power2.out" }, 3.15);
+
+      /* marker sweep under the session-file name */
+      tl.to("#notice .sweep", { scaleX: 1, duration: 0.45, ease: "power2.out" }, 3.7);
+
+      /* ambient payoff cue: files chip ticks 2 → 3 */
+      tl.to("#files-1", { opacity: 0, duration: 0.2, ease: "power1.in" }, 4.4);
+      tl.to("#files-2", { opacity: 1, duration: 0.25, ease: "power1.out" }, 4.5);
+      tl.fromTo("#files-chip", { backgroundColor: "rgba(226, 235, 255, 0)" },
+        { backgroundColor: "rgba(226, 235, 255, 1)", duration: 0.25, ease: "power1.out" }, 4.4);
+      tl.to("#files-chip", { backgroundColor: "rgba(226, 235, 255, 0)", duration: 0.45, ease: "power1.out" }, 4.85);
+
+      /* ------------------ the agent self-corrects: card 2 ---------------------- */
+      tl.fromTo("#card2", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 5.0);
+      tl.to("#out2-wrap", { height: 242, opacity: 1, duration: 0.4, ease: "power2.out" }, 5.55);
+
+      /* hold 5.95 → 6.9, then payoff */
+      tl.to("#payoff-veil", { opacity: 1, duration: 0.45, ease: "power1.out" }, 6.9);
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 7.0);
+
+      window.__timelines["tool-output-offload"] = tl;
+    </script>
+  </body>
+</html>

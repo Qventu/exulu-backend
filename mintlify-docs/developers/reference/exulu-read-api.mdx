@@ -1,0 +1,140 @@
+---
+title: "ExuluReadApi"
+description: "RBAC-safe direct read namespace for chunks and items — the shapes that ExuluContext.search() cannot express."
+---
+
+`ExuluReadApi` provides low-level, RBAC-enforced read functions for knowledge contexts. Where `ExuluContext.search()` covers relevance-ranked retrieval, `ExuluReadApi` covers targeted reads by item ID or external ID, embed-query utilities, and table-name resolution — all while applying the same access-control rules as the GraphQL layer.
+
+Use `ExuluReadApi` when you need to read specific known items without going through vector search, or when you need the underlying table names to build custom queries.
+
+## API surface
+
+### ExuluReadApi.authorizedRead
+
+```typescript
+ExuluReadApi.authorizedRead(
+  context: { id: string; fields?: unknown[]; entities?: unknown },
+  user: User,
+  role: string,
+  opts?: {
+    itemIds?: string[];
+    externalIds?: string[];
+    chunkIndexRange?: { from?: number; to?: number };
+  },
+): Promise<VectorSearchChunkResult[]>
+```
+
+Reads chunks from a context, joining them to their parent items and applying RBAC via `applyAccessControl`. At least `itemIds` or `externalIds` must be supplied — unconstrained full-table reads are rejected.
+
+<ParamField path="context" type="object" required>
+  The context to read from. Must have an `id` matching a registered `ExuluContext`.
+</ParamField>
+
+<ParamField path="user" type="User" required>
+  Authenticated user. Used for RBAC filtering on the items table.
+</ParamField>
+
+<ParamField path="role" type="string" required>
+  Role ID. Merged into the user object so access-control's role branch works correctly.
+</ParamField>
+
+<ParamField path="opts.itemIds" type="string[]">
+  Filter to chunks whose parent item ID is in this list.
+</ParamField>
+
+<ParamField path="opts.externalIds" type="string[]">
+  Filter to chunks whose parent item `external_id` is in this list.
+</ParamField>
+
+<ParamField path="opts.chunkIndexRange" type="{ from?: number; to?: number }">
+  Restrict to a contiguous range of `chunk_index` values within the matched items.
+</ParamField>
+
+<ResponseField name="return" type="Promise<VectorSearchChunkResult[]>">
+  Chunk rows with joined item metadata, ordered by `(source, chunk_index)`.
+</ResponseField>
+
+---
+
+### ExuluReadApi.embedQuery
+
+```typescript
+ExuluReadApi.embedQuery(
+  context: { id: string; name?: string; embedder: { model: string } },
+  text: string,
+  opts?: {
+    user?: User;
+    role?: string;
+    inputType?: "document" | "query";
+  },
+): Promise<number[]>
+```
+
+Embeds a text string using the context's configured embedder model. Returns the embedding vector as a number array.
+
+---
+
+### ExuluReadApi.entitiesAvailable
+
+```typescript
+ExuluReadApi.entitiesAvailable(
+  context: { id: string; entities?: unknown },
+): Promise<boolean>
+```
+
+Returns `true` when the context declares an `entities` config and the corresponding `_chunk_entities` table physically exists. Use this to guard entity tool registration at runtime.
+
+---
+
+### Table-name helpers
+
+```typescript
+ExuluReadApi.getTableName(contextId: string): string
+ExuluReadApi.getChunksTableName(contextId: string): string
+ExuluReadApi.getEntitiesTableName(contextId: string): string
+ExuluReadApi.getChunkEntitiesTableName(contextId: string): string
+```
+
+Return the Postgres table names used by the given context. Useful when building custom queries directly against the database.
+
+## Example
+
+```typescript
+import { ExuluReadApi, postgresClient } from "@exulu/backend";
+
+// Read all chunks for two known items, respecting RBAC
+const chunks = await ExuluReadApi.authorizedRead(
+  productDocsContext,
+  req.user,
+  req.user.role?.id ?? "viewer",
+  { itemIds: ["item-abc", "item-def"] },
+);
+
+// Stream chunk content to the calling agent
+for (const chunk of chunks) {
+  console.log(chunk.item_name, chunk.chunk_index, chunk.chunk_content);
+}
+```
+
+Resolve table names for a custom Knex query:
+
+```typescript
+const { db } = await postgresClient();
+const chunksTable = ExuluReadApi.getChunksTableName("product_docs");
+
+const recent = await db(chunksTable)
+  .where("chunk_index", 0)
+  .orderBy("createdAt", "desc")
+  .limit(10);
+```
+
+## Notes
+
+- `authorizedRead` always applies RBAC via `applyAccessControl` on the `items` alias — this gate cannot be bypassed through `opts`.
+- Results are ordered by `(chunks.source, chunks.chunk_index)` — stable page order for items with multiple chunks.
+- `embedQuery` routes through the same `resolveEmbedder` path as the ingestion pipeline, so LiteLLM cost attribution applies.
+
+## Related
+
+- [ExuluContext — introduction](/developers/core/exulu-context/introduction): `ExuluContext.search()` for relevance-ranked retrieval.
+- [`VectorSearchChunkResult`](/developers/reference/functions-and-types): shape of the returned chunk rows.

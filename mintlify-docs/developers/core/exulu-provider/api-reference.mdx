@@ -1,0 +1,301 @@
+---
+title: "API reference"
+description: "Every public method and property of ExuluProvider: generateSync, generateStream, tool(), providerName, modelName, and slug."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For constructor options, see [Configuration](/developers/core/exulu-provider/configuration).
+
+## Constructor
+
+```typescript
+const provider = new ExuluProvider(options);
+```
+
+See [Configuration](/developers/core/exulu-provider/configuration) for the full options object.
+
+## generateSync()
+
+Runs a complete, non-streaming generation — waits for the full response before returning. Used for background jobs, evals, API-triggered runs, and agent-as-tool execution. Internally uses the AI-SDK `generateText` function.
+
+```typescript
+generateSync({
+  prompt,
+  inputMessages,
+  languageModel,
+  user,
+  session,
+  agent,
+  instructions,
+  req,
+  currentTools,
+  currentSkills,
+  approvedTools,
+  allExuluTools,
+  toolConfigs,
+  providerapikey,
+  contexts,
+  exuluConfig,
+  maxStepCount,
+  onTokenUsage,
+  contextWindow,
+  disabledTools,
+}): Promise<string | object>
+```
+
+<ParamField path="prompt" type="string">
+  A single-turn prompt string. Mutually exclusive with `inputMessages` — passing both throws.
+</ParamField>
+
+<ParamField path="inputMessages" type="UIMessage[]">
+  Multi-turn message array. Mutually exclusive with `prompt`. When a `session` is also provided, IMP loads and prepends the session's stored history.
+</ParamField>
+
+<ParamField path="languageModel" type="LanguageModel" required>
+  The Vercel AI-SDK `LanguageModel` instance to call. Obtain it by calling `provider.config.model.create({ apiKey })` with the resolved API key from `resolveModel()`.
+</ParamField>
+
+<ParamField path="user" type="User">
+  The calling user. Used for memory retrieval, access control, personalization (first name, last name, email in the system prompt), and token statistics.
+</ParamField>
+
+<ParamField path="session" type="string">
+  Session ID. When set, IMP loads the full ordered message history from the `agent_messages` table, runs context-budget occupancy checks, and applies compaction checkpointing before calling the model.
+</ParamField>
+
+<ParamField path="agent" type="ExuluAgent">
+  The database agent record. When `agent.memory` is set to a context ID, IMP performs a hybrid search over that context and injects the top results as pre-fetched context in the system prompt.
+</ParamField>
+
+<ParamField path="instructions" type="string">
+  System prompt override. When omitted, defaults to a generic helpful-assistant prompt. IMP always appends its generic context (date, time, user personalization, session file info) after your instructions.
+</ParamField>
+
+<ParamField path="req" type="Request">
+  Express request object — forwarded to tool-conversion utilities that need the raw request (for example, for request-scoped tool configs).
+</ParamField>
+
+<ParamField path="currentTools" type="ExuluTool[]">
+  Tools available to the agent for this run. Converted to AI-SDK format via the internal `convertExuluToolsToAiSdkTools` pipeline, which also injects framework tools (agentic context search, session item tools).
+</ParamField>
+
+<ParamField path="currentSkills" type="ExuluSkill[]">
+  Skills available to the agent. Listed in the system prompt so the model knows which skill folders to read from the session filesystem.
+</ParamField>
+
+<ParamField path="approvedTools" type="string[]">
+  Tool call IDs pre-approved for this run — used when resuming from a user-approval step.
+</ParamField>
+
+<ParamField path="allExuluTools" type="ExuluTool[]">
+  The full registered tool set. Required by tool-conversion utilities that need to resolve agent-as-tool wiring.
+</ParamField>
+
+<ParamField path="toolConfigs" type="ExuluAgentToolConfig[]">
+  Admin-set tool configuration values for this agent — the runtime values for the `config` params declared on each `ExuluTool`.
+</ParamField>
+
+<ParamField path="providerapikey" type="string">
+  Resolved API key for the provider. Passed directly to tool-conversion utilities; the `languageModel` you provide already has the key baked in.
+</ParamField>
+
+<ParamField path="contexts" type="ExuluContext[]">
+  Context instances available for memory retrieval and context-search tools.
+</ParamField>
+
+<ParamField path="exuluConfig" type="ExuluConfig">
+  The app's `ExuluConfig`. Needed for storage access inside tools and processors called during this run.
+</ParamField>
+
+<ParamField path="maxStepCount" type="number">
+  Maximum AI-SDK agentic steps (tool-call turns). When omitted, IMP derives a step budget from the agent record's configured step limit.
+</ParamField>
+
+<ParamField path="onTokenUsage" type="function">
+  `({ inputTokens, outputTokens }) => Promise<void> | void` — callback invoked after the run completes with the total token usage. Useful for billing hooks.
+</ParamField>
+
+<ParamField path="contextWindow" type="number">
+  Context-window size override in tokens. Used by the context-budget guard and the retrieval-budget guard. When omitted, falls back to `provider.maxContextLength`.
+</ParamField>
+
+<ParamField path="disabledTools" type="string[]">
+  Tool IDs to suppress for this run, in addition to any admin-level disabling.
+</ParamField>
+
+<ParamField path="statistics" type="ExuluStatisticParams">
+  Optional usage-statistics attribution recorded with the run — an object with `label` and `trigger` strings used in analytics.
+</ParamField>
+
+<ResponseField name="return" type="Promise<string | object>">
+  The model's text response as a string, or a structured object when the call produced a structured output.
+</ResponseField>
+
+```typescript
+const answer = await supportProvider.generateSync({
+  prompt: "What is our return policy?",
+  languageModel: resolvedModel,
+  agent: agentRecord,
+  instructions: "You are a support agent. Be concise.",
+  currentTools: [knowledgeSearchTool],
+  statistics: { label: "support_agent", trigger: "api" },
+});
+
+console.log(answer);  // string
+```
+
+<Warning>
+`generateSync` throws `"Config is required for generating."` when `this.config` is undefined. It also throws `"Prompt or message is required for generating."` when neither `prompt` nor `inputMessages` is provided, and `"Message and prompt cannot be provided at the same time."` when both are.
+</Warning>
+
+## generateStream()
+
+Runs a streaming generation, returning the AI-SDK stream object alongside the reconstructed message arrays. Used by the platform's chat endpoint — call this when you need to pipe a response to the client in real time. Internally uses the AI-SDK `streamText` function.
+
+```typescript
+generateStream({
+  message,
+  user,
+  session,
+  agent,
+  previousMessages,
+  languageModel,
+  instructions,
+  req,
+  currentTools,
+  currentSkills,
+  approvedTools,
+  allExuluTools,
+  toolConfigs,
+  providerapikey,
+  contexts,
+  exuluConfig,
+  maxStepCount,
+  contextWindow,
+  disabledTools,
+}): Promise<{
+  stream: ReturnType<typeof streamText>;
+  originalMessages: UIMessage[];
+  previousMessages: UIMessage[];
+}>
+```
+
+<ParamField path="message" type="UIMessage" required>
+  The new user message to process. `generateStream` appends it to the loaded session history before calling the model.
+</ParamField>
+
+<ParamField path="previousMessages" type="UIMessage[]">
+  Pre-loaded message history from the client side, used when `session` is not provided.
+</ParamField>
+
+All other parameters match those of `generateSync` — see above for their descriptions.
+
+<ResponseField name="stream" type="ReturnType<typeof streamText>">
+  The AI-SDK `streamText` result. Pipe `stream.toDataStreamResponse()` to the HTTP response for the standard chat streaming protocol.
+</ResponseField>
+
+<ResponseField name="originalMessages" type="UIMessage[]">
+  The full validated message array that was sent to the model, after history loading, deduplication, stale-approval reconciliation, and file-part processing.
+</ResponseField>
+
+<ResponseField name="previousMessages" type="UIMessage[]">
+  The history that was loaded before appending the new message — useful for persisting the session after the stream completes.
+</ResponseField>
+
+```typescript
+const { stream, originalMessages, previousMessages } = await supportProvider.generateStream({
+  message: newUserMessage,
+  session: sessionId,
+  user: currentUser,
+  languageModel: resolvedModel,
+  agent: agentRecord,
+  currentTools: enabledTools,
+  contexts: registeredContexts,
+  exuluConfig,
+});
+
+return stream.toDataStreamResponse();
+```
+
+<Warning>
+`generateStream` throws `"Message is required for streaming."` when `message` is undefined. Both generate methods throw a `ContextCompactionRequiredError` when the message-history occupancy meets or exceeds the configured block threshold — the chat UI catches this error and offers a context-compaction action to the user.
+</Warning>
+
+## tool()
+
+Exports the provider as an `ExuluTool` that an orchestrating agent can call. The generated tool accepts a `prompt` (the question to ask the sub-agent) and an `information` field (summary of relevant session context), then runs `generateSync` and returns the text response.
+
+```typescript
+tool(
+  instance: string,
+  providers: ExuluProvider[],
+  contexts: ExuluContext[],
+): Promise<ExuluTool | null>
+```
+
+<ParamField path="instance" type="string" required>
+  Database ID (UUID) of the agent record to load. The method resolves the agent via `exuluApp.get().agent(instance)` and returns `null` when not found.
+</ParamField>
+
+<ParamField path="providers" type="ExuluProvider[]" required>
+  All registered providers — used when resolving the sub-agent's model and enabled tools.
+</ParamField>
+
+<ParamField path="contexts" type="ExuluContext[]" required>
+  All registered contexts — used for tool enablement and memory retrieval inside the sub-agent's run.
+</ParamField>
+
+<ResponseField name="return" type="Promise<ExuluTool | null>">
+  An `ExuluTool` of type `"agent"` that the orchestrating agent can call, or `null` when the agent record was not found.
+</ResponseField>
+
+<Note>
+`tool()` requires the `multi-agent-tooling` entitlement in your `EXULU_ENTERPRISE_LICENSE`. Without it, the method logs a warning and continues — but the returned tool, if non-null, will fail at call time because the sub-agent model resolution will lack a valid key. Set the license before wiring multi-agent flows.
+</Note>
+
+## Getters
+
+### providerName
+
+```typescript
+get providerName(): string
+```
+
+Returns `this.provider` (the string you passed to the constructor) when `config.model.create` is defined; returns an empty string otherwise.
+
+### modelName
+
+```typescript
+get modelName(): string
+```
+
+Returns `this.config.name` when `config.model.create` is defined; returns an empty string otherwise.
+
+## Properties
+
+| Property | Type | Notes |
+|---|---|---|
+| `id` | `string` | Unique provider identifier. |
+| `name` | `string` | Display name. |
+| `description` | `string` | What this provider does. |
+| `type` | `"agent"` | Always `"agent"`. |
+| `provider` | `string` | LLM provider name, e.g. `"anthropic"`. |
+| `slug` | `string` | `/agents/<slugified-name>/run` — set from `name` at construction time. |
+| `config` | `ExuluProviderConfig \| undefined` | Model configuration including the factory and instructions. |
+| `model` | `{ create: fn } \| undefined` | Shortcut to `config.model`. |
+| `capabilities` | `object` | Declared input modalities; defaults to all-empty when not provided. |
+| `maxContextLength` | `number \| undefined` | Context-window size in tokens. |
+| `workflows` | `ExuluProviderWorkflowConfig \| undefined` | Workflow queue configuration. |
+| `queue` | `ExuluQueueConfig \| undefined` | Direct queue configuration. |
+| `authenticationInformation` | `string \| undefined` | Human-readable auth description. |
+| `streaming` | `boolean` | Always `false` — initialized but not used to gate behavior in the current source. |
+
+```typescript
+console.log(supportProvider.slug);          // "/agents/support-agent/run"
+console.log(supportProvider.providerName);  // "anthropic"
+console.log(supportProvider.modelName);     // "claude-sonnet-4-5"
+```
+
+<Warning>
+The `streaming` property is declared and initialized to `false` on the class, but the current source does not use it to gate which generate method is called — both `generateSync` and `generateStream` are available regardless. Do not rely on `streaming` as a feature flag.
+</Warning>

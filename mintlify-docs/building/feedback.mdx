@@ -1,0 +1,73 @@
+---
+title: "Feedback"
+description: "Review user feedback on agent responses — filters, conversation view, and delete — in the Feedback review console."
+icon: "inbox"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="super admin" flags="none" />
+
+<Note>
+The **Feedback** page (`/feedback`) is the administrator review console for thumbs-up / thumbs-down signals that users submit from chat. It is separate from the **Send feedback** dialog in the sidebar footer, which lets users report bugs or suggest features directly to your team's feedback agent. The review console is visible to super admins regardless of server flags. The **Send feedback** dialog requires the server's `FEEDBACK_ENABLED` flag and is user-facing.
+</Note>
+
+## What the feedback console is
+
+When an agent has feedback enabled, users can give a thumbs-up or thumbs-down on any agent response in chat. The Feedback page aggregates these signals for review.
+
+Use it to:
+
+- Spot patterns in negative feedback and improve prompts or knowledge.
+- Review individual sessions where a user flagged a response.
+- Delete feedback records you no longer need.
+
+## The summary stat
+
+At the top of the page, the header meta row shows a summary: **`{percent}`% positive · `{n}` negative**. Clicking a sentiment segment in this stat activates the corresponding type filter.
+
+## Filters
+
+The toolbar below the header provides three filters and a search:
+
+| Control | What it filters |
+| --- | --- |
+| **Search** | Full-text search across feedback content |
+| **All / Negative / Positive** | Type tabs — filter by thumbs-down, thumbs-up, or show both |
+| **Filter by agent** | Entity search to narrow to one agent's feedback |
+| **Filter by user** | Entity search to narrow to one user's feedback |
+
+Active filters show a **Reset** chip in the toolbar. Clearing all filters restores the full list.
+
+The list shows a column view: date, type (positive/negative), the feedback text, the agent, and the user.
+
+## The detail panel
+
+Click any feedback row to open the detail panel (right pane on desktop, sheet on mobile). The panel shows:
+
+- **Type indicator** — a thumbs-up or thumbs-down icon colored green (positive) or red (negative), with the label "Positive feedback" or "Negative feedback" and a relative timestamp.
+- **Meta strip** — user, agent, and session, each with a copy-ID button.
+- **Open in Chat** — navigates to `/chat/{agent}/{session}` so you can review the full conversation in context.
+- **Feedback** — the user's written comment (if any).
+- **Conversation** — the messages from that chat session, rendered read-only.
+
+## Delete feedback
+
+To delete a single feedback record:
+
+1. Open it in the detail panel.
+2. Click the **⋯** overflow menu in the panel header and select **Delete feedback**.
+3. Confirm in the dialog: "This permanently removes the feedback record. The chat session itself is not affected. This cannot be undone."
+
+To delete multiple records at once:
+
+1. Select rows using the checkboxes in the list.
+2. The selection bar appears with **Delete `{n}`** — click it and confirm.
+
+Deleting feedback does not affect the underlying chat session.
+
+## Access
+
+The Feedback review console is visible only to **super admins** regardless of server flags. The sidebar entry (`navigation.feedback`) appears in the **Build** group.
+
+The **Send feedback** dialog (sidebar footer, `navigation.sendFeedback`) is a separate entry visible to all users when `feedback` is enabled — it sends to the organization's feedback agent, not to this review console.

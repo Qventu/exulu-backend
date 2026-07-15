@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #fdfdfd;
+        font-family: "Inter", system-ui, sans-serif;
+        color: #000000;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: geometricPrecision;
+      }
+
+      [data-composition-id="session-files-panel"] {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        background: #fdfdfd;
+        overflow: hidden;
+      }
+
+      /* ---------- HOOK + PAYOFF CAPTIONS ---------- */
+      .caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        text-align: center;
+        font-family: "Inter", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 96px;
+        letter-spacing: -0.025em;
+        line-height: 1.05;
+        color: #000000;
+        z-index: 50;
+        padding: 0 120px;
+      }
+      .caption .accent {
+        color: #7033ff;
+      }
+
+      .payoff {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        text-align: center;
+        font-family: "Inter", system-ui, sans-serif;
+        font-weight: 600;
+        font-size: 92px;
+        letter-spacing: -0.025em;
+        line-height: 1.1;
+        color: #000000;
+        z-index: 60;
+        padding: 0 120px;
+      }
+      .payoff .accent {
+        color: #7033ff;
+      }
+      .payoff-shade {
+        position: absolute;
+        inset: 0;
+        background: rgba(253, 253, 253, 0.86);
+        z-index: 55;
+      }
+
+      /* ---------- CHAT SHELL ---------- */
+      .chat-shell {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: row;
+        background: #fdfdfd;
+      }
+      .chat-main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 24px 36px;
+        border-bottom: 1px solid #e7e7ee;
+        background: #fdfdfd;
+        height: 84px;
+      }
+      .chat-title {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.015em;
+        color: #000000;
+      }
+      .chat-title-mark {
+        width: 30px;
+        height: 30px;
+        border-radius: 6.4px;
+        background: #7033ff;
+        display: grid;
+        place-items: center;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 16px;
+        letter-spacing: -0.04em;
+      }
+      .chat-title-sub {
+        font-weight: 400;
+        color: #525252;
+        font-size: 18px;
+        margin-left: 4px;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .folder-btn {
+        position: relative;
+        height: 44px;
+        padding: 0 14px;
+        border: 1px solid #e7e7ee;
+        border-radius: 6.4px;
+        background: #fdfdfd;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #000000;
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+      }
+      .folder-btn svg {
+        width: 18px;
+        height: 18px;
+        stroke: #000000;
+      }
+      .folder-badge {
+        min-width: 22px;
+        height: 22px;
+        padding: 0 6px;
+        border-radius: 999px;
+        background: #7033ff;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+        letter-spacing: 0;
+      }
+
+      .chat-body {
+        flex: 1;
+        padding: 48px 80px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        overflow: hidden;
+      }
+      .bubble-row {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        max-width: 900px;
+      }
+      .bubble-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        background: #e2ebff;
+        color: #1e6adc;
+        display: grid;
+        place-items: center;
+        font-size: 13px;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+      .bubble {
+        background: #f5f5f5;
+        border-radius: 6.4px;
+        padding: 18px 22px;
+        font-size: 20px;
+        line-height: 1.45;
+        color: #000000;
+        letter-spacing: -0.01em;
+      }
+      .bubble .muted {
+        color: #525252;
+      }
+
+      .user-bubble-row {
+        display: flex;
+        justify-content: flex-end;
+        margin-left: auto;
+        max-width: 900px;
+      }
+      .user-bubble {
+        background: #e2ebff;
+        color: #000000;
+        border-radius: 6.4px;
+        padding: 16px 20px;
+        font-size: 20px;
+        line-height: 1.4;
+        letter-spacing: -0.01em;
+        max-width: 680px;
+      }
+
+      .composer {
+        margin: 0 80px 36px;
+        border: 1px solid #e7e7ee;
+        border-radius: 6.4px;
+        background: #fdfdfd;
+        padding: 18px 22px;
+        color: #525252;
+        font-size: 18px;
+        letter-spacing: -0.01em;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.04), 0px 1px 2px -1px rgba(0, 0, 0, 0.06);
+      }
+      .composer-send {
+        background: #7033ff;
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 14px;
+        padding: 8px 14px;
+        border-radius: 6.4px;
+        letter-spacing: -0.01em;
+      }
+
+      /* ---------- SIDE PANEL ---------- */
+      .panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        height: 1080px;
+        width: 520px;
+        background: #fdfdfd;
+        border-left: 1px solid #e7e7ee;
+        box-shadow: -6px 0 18px -8px rgba(0, 0, 0, 0.08);
+        display: flex;
+        flex-direction: column;
+        z-index: 20;
+      }
+      .panel-header {
+        padding: 22px 24px 14px;
+        border-bottom: 1px solid #e7e7ee;
+      }
+      .panel-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .panel-title {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: #000000;
+      }
+      .panel-count {
+        font-size: 13px;
+        color: #525252;
+        margin-top: 4px;
+        letter-spacing: -0.005em;
+      }
+      .panel-close {
+        width: 30px;
+        height: 30px;
+        border-radius: 6.4px;
+        display: grid;
+        place-items: center;
+        color: #525252;
+      }
+      .panel-close svg {
+        width: 16px;
+        height: 16px;
+        stroke: #525252;
+      }
+      .panel-notice {
+        padding: 12px 24px;
+        background: #f5f5f5;
+        border-bottom: 1px solid #e7e7ee;
+        color: #525252;
+        font-size: 13px;
+        line-height: 1.45;
+        letter-spacing: -0.005em;
+      }
+
+      .file-list {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .file-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 24px;
+        border-bottom: 1px solid #e7e7ee;
+        position: relative;
+      }
+      .file-icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6.4px;
+        display: grid;
+        place-items: center;
+        background: #f5f5f5;
+        color: #525252;
+        flex-shrink: 0;
+      }
+      .file-icon svg {
+        width: 16px;
+        height: 16px;
+        stroke: #525252;
+      }
+      .file-meta {
+        flex: 1;
+        min-width: 0;
+      }
+      .file-name {
+        font-size: 16px;
+        font-weight: 500;
+        color: #000000;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .file-sub {
+        font-size: 13px;
+        color: #525252;
+        margin-top: 3px;
+        letter-spacing: -0.005em;
+      }
+
+      .progress-sweep {
+        position: absolute;
+        left: 24px;
+        right: 24px;
+        bottom: 0;
+        height: 2px;
+        background: #7033ff;
+        transform-origin: left center;
+        transform: scaleX(0);
+      }
+
+      .dropzone-wrap {
+        padding: 16px 20px 22px;
+        border-top: 1px solid #e7e7ee;
+      }
+      .dropzone {
+        border: 1.5px dashed #e7e7ee;
+        border-radius: 6.4px;
+        padding: 22px 18px;
+        text-align: center;
+        background: #fdfdfd;
+        transition: none;
+        color: #525252;
+      }
+      .dropzone-title {
+        font-size: 15px;
+        font-weight: 500;
+        color: #000000;
+        letter-spacing: -0.01em;
+        margin-bottom: 4px;
+      }
+      .dropzone-sub {
+        font-size: 12.5px;
+        color: #525252;
+        letter-spacing: -0.005em;
+      }
+
+      /* ---------- DRAGGED FILE GHOST ---------- */
+      .drag-ghost {
+        position: absolute;
+        z-index: 35;
+        background: #fdfdfd;
+        border: 1px solid #e7e7ee;
+        border-radius: 6.4px;
+        padding: 10px 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        box-shadow: 0px 8px 20px -6px rgba(0, 0, 0, 0.18), 0px 2px 6px rgba(0, 0, 0, 0.08);
+      }
+      .drag-ghost .file-icon {
+        width: 24px;
+        height: 24px;
+      }
+      .drag-ghost-name {
+        font-size: 14px;
+        font-weight: 500;
+        color: #000000;
+        letter-spacing: -0.01em;
+      }
+
+      /* ---------- CURSOR ---------- */
+      .cursor {
+        position: absolute;
+        z-index: 80;
+        width: 28px;
+        height: 28px;
+        pointer-events: none;
+        filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.18));
+      }
+      .cursor-pulse {
+        position: absolute;
+        z-index: 79;
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        background: rgba(112, 51, 255, 0.25);
+        border: 2px solid #7033ff;
+        transform: translate(-18px, -18px) scale(0);
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      data-composition-id="session-files-panel"
+      data-width="1920"
+      data-height="1080"
+      data-start="0"
+      data-duration="9"
+    >
+      <!-- ============================================================== -->
+      <!-- SCENE 1: HOOK CAPTION (0.0 - 1.7s)                              -->
+      <!-- ============================================================== -->
+      <div
+        id="hook"
+        class="clip caption"
+        data-start="0"
+        data-duration="1.7"
+        data-track-index="9"
+      >
+        <span class="accent">Session files</span>, in chat.
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SCENE 2: CHAT + PANEL (1.6 - 9.0s)                              -->
+      <!-- One big clip that holds the entire chat surface visible.        -->
+      <!-- ============================================================== -->
+      <div
+        id="chat-stage"
+        class="clip chat-shell"
+        data-start="1.6"
+        data-duration="7.4"
+        data-track-index="1"
+      >
+        <div class="chat-main">
+          <!-- Chat header -->
+          <div class="chat-header">
+            <div class="chat-title">
+              <div class="chat-title-mark">E</div>
+              <div>
+                Quarterly review
+                <span class="chat-title-sub">· Agent · gpt-5</span>
+              </div>
+            </div>
+            <div class="header-actions">
+              <div id="folder-btn" class="folder-btn">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+                Files
+                <span id="folder-badge" class="folder-badge">3</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chat body -->
+          <div class="chat-body">
+            <div class="bubble-row">
+              <div class="bubble-avatar">E</div>
+              <div class="bubble">
+                Sure — I can pull the highlights from those documents.
+                <span class="muted">Add the file and I'll work from it.</span>
+              </div>
+            </div>
+            <div class="user-bubble-row">
+              <div class="user-bubble">
+                Here's the contract — summarise the renewal terms please.
+              </div>
+            </div>
+          </div>
+
+          <!-- Composer -->
+          <div class="composer">
+            <span>Reply to the agent…</span>
+            <span class="composer-send">Send</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- SCENE 2b: SIDE PANEL (slides in at ~2.4s, holds to 9.0s)         -->
+      <!-- ============================================================== -->
+      <div
+        id="panel"
+        class="clip panel"
+        data-start="2.4"
+        data-duration="6.6"
+        data-track-index="2"
+      >
+        <div class="panel-header">
+          <div class="panel-header-row">
+            <div>
+              <div class="panel-title">Session files</div>
+              <div id="panel-count" class="panel-count">3 files</div>
+            </div>
+            <div class="panel-close">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="panel-notice">
+          Files in this session aren't shared with other sessions, projects, or
+          knowledge bases.
+        </div>
+
+        <div class="file-list">
+          <!-- Uploaded row (appears at top after drop) -->
+          <div id="row-uploaded" class="file-row">
+            <div class="file-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M9 13h6M9 17h4" />
+              </svg>
+            </div>
+            <div class="file-meta">
+              <div class="file-name">contract.pdf</div>
+              <div class="file-sub">248 KB · just now</div>
+            </div>
+            <div id="upload-sweep" class="progress-sweep"></div>
+          </div>
+
+          <div id="row-1" class="file-row">
+            <div class="file-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M9 13h6M9 17h4" />
+              </svg>
+            </div>
+            <div class="file-meta">
+              <div class="file-name">meeting-notes.md</div>
+              <div class="file-sub">4.2 KB · 2 min ago</div>
+            </div>
+          </div>
+
+          <div id="row-2" class="file-row">
+            <div class="file-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M8 13h2M8 17h2M14 13h2M14 17h2" />
+              </svg>
+            </div>
+            <div class="file-meta">
+              <div class="file-name">Q3_strategy.docx</div>
+              <div class="file-sub">182 KB · 14 min ago</div>
+            </div>
+          </div>
+
+          <div id="row-3" class="file-row">
+            <div class="file-icon">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="9" cy="9" r="1.8" />
+                <path d="m21 15-5-5L5 21" />
+              </svg>
+            </div>
+            <div class="file-meta">
+              <div class="file-name">screenshot.png</div>
+              <div class="file-sub">1.1 MB · 36 min ago</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dropzone-wrap">
+          <div id="dropzone" class="dropzone">
+            <div class="dropzone-title">Drop a file to upload</div>
+            <div class="dropzone-sub">PDF, DOCX, MD, PNG up to 25 MB</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- DRAG GHOST — the contract file being dragged                    -->
+      <!-- ============================================================== -->
+      <div
+        id="drag-ghost"
+        class="clip drag-ghost"
+        data-start="5.0"
+        data-duration="0.85"
+        data-track-index="4"
+        style="left: 760px; top: 920px;"
+      >
+        <div class="file-icon">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+          </svg>
+        </div>
+        <div class="drag-ghost-name">contract.pdf</div>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- CURSOR (visible from chat scene onward)                         -->
+      <!-- ============================================================== -->
+      <div
+        id="cursor"
+        class="clip cursor"
+        data-start="1.7"
+        data-duration="7.3"
+        data-track-index="5"
+        style="left: 600px; top: 700px;"
+      >
+        <svg viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M4 2 L4 22 L9 17.5 L12 24 L15 22.7 L12 16.3 L19 16.3 Z"
+            fill="#000000"
+            stroke="#ffffff"
+            stroke-width="1.2"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+      <div
+        id="cursor-pulse"
+        class="clip cursor-pulse"
+        data-start="2.3"
+        data-duration="0.6"
+        data-track-index="6"
+        style="left: 1810px; top: 42px;"
+      ></div>
+
+      <!-- ============================================================== -->
+      <!-- PAYOFF (6.4 - 9.0s)                                              -->
+      <!-- ============================================================== -->
+      <div
+        id="payoff-shade"
+        class="clip payoff-shade"
+        data-start="6.4"
+        data-duration="2.6"
+        data-track-index="7"
+      ></div>
+      <div
+        id="payoff"
+        class="clip payoff"
+        data-start="6.4"
+        data-duration="2.6"
+        data-track-index="8"
+      >
+        <span class="accent">Drop a file.</span> Ask the agent. Done.
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---------- HOOK (0.0 - 1.7s) ----------
+      // Entrance: fade + small rise. Holds static through 1.6s.
+      tl.from(
+        "#hook",
+        { opacity: 0, y: 24, duration: 0.5, ease: "power2.out" },
+        0.1,
+      );
+
+      // ---------- CHAT STAGE entrance (1.6s) ----------
+      // Soft fade-up of the whole chat as the hook gives way.
+      tl.from(
+        "#chat-stage",
+        { opacity: 0, y: 20, duration: 0.45, ease: "power2.out" },
+        1.7,
+      );
+
+      // ---------- CURSOR motion ----------
+      // Start: bottom-left of chat (over the user bubble area).
+      // Move to folder button (top-right) by 2.25s.
+      tl.fromTo(
+        "#cursor",
+        { left: 600, top: 700, opacity: 0 },
+        { opacity: 1, duration: 0.3, ease: "power2.out" },
+        1.8,
+      );
+      tl.to(
+        "#cursor",
+        { left: 1800, top: 50, duration: 0.55, ease: "power2.inOut" },
+        2.0,
+      );
+
+      // Click pulse on the folder button.
+      tl.fromTo(
+        "#cursor-pulse",
+        { left: 1810, top: 60, scale: 0, opacity: 0 },
+        { scale: 1, opacity: 1, duration: 0.18, ease: "power2.out" },
+        2.45,
+      );
+      tl.to(
+        "#cursor-pulse",
+        { scale: 1.6, opacity: 0, duration: 0.32, ease: "power2.out" },
+        2.6,
+      );
+
+      // ---------- PANEL slides in (2.55s) ----------
+      tl.from(
+        "#panel",
+        { x: 520, duration: 0.55, ease: "power2.inOut" },
+        2.55,
+      );
+
+      // Cursor moves back into panel area while panel settles + brief hold (breath).
+      tl.to(
+        "#cursor",
+        { left: 1450, top: 360, duration: 0.6, ease: "power2.inOut" },
+        2.9,
+      );
+
+      // ---------- File rows render in stagger (3.5 - 5.0s) ----------
+      // Starting state for the three pre-existing rows.
+      tl.set(
+        ["#row-1", "#row-2", "#row-3"],
+        { opacity: 0, y: 12 },
+        2.4,
+      );
+      // Uploaded row starts hidden and offset.
+      tl.set(
+        "#row-uploaded",
+        { opacity: 0, y: -8, scale: 0.98, transformOrigin: "left center" },
+        2.4,
+      );
+
+      tl.to(
+        "#row-1",
+        { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" },
+        3.5,
+      );
+      tl.to(
+        "#row-2",
+        { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" },
+        3.65,
+      );
+      tl.to(
+        "#row-3",
+        { opacity: 1, y: 0, duration: 0.4, ease: "power2.out" },
+        3.8,
+      );
+
+      // Cursor moves down toward the user bubble (where the file will be dragged from).
+      tl.to(
+        "#cursor",
+        { left: 760, top: 940, duration: 0.55, ease: "power2.inOut" },
+        4.3,
+      );
+
+      // ---------- DRAG: cursor picks up file ghost, moves to dropzone ----------
+      // Ghost appears under cursor at 5.0s.
+      tl.from(
+        "#drag-ghost",
+        { opacity: 0, scale: 0.94, duration: 0.18, ease: "power2.out" },
+        5.0,
+      );
+
+      // Cursor + ghost travel together to the dropzone (around x=1640, y=920).
+      tl.to(
+        "#cursor",
+        { left: 1640, top: 920, duration: 0.55, ease: "power2.inOut" },
+        5.05,
+      );
+      tl.to(
+        "#drag-ghost",
+        { left: 1590, top: 900, duration: 0.55, ease: "power2.inOut" },
+        5.05,
+      );
+
+      // Dropzone highlights as the file enters its hit area.
+      tl.to(
+        "#dropzone",
+        {
+          borderColor: "#7033FF",
+          backgroundColor: "#E2EBFF",
+          color: "#1E6ADC",
+          duration: 0.2,
+          ease: "power2.out",
+        },
+        5.45,
+      );
+
+      // Drop: ghost fades, dropzone settles back, uploaded row appears at top.
+      tl.to(
+        "#drag-ghost",
+        { opacity: 0, scale: 0.92, duration: 0.18, ease: "power2.out" },
+        5.65,
+      );
+      tl.to(
+        "#dropzone",
+        {
+          borderColor: "#E7E7EE",
+          backgroundColor: "#FDFDFD",
+          color: "#525252",
+          duration: 0.3,
+          ease: "power2.inOut",
+        },
+        5.75,
+      );
+
+      // Uploaded row drops into the list at the top, with a progress sweep.
+      tl.to(
+        "#row-uploaded",
+        {
+          opacity: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.32,
+          ease: "power2.out",
+        },
+        5.7,
+      );
+      tl.fromTo(
+        "#upload-sweep",
+        { scaleX: 0 },
+        { scaleX: 1, duration: 0.5, ease: "power2.inOut" },
+        5.75,
+      );
+      tl.to(
+        "#upload-sweep",
+        { opacity: 0, duration: 0.25, ease: "power2.out" },
+        6.3,
+      );
+
+      // Folder badge ticks from 3 → 4.
+      tl.call(
+        () => {
+          const b = document.getElementById("folder-badge");
+          if (b) b.textContent = "4";
+          const c = document.getElementById("panel-count");
+          if (c) c.textContent = "4 files";
+        },
+        null,
+        5.95,
+      );
+
+      // ---------- PAYOFF (6.4 - 9.0s) ----------
+      tl.from(
+        "#payoff-shade",
+        { opacity: 0, duration: 0.4, ease: "power2.out" },
+        6.4,
+      );
+      tl.from(
+        "#payoff",
+        { opacity: 0, y: 20, duration: 0.5, ease: "power2.out" },
+        6.55,
+      );
+      // Holds static through 9.0s — loop rests on the payoff frame.
+
+      window.__timelines["session-files-panel"] = tl;
+    </script>
+  </body>
+</html>

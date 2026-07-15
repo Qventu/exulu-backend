@@ -1,0 +1,5 @@
+# Keep secrets and local files out of the build context.
+# (The Dockerfile doesn't COPY anything, but this is belt-and-suspenders.)
+.env
+*.env
+!.env.example

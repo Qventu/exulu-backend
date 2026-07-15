@@ -1,0 +1,53 @@
+---
+title: "Teams"
+description: "The team type represents a named group of users used for resource access control and budget scoping."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Teams require an Enterprise Edition license (`rbac` entitlement).
+
+A `team` is a named group that can be granted access to agents, projects, prompts, and other resources via the RBAC system. Teams can also carry a shared spending budget. See [Users & access](/administration/users-access/overview).
+
+```graphql
+type team {
+  name: String!
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `budget` | JSON budget envelope for spend limits applied to all users who are members of this team. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  teamsPagination(
+    limit: 20
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

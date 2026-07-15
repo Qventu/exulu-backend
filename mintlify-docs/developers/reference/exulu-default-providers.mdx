@@ -1,0 +1,82 @@
+---
+title: "ExuluDefaultProviders"
+description: "Pre-built ExuluProvider instances for Anthropic, Cerebras, Google Vertex, and OpenAI — import and register without writing provider config."
+---
+
+`ExuluDefaultProviders` is a nested object containing ready-made `ExuluProvider` instances for the most commonly used models. Each entry is a fully configured provider that you can pass directly to `ExuluApp.create()` or reference when building an agent's model list in the platform UI.
+
+The accessor path matches the `provider` key in the docs: `ExuluDefaultProviders.<vendor>.<accessor>`.
+
+## Providers
+
+### Anthropic
+
+| Accessor | Model ID | Context |
+|---|---|---|
+| `anthropic.opus4` | `claude-opus-4-0` | 200 000 tokens |
+| `anthropic.sonnet4` | `claude-sonnet-4-0` | 200 000 tokens |
+| `anthropic.sonnet45` | `claude-sonnet-4-5` | 200 000 tokens |
+
+### Cerebras
+
+| Accessor | Model ID | Context |
+|---|---|---|
+| `cerebras.gptOss120b` | `gpt-oss-120b` | 128 000 tokens |
+| `cerebras.llama38b` | `llama3.1-8b` | 32 000 tokens |
+| `cerebras.llama3370b` | `llama-3.3-70b` | 32 000 tokens |
+
+Cerebras providers require a Cerebras API key configured as the provider credential in the platform. The `provider` field is `"custom"`.
+
+### Google Vertex
+
+| Accessor | Model ID | Context |
+|---|---|---|
+| `google.vertexGemini25Flash` | `gemini-2.5-flash` | 1 048 576 tokens |
+| `google.vertexGemini25Pro` | `gemini-2.5-pro` | 1 048 576 tokens |
+| `google.vertexGemini3Pro` | `gemini-3-pro-preview` | 1 048 576 tokens |
+| `google.vertexLlamaScout4` | `meta/llama-4-scout-17b-16e-instruct-maas` | 1 048 576 tokens |
+
+Vertex providers require a Google Cloud service-account JSON as the provider credential. See the authentication note in the platform's provider settings.
+
+### OpenAI
+
+| Accessor | Model ID | Context |
+|---|---|---|
+| `openai.gpt5Mini` | `gpt-5-mini` | 400 000 tokens |
+| `openai.gpt5` | `gpt-5` | 400 000 tokens |
+| `openai.gpt5pro` | `gpt-5-pro` | 400 000 tokens |
+| `openai.gpt5Codex` | `gpt-5-codex` | 400 000 tokens |
+| `openai.gpt5Nano` | `gpt-5-nano` | 400 000 tokens |
+| `openai.gpt41` | `gpt-4.1` | 1 047 576 tokens |
+| `openai.gpt41Mini` | `gpt-4.1-mini` | 1 047 576 tokens |
+| `openai.gpt4o` | `gpt-4o` | 128 000 tokens |
+| `openai.gpt4oMini` | `gpt-4o-mini` | 128 000 tokens |
+
+## Example
+
+```typescript
+import { ExuluApp, ExuluContext, ExuluDefaultProviders } from "@exulu/backend";
+
+const app = new ExuluApp();
+
+await app.create({
+  providers: [
+    ExuluDefaultProviders.anthropic.sonnet45,
+    ExuluDefaultProviders.openai.gpt41,
+    ExuluDefaultProviders.google.vertexGemini25Flash,
+  ],
+  contexts: [productContext],
+  config: { /* ... */ },
+});
+```
+
+## Notes
+
+- Each default provider has a stable `id` (e.g. `claude_sonnet_4_5_provider`) that IMP stores in the database when a user selects it. Do not change the `id` without a migration.
+- You can mix default providers with custom `ExuluProvider` instances in the same array.
+- Model IDs in this table reflect the source at the time of the installed `@exulu/backend` version. Check the platform's model admin page for live availability.
+
+## Related
+
+- [ExuluProvider — introduction](/developers/core/exulu-provider/introduction): build and configure custom providers.
+- [Administration / Models](/administration/models): manage model access and API keys in the platform.

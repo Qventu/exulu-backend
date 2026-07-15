@@ -1,0 +1,255 @@
+---
+title: "Vector search"
+description: "The generated VectorSearch query in depth — cosine, hybrid, and full-text retrieval with cutoffs, context expansion, and entity filters."
+---
+
+Every [context type](/api-reference/graphql/dynamic-types) generates a `{context_id}_itemsVectorSearch` query that searches the context's embedded chunks and returns them joined with parent-item metadata. It is the same retrieval engine agents use — available to you directly over GraphQL.
+
+The generated signature, for a context with ID `product_docs`:
+
+```graphql
+product_docs_itemsVectorSearch(
+  limit: Int
+  query: String!
+  method: VectorMethodEnum!
+  itemFilters: [FilterProduct_docs_items]
+  cutoffs: SearchCutoffs
+  expand: SearchExpand
+  entityFilter: product_docs_itemsEntityFilterInput
+): product_docs_itemsVectorSearchResult
+```
+
+The context must have an embedder configured; the query text is preprocessed (language detection and stemming) and, when the context defines a `queryRewriter`, rewritten before searching. `limit` defaults to 10 (or the context's `maxRetrievalResults`) and is capped at 250.
+
+## Search methods
+
+```graphql
+enum VectorMethodEnum {
+  cosineDistance
+  hybridSearch
+  tsvector
+}
+```
+
+| Method | How it ranks | Score field on chunks |
+| --- | --- | --- |
+| `cosineDistance` | Embeds the query and ranks by vector similarity | `chunk_cosine_distance` |
+| `tsvector` | PostgreSQL full-text rank (`ts_rank`) across the detected languages | `chunk_fts_rank` |
+| `hybridSearch` | Reciprocal-rank fusion of the semantic and full-text rankings | `chunk_hybrid_score` (plus both component scores) |
+
+<Note>
+Despite its name, `chunk_cosine_distance` holds a **similarity** — computed as `1 - cosine distance` — so `1.0` means identical direction and higher is better.
+</Note>
+
+## Cutoffs
+
+```graphql
+input SearchCutoffs {
+  cosineDistance: Float
+  hybrid: Float
+  tsvector: Float
+}
+```
+
+Cutoffs are minimum scores; anything below is dropped. When omitted they fall back to the context's configured cutoffs, and otherwise to 0 (no cutoff).
+
+- `cosineDistance` — minimum similarity, on the same 0–1 scale as `chunk_cosine_distance`. `0.35` is a reasonable starting floor for prose.
+- `tsvector` — minimum full-text rank.
+- `hybrid` — minimum hybrid score on a 0–100 scale, matching the returned `chunk_hybrid_score`. For `hybridSearch` you can additionally bound the components with the other two cutoffs.
+
+## Context expansion
+
+```graphql
+input SearchExpand {
+  before: Int
+  after: Int
+}
+```
+
+Retrieval returns the chunks that *matched* — often mid-paragraph. `expand` fetches up to `before`/`after` neighboring chunks (by `chunk_index`, within the same item) around every hit, deduplicates, and returns the final list ordered by item and chunk index. Expanded neighbors carry score `0` — treat scores as ranking signals for matched chunks only. Defaults come from the context's configuration, otherwise no expansion.
+
+## Item filters and access control
+
+`itemFilters` uses the context's regular [filter type](/api-reference/graphql/conventions#filters) and applies to the **parent items**, not the chunks — for example, restrict a search to non-archived guides with `[{ category: { eq: GUIDE } }, { archived: { ne: true } }]`. Row-level RBAC is enforced on the parent items too: you only ever get chunks from items you are allowed to read.
+
+## Worked examples
+
+Semantic search with a cutoff and expansion:
+
+```graphql
+query {
+  product_docs_itemsVectorSearch(
+    query: "rotate the S3 access keys without downtime"
+    method: cosineDistance
+    limit: 8
+    cutoffs: { cosineDistance: 0.35 }
+    expand: { before: 1, after: 2 }
+    itemFilters: [{ archived: { ne: true } }]
+  ) {
+    chunks {
+      chunk_content
+      chunk_index
+      chunk_cosine_distance
+      item_id
+      item_name
+    }
+    context {
+      name
+      embedder
+    }
+    query
+    method
+  }
+}
+```
+
+Hybrid search — best default when queries mix natural language with exact terms (error codes, product names):
+
+```graphql
+query {
+  product_docs_itemsVectorSearch(
+    query: "ERR_LITELLM_502 gateway timeout"
+    method: hybridSearch
+    limit: 10
+    cutoffs: { hybrid: 1.5 }
+  ) {
+    chunks {
+      chunk_content
+      chunk_hybrid_score
+      chunk_cosine_distance
+      chunk_fts_rank
+      item_name
+    }
+  }
+}
+```
+
+Full-text only — exact keyword matching, no semantic smoothing:
+
+```graphql
+query {
+  product_docs_itemsVectorSearch(
+    query: "NEXTAUTH_SECRET"
+    method: tsvector
+    limit: 20
+  ) {
+    chunks {
+      chunk_content
+      chunk_fts_rank
+      item_name
+      item_external_id
+    }
+  }
+}
+```
+
+## Entity filters and insights
+
+Contexts with the [entity layer](/building/knowledge/entities) enabled can constrain and enrich searches with the entity graph:
+
+```graphql
+input {context_id}_itemsEntityRefInput {
+  type: String!
+  name: String!
+}
+
+input {context_id}_itemsEntityFilterInput {
+  entityIds: [ID!]
+  entities: [{context_id}_itemsEntityRefInput!]
+  mode: String
+}
+```
+
+Pass entity IDs, or `type`/`name` pairs to be resolved for you. `mode` is `"any"` (default — a chunk must mention at least one of the entities) or `"all"` (must mention every one):
+
+```graphql
+query {
+  product_docs_itemsVectorSearch(
+    query: "connection pooling configuration"
+    method: hybridSearch
+    entityFilter: {
+      entities: [{ type: "technology", name: "PostgreSQL" }]
+      mode: "any"
+    }
+  ) {
+    chunks {
+      chunk_content
+      chunk_entities { id name type }
+      item_name
+    }
+    entityInsights {
+      queryEntities {
+        name
+        type
+        matchedInResults
+        relatedDocCount
+        relatedEntities { name type weight }
+      }
+    }
+  }
+}
+```
+
+When the entity layer is active, the engine also extracts entities from the query itself, applies a soft ranking boost to chunks sharing them (nothing is excluded), and reports what it found in `entityInsights`.
+
+## Result shape
+
+```graphql
+type {context_id}_itemsVectorSearchResult {
+  chunks: [{context_id}_itemsVectorSearchChunk!]!
+  context: VectoSearchResultContext!
+  itemFilters: JSON!
+  chunkFilters: JSON!
+  query: String!
+  method: VectorMethodEnum!
+  entityInsights: {context_id}_itemsEntityInsights
+}
+```
+
+```graphql
+type {context_id}_itemsVectorSearchChunk {
+  chunk_content: String
+  chunk_index: Int
+  chunk_id: String
+  chunk_source: String
+  chunk_metadata: JSON
+  chunk_created_at: Date
+  chunk_updated_at: Date
+  item_updated_at: Date
+  item_created_at: Date
+  item_id: String!
+  item_external_id: String
+  item_name: String!
+  chunk_cosine_distance: Float
+  chunk_fts_rank: Float
+  chunk_hybrid_score: Float
+  chunk_entities: [{context_id}_itemsChunkEntity!]
+}
+```
+
+The `context` object identifies what was searched — `name`, `id`, and the `embedder` model. (The generated type is named `VectoSearchResultContext`; the missing "r" is in the schema itself.) The returned `query` is the preprocessed form actually used for matching. Score fields are populated per method, as in the table above.
+
+To fetch a single chunk later — for example to render a citation — use the companion query:
+
+```graphql
+query {
+  product_docs_itemsChunkById(id: "9f2c4b7a-1e5d-4c8a-b3f6-2a7d9e0c5b41") {
+    chunk_content
+    chunk_index
+    chunk_metadata
+    item_id
+    item_name
+  }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Knowledge pipeline" icon="workflow" href="/building/knowledge/pipeline">
+    How items become chunks and embeddings in the first place.
+  </Card>
+  <Card title="Entities" icon="network" href="/building/knowledge/entities">
+    Configure the entity layer that powers filters and insights.
+  </Card>
+</CardGroup>

@@ -1,0 +1,121 @@
+---
+title: "API reference"
+description: "Every public property and method of ExuluTool: the execute() instance method and the ExuluTool.internal() factory."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For constructor options, see [Configuration](/developers/core/exulu-tool/configuration).
+
+## Constructor
+
+```typescript
+const tool = new ExuluTool(options);
+```
+
+See [Configuration](/developers/core/exulu-tool/configuration) for the full options object.
+
+## Instance method: execute()
+
+Runs the tool directly from your own code, outside of a chat session. Useful for testing, background jobs, or triggering tool logic programmatically.
+
+```typescript
+tool.execute({
+  agent,    // string — required
+  config,   // ExuluConfig — required
+  user,     // User
+  inputs,   // any
+  project,  // string
+  items,    // string[]
+}): Promise<{ result?: string; job?: string; items?: Item[] } | undefined>
+```
+
+<ParamField path="agent" type="string" required>
+  Agent ID on whose behalf the tool runs. IMP resolves the agent record, its configured model, and the API key needed for any provider calls that the tool's execution chain makes.
+</ParamField>
+
+<ParamField path="config" type="ExuluConfig" required>
+  The app's `ExuluConfig` — needed to resolve tools and provider keys at runtime.
+</ParamField>
+
+<ParamField path="user" type="User">
+  Calling user. Used for access control (for example, OAuth token lookup keyed on `userId`) and for logging.
+</ParamField>
+
+<ParamField path="inputs" type="any">
+  Input values passed to `execute`. Must conform to the tool's `inputSchema`.
+</ParamField>
+
+<ParamField path="project" type="string">
+  Project ID, forwarded to tool-conversion utilities that scope agentic context searches to a project.
+</ParamField>
+
+<ParamField path="items" type="string[]">
+  Session item IDs, forwarded to tool-conversion utilities for session-scoped tools.
+</ParamField>
+
+<ResponseField name="result" type="string">
+  The result string from the tool's last yielded or returned value.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Job ID if the tool enqueued background work.
+</ResponseField>
+
+<ResponseField name="items" type="Item[]">
+  Items for context-retrieval tools.
+</ResponseField>
+
+```typescript
+const result = await priceLookupTool.execute({
+  agent: "customer_support_agent",
+  config: exuluConfig,
+  user: currentUser,
+  inputs: { sku: "PROD-001", currency: "EUR" },
+});
+
+console.log(result?.result);  // JSON string from the tool
+```
+
+<Warning>
+`execute()` resolves the agent by ID from the app singleton, then converts the tool via the same pipeline the framework uses during a live chat. It logs verbosely to the console — this method is intended for internal and testing use, not as the primary invocation path in production workflows.
+</Warning>
+
+## Static factory: ExuluTool.internal()
+
+Creates a tool whose `type` is one of the framework-managed values (`"agent"` or `"context"`). Not part of the public API — package consumers should use `new ExuluTool(...)`, which only accepts a `PublicToolType`.
+
+```typescript
+ExuluTool.internal(
+  params: Omit<ConstructorParameters<typeof ExuluTool>[0], "type"> & { type: ToolType },
+): ExuluTool
+```
+
+Internally this constructs the tool as `type: "function"`, then mutates `instance.type` to the requested managed type — bypassing the constructor guard without weakening it for consumers.
+
+<Warning>
+`ExuluTool.internal()` is for IMP framework internals. Using it to construct `"agent"` tools manually produces tools whose IDs IMP expects to be real agent UUIDs — passing anything else causes a UUID lookup crash at runtime. Do not call it in application code.
+</Warning>
+
+## Properties
+
+All constructor options are exposed as public properties after construction:
+
+| Property | Type | Notes |
+|---|---|---|
+| `id` | `string` | Unique tool identifier. |
+| `name` | `string` | Display name. |
+| `description` | `string` | Surfaced to agents and administrators. |
+| `category` | `string` | Defaults to `"default"` when not set. |
+| `type` | `ToolType` | `PublicToolType` for user-constructed tools; may be `"agent"` or `"context"` for internal tools. |
+| `inputSchema` | `z.ZodType \| undefined` | Zod schema for inputs; `undefined` when not provided (defaults to `z.object({})`). |
+| `config` | `ExuluToolConfigParam[]` | Admin-configurable params. |
+| `needsApproval` | `boolean` | Whether the platform prompts the user before running. |
+| `oauth` | `ExuluOauthConfig \| undefined` | OAuth config, or `undefined` when not declared. |
+| `tool` | `Tool` | The AI-SDK `Tool` object created from `description`, `inputSchema`, and `execute`. Used by the framework when converting tools for provider calls. |
+
+```typescript
+console.log(priceLookupTool.id);            // "price_lookup"
+console.log(priceLookupTool.needsApproval); // false
+console.log(priceLookupTool.type);          // "function"
+console.log(priceLookupTool.config.length); // 2
+```

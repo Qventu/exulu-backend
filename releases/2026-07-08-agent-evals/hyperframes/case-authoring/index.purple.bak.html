@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agent Evals — conversation-based test case authoring</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 { margin-top: 30px; font-size: 86px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.06; }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ------------------------------ dialog scene ----------------------------- */
+      #app { display: block; }
+      #dialog-pos {
+        position: absolute; left: 50%; top: 40px;
+        transform: translateX(-50%) scale(0.92); transform-origin: top center;
+        width: 896px; height: 960px;
+      }
+      /* Real DialogContent: md:max-w-4xl md:max-h-[90dvh] md:rounded-lg md:p-6 */
+      #dialog {
+        display: flex; flex-direction: column;
+        width: 896px; height: 960px; padding: 24px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 8px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 24px 60px -20px rgba(0, 0, 0, 0.18);
+      }
+      #dlg-title { font-size: 18px; line-height: 28px; font-weight: 600; }
+      #dlg-desc { margin-top: 6px; font-size: 14px; line-height: 20px; color: #525252; }
+
+      /* TabsList: grid w-full grid-cols-2 h-10 bg-muted p-1 rounded-md */
+      #tabs {
+        margin-top: 16px; height: 40px; flex: none;
+        display: grid; grid-template-columns: 1fr 1fr;
+        background: #f5f5f5; padding: 4px; border-radius: 6px;
+      }
+      .tab {
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        border-radius: 4px; font-size: 14px; font-weight: 500; color: #525252;
+      }
+      .tab.active { background: #fff; color: #0a0a0a; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+      .tab svg { width: 16px; height: 16px; }
+
+      /* ScrollArea flex-1: state A is scrolled down 108px, settles to 0 on post */
+      #viewport { position: relative; flex: 1; overflow: hidden; }
+      #tabcontent { padding: 16px 4px 4px; } /* TabsContent mt-4 p-1 */
+
+      /* Card */
+      #card { border: 1px solid #e7e7ee; border-radius: 8px; background: #fcfcfc; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); }
+      #card-header { padding: 24px 24px 12px; } /* CardHeader pb-3 */
+      #card-title-row { display: flex; align-items: center; height: 22px; font-size: 14px; font-weight: 600; gap: 8px; color: #0a0a0a; }
+      #card-title-row svg { width: 16px; height: 16px; }
+      .badge {
+        margin-left: 8px; display: inline-flex; align-items: center; height: 20px;
+        border-radius: 999px; background: #edf1f5; padding: 0 10px;
+        font-size: 12px; line-height: 16px; font-weight: 600; color: #0a0a0a;
+      }
+      #card-desc { margin-top: 6px; font-size: 14px; line-height: 20px; color: #525252; }
+      #card-content { padding: 0 24px 24px; } /* CardContent p-6 pt-0 */
+
+      /* Transcript: max-h-[350px] border rounded-lg bg-muted/30; grows 178 -> 338 */
+      #transcript {
+        height: 178px; overflow: hidden;
+        border: 1px solid #e7e7ee; border-radius: 8px; background: rgba(245, 245, 245, 0.3);
+      }
+      #transcript-inner { padding: 16px 24px; } /* px-6 py-4, space-y-4 via margins */
+      .msg-user-row { display: flex; justify-content: flex-end; }
+      .msg-user {
+        max-width: 95%; background: #edf1f5; border-radius: 8px; padding: 12px 16px;
+        font-size: 14px; line-height: 20px; color: #0a0a0a;
+      }
+      .msg-actions { margin-top: 8px; display: flex; gap: 4px; height: 24px; }
+      .icon-btn24 { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; color: #525252; }
+      .icon-btn24 svg { width: 12px; height: 12px; }
+      .msg-ghost {
+        margin-top: 16px; background: rgba(237, 241, 245, 0.5);
+        border-left: 2px solid rgba(112, 51, 255, 0.3); border-radius: 8px;
+        padding: 16px; font-size: 14px; line-height: 20px; color: #0a0a0a;
+      }
+      #new-turns { margin-top: 16px; opacity: 0; }
+
+      /* Composer: space-y-3 pt-2 below the transcript (CardContent space-y-6) */
+      #composer { margin-top: 24px; padding-top: 8px; }
+      #composer-label { font-size: 14px; line-height: 20px; font-weight: 600; color: #0a0a0a; }
+      #ta {
+        position: relative; margin-top: 12px; height: 58px; /* rows=2 */
+        border: 1px solid #e7e7ee; border-radius: 6px; background: transparent;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+      #ta-placeholder, #ta-line {
+        position: absolute; left: 0; top: 0; right: 0; padding: 8px 12px;
+        font-size: 14px; line-height: 20px; white-space: pre; overflow: hidden;
+      }
+      #ta-placeholder { color: #525252; }
+      #ta-line .ch { opacity: 0; position: relative; }
+      .kc {
+        position: absolute; right: -1px; top: 50%; transform: translateY(-50%);
+        width: 1.5px; height: 16px; background: #0a0a0a; opacity: 0;
+      }
+      #caret-rest { position: absolute; left: 12px; top: 10px; width: 1.5px; height: 16px; background: #0a0a0a; }
+      #keycap {
+        position: absolute; right: 10px; bottom: 6px; opacity: 0;
+        padding: 3px 9px; border: 1px solid #e7e7ee; border-bottom-width: 2px; border-radius: 5px;
+        background: #fff; font-size: 11px; line-height: 16px; font-weight: 500; color: #525252;
+      }
+      #btnrow { margin-top: 12px; display: flex; align-items: center; gap: 8px; }
+      .btn {
+        height: 36px; padding: 0 16px; border-radius: 6px;
+        display: inline-flex; align-items: center; gap: 8px;
+        font-size: 14px; font-weight: 500;
+      }
+      .btn svg { width: 16px; height: 16px; }
+      .btn-outline { border: 1px solid #e7e7ee; background: #fcfcfc; color: #0a0a0a; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); }
+      #btn-add { margin-left: auto; }
+
+      /* Staged file + warning: collapses to 0 when the message posts */
+      #collapse { overflow: hidden; height: 348px; }
+      #filegrid { margin-top: 12px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      #fileitem { grid-column: 1; border: 1px solid #e7e7ee; border-radius: 8px; padding: 8px; opacity: 0.5; }
+      #filepreview {
+        aspect-ratio: 1 / 1; background: rgba(245, 245, 245, 0.5); border-radius: 6px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        margin-bottom: 8px;
+      }
+      #filepreview svg { width: 24px; height: 24px; color: #e54b50; }
+      #filepreview .pname { margin-top: 4px; padding: 0 4px; text-align: center; font-size: 12px; line-height: 16px; color: #525252; }
+      #fname { font-size: 12px; line-height: 16px; color: #0a0a0a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #warnrow {
+        margin-top: 12px; display: flex; align-items: flex-start; gap: 8px; padding: 12px;
+        background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: 8px;
+      }
+      #warnrow svg { width: 16px; height: 16px; margin-top: 2px; flex: none; color: #d97706; }
+      #warnrow p { font-size: 12px; line-height: 16px; color: #78350f; }
+      #helper { margin-top: 12px; font-size: 12px; line-height: 16px; color: #525252; }
+
+      /* Footer */
+      #footer { margin-top: 16px; flex: none; display: flex; justify-content: flex-end; gap: 8px; }
+      .btn-primary { background: #7033ff; color: #fff; border: 1px solid transparent; box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16); }
+
+      /* ------------------------------- payoff ---------------------------------- */
+      #payoff { display: block; }
+      #payoff-inner {
+        position: absolute; left: 0; right: 0; top: 918px; height: 162px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 34px; font-weight: 600; color: #1a1a1a; opacity: 0;
+      }
+      #payoff-inner em { font-style: normal; color: #7033ff; }
+
+      svg.ic { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="9.5">
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Agent Evals</span>
+          <h1>Test cases that <em>talk</em> like your users.</h1>
+        </div>
+      </div>
+
+      <div id="app" class="clip" data-start="1.9" data-duration="7.6" data-track-index="3">
+        <div id="dialog-pos">
+          <div id="dialog-anim">
+            <div id="dialog">
+              <div id="dlg-title">Create test case</div>
+              <div id="dlg-desc">Create a new test case with conversation inputs and expected outputs.</div>
+
+              <div id="tabs">
+                <div class="tab">
+                  <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                  Basic info
+                </div>
+                <div class="tab active">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  Conversation
+                </div>
+              </div>
+
+              <div id="viewport" data-layout-allow-overflow>
+                <div id="scrollinner">
+                  <div id="tabcontent">
+                    <div id="card">
+                      <div id="card-header" data-layout-allow-occlusion data-layout-allow-overlap>
+                        <div id="card-title-row">
+                          <svg class="ic" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                          Conversation flow
+                          <span class="badge">4</span>
+                        </div>
+                        <div id="card-desc">Add user messages in order. The agent will respond between each message automatically.</div>
+                      </div>
+                      <div id="card-content">
+                        <div id="transcript" data-layout-allow-overflow>
+                          <div id="transcript-inner">
+                            <div class="msg-user-row">
+                              <div class="msg-user">
+                                What changed in Q2 travel spend?
+                                <div class="msg-actions">
+                                  <span class="icon-btn24"><svg class="ic" viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></span>
+                                  <span class="icon-btn24"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></span>
+                                </div>
+                              </div>
+                            </div>
+                            <div class="msg-ghost">💬 Placeholder, generated agent response will be added here when the test case is run…</div>
+
+                            <div id="new-turns">
+                              <div class="msg-user-row">
+                                <div class="msg-user">
+                                  Summarize the attached report in three bullets.
+                                  <div class="msg-actions">
+                                    <span class="icon-btn24"><svg class="ic" viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></span>
+                                    <span class="icon-btn24"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div class="msg-ghost">💬 Placeholder, generated agent response will be added here when the test case is run…</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div id="composer">
+                          <div id="composer-label">Add user message</div>
+                          <div id="ta" data-layout-allow-overlap>
+                            <div id="ta-placeholder">Type the user's message…</div>
+                            <div id="ta-line"></div>
+                            <div id="caret-rest"></div>
+                            <div id="keycap">↵ Enter</div>
+                          </div>
+                          <div id="btnrow">
+                            <span class="btn btn-outline">Select files
+                              <svg class="ic" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
+                            </span>
+                            <span class="btn btn-outline" id="btn-add">
+                              <svg class="ic" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                              Add message
+                            </span>
+                          </div>
+                          <div id="collapse" data-layout-allow-overlap data-layout-allow-occlusion>
+                            <div id="filegrid">
+                              <div id="fileitem">
+                                <div id="filepreview">
+                                  <svg class="ic" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                                  <span class="pname">quarterly-report.pdf</span>
+                                </div>
+                                <p id="fname">quarterly-report.pdf</p>
+                              </div>
+                            </div>
+                            <div id="warnrow">
+                              <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+                              <p>Ensure the selected agent supports the file types you've attached (images, documents, audio, etc.).</p>
+                            </div>
+                          </div>
+                          <p id="helper">Press Enter to add, Shift+Enter for new line. You can attach files to messages.</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div id="footer">
+                <span class="btn btn-outline">Cancel</span>
+                <span class="btn btn-primary">Create test case</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.0" data-duration="2.5" data-track-index="4">
+        <div id="payoff-inner">Ghost turns become&nbsp;<em>real replies</em>&nbsp;on every run.</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      /* Typed line built as per-char spans, each with a caret marker at its
+         right edge. Synchronous, deterministic DOM construction. */
+      const TYPED = "Summarize the attached report in three bullets.";
+      const lineEl = document.getElementById("ta-line");
+      const chEls = [];
+      const caretEls = [];
+      for (let i = 0; i < TYPED.length; i++) {
+        const span = document.createElement("span");
+        span.className = "ch";
+        span.textContent = TYPED[i];
+        const caret = document.createElement("i");
+        caret.className = "kc";
+        span.appendChild(caret);
+        lineEl.appendChild(span);
+        chEls.push(span);
+        caretEls.push(caret);
+      }
+
+      /* Deterministic natural cadence: fixed jitter cycle, word gaps 1.5x.
+         Typing runs 2.90s -> 4.58s (plan: 2.90-4.60, ~1.7s). */
+      const T_START = 2.90;
+      const T_END = 4.58;
+      const jitter = [1.0, 0.78, 1.18, 0.92, 1.06, 0.84, 1.14, 0.96];
+      const weights = [];
+      let totalW = 0;
+      for (let k = 0; k < TYPED.length; k++) {
+        const w = jitter[k % 8] * (TYPED[k] === " " ? 1.5 : 1);
+        weights.push(w);
+        totalW += w;
+      }
+      const charTimes = [];
+      let acc = T_START;
+      for (let k = 0; k < TYPED.length; k++) {
+        charTimes.push(acc);
+        acc += (weights[k] / totalW) * (T_END - T_START);
+      }
+
+      const tl = gsap.timeline({ paused: true });
+
+      /* ------------------------------ hook ------------------------------------ */
+      /* 0.00-0.40 entrance, 0.40-1.90 static hold, 1.90-2.40 crossfade out */
+      tl.fromTo("#hook-inner", { y: 32, opacity: 0 }, { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.05);
+      tl.to("#hook-inner", { y: -24, opacity: 0, duration: 0.35, ease: "power2.in" }, 1.90);
+
+      /* --------------------------- dialog fades in ----------------------------- */
+      tl.fromTo("#dialog-anim", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 1.95);
+
+      /* Everything still 2.40-2.90; the caret blinks once */
+      tl.set("#caret-rest", { opacity: 0 }, 2.46);
+      tl.set("#caret-rest", { opacity: 1 }, 2.70);
+
+      /* ------------------------------ typing ----------------------------------- */
+      for (let i = 0; i < TYPED.length; i++) {
+        const t = charTimes[i];
+        tl.set(chEls[i], { opacity: 1 }, t);
+        tl.set(caretEls[i], { opacity: 1 }, t);
+        if (i === 0) {
+          tl.set("#ta-placeholder", { opacity: 0 }, t);
+          tl.set("#caret-rest", { opacity: 0 }, t);
+        } else {
+          tl.set(caretEls[i - 1], { opacity: 0 }, t);
+        }
+      }
+
+      /* ------------------------- Enter keycap chip ----------------------------- */
+      tl.fromTo("#keycap", { opacity: 0, y: 4 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, 4.60);
+      tl.to("#keycap", { scale: 0.9, duration: 0.07, ease: "power1.in", yoyo: true, repeat: 1 }, 4.70);
+      tl.to("#keycap", { opacity: 0, duration: 0.14, ease: "power2.in" }, 4.92);
+
+      /* ------------------- the post: one settle, 380ms power2.out -------------- */
+      /* Textarea clears back to its placeholder; caret rests at position 0 */
+      tl.set("#ta-line", { opacity: 0 }, 4.72);
+      tl.set(caretEls[TYPED.length - 1], { opacity: 0 }, 4.72);
+      tl.set("#caret-rest", { opacity: 1 }, 4.72);
+      tl.to("#ta-placeholder", { opacity: 1, duration: 0.2, ease: "power1.out" }, 4.78);
+
+      /* Transcript grows, the new user bubble + ghost placeholder fade in
+         (real container: animate-in fade-in), staged card + warning collapse,
+         scroll settles to the top (whole card now fits the viewport). */
+      tl.fromTo("#transcript", { height: 178 }, { height: 338, duration: 0.38, ease: "power2.out" }, 4.72);
+      tl.fromTo("#new-turns", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.38, ease: "power2.out" }, 4.74);
+      tl.fromTo("#collapse", { height: 348, opacity: 1 }, { height: 0, opacity: 0, duration: 0.38, ease: "power2.out" }, 4.72);
+      tl.fromTo("#scrollinner", { y: -108 }, { y: 0, duration: 0.38, ease: "power2.out" }, 4.72);
+
+      /* 5.10-7.00: state B holds completely still (caret frozen solid) */
+
+      /* ------------------------------ payoff ----------------------------------- */
+      tl.fromTo("#payoff-inner", { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" }, 7.02);
+      /* 7.32 onward: nothing animates — last 600ms is the loop resting frame */
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

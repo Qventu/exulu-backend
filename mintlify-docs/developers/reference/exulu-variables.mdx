@@ -1,0 +1,73 @@
+---
+title: "ExuluVariables"
+description: "Read platform variables at runtime — automatically decrypts AES-encrypted values using NEXTAUTH_SECRET."
+---
+
+`ExuluVariables` provides a single `get` method that reads a named variable from the IMP `variables` table. If the variable was stored as encrypted (AES-256 via the platform's variable editor), `get` decrypts it transparently using `NEXTAUTH_SECRET` before returning the plaintext value.
+
+Use `ExuluVariables` inside tools, processors, or any server-side code where you need access to admin-managed secrets (API keys, connection strings, toggle values) without hard-coding them.
+
+<Warning>
+`get` throws when the variable name does not exist in the database. Catch the error in callers that handle optional variables.
+</Warning>
+
+## API surface
+
+### ExuluVariables.get
+
+```typescript
+ExuluVariables.get(name: string): Promise<string>
+```
+
+Looks up the variable by `name` in the `variables` table, decrypts it if the `encrypted` flag is set, and returns the plaintext value as a string.
+
+<ParamField path="name" type="string" required>
+  The variable name as it appears in Administration → Variables.
+</ParamField>
+
+<ResponseField name="return" type="Promise<string>">
+  The plaintext variable value. Throws with `Variable <name> not found.` when the name does not exist.
+</ResponseField>
+
+## Example
+
+```typescript
+import { ExuluVariables } from "@exulu/backend";
+
+const apiKey = await ExuluVariables.get("OPENAI_API_KEY");
+
+// Use the value to call an external API
+const response = await fetch("https://api.openai.com/v1/models", {
+  headers: { Authorization: `Bearer ${apiKey}` },
+});
+```
+
+Inside a tool's `execute`:
+
+```typescript
+import { ExuluTool, ExuluVariables } from "@exulu/backend";
+import { z } from "zod";
+
+const myTool = new ExuluTool({
+  id: "my_tool",
+  name: "My tool",
+  description: "Calls an external service.",
+  inputSchema: z.object({ query: z.string() }),
+  execute: async function* ({ query }) {
+    const secret = await ExuluVariables.get("MY_SERVICE_SECRET");
+    // ... use secret
+    yield { result: "done" };
+  },
+});
+```
+
+## Notes
+
+- Encryption uses `CryptoJS.AES` with `NEXTAUTH_SECRET` as the key phrase. Both the platform and `get` must share the same secret.
+- Unencrypted variables are returned as-is from the database.
+- `ExuluVariables` is a thin convenience wrapper — you can also query the `variables` table directly via `postgresClient` when you need the full row.
+
+## Related
+
+- [Administration / Variables](/administration/variables): create and manage platform variables.
+- [`postgresClient`](/developers/reference/functions-and-types): direct database access.

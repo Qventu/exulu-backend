@@ -1,0 +1,260 @@
+---
+title: "Configuration"
+description: "Every parameter of ExuluQueues.register() and the ExuluQueueConfig object returned by .use()."
+icon: "settings"
+---
+
+`ExuluQueues.register()` is the sole configuration entry point. Call it once per queue, typically in the same file where you define your contexts or your `initdb` script. The call is synchronous and registers the queue internally; you get back a `{ use }` object whose `.use()` method connects to Redis and returns the live queue configuration.
+
+```typescript
+import { ExuluQueues } from "@exulu/backend";
+
+const myQueue = ExuluQueues.register(
+  name,                    // string — required
+  concurrency,             // { worker: number; queue: number } — required
+  ratelimit?,              // number — default 1
+  timeoutInSeconds?,       // number — default 180
+);
+
+const config = await myQueue.use(); // Promise<ExuluQueueConfig>
+```
+
+## Parameters
+
+<ParamField path="name" type="string" required>
+  Unique queue name. Passed directly to BullMQ as the queue name, stored in `ExuluQueues.list`, and injected into the GraphQL `QueueEnum` at boot. Use lowercase with hyphens or underscores — the name appears in Redis keys and the platform UI.
+</ParamField>
+
+<ParamField path="concurrency" type="{ worker: number; queue: number }" required>
+  Two-tier concurrency configuration. Both values must be positive integers.
+</ParamField>
+
+<ParamField path="concurrency.worker" type="number" required>
+  How many jobs a single worker process handles in parallel. IMP passes this value to the BullMQ `Worker` concurrency option when it creates the worker at app startup.
+</ParamField>
+
+<ParamField path="concurrency.queue" type="number" required>
+  Global maximum active jobs across all worker processes, enforced by BullMQ via `queue.setGlobalConcurrency()`. A queue with `concurrency.queue: 10` will never have more than 10 jobs in the `active` state system-wide, regardless of how many workers are running.
+</ParamField>
+
+<ParamField path="ratelimit" type="number" default="1">
+  Maximum jobs per second that any single worker process processes from this queue. IMP applies this as a BullMQ `Worker` rate limiter (`{ max: ratelimit, duration: 1000 }`). Rate limiting is implemented at the worker level, not the queue level, because BullMQ's global rate limit lives on workers. Defaults to 1 job per second.
+</ParamField>
+
+<ParamField path="timeoutInSeconds" type="number" default="180">
+  Maximum wall-clock time a single job may run before BullMQ marks it failed. Stored on the registration and passed to the worker as `lockDuration`. Defaults to 180 seconds (3 minutes).
+</ParamField>
+
+## Return value
+
+`register()` returns `{ use: () => Promise<ExuluQueueConfig> }`.
+
+### `.use()`
+
+```typescript
+const config = await myQueue.use();
+```
+
+Calling `.use()` the first time:
+
+1. Verifies that `REDIS_HOST` and `REDIS_PORT` are set; throws if either is empty.
+2. Creates a BullMQ `Queue` with `enableOfflineQueue: false` so jobs are never silently buffered when Redis is down.
+3. Races `queue.waitUntilReady()` against a 60-second timeout (hard abort with a descriptive error).
+4. Sets `queue.setGlobalConcurrency(concurrency.queue)`.
+5. Returns `ExuluQueueConfig` and stores the instance in `ExuluQueues.queues`.
+
+Subsequent `.use()` calls for the same name return the cached instance immediately (reconciling `concurrency.queue` if it changed).
+
+### ExuluQueueConfig
+
+```typescript
+type ExuluQueueConfig = {
+  queue: Queue;                // BullMQ Queue instance
+  ratelimit: number;           // Jobs per second
+  timeoutInSeconds?: number;   // Job timeout (default 180)
+  concurrency: {
+    worker: number;
+    queue: number;
+  };
+  retries?: number;            // Optional retry count (set by caller)
+  backoff?: {                  // Optional backoff (set by caller)
+    type: "exponential" | "linear";
+    delay: number;             // Milliseconds
+  };
+};
+```
+
+<ResponseField name="queue" type="Queue">
+  The live BullMQ `Queue` instance. Use it to add jobs, inspect counts, pause/resume, or drain — see [API reference](/developers/core/exulu-queues/api-reference).
+</ResponseField>
+
+<ResponseField name="ratelimit" type="number">
+  The value passed to `register()`, stored here so the worker creation logic can read it without access to the original registration closure.
+</ResponseField>
+
+<ResponseField name="timeoutInSeconds" type="number | undefined">
+  The value passed to `register()` (default 180). Workers use this as the job lock duration.
+</ResponseField>
+
+<ResponseField name="concurrency" type="{ worker: number; queue: number }">
+  The resolved concurrency values, after clamping to at least 1 for both keys.
+</ResponseField>
+
+<ResponseField name="retries" type="number | undefined">
+  Optional. Set by the ExuluContext source or processor config that receives `ExuluQueueConfig`; not set by `register()` itself.
+</ResponseField>
+
+<ResponseField name="backoff" type="object | undefined">
+  Optional. Same as `retries` — set by the consumer, not by `register()`.
+</ResponseField>
+
+## Configuration examples
+
+### Embedder queue
+
+```typescript
+import { ExuluQueues, ExuluContext } from "@exulu/backend";
+
+const embeddingsQueue = ExuluQueues.register(
+  "embeddings",
+  { worker: 8, queue: 20 },
+  50,   // 50 jobs/sec — size to your provider's TPM quota
+  300,  // 5-minute timeout for large embedding batches
+);
+
+const docsContext = new ExuluContext({
+  id: "docs",
+  name: "Documentation",
+  description: "Product knowledge base.",
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: embeddingsQueue.use(),
+  },
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext", required: true },
+  ],
+  sources: [],
+});
+```
+
+### Document processing queue
+
+```typescript
+const processorQueue = ExuluQueues.register(
+  "doc_processing",
+  { worker: 2, queue: 4 },
+  2,    // 2 jobs/sec
+  900,  // 15-minute timeout for large PDFs
+);
+
+const filesContext = new ExuluContext({
+  id: "files",
+  name: "Uploaded files",
+  description: "Processed document store.",
+  processor: {
+    name: "PDF text extractor",
+    config: {
+      queue: processorQueue.use(),
+      trigger: "onInsert",
+      retries: 3,
+      backoff: { type: "exponential", delay: 2000 },
+    },
+    execute: async ({ item, utils }) => {
+      const text = await extractPdf(item.file_s3key, utils.storage);
+      return { ...item, content: text };
+    },
+  },
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "file", type: "file", allowedFileTypes: [".pdf"] },
+    { name: "content", type: "longtext" },
+  ],
+  sources: [],
+});
+```
+
+### Data-source sync queue
+
+```typescript
+const syncQueue = ExuluQueues.register(
+  "github_sync",
+  { worker: 1, queue: 1 }, // one sync at a time
+  1,
+  3600, // 1-hour timeout for large repos
+);
+
+const issuesContext = new ExuluContext({
+  id: "github_issues",
+  name: "GitHub issues",
+  description: "Open issues synced from GitHub.",
+  sources: [{
+    id: "github",
+    name: "GitHub",
+    description: "Syncs open issues every 6 hours.",
+    config: {
+      schedule: "0 */6 * * *",
+      queue: syncQueue.use(),
+      retries: 2,
+      backoff: { type: "exponential", delay: 5000 },
+    },
+    execute: async () => {
+      const issues = await fetchOpenIssues();
+      return issues.map((i) => ({
+        external_id: String(i.id),
+        name: i.title,
+        content: i.body,
+      }));
+    },
+  }],
+  fields: [
+    { name: "title", type: "text", required: true },
+    { name: "content", type: "longtext" },
+  ],
+});
+```
+
+### Eval queue
+
+```typescript
+import { ExuluEval, ExuluQueues } from "@exulu/backend";
+
+const evalQueue = ExuluQueues.register(
+  "eval_runs",
+  { worker: 2, queue: 10 },
+  5,   // 5 runs/sec
+  600, // 10-minute timeout per eval run
+);
+
+const myEval = new ExuluEval({
+  id: "response_quality",
+  name: "Response quality",
+  queue: evalQueue.use(),
+  // ... judge and test-case config
+});
+```
+
+## Rate-limit sizing
+
+The `ratelimit` parameter controls tokens-per-minute consumption for embedding queues. Use this formula as a starting point:
+
+```
+ratelimit = provider_TPM_quota / avg_tokens_per_request
+```
+
+A provider with a 5 M TPM quota and 1 024-token chunks yields roughly `5_000_000 / 1_024 / 60 ≈ 81` requests per second. Set `ratelimit: 80` to stay safely below the cap, then observe your error rate and adjust.
+
+<Warning>
+Rate limiting is applied per worker process. If you run multiple worker processes, the effective rate is `ratelimit × number_of_workers`. Set `concurrency.queue` to cap total active jobs and indirectly bound the effective rate.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-queues/api-reference">
+    `register()`, `queue()`, `.list`, and `.queues` — full signatures and queue inspection.
+  </Card>
+  <Card title="ExuluContext" icon="layers" href="/developers/core/exulu-context/introduction">
+    Pass the queue config to an embedder, source, or processor.
+  </Card>
+</CardGroup>

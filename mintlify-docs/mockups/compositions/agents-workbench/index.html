@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — agents workbench</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* editor layout: nav rail + content */
+      #root .editor-body { display: flex; flex: 1; min-height: 0; }
+
+      /* section nav rail */
+      #root .editor-nav { width: 200px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); padding: 16px 0; display: flex; flex-direction: column; gap: 2px; }
+      #root .editor-nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .editor-nav-item.active { background: var(--surface-2); color: var(--tx-hi); font-weight: 500; }
+      #root .editor-nav-item svg { width: 14px; height: 14px; stroke-width: 1.5; flex: none; }
+
+      /* editor content */
+      #root .editor-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .editor-scroll { flex: 1; overflow: hidden; padding: 32px 40px; }
+      #root .editor-col { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+      /* section header */
+      #root .section-hd { display: flex; flex-direction: column; gap: 4px; }
+      #root .section-title { font-size: 17px; font-weight: 600; color: var(--tx-hi); }
+      #root .section-desc { font-size: 13px; color: var(--tx-lo); }
+
+      /* form field */
+      #root .field { display: flex; flex-direction: column; gap: 6px; }
+      #root .field-label { font-size: 12px; font-weight: 500; color: var(--tx-hi); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+      #root .field-input { border: 1px solid var(--hair); background: var(--bg); padding: 8px 12px; font-size: 13.5px; color: var(--tx-hi); font-family: var(--font-sans); }
+      #root .field-input.empty { color: var(--tx-faint); }
+      #root .field-input.select { display: flex; align-items: center; justify-content: space-between; }
+      #root .field-select-arrow { color: var(--tx-faint); font-size: 11px; }
+      #root .field-textarea { border: 1px solid var(--hair); background: var(--bg); padding: 8px 12px; font-size: 13.5px; color: var(--tx-hi); font-family: var(--font-sans); height: 100px; }
+      #root .field-badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hair); padding: 3px 8px; font-size: 12px; color: var(--tx-lo); margin-top: 4px; }
+
+      /* model tile row */
+      #root .modality-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+      #root .modality-tile { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; font-size: 12px; border: 1px solid var(--hair); color: var(--tx-lo); background: var(--surface); }
+      #root .modality-tile.on { color: var(--accent); background: var(--chip-soft); border-color: var(--chip); }
+      #root .modality-tile svg { width: 13px; height: 13px; stroke-width: 1.5; }
+
+      /* header breadcrumb area */
+      #root .editor-topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      #root .breadcrumb { font-size: 13px; color: var(--tx-lo); }
+      #root .breadcrumb-sep { color: var(--tx-faint); margin: 0 6px; }
+      #root .breadcrumb-current { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .agent-monogram { width: 28px; height: 28px; background: var(--chip-soft); display: grid; place-items: center; font-size: 12px; font-weight: 600; color: var(--ink); font-family: var(--font-mono); flex: none; }
+
+      /* header right actions */
+      #root .topbar-right { display: flex; align-items: center; gap: 10px; }
+      #root .status-chip { display: flex; align-items: center; gap: 6px; border: 1px solid var(--hair); padding: 5px 12px; font-size: 12.5px; color: var(--tx-mid); }
+      #root .status-dot { width: 8px; height: 8px; background: var(--accent); flex: none; }
+      #root .status-dot.muted { background: var(--hair); }
+      #root .topbar-overflow { width: 32px; height: 32px; display: grid; place-items: center; color: var(--tx-lo); border: 1px solid var(--hair); }
+      #root .topbar-overflow svg { width: 14px; height: 14px; stroke-width: 1.5; }
+
+      /* form grid */
+      #root .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+      /* save bar */
+      #root .save-bar { background: var(--ink); color: #fff; padding: 10px 40px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; font-size: 12.5px; }
+      #root .save-bar-msg { color: rgba(255,255,255,0.6); flex: 1; }
+      #root .btn-save-bar { background: var(--accent); color: #fff; border: none; padding: 7px 18px; font-size: 12.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; cursor: default; }
+      #root .btn-save-bar-cancel { background: transparent; color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.2); padding: 7px 18px; font-size: 12.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="agents-workbench"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>Knowledge</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- workbench topbar -->
+            <div class="imp-topbar">
+              <span class="editor-topbar-left">
+                <span class="breadcrumb">Agents</span>
+                <span class="breadcrumb-sep">/</span>
+                <span class="agent-monogram">SA</span>
+                <span class="breadcrumb-current">Support Assistant</span>
+              </span>
+              <span class="topbar-right">
+                <span class="status-chip">
+                  <span class="status-dot"></span>
+                  Active
+                  <!-- toggle knob implied -->
+                </span>
+                <span class="imp-btn imp-btn-ghost"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;margin-right:5px;vertical-align:middle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Test in chat</span>
+                <span class="imp-btn imp-btn-ghost" style="opacity:0.5;">Save</span>
+                <span class="topbar-overflow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+              </span>
+            </div>
+
+            <!-- editor layout -->
+            <div class="editor-body">
+              <!-- section nav rail -->
+              <nav class="editor-nav">
+                <div class="editor-nav-item active">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"/><path d="M12 12h.01"/></svg>
+                  Basics
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  Instructions
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>
+                  Knowledge &amp; memory
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                  Tools &amp; skills
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+                  Chat experience
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+                  Appearance
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Access
+                </div>
+                <div class="editor-nav-item">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                  Developer
+                </div>
+              </nav>
+
+              <!-- editor content: Basics section -->
+              <div class="editor-content">
+                <div class="editor-scroll">
+                  <div class="editor-col">
+                    <div class="section-hd">
+                      <div class="section-title">Basics</div>
+                      <div class="section-desc">Name, category, description, and the model this agent uses.</div>
+                    </div>
+
+                    <div class="form-grid-2">
+                      <div class="field">
+                        <div class="field-label">Name</div>
+                        <div class="field-input">Support Assistant</div>
+                      </div>
+                      <div class="field">
+                        <div class="field-label">Category</div>
+                        <div class="field-input select">support <span class="field-select-arrow">▾</span></div>
+                      </div>
+                    </div>
+
+                    <div class="field">
+                      <div class="field-label">Description</div>
+                      <div class="field-textarea">Answers customer support questions using the product manual knowledge base and ticket history.</div>
+                    </div>
+
+                    <div class="field">
+                      <div class="field-label">Model</div>
+                      <div class="field-badge">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:12px;height:12px"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                        claude-sonnet-4 · Anthropic
+                      </div>
+                      <div class="field-input select" style="margin-top:8px;">Change model <span class="field-select-arrow">▾</span></div>
+                      <div class="modality-row">
+                        <span class="modality-tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>Text</span>
+                        <span class="modality-tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>Images</span>
+                        <span class="modality-tile on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/></svg>Files</span>
+                        <span class="modality-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>Audio</span>
+                        <span class="modality-tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>Video</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- save bar -->
+                <div class="save-bar">
+                  <span class="save-bar-msg">Unsaved changes</span>
+                  <span class="btn-save-bar-cancel">Cancel</span>
+                  <span class="btn-save-bar">Save</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["agents-workbench"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

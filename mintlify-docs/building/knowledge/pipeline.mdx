@@ -1,0 +1,139 @@
+---
+title: "Pipeline"
+description: "How the Sources → Processor → Embedder stages turn raw content into searchable knowledge."
+icon: "workflow"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+<Frame caption="A knowledge item moving through the pipeline: ingested, then processed into chunks, then embedded — watch ingestion become searchable.">
+  <video autoPlay muted loop playsInline src="/videos/knowledge-pipeline.mp4" />
+</Frame>
+
+## The pipeline concept
+
+Every context has a three-stage pipeline that transforms raw content into vectors an agent can search.
+
+```
+Sources  →  Processor  →  Embedder  →  Vector index
+```
+
+- **Sources** ingest external data into the context as items.
+- **Processor** splits items into chunks — discrete, overlapping text fragments sized for embedding.
+- **Embedder** converts chunks into vector embeddings and stores them in the vector index.
+
+When an agent retrieves knowledge, it queries the embeddings and traces the result back to the source items and chunks.
+
+<Note>
+Contexts and their pipeline stages are defined in code by your development team — you cannot add or remove stages from the UI. What the pipeline page lets you do is trigger, monitor, and troubleshoot the stages that already exist. See [Defining contexts](/developers/tutorials/defining-contexts) in the Developers section for how to configure stages in code.
+</Note>
+
+## Pipeline health
+
+At the top of the Pipeline tab, the **pipeline health panel** gives a snapshot of the context's retrieval readiness:
+
+| Stat | What it means |
+| --- | --- |
+| **Total items** | All items in the context. |
+| **Embedded** | Items that have at least one embedding chunk (retrievable). |
+| **Not embedded** | Items ingested but never embedded — these are invisible to agent retrieval. |
+| **Total chunks** | Sum of all chunks across all items. |
+| **Stale** | Chunks older than 30 days that may need regeneration. |
+
+A visual flow row summarizes the pipeline: "**`{n}` connected** · `{items}` items → Processor → Embedder → `{pct}`% retrievable".
+
+When there are items with no embeddings, a warning block appears: "**`{n}` items have no embeddings** — Ingested but never embedded — these items won't be returned by agent retrieval." Click **Inspect items** to filter the Items tab to those items.
+
+## Sources stage
+
+Sources are the mechanisms that bring external data into the context as items. Each source has:
+
+- **Name** — the identifier defined in code.
+- **Schedule** — a cron expression (displayed in monospace) if the source runs automatically. "No schedule" means manual-trigger only.
+- **Queue** — the job queue this source uses. Blank if the source runs inline.
+
+### Triggering a source
+
+Click **Run** on any source row. If the source has no parameters, it executes immediately. If it has parameters, the **Trigger `{name}`** dialog opens:
+
+- Each parameter shows its name, description, and default value.
+- Edit the values as needed, then click **Trigger source**.
+- The dialog shows whether the run will be queued ("A job will be scheduled in the `{queue}` queue") or inline ("The source will execute immediately without queueing").
+
+On success, a toast confirms "Source queued" and shows the number of jobs scheduled.
+
+### Source configuration
+
+Click **Configuration** on a source row to expand its configuration details: retries, backoff strategy, and schedule (cron expression). These values are set in code and shown here for reference only.
+
+### Source jobs
+
+Click **Jobs** on a source row to open the queue panel for that source. The panel shows pending, running, and recently completed jobs with their status and timestamps. From here you can retry a failed job — retrying reopens the trigger dialog pre-filled with the job's original parameters.
+
+## Processor stage
+
+The Processor takes items and splits them into chunks. In the stage card you see:
+
+- **Name** and **Description** — the processor's identifier and what it does (from code).
+- **Embeddings mode** — "Generated automatically" (the processor triggers the embedder after processing) or "Manual only" (chunks are created but embedding must be triggered separately).
+- **Timeout** — the maximum time (in seconds) allowed per item before the processor aborts.
+
+### Triggering the processor
+
+Click **Trigger** to run the processor in bulk on a filtered set of items. A filter dialog opens (equivalent to the bulk "Process items in bulk" dialog from the Items tab). Set your filters, preview the matches, and confirm.
+
+### Processor jobs
+
+Click **Jobs** to see the processor queue. Failed jobs show the error reason and can be retried.
+
+## Embedder stage
+
+The Embedder converts chunks into vectors and writes them to the vector index. The stage card shows:
+
+- **Embedder identity** — the model and provider used for embedding, displayed as "Embedder · `{id}`".
+- **Variable bindings** — any environment variables the embedder needs (API keys, endpoint URLs). Bindings are listed with their current status; unconfigured bindings show "No variable bindings configured."
+
+### Triggering the embedder
+
+Click **Trigger** to run the embedder in bulk on a filtered set of items. The "Generate embeddings in bulk" dialog lets you configure filters and preview the affected items.
+
+Click **Delete embeddings (bulk)** to remove stored vectors for a filtered set (the items themselves are kept). Use this before re-embedding with a different model.
+
+### Embedder jobs
+
+Click **Jobs** to see the embedding queue. Large contexts can queue many jobs; the panel shows progress across the queue.
+
+## Activity log
+
+Below the three stage cards, the **Recent activity** panel shows a merged feed of the most recent processing and embedding events across all stages. Each row shows the stage (Processed / Embedded), the item name, and the timestamp. The list polls automatically every 10 seconds while you are on the Pipeline tab.
+
+## Deep-linking to a stage
+
+You can open the Pipeline tab directly on a specific stage's Jobs panel by adding `?stage=sources`, `?stage=processor`, or `?stage=embedder` to the context URL. Item detail pages use this to link to "Open queue" when a pipeline job is in progress.
+
+## Common situations
+
+### Items visible but agents cannot find them
+
+The item exists but has no embeddings. Check the health panel for "Not embedded" count. Open the item, click **Generate embeddings**, or trigger the embedder in bulk from the Pipeline tab.
+
+### Processor runs but no chunks appear
+
+The item may have no processable content (empty description, no attached file). Open the item and fill in the **Description** or ensure the source wrote content to the item.
+
+### Old embeddings from a model you replaced
+
+Use **Delete embeddings (bulk)** to clear the old vectors, then re-trigger the Embedder with the new model configuration. The stale count in the health panel indicates chunks older than 30 days.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Items" icon="list" href="/building/knowledge/items">
+    Create and manage items, trigger per-item pipeline runs.
+  </Card>
+  <Card title="Entities" icon="tag" href="/building/knowledge/entities">
+    Add entity extraction on top of the pipeline.
+  </Card>
+</Columns>

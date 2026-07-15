@@ -1,0 +1,24 @@
+<article class="chapter" id="r-text-to-speech" data-release="2026-07-08-platform-roundup" aria-labelledby="r-text-to-speech-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">29</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-text-to-speech-h">Read replies aloud</h1>
+    <p class="ch-lede">Any assistant message becomes audio — one click on the speaker.</p>
+  </header>
+  <section class="feature"><p class="kicker">Chat experience</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-platform-roundup__text-to-speech.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Every completed assistant message now carries a speaker button in its actions row. Click it and the reply plays as audio — markdown stripped, code blocks skipped. Click again to pause; replays are instant because each message keeps its audio cached. Even on multi-page answers, playback starts in roughly two to three seconds.</p>
+          <p>The same endpoint is open to any authenticated client — text in, MP3 out, up to 4,000 characters per call. It's live on deployments with <code>EXULU_USE_LITELLM=true</code>, <code>TTS_MODEL</code>, and <code>TTS_VOICE</code> configured.</p>
+          <div class="snippet-label">REST — text in, MP3 out</div>
+          <pre><code># Any authenticated client can synthesize speech:
+curl -X POST "$EXULU_BACKEND/speech" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Here is the summary you asked for."}' \
+  --output reply.mp3</code></pre>
+        </div></section>
+</article>

@@ -1,0 +1,74 @@
+<article class="chapter" id="r-chat-trust-and-control" data-release="2026-07-08-chat-trust-and-control" aria-labelledby="r-chat-trust-and-control-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">36</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Trust & Control in Chat</span>
+    </div>
+    <h1 class="ch-title" id="r-chat-trust-and-control-h">See what the agent does. Decide what it <em>may</em>.</h1>
+    <p class="ch-lede">Enterprise-grade control lives right inside the conversation: approve sensitive tool calls before they run, verify every answer down to the source PDF page, and steer the agent through structured question cards and visible plans.</p>
+  </header>
+  <section class="feature" id="r-chat-trust-and-control--tool-approval"><h2>Tool-call approval</h2>
+        <p class="one-liner">Nothing runs without your say-so.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-chat-trust-and-control__tool-approval.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>When an agent wants to run a sensitive tool, the conversation pauses and an approval card appears in place: a plain-language explanation and a preview of the exact input the tool will receive. Choose <strong>Allow once</strong>, <strong>Allow for this chat</strong>, or Deny — a denied call tells the agent no, and it answers with what it can do instead.</p>
+          <p>Chat-wide approvals are never invisible: they're listed under "Approved for this chat" with a per-tool Revoke button. Every custom tool asks first by default; only the built-in sandbox file and shell tools run without a prompt.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--citations"><h2>Citations</h2>
+        <p class="one-liner">Every answer shows its work — down to the page.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-chat-trust-and-control__citations.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Answers show their work. Every retrieval-backed claim carries a compact citation badge right where the claim is made; click it to see the exact retrieved passage, its source metadata, and — for PDFs — the source document opened at the cited page. Internet-search claims get the same treatment: the quoted snippet alongside the live page.</p>
+          <p>Spot a bad source? <strong>"Deactivate this source"</strong> archives the item globally from the same dialog — it stops appearing in every user's chat and search results.</p>
+          <div class="snippet-label">GraphQL — the provenance query behind the dialog</div>
+          <p class="fineprint" style="margin: 0 0 8px;">The dialog runs this query — so can you:</p>
+          <pre><code>query GetChunkByIdreports($id: ID!) {
+  reports_itemsChunkById(id: $id) {
+    chunk_content
+    chunk_index
+    chunk_metadata   # pdf + page drive the PDF-at-page preview
+    item_id
+    item_name
+    item_external_id
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--question-cards"><h2>Question cards</h2>
+        <p class="one-liner">Agents that ask before they act.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-chat-trust-and-control__question-cards.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Agents can pause and ask instead of guessing: a question card renders in the transcript with multi-select options and a <strong>"Confirm selection"</strong> button. Your choices post back as a normal message, so the decision survives a page refresh and stays visible to the agent.</p>
+          <p>Plans show the same way: a live checklist that updates in place — done, in progress, pending — with a progress bar counting steps. Both surfaces are built-in agent tools you toggle per agent, and answers are plain messages, so they work with any model.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--skills-and-tools"><h2>Decide what the agent may use, per conversation</h2>
+        <p class="one-liner">Every skill and tool the agent carries, switched on or off — for this chat.</p>
+        <div class="slice">
+          <p>Open <strong>"Skills &amp; tools"</strong> from the ＋ menu to see everything the agent carries — every skill and tool with its own switch, plus per-section enable-all and disable-all. Tools you approved mid-conversation appear under "Approved for this chat" with a Revoke button, so a one-time grant is never permanent or invisible.</p>
+          <p>When anything is switched off, a quiet <strong>"N off"</strong> badge sits on the ＋ trigger — a non-default setup is visible before you send your next message.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--session-sharing-rbac"><h2>Share a conversation without giving away the pen</h2>
+        <p class="one-liner">Hand out the link, keep control of who can write.</p>
+        <div class="slice">
+          <p><strong>"Share conversation"</strong> hands out the link, and the <strong>"Access"</strong> panel controls who can do what: keep it private, or share with specific users or roles, each set to Read or Write.</p>
+          <p>Read-only recipients get the full transcript but not the pen — the composer becomes a lock bar naming who shared the chat, so they know exactly whom to ask for write access.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--conversation-search"><h2>Find any conversation, delete fifty at once</h2>
+        <p class="one-liner">A debounced title search and bulk delete, per agent.</p>
+        <div class="slice">
+          <p>Every agent gets a <strong>"Search conversations"</strong> page: type three or more characters and the list narrows to matching titles, paging in 50 at a time.</p>
+          <p>Need to clean up? Flip on <strong>Select</strong>, tick the conversations you're allowed to touch — select-all included — and delete them in one action, behind a confirm that's honest about the stakes: deletion is permanent and applies to everyone with access.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--reasoning-timeline"><h2>See how the answer was built</h2>
+        <p class="one-liner">A numbered reasoning timeline you can unfold and audit.</p>
+        <div class="slice">
+          <p>While an agent works, its reasoning renders as a numbered timeline: each step shows the agent's thinking plus a chip for every tool it called — click one to see that call's actual input and output.</p>
+          <p>Long runs stay readable. While streaming, only the latest five steps show; once the answer lands, the whole trail collapses to a single line you can expand whenever you want to audit the run.</p>
+        </div></section>
+<section class="feature" id="r-chat-trust-and-control--feedback-source-curation"><h2>Thumbs-down that fixes the source, not just the answer</h2>
+        <p class="one-liner">Pull a bad source for the whole team from inside the feedback dialog.</p>
+        <div class="slice">
+          <p>A thumbs-down now opens <strong>"What could be improved?"</strong> with more than a text box: it lists every knowledge source the answer actually cited. Knowledge curators can deactivate a bad source right there, behind a two-step confirm that states the consequence — the item is archived globally and stops appearing in anyone's chat or search results.</p>
+          <p>One bad answer becomes one fix for the whole team — no hunting through the knowledge base.</p>
+        </div></section>
+</article>

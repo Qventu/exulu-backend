@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — From conversation to automation (Routines)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 98.8235%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Routines</span>
+      <h1 class="hero">From conversation to <em>automation</em>.</h1>
+      <p class="lede">Any working chat can become a routine: save it, give it a schedule, and let it run on its own — with a live run list, parameterized re-runs, and full error forensics when something breaks.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="chat-to-routine">
+        <h2>Save a chat as a routine</h2>
+        <p class="one-liner">From conversation to automation in two clicks.</p>
+        <div class="slice">
+          <video src="./shorts/chat-to-routine.mp4" poster="./shorts/chat-to-routine-poster.png" autoplay loop muted playsinline></video>
+          <p>Any chat can become a routine. The chat header's ⋯ menu now carries <strong>"Save as Routine"</strong>, enabled once the session has at least one user and one assistant message. Selecting it opens a dialog pre-seeded from the conversation — the <strong>Routine name</strong> field arrives pre-filled with the session title, above a Description field and collapsed <strong>Sharing &amp; permissions</strong>. The dialog's own copy carries the promise: <em>"Convert this conversation into a reusable routine. Use {variable_name} syntax to create variables."</em></p>
+          <p>The captured conversation lives on a <strong>Steps</strong> tab: your user messages are kept verbatim and stay editable, while every assistant turn is replaced by a placeholder that the agent regenerates fresh on each run — so a routine never replays a stale answer. Before the agent's first reply the menu entry stays disabled with the honest sub-line <strong>"Available after the agent's first reply"</strong>, and ⌘./Ctrl+. opens the menu from the keyboard.</p>
+          <p>Saving fires <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">workflow_templatesCreateOne</code> with the agent always attached — "Routines must have an agent attached" guards the payload. This is the <strong>only</strong> creation path for routines: the /workflows page edits them, but chat is where routines are born.</p>
+          <div class="snippet-label">GraphQL — the dialog is plain GraphQL underneath — script the same creation path:</div>
+          <pre><code>mutation CreateWorkflowTemplate(
+  $name: String!
+  $rights_mode: String!
+  $agent: String!
+  $steps_json: JSON!
+) {
+  workflow_templatesCreateOne(
+    input: { name: $name, rights_mode: $rights_mode, agent: $agent, steps_json: $steps_json }
+  ) {
+    item { id name variables }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="cron-schedule">
+        <h2>Cron scheduling with presets</h2>
+        <p class="one-liner">Agents that work while you sleep.</p>
+        <div class="slice">
+          <video src="./shorts/cron-schedule.mp4" poster="./shorts/cron-schedule-poster.png" autoplay loop muted playsinline></video>
+          <p>Every routine's workbench has a <strong>Schedule</strong> section, open by default. Pick from a Select of seven presets — each with a label and a one-line description — and the resulting cron expression echoes instantly in a muted box beneath: choose <strong>"Weekdays at 09:00"</strong> and <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">0 9 * * 1-5</code> appears under "CRON expression", no cron syntax required. A server-computed <strong>Next run</strong> line ("in 7 hours") sits above the editor and updates after you save.</p>
+          <p>Prefer to write it by hand? The <strong>Custom CRON</strong> tab is a free-text input validated live with cron-validator — invalid input shows <strong>"Invalid CRON expression. Format: minute hour day month weekday"</strong> with a destructive border, and a quiet <strong>"Format help"</strong> disclosure expands a cheat sheet ("minute: 0–59", "hour: 0–23", "day: 1–31", "month: 1–12", "weekday: 0–7 (0 and 7 are Sunday)").</p>
+          <p>Editing never means retyping. On mount, <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">matchPreset()</code> checks a saved cron against the presets — a match reopens the Presets tab pre-selected; anything else opens Custom with the value filled in. The Save button is state-aware — <strong>"Save schedule"</strong> becomes <strong>"Update schedule"</strong> when one exists — and <strong>"Remove schedule"</strong> sits behind a confirm that spells it out: "The routine stays — only the automatic schedule is removed."</p>
+          <div class="snippet-label">GraphQL — Schedules are a first-class API — one mutation to set, one query for the server-computed next run:</div>
+          <pre><code>mutation UpsertWorkflowSchedule($workflow: ID!, $schedule: String!) {
+  upsertWorkflowSchedule(workflow: $workflow, schedule: $schedule) {
+    status
+  }
+}
+
+query GetWorkflowSchedule($workflow: ID!) {
+  workflowSchedule(workflow: $workflow) {
+    schedule
+    next
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="run-forensics">
+        <h2>Run history with error forensics</h2>
+        <p class="one-liner">See exactly why a run failed.</p>
+        <div class="slice">
+          <video src="./shorts/run-forensics.mp4" poster="./shorts/run-forensics-poster.png" autoplay loop muted playsinline></video>
+          <p>The workbench's <strong>Runs</strong> section lists the last 50 executions as flat rows that expand <strong>in place</strong> — no second navigation altitude. A collapsed row is a status dot (green completed, red failed, blue pulsing for active), a tinted state pill, and a relative timestamp ("2h ago"). Click anywhere on it and it unfolds: the full timestamp ("Jul 8, 2026, 7:02:11 AM"), a red <strong>Error</strong> block with the complete message, a <strong>Metadata</strong> key/value table of the run's inputs and queue, and two actions.</p>
+          <p>The forensics are lazy: the list query fetches only the light fields, and the heavy detail — error, result, metadata — is fetched on first expand, cache-first, with the row kept mounted so re-collapse and re-expand are instant. <strong>"Show raw payload"</strong> toggles a copyable JSON block of the whole record, and <strong>"Retry with edits"</strong> reopens the Run dialog prefilled with the failed run's recorded <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">metadata.inputs</code> — so you fix only what broke. States cover completed / failed / stuck / active / waiting / delayed / paused; only one run expands at a time. Empty routines say so: <strong>"No runs yet"</strong> — "Press Run to try this routine."</p>
+          <div class="snippet-label">GraphQL — The same forensics are one query away — pull any run's error and inputs programmatically:</div>
+          <pre><code>query GetJobResultById($id: ID!) {
+  job_resultById(id: $id) {
+    id
+    state
+    error
+    result
+    metadata
+    createdAt
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="routines-index">
+        <h2>One list, every routine's pulse</h2>
+        <p class="one-liner">Name, last run, next run — the whole automation estate in one table.</p>
+        <div class="slice">
+          <p>The new /workflows index is a real operations view, not a bare list. The page header reads "Routines" — "Saved conversations that run on demand or on a schedule." — with a debounced "Search routines…" box and a live count ("3 routines"). Each row shows four columns: <strong>Name</strong> (with description and a visibility chip), <strong>Last run</strong>, <strong>Schedule</strong>, and an inline <strong>Run</strong> button. The list re-polls every 30 seconds, and all per-row data is resolved by batched page-level lookups — the redesign explicitly killed the old per-row query storm.</p>
+          <p>Status is a colored dot that stays quiet until it isn't: completed runs get a green dot with a relative timestamp, failures a red one, and a currently <strong>active</strong> run gets a blue dot that gently pulses — it respects reduced-motion. A routine that has never run shows a muted dot labelled "Never run". The Schedule column is a monospace cron chip whose tooltip shows "Next run" plus the relative time; unscheduled routines show an em dash. The visibility chip appears only when a routine isn't private: "Public" with a globe, "Users ({count})", or "Roles ({count})" — private stays unmarked, because private is the default, not a badge.</p>
+          <p>The inline Run button fires from the row without leaving the page; when it can't run it says why in a tooltip — "No agent attached" or "You don't have permission to run this routine". And notably there is <strong>no create button</strong> here: routines are created exclusively from chat. The empty state says it outright: "No routines yet" — "Save any chat conversation as a routine to run it again — on demand or on a schedule." with an "Open chat" link.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="run-dialog">
+        <h2>Run it now, or queue it — the dialog tells you which</h2>
+        <p class="one-liner">One form, honest about what happens when you press the button.</p>
+        <div class="slice">
+          <p>Pressing Run opens a single dialog titled "Run {name}". Directly under the title, one quiet line tells you exactly what will happen: "Runs immediately" (lightning icon) when the agent has no queue, or "Queued on {queue}" (clock icon) when the run will be enqueued on the agent's queue. The submit button matches: "Run now" vs "Queue routine" (and "Starting…" while in flight). Even the success toast is honest — "Routine queued" vs "Routine run started" — replacing the legacy toast that claimed completion before a queued run had even started.</p>
+          <p>Every <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{variable}</code> in the routine's steps becomes a labelled form field with a required asterisk, a placeholder like "Enter company name…", and inline validation ("Required") — no toast-only errors. Routines without inputs state it plainly: "No input variables required for this routine."</p>
+          <p>The same dialog powers failure recovery. In the workbench's Runs section, every expanded run has a "Retry with edits" button that reopens this dialog with the fields <strong>pre-filled from that run's recorded <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">metadata.inputs</code></strong> — fix the one bad value and re-run, instead of retyping everything. Under the hood it is one GraphQL mutation — the same call any authenticated client can make against the API:</p>
+          <div class="snippet-label">GraphQL — one mutation runs a routine, immediately or queued</div>
+          <pre><code>mutation RunWorkflow($id: ID!, $variables: JSON!) {
+  runWorkflow(id: $id, variables: $variables) { result job metadata }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="workbench">
+        <h2>The routine workbench: one page, seven rungs</h2>
+        <p class="one-liner">Everything about a routine — settings, steps, schedule, history, queue — on a single scrollable page.</p>
+        <div class="slice">
+          <p>Clicking a routine opens /workflows/[id], a full workbench that replaced the old edit dialog. A sticky section nav walks a fixed ladder — verbatim: "Basics", "Access", "Steps", "Schedule", "Runs", "Queue", "Danger zone". The header carries a breadcrumb back to Routines, the agent it "Uses", the visibility chip, a primary Run button, and a "Copy routine ID" overflow action. Edits to Basics and Access ride a page-level save bar ("Unsaved changes to this routine") with an unsaved-changes guard that intercepts navigation.</p>
+          <p>Scheduling is built in: pick from seven cron presets or write a custom expression with inline validation, and an existing cron that matches a preset reopens on the preset — the round-trip is prefilled, not forgotten. Saving fires <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">upsertWorkflowSchedule(workflow, schedule)</code>; "Remove schedule" deletes only the cron, with the confirm copy spelling it out: "The routine stays — only the automatic schedule is removed."</p>
+          <p>Runs is a forensic history, not a link list: the last 50 runs expand <strong>in place</strong> with a state badge, timestamp, full error block, a key/value metadata table, a "Show raw payload" JSON toggle, and the "Retry with edits" button. The Danger zone appears only for users who can actually delete, and deleting is type-to-confirm: "This permanently deletes the routine. To confirm, type its name".</p>
+        </div>
+      </section>
+
+      <section class="feature" id="steps-editor">
+        <h2>Edit steps like the conversation they are</h2>
+        <p class="one-liner">A routine's steps are chat messages — so the editor is a chat.</p>
+        <div class="slice">
+          <p>From the Steps section, "Edit steps" opens a wide right-side sheet titled "Edit conversation steps" — "Add or remove steps. Use {variable_name} syntax to create reusable variables." The steps render as a real conversation: your user messages are editable and removable bubbles, and between them sit assistant placeholders that read "Placeholder — the agent's generated response will appear here when the routine runs." — marked with a primary-tinted left border and no action row, so it's unmistakable which turns you wrote and which turns the agent will fill in at run time. Removing a user message removes its paired placeholder automatically.</p>
+          <p>The composer at the bottom works like chat too: "Add user message", placeholder "Type the user's message…", and "Press Enter to add, Shift+Enter for a new line. You can attach files." Attachments go through the platform's file picker (up to 10 files per message; images, PDFs, Office documents, CSVs, audio, and video), with a heads-up shown under selected files: "Make sure the selected agent supports these file types (images, documents, audio)."</p>
+          <p>The sheet owns its own save bar ("Unsaved step changes") independent of the page-level form, and closing with pending edits is gated by a confirm — "Discard step changes?" — "Your changes to this routine's steps will be lost. This does not affect anything that has already been saved." Saving persists only <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">steps_json</code> (plus the routine's agent), so a half-finished rename elsewhere on the page can't leak through.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="queue">
+        <h2>The queue, without leaving the routine</h2>
+        <p class="one-liner">Pause, inspect, and retry queued runs from a sheet on the routine itself.</p>
+        <div class="slice">
+          <p>When a routine's agent runs on a queue, the workbench's Queue section names it and offers "Manage queue" (and states the alternative honestly: "No queue configured for this routine's agent."). The button opens a right-side sheet titled "Queue: {name}" hosting the platform's shared queue panel, scoped to exactly that agent queue — the same oversight surface used elsewhere in Exulu, so nothing here is a one-off.</p>
+          <p>Inside: jobs grouped by state tab (active, waiting, completed, failed, delayed, paused), queue-level pause and resume with confirms, and per-job retry with a "Delete original after retrying" option. Retry here is routine-aware — each job row is labelled "Routine run: {workflow}", and retrying re-fires the <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">runWorkflow</code> mutation with the job's <strong>original recorded inputs</strong>, so a failed scheduled run is re-executed with the exact variables it had. If a job's payload lost its routine reference, the panel says so instead of guessing: "Cannot retry — original routine reference missing".</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

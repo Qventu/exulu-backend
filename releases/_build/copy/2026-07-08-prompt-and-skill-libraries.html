@@ -1,0 +1,120 @@
+      <section class="feature" id="skill-ide">
+        <h2>Skill editor mini-IDE</h2>
+        <p class="one-liner">Build agent skills like a code project — files, versions and Cmd+S, right in the browser.</p>
+        <div class="slice">
+          <video src="./shorts/skill-ide.mp4" poster="./shorts/skill-ide-poster.png" autoplay loop muted playsinline></video>
+          <p>The skill editor is now a mini-IDE in the browser. A file sidebar carries a real tree — create, rename, and delete files and folders — next to an editor that opens <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.md</code> files in markdown and everything else in plain text. <strong>Cmd/Ctrl+S saves</strong>, an "Unsaved" badge tracks your edits, and switching files with unsaved changes asks before discarding.</p>
+          <p><strong>"Save version"</strong> snapshots the current state into history, with file-level diffs one click away. Without write access, every file stays browsable in read-only mode.</p>
+          <div class="snippet-label">Cmd+S is a plain REST flow — script the same save from anywhere</div>
+          <pre><code>POST /skills/{skillId}/sign
+{ "filePath": "SKILL.md", "contentType": "text/markdown" }
+
+# → { "key": "skills/{skillId}/v2/SKILL.md",
+#     "url": "&lt;presigned PUT URL&gt;", "method": "PUT" }
+
+PUT &lt;presigned PUT URL&gt;
+Content-Type: text/markdown
+
+&lt;new SKILL.md content&gt;</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-variables">
+        <h2>Variable-fill for templated prompts</h2>
+        <p class="one-liner">One prompt library for the whole org — templates carry the blanks; anyone fills them in seconds.</p>
+        <div class="slice">
+          <video src="./shorts/prompt-variables.mp4" poster="./shorts/prompt-variables-poster.png" autoplay loop muted playsinline></video>
+          <p>Prompts can carry <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{{variable}}</code> placeholders — names use letters, numbers, and underscores. Clicking <strong>"Use prompt"</strong> on a templated prompt opens a fill-in dialog with one labeled field per variable, and copy stays disabled until every field is filled — no half-finished templates on your clipboard. Prompts without variables copy straight away.</p>
+          <p>The same fill flow works in the chat composer's prompt selector, inserting the finished text into your message. And every use now counts, so "Used N times" and the "Most used" sort reflect real usage.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-versions">
+        <h2>Prompt version history</h2>
+        <p class="one-liner">Every prompt keeps its history — see exactly what changed, roll back anytime.</p>
+        <div class="slice">
+          <video src="./shorts/prompt-versions.mp4" poster="./shorts/prompt-versions-poster.png" autoplay loop muted playsinline></video>
+          <p>Every prompt now keeps a version history: each edit is logged with its change note, author, and timestamp, newest first. <strong>"Compare"</strong> opens a side-by-side diff with word-level highlights — pick any two versions, including the current state — and changes to name, description, or tags are summarized above the content diff.</p>
+          <p><strong>"Restore"</strong> rolls a prompt back, preserving your current state in history first, with room for an optional restoration note. Consecutive edits by the same author within five minutes squash into one entry, and the timeline keeps the last 50 versions.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-versions">
+        <h2>Skill versioning with per-file diffs</h2>
+        <p class="one-liner">Skills, under version control — know exactly what changed, file by file.</p>
+        <div class="slice">
+          <video src="./shorts/skill-versions.mp4" poster="./shorts/skill-versions-poster.png" autoplay loop muted playsinline></video>
+          <p>Skills are versioned file bundles. <strong>"Save version"</strong> snapshots every file into a labeled version slot while you keep editing the next one. <strong>"Compare versions"</strong> lists the added, removed, and modified files between any two versions — click a modified file for a split red/green diff with word-level highlights.</p>
+          <p>Any version downloads as a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.zip</code> with folder structure preserved plus a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">version.txt</code> manifest — take a skill into Claude Code or any other tool.</p>
+          <div class="snippet-label">Snapshots and diffs are plain REST — script them</div>
+          <pre><code>POST /skills/:skillId/version
+{ "label": "Tightened safety prompt" }
+# → { "newVersion": 4, "fileCount": 12 }
+
+GET /skills/:skillId/diff?fromVersion=3&amp;toVersion=4
+# → { "fromVersion": 3, "toVersion": 4,
+#     "files": [ { "path": "reference.md",
+#                  "status": "modified", "diff": "..." } ] }</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="prompts-library">
+        <h2>Find any prompt in three keystrokes</h2>
+        <p class="one-liner">The whole prompt library on one screen — search, sort, filter, and the document always open.</p>
+        <div class="slice">
+          <p>The new <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/prompts</code> page is a split view: a paginated list on the left, the full prompt document always open on the right. Search by name, sort five ways — recently updated, recently created, most favorited, most used, alphabetical — and filter by favorites, tags, or agents, with each active filter shown as a removable chip.</p>
+          <p>Fifty prompts per page, and two shortcuts: <strong>"/"</strong> jumps to search, <strong>"N"</strong> opens a new prompt if you have write access.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-detail">
+        <h2>Every prompt is one click to use and one link to share</h2>
+        <p class="one-liner">Use it, star it, send the link — every prompt has a full shareable page.</p>
+        <div class="slice">
+          <p><strong>"Use prompt"</strong> copies the content to your clipboard and now counts toward the prompt's usage, so "Used N times" and the "Most used" sort finally mean something. A star toggle adds the prompt to your favorites.</p>
+          <p>Every prompt also has its own shareable page — <strong>"Copy link"</strong> puts the URL on your clipboard — showing the creator, last update, access level, usage count, and favorite count at a glance.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="prompt-editor">
+        <h2>Write once, template forever</h2>
+        <p class="one-liner">One modal for content, variables, and access — content, sharing, and change notes in a single pass.</p>
+        <div class="slice">
+          <p>One editor covers content, organization, and sharing in a single pass. Flip between plain text and rich text with live markdown preview, while <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">{{variable}}</code> tokens are detected as you type. Add up to 5 tags, assign the prompt to agents so it appears as a recommendation in chat, and share it privately, with specific users, roles, or teams, or publicly.</p>
+          <p>On edit, an optional <strong>"What changed?"</strong> note feeds the version history. Only real changes create a version, and the timeline keeps the last 50.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skills-library">
+        <h2>Browse skills like files, not like folklore</h2>
+        <p class="one-liner">A library, not a maze — the same split view, with the skill you're inspecting docked open.</p>
+        <div class="slice">
+          <p>The <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">/skills</code> page gets the same split-view treatment: search as you type, tag filters with removable chips, and a docked detail panel so the skill you're inspecting stays open while you scan the list. Select multiple tags and a skill must carry all of them.</p>
+          <p>Fifty skills per page, and <strong>"N"</strong> opens the create dialog from anywhere on the page.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-detail">
+        <h2>Know what a skill does before an agent loads it</h2>
+        <p class="one-liner">Read it before you run it — the real SKILL.md, versions, access, and a portable .zip export.</p>
+        <div class="slice">
+          <p>Select a skill and the panel shows its actual <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">SKILL.md</code> — the first 15 lines, with an expander for the rest — plus inline-editable tags, a compact version history, access control, and stats for versions and how many times agents have loaded the skill. The overflow menu adds <strong>"Download as .zip"</strong> and copying the skill ID.</p>
+          <p>Export is a real API, not just a button: any authenticated client can download a skill version as a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.zip</code> with folder structure preserved plus a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">version.txt</code> manifest. Omit the version and you get the current one.</p>
+          <div class="snippet-label">REST — export any skill version as a portable .zip</div>
+          <pre><code># Export any skill version as a portable .zip:
+curl -H "Authorization: Bearer $JWT" \
+  "$EXULU_BACKEND/skills/$SKILL_ID/download?version=3" \
+  --output data-analysis-v3.zip
+# → folder structure preserved + version.txt
+#   (Skill / Skill id / Version / Files / Exported at)</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="create-skill">
+        <h2>From zero to editable skill in one dialog</h2>
+        <p class="one-liner">Start blank or bring a bundle — a skill is shareable the moment it exists.</p>
+        <div class="slice">
+          <p>The <strong>"New skill"</strong> dialog offers two paths: create blank — which seeds a templated <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">SKILL.md</code> and drops you straight into the editor — or create from upload, dragging in a <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.zip</code> skill folder or a single <code style="font-family:'JetBrains Mono',monospace;font-size:14px;">.md</code> file that becomes version 1. Only .zip and .md files are accepted.</p>
+          <p>Name, description, tags, and access are all set in the same dialog, so a skill is shareable the moment it exists — and access settings now reliably stick on create.</p>
+        </div>
+      </section>

@@ -1,0 +1,54 @@
+---
+title: "Redis"
+description: "Redis powers IMP's BullMQ job queues. Required only when running worker containers."
+icon: "layers"
+---
+
+IMP uses Redis as the backing store for BullMQ job queues. Workers dequeue and process background jobs (knowledge ingestion, embeddings, evals, routines) via Redis.
+
+**Redis is not required for backend-only deployments.** If you are not running a worker container, you can leave the Redis variables unset.
+
+## Image and port
+
+| Property | Value |
+|---|---|
+| Recommended image | `redis:7` |
+| Port | `6379` |
+
+## Connection behaviour
+
+The BullMQ client reads `REDIS_HOST` and `REDIS_PORT` lazily when the first queue is registered. If either variable is empty and a worker tries to enqueue a job, IMP logs an error and throws — it does not silently discard work.
+
+IMP uses `enableOfflineQueue: false` on every queue connection, so the client fails fast when Redis is unreachable rather than buffering commands indefinitely. The startup path waits for the connection to be ready before accepting jobs and reports a clear error if Redis does not respond within the startup timeout.
+
+## Configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `REDIS_HOST` | — | Hostname or IP of the Redis server |
+| `REDIS_PORT` | — | Port (typically `6379`) |
+| `REDIS_USER` | `""` | ACL username. Use `default` for Redis without ACLs. |
+| `REDIS_PASSWORD` | — | Password |
+
+## Compose excerpt
+
+```yaml
+exulu-redis:
+  image: redis:7
+  restart: unless-stopped
+  ports:
+    - "6379:6379"
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+```
+
+## Operational notes
+
+**Worker env file.** The worker compose file (`docker-compose.worker.yml`) does not include an `env_file` entry by default. Outside Dokploy, add `env_file: [.env]` to the worker service or inject the variables another way, or the worker starts without Redis credentials and fails on first job.
+
+**Worker heap size.** Workers need at least 8 GB of Node.js heap for knowledge processing tasks. Set `NODE_OPTIONS='--max-old-space-size=8192'` in the worker container's environment.
+
+**Queue licence requirement.** Queue registration requires the `EXULU_ENTERPRISE_LICENSE` env var to be set to a valid enterprise licence key. IMP throws on startup if you attempt to register a queue without a licence.

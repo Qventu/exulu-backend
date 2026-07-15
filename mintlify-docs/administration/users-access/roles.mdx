@@ -1,0 +1,87 @@
+---
+title: "Roles"
+description: "Create and configure roles with the permission matrix: seven right areas, each with None / Read / Write."
+icon: "shield"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="users (write)" />
+
+## What roles are
+
+A role is a named bundle of permissions. Assign a role to a user and they gain exactly what the role grants — no more, no less. Roles use a three-level grant per area: **None**, **Read**, or **Write**. Super admins bypass the role system and always have full access.
+
+The Roles tab is at `/users?tab=roles` (also reachable via the `/roles` redirect).
+
+<Frame caption="Configuring a role's permission matrix: set None / Read / Write for each area (Agents, Routines, Variables, Users, API, Evals, Budgets), then save.">
+  <video autoPlay muted loop playsInline src="/videos/assign-role.mp4" />
+</Frame>
+
+## The roles list
+
+The Roles tab shows all roles in a table with columns **Role**, **Permissions**, and **Updated**. The Permissions column summarizes each area's grant level with short badges (RW for read/write, R for read only, or blank for no permission).
+
+Use the **Search roles…** field to filter by name. System roles are marked with a **System** badge and cannot be renamed or deleted.
+
+Click any role row to open the role detail panel.
+
+## The permission matrix
+
+Each role has a permission matrix with seven areas. For each area you choose one of:
+
+| Level | What the holder can do |
+| --- | --- |
+| **None** | No access — the corresponding nav item is hidden and routes are blocked. |
+| **Read** | View the area's content; no mutations. |
+| **Write** | Full create, edit, and delete access within the area. |
+
+### The seven right areas
+
+| Area | What it covers |
+| --- | --- |
+| **Agents** | AI agents and their configurations. Controls access to `/agents`, `/prompts`, and Knowledge (`/data`) with read level; `/skills` requires write level. |
+| **Routines** | Routines and their runs. Controls access to `/workflows`. |
+| **Variables** | Environment variables and secrets. Controls access to `/variables`. |
+| **Users** | User management and roles. Controls access to `/users`. |
+| **API** | API access and management. Controls access to `/explorer` and `/keys`. |
+| **Evals** | Evaluation sets, test cases, and eval runs. Controls access to `/evals`. |
+| **Budgets** | Spend budgets for users, roles, teams, projects, and agents. Controls access to `/budgets`. |
+
+<Note>
+Each area row includes an info tooltip (the ⓘ icon) that shows a short description. These match the labels above exactly as verified in the frontend source.
+</Note>
+
+### Blast radius
+
+Saving a role applies the new permissions immediately to every user who holds it. IMP notes this on the detail panel: "Members of this role see navigation changes immediately." There is no staged rollout.
+
+## Create a role
+
+Click **New role** in the page header to open the create panel. Enter a **Role name** and configure the permission matrix. Click **Create** to save.
+
+## Edit a role
+
+Open any non-system role from the list. Change the name or any area's grant level and click **Save**. The detail panel shows an "Unsaved changes" indicator while there are pending edits.
+
+## Delete a role
+
+Open the role's detail panel, scroll to **Danger zone**, and click **Delete role**. A confirmation dialog warns that members of the role keep their accounts but lose its permission grants immediately. System roles show a tooltip ("System roles cannot be deleted") and the delete button is disabled.
+
+## System roles
+
+System roles are created by IMP on deployment and reflect the platform defaults. They appear with a **System** badge in the list and in the detail panel. System roles cannot be renamed or deleted.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Users overview" icon="users" href="/administration/users-access/overview">
+    Assign roles to individual users or in bulk from the Users tab.
+  </Card>
+  <Card title="Teams" icon="users-round" href="/administration/users-access/teams">
+    Group users for cost attribution and content sharing.
+  </Card>
+  <Card title="Budgets" icon="wallet" href="/administration/budgets">
+    The budget_management right controls who can view and edit budgets.
+  </Card>
+</Columns>

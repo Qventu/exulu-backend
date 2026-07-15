@@ -1,0 +1,111 @@
+---
+title: "ExuluReranker"
+description: "Provider-agnostic reranking via LiteLLM — reorder retrieval results by relevance and attach a rerank_score."
+---
+
+`ExuluReranker` wraps the backend's reranking infrastructure. It sends a query and a list of chunks to a LiteLLM-proxied reranker model (following the Cohere-compatible `/v1/rerank` shape), then returns the items reordered descending by relevance with a `rerank_score` field added to each.
+
+Because reranking goes through the LiteLLM proxy, you switch providers (Cohere, Vertex AI, Together AI, …) by editing `config.litellm.yaml` rather than by changing code. Cost attribution via spend tags is built in.
+
+## API surface
+
+### ExuluReranker.rerank
+
+```typescript
+ExuluReranker.rerank<T extends RerankableChunk>(input: {
+  query: string;
+  items: T[];
+  topN?: number;
+  model: string;
+  contextId?: string;
+  contextName?: string;
+  user?: User;
+  userId?: number;
+  roleId?: string;
+  project?: Project;
+  agent?: ExuluAgent;
+  routine?: { id: string; name: string };
+}): Promise<(T & { rerank_score: number })[]>
+```
+
+<ParamField path="query" type="string" required>
+  The user query or search string to score items against.
+</ParamField>
+
+<ParamField path="items" type="T[]" required>
+  The chunks to rerank. Each item must have `item_name` and `chunk_content` fields (the shape shared by `VectorSearchChunkResult` and the retrieval pipeline's `ChunkWithScore`). All other fields are preserved on the returned objects.
+</ParamField>
+
+<ParamField path="model" type="string" required>
+  LiteLLM `model_name` declared in `config.litellm.yaml` with `model_info.type: reranker` (e.g. `"rerank-v4.0-pro"`).
+</ParamField>
+
+<ParamField path="topN" type="number">
+  Return only the top N items. When omitted, all items are returned reordered.
+</ParamField>
+
+<ParamField path="contextId" type="string">
+  Emitted as a `context_id_` spend tag in LiteLLM.
+</ParamField>
+
+<ParamField path="contextName" type="string">
+  Emitted as a `context_name_` spend tag.
+</ParamField>
+
+<ParamField path="user" type="User">
+  Full user record — used for tag-based budget attribution.
+</ParamField>
+
+<ParamField path="userId" type="number">
+  Numeric user ID when only the ID is available (background ingestion jobs).
+</ParamField>
+
+<ParamField path="roleId" type="string">
+  Role ID emitted as a spend tag.
+</ParamField>
+
+<ParamField path="project" type="Project">
+  Project record — emitted as a `project_id_` spend tag.
+</ParamField>
+
+<ParamField path="agent" type="ExuluAgent">
+  Agent record — emitted as an `agent_id_` spend tag.
+</ParamField>
+
+<ParamField path="routine" type="{ id: string; name: string }">
+  Routine info — emitted as a `routine_id_` spend tag.
+</ParamField>
+
+<ResponseField name="return" type="Promise<(T & { rerank_score: number })[]>">
+  The input items reordered descending by relevance, each extended with `rerank_score: number`. Returns an empty array when `items` is empty.
+</ResponseField>
+
+## Example
+
+```typescript
+import { ExuluReranker } from "@exulu/backend";
+
+// results is VectorSearchChunkResult[] from a prior context.search() call
+const reranked = await ExuluReranker.rerank({
+  query: "How do I configure the authentication module?",
+  items: results,
+  model: "rerank-v4.0-pro",
+  topN: 10,
+  user: req.user,
+  roleId: req.user.role?.id,
+});
+
+// reranked[0] is now the most relevant chunk
+console.log(reranked[0].rerank_score, reranked[0].chunk_content);
+```
+
+## Notes
+
+- Each document sent to the reranker is built as `item_name + ": " + chunk_content`. This is the standard retrieval convention; keep that shape consistent across your chunkers.
+- The function returns an empty array immediately when `items` is empty — no network call is made.
+- Reranking requires `EXULU_USE_LITELLM=true` and a running LiteLLM proxy.
+
+## Related
+
+- [ExuluDefaultTools](/developers/reference/exulu-default-tools): the agentic retrieval pipeline uses `ExuluReranker` internally.
+- [Self-hosting / LiteLLM](/self-hosting/services/litellm): configure the proxy and add reranker models.

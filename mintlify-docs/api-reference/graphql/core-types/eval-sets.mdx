@@ -1,0 +1,51 @@
+---
+title: "Eval sets"
+description: "The eval_set type is a named collection of test cases used to organise evaluation work."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Eval sets require an Enterprise Edition license (`evals` entitlement).
+
+An `eval_set` groups related `test_case` records and is referenced by `eval_run` configurations. See [Evals overview](/building/evals/overview).
+
+```graphql
+type eval_set {
+  name: String!
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  eval_setsPagination(
+    limit: 10
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      description
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

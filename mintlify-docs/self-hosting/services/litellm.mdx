@@ -1,0 +1,183 @@
+---
+title: "LiteLLM proxy"
+description: "LiteLLM is IMP's single model registry: chat routing, embeddings, reranking, OCR, image generation, and budget tracking."
+icon: "cpu"
+---
+
+IMP uses LiteLLM as its unified gateway to LLM providers. All model calls — chat completions, embeddings, reranking, OCR, and image generation — go through the LiteLLM proxy running on port `4000`. LiteLLM also serves as the source of truth for budget tracking and spend logging.
+
+The proxy is also reachable externally through the [LiteLLM gateway](/api-reference/rest/gateways-litellm) (`/litellm/{project}/v1/...`), which lets callers use any model in the `model_list` directly from an OpenAI-compatible SDK.
+
+## Role in the stack
+
+| Function | What LiteLLM provides |
+|---|---|
+| Chat routing | OpenAI-compatible `/chat/completions` forwarded to any provider |
+| Embeddings | `/embeddings` routed to models tagged `type: embedder` |
+| Reranking | `/rerank` routed to models tagged `type: reranker` |
+| OCR | `/v1/ocr` routed to models tagged `type: ocr` |
+| Image generation | `/v1/images/generations` routed to models tagged `type: image_generation` |
+| Budgets | Spend logging, per-key budget enforcement — single source of truth |
+| Admin UI | Web dashboard mounted at `/litellm-admin` on the backend's port `9001` |
+
+## Enabling LiteLLM
+
+Set `EXULU_USE_LITELLM=true` and `LITELLM_MASTER_KEY` in your environment. Without `LITELLM_MASTER_KEY`, the backend throws at startup and refuses to start.
+
+## Supervisor lifecycle
+
+The backend spawns LiteLLM as a child process. You do not run LiteLLM separately.
+
+```
+ExuluApp (port 9001)
+  └─ spawns LiteLLM child process (port 4000)
+       └─ reads config.litellm.yaml
+```
+
+**Startup sequence:**
+
+1. Backend sets `EXULU_USE_LITELLM=true` → `startLiteLLMSupervisor()` is called.
+2. The Python venv binary at `ee/python/.venv/bin/litellm` is spawned with `--config <path> --port 4000 --host 127.0.0.1`.
+3. The supervisor polls `http://127.0.0.1:4000/health/liveliness` every 200 ms.
+4. If LiteLLM is not ready within **90 seconds**, the supervisor kills the child and respawns.
+5. After **5 consecutive crashes**, the supervisor gives up and sets state `given_up`. LiteLLM-dependent features fail at runtime with a clear error. Fix the config and restart the backend.
+
+**Crash backoff.** On each crash the supervisor waits before respawning: 1 s → 2 s → 4 s → 8 s → 16 s, capped at 30 s.
+
+**Shutdown.** On `SIGTERM` or `SIGINT`, the backend sends `SIGTERM` to the LiteLLM child and gives it **5 seconds** to exit cleanly before sending `SIGKILL`.
+
+**Worker client mode.** Worker containers do not spawn their own LiteLLM process. They connect to the backend's proxy on port `4000`. This is configured automatically by `enableLiteLLMClientMode()` in the worker boot path.
+
+## Config file
+
+LiteLLM is configured via `config.litellm.yaml`. The default path is `./config.litellm.yaml` in the working directory from which the backend is run. Override with `LITELLM_CONFIG_PATH`.
+
+### Annotated example
+
+The following is a trimmed excerpt from the example repo's `config.litellm.yaml`, showing the `model_info` fields IMP reads:
+
+```yaml
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL
+  proxy_batch_write_at: 60          # batch spend writes every 60 s
+  database_connection_pool_limit: 10
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+  set_verbose: False
+  json_logs: true
+
+model_list:
+  # Embedding model — dimensionality drives vector column width in Postgres
+  - model_name: gemini-embedding-001
+    litellm_params:
+      model: vertex_ai/gemini-embedding-001
+      vertex_ai_project: "my-project"
+      vertex_ai_location: "europe-west1"
+      vertex_credentials: os.environ/VERTEX_CREDENTIALS_PATH
+    model_info:
+      type: embedder         # required: embedder | reranker | ocr | image_generation
+      brand: "google"        # displayed in the IMP model selector
+      region: "eu"           # shown in the admin UI
+      dimensionality: 1024   # vector(1024) columns in Postgres
+      max_chunk_size: 1024   # max tokens per chunk sent to this model
+      max_batch_size: 250    # max items per embedding batch
+
+  # Reranker
+  - model_name: cohere/rerank-v4.0-pro
+    litellm_params:
+      model: cohere/rerank-v4.0-pro
+      api_key: os.environ/COHERE_API_KEY
+    model_info:
+      type: reranker
+
+  # OCR model
+  - model_name: vertex-ocr
+    litellm_params:
+      model: vertex_ai/mistral-ocr-2505
+      vertex_ai_project: "my-project"
+      vertex_ai_location: "europe-west4"
+      vertex_credentials: os.environ/VERTEX_CREDENTIALS_PATH
+    model_info:
+      mode: ocr
+      type: ocr
+
+  # Chat model — no special type means it shows up in the chat model picker
+  - model_name: claude-sonnet-4-6*   # wildcard matches version suffixes
+    litellm_params:
+      model: vertex_ai/claude-sonnet-4-6
+      vertex_ai_project: "my-project"
+      vertex_ai_location: "europe-west1"
+      vertex_credentials: os.environ/VERTEX_CREDENTIALS_PATH
+    model_info:
+      brand: "anthropic"
+      region: "eu"
+```
+
+### `model_info` fields IMP reads
+
+| Field | Type | Required for | Description |
+|---|---|---|---|
+| `type` | string | Specialist models | `embedder`, `reranker`, `ocr`, or `image_generation`. Omit for chat models. |
+| `brand` | string | Display | Provider label shown in the model picker (e.g. `google`, `anthropic`). |
+| `region` | string | Display | Region label (e.g. `eu`, `us`). |
+| `dimensionality` | integer | Embedders | Embedding vector size. Sets the `vector(N)` column width in Postgres. |
+| `max_chunk_size` | integer | Embedders | Maximum token count per chunk passed to this model. |
+| `max_batch_size` | integer | Embedders | Maximum number of items per batch embedding call. |
+
+## Dedicated database requirement
+
+LiteLLM tracks spend, keys, and budgets in Postgres. On startup, IMP runs `prisma db push` against `LITELLM_DATABASE_URL` to keep the LiteLLM schema up to date.
+
+<Warning>
+`LITELLM_DATABASE_URL` must point to a **dedicated** Postgres database — not the same database as `POSTGRES_DB_NAME`. If both point at the same database, `prisma db push` would drop every table that is not in LiteLLM's schema, destroying all IMP application data.
+
+IMP detects this at startup, prints a loud warning banner, **skips LiteLLM database setup, and continues booting**. LiteLLM-dependent features (model routing, budget tracking, spend logging) will fail at runtime. This misconfiguration is not fatal at boot — check startup logs for the warning banner.
+
+Create a dedicated LiteLLM database:
+
+```bash
+createdb -h <host> -U <user> litellm
+```
+
+Then set:
+
+```ini
+LITELLM_DATABASE_URL=postgres://<user>:<password>@<host>:5432/litellm
+```
+</Warning>
+
+IMP also skips the push with a warning if the database already contains non-`LiteLLM`-prefixed tables, to prevent accidentally overwriting an unrelated schema.
+
+## Admin UI
+
+The LiteLLM admin dashboard is accessible at `/litellm-admin` on the backend's port. Navigate to:
+
+```
+http://<your-backend-host>:9001/litellm-admin
+```
+
+Log in with the `LITELLM_MASTER_KEY`. The admin UI lets you manage virtual keys, view spend, set budgets, and monitor model health without editing `config.litellm.yaml`.
+
+## Configuration reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `EXULU_USE_LITELLM` | — | Set to `true` to enable the LiteLLM supervisor. |
+| `LITELLM_MASTER_KEY` | — | **Required when enabled.** Secret key the backend and workers use to authenticate against the proxy. |
+| `LITELLM_DATABASE_URL` | — | Postgres connection string for the LiteLLM database. Must be a separate database. |
+| `LITELLM_CONFIG_PATH` | `./config.litellm.yaml` | Path to the config file, relative to the backend's working directory. |
+| `LITELLM_HOST` | `127.0.0.1` | Host the LiteLLM process binds to. Set to `0.0.0.0` to make the proxy reachable from worker containers on a separate host. |
+| `LITELLM_PORT` | `4000` | Port the LiteLLM process listens on. |
+
+## Operational notes
+
+**Config missing at startup.** If `config.litellm.yaml` does not exist when the backend starts, the supervisor logs an error and sets state `given_up` — LiteLLM is not started. Place the config file and restart the backend.
+
+**Python venv.** LiteLLM runs from a Python virtual environment bundled with `@exulu/backend` at `ee/python/.venv`. The venv is built during the Docker image build step (`docker compose build`). If the venv is absent, the supervisor logs an error and skips startup.
+
+**`DEBUG` env var conflict.** The backend strips the `DEBUG` variable from the child process environment and pins it to `"false"`. LiteLLM's click-based CLI reads `DEBUG` as a boolean flag; Node's `debug` package convention (e.g. `DEBUG=http-proxy-middleware*`) would crash the LiteLLM process.
+
+**Worker port `4000`.** Port `4000` is published on the backend container so that worker containers can reach the proxy over the Docker network. Workers connect to `http://<backend-container>:4000` using `LITELLM_HOST=<backend-host>`.

@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Agent evals — per-result deep-dive sheet</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body {
+        font-family: "Inter", system-ui, sans-serif;
+        letter-spacing: -0.025em;
+        color: #000;
+        -webkit-font-smoothing: antialiased;
+      }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      svg.lucide { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin-top: 30px; font-size: 104px; font-weight: 800;
+        letter-spacing: -0.04em; line-height: 1.04;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ------------------------------ app card -------------------------------- */
+      /* The runs-matrix card acts as the app viewport: overlay + sheet live inside. */
+      #app-card {
+        position: absolute; left: 400px; top: 220px; width: 1120px; height: 640px;
+        background: #fdfdfd; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1), 0 18px 44px -20px rgba(0, 0, 0, 0.14);
+        overflow: hidden;
+      }
+
+      /* runs matrix — CSS grid from eval-runs-table.tsx
+         gridTemplateColumns: minmax(220px, 280px) repeat(3, minmax(140px, 1fr)) */
+      #matrix {
+        position: absolute; left: 0; top: 140px; width: 1118px;
+        display: grid; grid-template-columns: 280px repeat(3, 1fr);
+      }
+      .mx-cell {
+        height: 60px; padding: 12px;
+        border-bottom: 1px solid #e7e7ee; border-right: 1px solid #e7e7ee;
+        display: flex; flex-direction: column; justify-content: center;
+      }
+      .mx-cell.last-col { border-right: none; }
+      .mx-cell.last-row { border-bottom: none; }
+      .mx-cell.avg-row { background: #f5f5f5; border-bottom: 5px solid #e7e7ee; }
+      .mx-cell.lane-head { background: rgba(245, 245, 245, 0.3); }
+      .mx-head-label { font-size: 12px; line-height: 16px; color: #525252; }
+      .lane-name { font-size: 12px; line-height: 16px; font-weight: 600; }
+      .lane-meta { font-size: 10px; line-height: 14px; color: #525252; margin-top: 2px; }
+      .avg-label { font-size: 14px; line-height: 20px; font-weight: 700; }
+      .avg-value {
+        font-size: 14px; line-height: 20px; font-weight: 600; text-align: center;
+        font-variant-numeric: tabular-nums;
+      }
+      .case-name { font-size: 14px; line-height: 20px; font-weight: 500; }
+      .case-id {
+        font-family: "JetBrains Mono", monospace; letter-spacing: 0;
+        font-size: 12px; line-height: 16px; color: #525252;
+        max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      /* ScoreCell button: centered, min-h-[48px], text-sm font-semibold */
+      .score-cell {
+        align-items: center; justify-content: center;
+        font-size: 14px; line-height: 20px; font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .score-num { position: relative; display: inline-block; }
+      #hover-underline {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+        background: currentColor; opacity: 0;
+      }
+      .t-success { color: #16a34a; }
+      .t-warning { color: #d97706; }
+      .t-destructive { color: #e54b50; }
+
+      /* --------------------------- overlay + sheet ----------------------------- */
+      /* Real overlay is bg-black/80; softened to ~black/35 so the matrix stays legible. */
+      #overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.35); opacity: 0; }
+      #sheet {
+        position: absolute; top: 0; right: 0; width: 672px; height: 100%;
+        background: #fdfdfd; border-left: 1px solid #e7e7ee; padding: 24px;
+        box-shadow: -12px 0 28px -12px rgba(0, 0, 0, 0.18);
+      }
+      #sheet-close { position: absolute; top: 16px; right: 16px; opacity: 0.7; color: #0a0a0a; }
+      #sheet-title { font-size: 18px; line-height: 28px; font-weight: 600; }
+
+      /* Tabs: grid w-full grid-cols-4, h-10, bg muted, radius 6, p-1 */
+      #tabs {
+        margin-top: 24px; height: 40px; padding: 4px;
+        background: #f5f5f5; border-radius: 6px;
+        display: grid; grid-template-columns: repeat(4, 1fr);
+      }
+      .tab {
+        display: flex; align-items: center; justify-content: center;
+        font-size: 14px; line-height: 20px; font-weight: 500; color: #525252;
+        border-radius: 4px;
+      }
+      .tab.active {
+        background: #fdfdfd; color: #0a0a0a;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+
+      /* Overview cards */
+      #overview { margin-top: 16px; display: flex; flex-direction: column; gap: 16px; }
+      .sheet-card {
+        position: relative;
+        border: 1px solid #e7e7ee; border-radius: 8px; background: #fcfcfc;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+      .card-header { padding: 24px 24px 12px; }
+      .card-content { padding: 0 24px 24px; }
+      .card-title-muted {
+        font-size: 14px; line-height: 20px; font-weight: 500; color: #525252;
+        display: flex; align-items: center; gap: 8px;
+      }
+      .card-title {
+        font-size: 14px; line-height: 20px; font-weight: 500; color: #0a0a0a;
+        display: flex; align-items: center; gap: 8px;
+      }
+      .two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      #score-value {
+        font-size: 30px; line-height: 36px; font-weight: 700; color: #000;
+        font-variant-numeric: tabular-nums;
+      }
+      #duration-value { font-size: 24px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .kv-rows { display: flex; flex-direction: column; gap: 12px; }
+      .kv-row { display: flex; align-items: center; justify-content: space-between; }
+      .kv-key { font-size: 14px; line-height: 20px; color: #525252; }
+      .badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        border-radius: 999px; padding: 2px 10px;
+        background: #7033ff; color: #fff;
+        font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0;
+      }
+      .mono-value {
+        font-family: "JetBrains Mono", monospace; letter-spacing: 0;
+        font-size: 14px; line-height: 20px; color: #0a0a0a;
+      }
+      #total-value { font-size: 18px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .divider { height: 1px; background: #e7e7ee; }
+      .token-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .token-k { font-size: 12px; line-height: 16px; color: #525252; }
+      .token-v { font-size: 16px; line-height: 24px; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+      /* highlight sweep over the Token usage card */
+      #token-hl {
+        position: absolute; inset: 0; border-radius: 8px;
+        background: #e2ebff; opacity: 0;
+        transform: scaleX(0); transform-origin: left center;
+        pointer-events: none;
+      }
+
+      /* ------------------------------ cursor ---------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 20; opacity: 0; }
+
+      /* ------------------------------ payoff ---------------------------------- */
+      #payoff { z-index: 30; }
+      #payoff-card {
+        position: absolute; left: 230px; bottom: 250px; max-width: 620px;
+        padding: 22px 40px; text-align: center;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 31px; line-height: 42px; font-weight: 600; color: #1a1a1a;
+        opacity: 0;
+      }
+      #payoff-card .a { color: #7033ff; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.5"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.1" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill" id="hook-pill">Agent Evals</span>
+          <h1 id="hook-h1">Every score, <em>explained</em>.</h1>
+        </div>
+      </div>
+
+      <!-- data-layout-allow-occlusion: overlay/sheet/payoff intentionally cover the matrix -->
+      <div id="app" class="clip" data-start="1.6" data-duration="7.9" data-track-index="3" data-layout-allow-occlusion>
+        <div id="app-inner" style="position: absolute; inset: 0">
+          <div id="app-card">
+            <!-- eval runs matrix -->
+            <div id="matrix">
+              <!-- header row -->
+              <div class="mx-cell"><span class="mx-head-label">Test case</span></div>
+              <div class="mx-cell lane-head">
+                <span class="lane-name">Nightly regression</span>
+                <span class="lane-meta">Jul 5, 2026 · 22:00 · Support agent</span>
+              </div>
+              <div class="mx-cell lane-head">
+                <span class="lane-name">Prompt v2</span>
+                <span class="lane-meta">Jul 6, 2026 · 10:32 · Support agent</span>
+              </div>
+              <div class="mx-cell lane-head last-col">
+                <span class="lane-name">Prompt v3</span>
+                <span class="lane-meta">Jul 7, 2026 · 09:14 · Support agent</span>
+              </div>
+
+              <!-- average row -->
+              <div class="mx-cell avg-row"><span class="avg-label">Average</span></div>
+              <div class="mx-cell avg-row"><span class="avg-value t-success">82.4</span></div>
+              <div class="mx-cell avg-row"><span class="avg-value t-success">77.9</span></div>
+              <div class="mx-cell avg-row last-col"><span class="avg-value t-warning">66.4</span></div>
+
+              <!-- case row 1 — the star row -->
+              <div class="mx-cell">
+                <span class="case-name">Refund policy lookup</span>
+                <span class="case-id">b3c9a1d2-44f7-4e…</span>
+              </div>
+              <div class="mx-cell score-cell t-success">88.0</div>
+              <div class="mx-cell score-cell t-success">84.0</div>
+              <div class="mx-cell score-cell last-col t-destructive" id="cell-star">
+                <span class="score-num">42.0<span id="hover-underline"></span></span>
+              </div>
+
+              <!-- case row 2 -->
+              <div class="mx-cell">
+                <span class="case-name">Quarterly report summary</span>
+                <span class="case-id">7e02f6c8-91ab-4d…</span>
+              </div>
+              <div class="mx-cell score-cell t-success">79.5</div>
+              <div class="mx-cell score-cell t-warning">66.0</div>
+              <div class="mx-cell score-cell last-col t-warning">61.0</div>
+
+              <!-- case row 3 -->
+              <div class="mx-cell">
+                <span class="case-name">Order status check</span>
+                <span class="case-id">d54a8e10-3c6f-48…</span>
+              </div>
+              <div class="mx-cell score-cell t-success">90.0</div>
+              <div class="mx-cell score-cell t-success">91.5</div>
+              <div class="mx-cell score-cell last-col t-success">88.0</div>
+
+              <!-- case row 4 -->
+              <div class="mx-cell last-row">
+                <span class="case-name">Escalation handoff</span>
+                <span class="case-id">f19b7c33-a2d5-4b…</span>
+              </div>
+              <div class="mx-cell score-cell last-row t-success">72.0</div>
+              <div class="mx-cell score-cell last-row t-success">70.0</div>
+              <div class="mx-cell score-cell last-col last-row t-success">74.5</div>
+            </div>
+
+            <!-- dim overlay (real: bg-black/80, softened for the demo) -->
+            <div id="overlay"></div>
+
+            <!-- detail sheet — side="right", sm:max-w-2xl -->
+            <!-- data-layout-allow-overflow: sheet starts offscreen right before its slide-in -->
+            <div id="sheet" data-layout-allow-overlap data-layout-allow-overflow>
+              <span id="sheet-close">
+                <svg class="lucide" width="16" height="16" viewBox="0 0 24 24">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </span>
+              <div id="sheet-title">Test result details</div>
+
+              <div id="tabs">
+                <div class="tab active">Overview</div>
+                <div class="tab">Messages</div>
+                <div class="tab">Functions</div>
+                <div class="tab">Raw</div>
+              </div>
+
+              <div id="overview">
+                <div class="two-up">
+                  <div class="sheet-card">
+                    <div class="card-header"><div class="card-title-muted">Score</div></div>
+                    <div class="card-content"><div id="score-value">42.0</div></div>
+                  </div>
+                  <div class="sheet-card">
+                    <div class="card-header">
+                      <div class="card-title-muted">
+                        <svg class="lucide" width="16" height="16" viewBox="0 0 24 24">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 6v6l4 2" />
+                        </svg>
+                        Duration
+                      </div>
+                    </div>
+                    <div class="card-content"><div id="duration-value">1m 24s</div></div>
+                  </div>
+                </div>
+
+                <div class="sheet-card">
+                  <div class="card-header"><div class="card-title">Status</div></div>
+                  <div class="card-content">
+                    <div class="kv-rows">
+                      <div class="kv-row">
+                        <span class="kv-key">Status</span>
+                        <span class="badge">
+                          <svg class="lucide" width="12" height="12" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="m9 12 2 2 4-4" />
+                          </svg>
+                          Completed
+                        </span>
+                      </div>
+                      <div class="kv-row">
+                        <span class="kv-key">Job ID</span>
+                        <span class="mono-value">e7b421f9</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sheet-card" id="token-card">
+                  <div id="token-hl"></div>
+                  <div class="card-header">
+                    <div class="card-title">
+                      <svg class="lucide" width="16" height="16" viewBox="0 0 24 24">
+                        <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+                      </svg>
+                      Token usage
+                    </div>
+                  </div>
+                  <div class="card-content">
+                    <div class="kv-rows">
+                      <div class="kv-row">
+                        <span class="kv-key">Total tokens</span>
+                        <span id="total-value">12,847</span>
+                      </div>
+                      <div class="divider"></div>
+                      <div class="token-grid">
+                        <div>
+                          <div class="token-k">Input</div>
+                          <div class="token-v">9,512</div>
+                        </div>
+                        <div>
+                          <div class="token-k">Output</div>
+                          <div class="token-v">3,335</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- house cursor -->
+          <div id="cursor">
+            <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+              <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="7.1" data-duration="2.4" data-track-index="4">
+        <div id="payoff-card">Score, tokens, and the full conversation&nbsp;— <span class="a">one click.</span></div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook: enter 0.05–0.40, hold static 0.40–1.60, crossfade out 1.60–2.00 */
+      tl.fromTo("#hook-pill", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" }, 0.05);
+      tl.fromTo("#hook-h1", { y: 34, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: "power3.out" }, 0.08);
+      tl.to("#hook-inner", { y: -24, opacity: 0, duration: 0.4, ease: "power2.in" }, 1.6);
+
+      /* runs-matrix card fades in 1.60–2.05 */
+      tl.fromTo("#app-inner", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease: "power2.out" }, 1.6);
+
+      /* cursor glides to the red 42.0 cell 2.05–2.75 */
+      tl.set("#cursor", { x: 980, y: 840 }, 1.62);
+      tl.fromTo("#cursor", { opacity: 0 }, { opacity: 1, duration: 0.18, ease: "power1.out" }, 2.05);
+      tl.to("#cursor", { x: 1375, y: 506, duration: 0.7, ease: "power2.out" }, 2.05);
+
+      /* hover 2.75–2.95: real hover:underline on the 42.0 only */
+      tl.fromTo("#hover-underline", { opacity: 0 }, { opacity: 1, duration: 0.12, ease: "power1.out" }, 2.76);
+
+      /* click at 2.95: 100ms press scale on cell + cursor */
+      tl.to("#cursor svg", { scale: 0.86, duration: 0.05, ease: "power1.in" }, 2.95);
+      tl.to("#cursor svg", { scale: 1, duration: 0.1, ease: "power1.out" }, 3.0);
+      tl.fromTo("#cell-star", { scale: 1 }, { scale: 0.965, duration: 0.05, ease: "power1.in" }, 2.95);
+      tl.to("#cell-star", { scale: 1, duration: 0.1, ease: "power1.out" }, 3.0);
+
+      /* overlay dims + sheet slides in from the right, 350ms power2.out (2.95–3.30) */
+      tl.fromTo("#overlay", { opacity: 0 }, { opacity: 1, duration: 0.35, ease: "power2.out" }, 2.95);
+      tl.fromTo("#sheet", { x: 700 }, { x: 0, duration: 0.35, ease: "power2.out" }, 2.95);
+      tl.to("#cursor", { opacity: 0, duration: 0.22, ease: "power1.in" }, 3.05);
+
+      /* post-action hold 3.30–4.30: everything still */
+
+      /* highlight sweep enters over the Token usage card 4.30–4.70, holds to 6.20 */
+      tl.fromTo("#token-hl", { scaleX: 0, opacity: 0.45 }, { scaleX: 1, duration: 0.4, ease: "power2.out" }, 4.3);
+      tl.to("#token-hl", { opacity: 0, duration: 0.3, ease: "power1.in" }, 6.2);
+
+      /* breath 6.50–7.10: fully still */
+
+      /* payoff caption enters 7.10–7.50, holds to 9.50; last 600ms completely still */
+      tl.fromTo("#payoff-card", { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 7.1);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

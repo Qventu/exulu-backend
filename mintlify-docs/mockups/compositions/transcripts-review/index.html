@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — transcripts review</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* page content */
+      #root .page-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+
+      /* topbar additions */
+      #root .tb-breadcrumb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx-lo); }
+      #root .tb-breadcrumb .sep { color: var(--tx-faint); }
+      #root .tb-breadcrumb .current { color: var(--tx-hi); font-weight: 500; }
+
+      /* two-panel layout */
+      #root .review-body { flex: 1; display: flex; min-height: 0; }
+
+      /* left speakers panel */
+      #root .speakers-panel { width: 300px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+      #root .sp-header { padding: 20px 20px 12px; border-bottom: 1px solid var(--hair); }
+      #root .sp-title { font-size: 13px; font-weight: 600; color: var(--tx-hi); margin-bottom: 4px; }
+      #root .sp-hint { font-size: 12px; color: var(--tx-faint); }
+      #root .sp-list { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; flex: 1; }
+      #root .sp-item { display: flex; flex-direction: column; gap: 6px; }
+      #root .sp-raw { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-faint); }
+      #root .sp-input { border: 1px solid var(--hair); background: var(--surface); padding: 7px 10px; font-size: 13px; color: var(--tx-hi); }
+      #root .sp-input.filled { color: var(--tx-hi); border-color: var(--ink); }
+      #root .sp-input.empty { color: var(--tx-faint); }
+
+      /* right transcript panel */
+      #root .transcript-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+      #root .tp-header { padding: 20px 28px 12px; border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; }
+      #root .tp-title { font-size: 13px; font-weight: 600; color: var(--tx-hi); }
+      #root .tp-actions { display: flex; gap: 8px; }
+      #root .tp-scroll { flex: 1; overflow: hidden; padding: 20px 28px; }
+      #root .seg-list { display: flex; flex-direction: column; gap: 16px; }
+      #root .seg { display: flex; gap: 14px; }
+      #root .seg-meta { flex: none; width: 130px; display: flex; flex-direction: column; gap: 2px; }
+      #root .seg-speaker { font-size: 11.5px; font-weight: 600; color: var(--tx-hi); }
+      #root .seg-time { font-family: var(--font-mono); font-size: 11px; color: var(--tx-faint); }
+      #root .seg-text { font-size: 13.5px; color: var(--tx-mid); line-height: 1.55; flex: 1; }
+
+      /* audio timeline strip */
+      #root .audio-strip { height: 64px; flex: none; border-top: 1px solid var(--hair); background: var(--surface); display: flex; align-items: center; gap: 14px; padding: 0 20px; }
+      #root .audio-play { width: 34px; height: 34px; display: grid; place-items: center; background: var(--ink); color: #fff; flex: none; }
+      #root .audio-play svg { width: 14px; height: 14px; }
+      #root .audio-track { flex: 1; height: 4px; background: var(--hair); position: relative; }
+      #root .audio-progress { position: absolute; left: 0; top: 0; height: 4px; background: var(--ink); width: 38%; }
+      #root .audio-thumb { position: absolute; top: 50%; left: 38%; transform: translate(-50%, -50%); width: 12px; height: 12px; background: var(--ink); }
+      #root .audio-time { font-family: var(--font-mono); font-size: 11px; color: var(--tx-lo); white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="transcripts-review"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span class="tb-breadcrumb">
+                <span>Transcripts</span>
+                <span class="sep">/</span>
+                <span class="current">Review transcript</span>
+              </span>
+              <span class="tp-actions">
+                <span class="imp-btn imp-btn-ghost">Discard</span>
+                <span class="imp-btn imp-btn-ink">Save changes</span>
+              </span>
+            </div>
+
+            <!-- page content: two panels -->
+            <div class="page-content">
+              <div class="review-body">
+                <!-- speakers panel -->
+                <div class="speakers-panel">
+                  <div class="sp-header">
+                    <div class="sp-title">Speakers</div>
+                    <div class="sp-hint">Type names to replace the raw labels</div>
+                  </div>
+                  <div class="sp-list">
+                    <div class="sp-item">
+                      <div class="sp-raw">SPEAKER_00</div>
+                      <div class="sp-input filled">Maren Vogel</div>
+                    </div>
+                    <div class="sp-item">
+                      <div class="sp-raw">SPEAKER_01</div>
+                      <div class="sp-input filled">Thomas Brandt</div>
+                    </div>
+                    <div class="sp-item">
+                      <div class="sp-raw">SPEAKER_02</div>
+                      <div class="sp-input empty">Type name…</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- transcript panel -->
+                <div class="transcript-panel">
+                  <div class="tp-header">
+                    <div class="tp-title">Transcript</div>
+                  </div>
+                  <div class="tp-scroll">
+                    <div class="seg-list">
+                      <div class="seg">
+                        <div class="seg-meta">
+                          <span class="seg-speaker">Maren Vogel</span>
+                          <span class="seg-time">0:00 – 0:18</span>
+                        </div>
+                        <div class="seg-text">Good morning everyone. Let's start with the Q3 status — I'll hand over to Thomas once I've covered the headline numbers from last week.</div>
+                      </div>
+                      <div class="seg">
+                        <div class="seg-meta">
+                          <span class="seg-speaker">Thomas Brandt</span>
+                          <span class="seg-time">0:19 – 0:47</span>
+                        </div>
+                        <div class="seg-text">Thanks Maren. So the compliance review passed on Thursday — all twelve items are closed. The open point from the July audit has been resolved and I've updated the tracker accordingly.</div>
+                      </div>
+                      <div class="seg">
+                        <div class="seg-meta">
+                          <span class="seg-speaker">Maren Vogel</span>
+                          <span class="seg-time">0:48 – 1:12</span>
+                        </div>
+                        <div class="seg-text">Perfect. That means we're clear to go ahead with the partner rollout. Does anyone have concerns before we lock the schedule?</div>
+                      </div>
+                      <div class="seg">
+                        <div class="seg-meta">
+                          <span class="seg-speaker">SPEAKER_02</span>
+                          <span class="seg-time">1:13 – 1:38</span>
+                        </div>
+                        <div class="seg-text">I'd like to double-check the data retention policy before we push to external partners — just to make sure we're aligned on what gets shared and what stays internal.</div>
+                      </div>
+                      <div class="seg">
+                        <div class="seg-meta">
+                          <span class="seg-speaker">Maren Vogel</span>
+                          <span class="seg-time">1:39 – 1:58</span>
+                        </div>
+                        <div class="seg-text">Good point. Thomas, can you pull the retention policy doc and circulate it before end of day?</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- audio timeline -->
+                  <div class="audio-strip">
+                    <div class="audio-play">
+                      <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </div>
+                    <div class="audio-time">1:02</div>
+                    <div class="audio-track">
+                      <div class="audio-progress"></div>
+                      <div class="audio-thumb"></div>
+                    </div>
+                    <div class="audio-time">2:41</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["transcripts-review"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

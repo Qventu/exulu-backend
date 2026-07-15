@@ -1,0 +1,22 @@
+<article class="chapter" id="r-skill-sandbox-s3-artifacts" data-release="2026-07-08-platform-roundup" aria-labelledby="r-skill-sandbox-s3-artifacts-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">26</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-skill-sandbox-s3-artifacts-h">Skill sandbox artifacts persist to S3</h1>
+    <p class="ch-lede">Sandboxes are disposable. The files your agents make aren't anymore.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>Sandboxes are ephemeral by design — which used to mean a restart between turns silently erased every report, script, and dataset an agent had produced. Now every artifact is mirrored to S3 as it's written, scoped per user and session, and restored before the agent runs again, so it picks up exactly where it left off. Un-synced local work is never overwritten, and a failed upload never fails the tool call.</p>
+          <p>The bonus: <code>writeFile</code> now returns a shareable presigned URL the moment a file exists.</p>
+          <div class="snippet-label">writeFile now answers with a shareable URL</div>
+          <pre><code>{
+  "success": true,
+  "path": "sessions/3f2a.../quarterly-report.md",
+  "url": "https://s3.eu-central-1.amazonaws.com/…/user_42/sessions/3f2a…/quarterly-report.md?X-Amz-Signature=…",
+  "key": "uploads/user_42/sessions/3f2a.../quarterly-report.md"
+}</code></pre>
+        </div></section>
+</article>

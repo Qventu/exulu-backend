@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — chat artifact share</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/chat.css" />
+    <link rel="stylesheet" href="kit/dialog.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* chat screen */
+      #root .chat-body { display: flex; flex: 1; min-height: 0; }
+
+      /* history rail */
+      #root .chat-rail { width: 250px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); display: flex; flex-direction: column; padding: 12px 10px; gap: 10px; }
+      #root .rail-agent { display: flex; align-items: center; gap: 8px; padding: 2px 6px; font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .rail-agent svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .rail-agent .rail-menu { margin-left: auto; color: var(--tx-lo); display: grid; place-items: center; }
+      #root .rail-new { justify-content: center; width: 100%; box-sizing: border-box; }
+      #root .rail-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--surface); padding: 7px 10px; font-size: 12.5px; color: var(--tx-faint); }
+      #root .rail-search svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .rail-label { font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); padding: 4px 6px 0; }
+      #root .rail-list { display: flex; flex-direction: column; gap: 2px; }
+      #root .rail-row { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; font-size: 13px; color: var(--tx-mid); }
+      #root .rail-row .time { font-size: 11px; color: var(--tx-faint); }
+      #root .rail-row.active { background: var(--surface-2); color: var(--tx-hi); }
+      #root .rail-seeall { padding: 8px 10px; font-size: 12.5px; color: var(--tx-lo); }
+
+      /* chat header */
+      #root .hd-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      #root .hd-icon { width: 26px; height: 26px; display: grid; place-items: center; color: var(--tx-lo); }
+      #root .hd-icon svg { width: 15px; height: 15px; stroke-width: 1.5; }
+      #root .hd-avatar { width: 22px; height: 22px; flex: none; background: var(--chip); color: var(--ink); font-family: var(--font-mono); font-size: 10px; display: grid; place-items: center; }
+      #root .hd-name { font-size: 13.5px; font-weight: 500; color: var(--tx-hi); }
+      #root .hd-sep { color: var(--tx-faint); font-size: 13px; }
+      #root .hd-title { font-size: 13.5px; color: var(--tx-hi); }
+      #root .hd-chip { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.02em; border: 1px solid var(--hair); padding: 3px 8px; color: var(--tx-lo); display: inline-flex; align-items: center; gap: 6px; }
+      #root .hd-right { display: flex; align-items: center; gap: 10px; }
+
+      /* conversation column */
+      #root .chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+      #root .chat-scroll { flex: 1; overflow: hidden; padding: 30px 24px 0; }
+      #root .chat-bottom { padding: 0 24px 16px; }
+      #root .chat-col { max-width: 760px; margin: 0 auto; }
+      #root .chat-disclaimer { text-align: center; font-size: 11px; color: var(--tx-faint); margin-top: 9px; }
+
+      /* share dialog — positioned over the chat */
+      #root .share-scrim { position: absolute; inset: 0; background: rgba(27,23,20,.3); display: grid; place-items: center; z-index: 20; }
+      #root .share-dialog { width: 480px; background: var(--surface); border: 1px solid var(--hair); padding: 0; }
+      #root .share-dialog-header { padding: 20px 20px 4px; }
+      #root .share-dialog-title { font-size: 15px; font-weight: 500; color: var(--tx-hi); margin-bottom: 2px; }
+      #root .share-dialog-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+      /* form fields */
+      #root .share-field { display: flex; flex-direction: column; gap: 5px; }
+      #root .share-label { font-size: 12px; font-weight: 500; color: var(--tx-hi); }
+      #root .share-input { border: 1px solid var(--hair); background: var(--bg); padding: 7px 10px; font-size: 13px; color: var(--tx-hi); font-family: var(--font-mono); }
+
+      /* pill group (expiry, access) */
+      #root .share-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+      #root .share-pill { font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--hair); padding: 5px 11px; color: var(--tx-mid); cursor: default; }
+      #root .share-pill.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+      /* footer */
+      #root .share-footer { padding: 12px 20px; border-top: 1px solid var(--hair); display: flex; justify-content: flex-end; gap: 8px; }
+      #root .share-btn { font-family: var(--font-mono); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; padding: 7px 14px; border: 1px solid var(--hair); cursor: default; }
+      #root .share-btn-ghost { background: transparent; color: var(--tx-mid); }
+      #root .share-btn-ink { background: var(--ink); color: #fff; border-color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="chat-artifact-share"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"/></svg>Transcripts</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- chat header -->
+            <div class="imp-topbar">
+              <span class="hd-left">
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></span>
+                <span class="hd-avatar">SA</span>
+                <span class="hd-name">Support Assistant</span>
+                <span class="hd-sep">/</span>
+                <span class="hd-title">Q2 report generation</span>
+                <span class="hd-chip">5% · 3k</span>
+              </span>
+              <span class="hd-right">
+                <span class="hd-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+                  2 files
+                </span>
+                <span class="hd-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+              </span>
+            </div>
+
+            <div class="chat-body">
+              <!-- history rail -->
+              <div class="chat-rail">
+                <div class="rail-agent">
+                  Support Assistant
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+                  <span class="rail-menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></span>
+                </div>
+                <span class="imp-btn imp-btn-ink rail-new">+ New chat</span>
+                <div class="rail-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>Search chats</div>
+                <div class="rail-label">Recents</div>
+                <div class="rail-list">
+                  <div class="rail-row active">Q2 report generation<span class="time">just now</span></div>
+                  <div class="rail-row">Hamburg ticket summary<span class="time">1 h ago</span></div>
+                  <div class="rail-row">Onboarding checklist<span class="time">yesterday</span></div>
+                </div>
+                <div class="rail-seeall">See all</div>
+              </div>
+
+              <!-- conversation column with share dialog overlay -->
+              <div class="chat-main">
+                <div class="chat-scroll">
+                  <div class="imp-chat">
+                    <div class="imp-msg-user">Create a Q2 executive summary as an HTML report.</div>
+                    <div class="imp-msg-agent">
+                      <p>Done — I've written the Q2 executive summary as an HTML file and saved it to the session. You can find it in Session files as <code>q2-executive-summary.html</code>.</p>
+                    </div>
+                  </div>
+                </div>
+                <div class="chat-bottom">
+                  <div class="chat-col">
+                    <div class="imp-composer">
+                      <span class="imp-composer-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span>
+                      <span class="imp-composer-input">Ask me anything...</span>
+                      <span class="imp-composer-send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- share dialog overlay -->
+                <div class="share-scrim">
+                  <div class="share-dialog">
+                    <div class="share-dialog-header">
+                      <div class="share-dialog-title">Create a shareable link</div>
+                    </div>
+                    <div class="share-dialog-body">
+                      <div class="share-field">
+                        <div class="share-label">Link name</div>
+                        <div class="share-input">q2-executive-summary</div>
+                      </div>
+                      <div class="share-field">
+                        <div class="share-label">Expires</div>
+                        <div class="share-pills">
+                          <span class="share-pill">1 day</span>
+                          <span class="share-pill active">7 days</span>
+                          <span class="share-pill">30 days</span>
+                          <span class="share-pill">No expiry</span>
+                        </div>
+                      </div>
+                      <div class="share-field">
+                        <div class="share-label">Access</div>
+                        <div class="share-pills">
+                          <span class="share-pill active">Public</span>
+                          <span class="share-pill">Password</span>
+                          <span class="share-pill">Logged-in users</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="share-footer">
+                      <span class="share-btn share-btn-ghost">Cancel</span>
+                      <span class="share-btn share-btn-ink">Create link</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["chat-artifact-share"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,28 @@
+<article class="chapter" id="r-oauth-provider-scoped-tokens" data-release="2026-07-08-platform-roundup" aria-labelledby="r-oauth-provider-scoped-tokens-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">23</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Platform Roundup</span>
+    </div>
+    <h1 class="ch-title" id="r-oauth-provider-scoped-tokens-h">OAuth: one consent per provider</h1>
+    <p class="ch-lede">Connect Google once — every Google tool is signed in.</p>
+  </header>
+  <section class="feature"><div class="slice">
+          <p>Six <code>jira_*</code> tools used to mean clicking Connect six times against the same OAuth app. Tokens are now keyed per provider and user: declare <code>provider: "jira"</code> on a tool's OAuth config, and every tool sharing that provider shares one token — one consent screen, then everything works. Tools claiming the same provider must agree on credentials, endpoints, and the identical scope set, enforced at startup — no silent scope escalation, ever.</p>
+          <p>It's opt-in and non-breaking: omit <code>provider</code> and tokens stay per-tool exactly as before.</p>
+          <div class="snippet-label">From the SDK — ExuluOauthConfig</div>
+          <pre><code>new ExuluTool({
+  id: "jira_create_issue",
+  // ...
+  oauth: {
+    provider: "jira", // ← share one consent across every jira_* tool
+    authorizationUrl: "https://auth.atlassian.com/authorize",
+    tokenUrl: "https://auth.atlassian.com/oauth/token",
+    clientId: process.env.JIRA_CLIENT_ID!,
+    clientSecret: process.env.JIRA_CLIENT_SECRET!,
+    scopes: JIRA_SCOPES, // must match across the provider — enforced at boot
+  },
+});</code></pre>
+        </div></section>
+</article>

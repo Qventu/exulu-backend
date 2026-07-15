@@ -1,0 +1,80 @@
+<section class="feature" id="feedback-triage">
+  <h2>Feedback triage</h2>
+  <p class="one-liner">Every thumbs-down, in one place.</p>
+  <div class="slice">
+    <video src="./shorts/feedback-triage.mp4" poster="./shorts/feedback-triage-poster.png" autoplay loop muted playsinline></video>
+    <p>The <code>/feedback</code> console gathers every rating users leave on agent answers into one reviewable list: the verdict, a preview of the comment, the agent, the user, and when it happened. The toolbar narrows thousands of ratings to the handful worth fixing in a few clicks:</p>
+    <ul>
+      <li>One click on <strong>Negative</strong> shows only the thumbs-down rows</li>
+      <li>Search across feedback text</li>
+      <li>Filter by agent or by user</li>
+      <li>Reset clears every active filter at once</li>
+    </ul>
+    <div class="snippet-label">GraphQL — the Negative tab is just a filter on one query; pull it from the API the same way:</div>
+    <pre><code>query GetFeedback($page: Int!, $limit: Int!, $filters: [FilterFeedback]) {
+  feedbackPagination(page: $page, limit: $limit, filters: $filters) {
+    pageInfo { itemCount pageCount }
+    items { id score description agent user createdAt }
+  }
+}
+# filters: [{ score: { eq: 0 } }]   ← the Negative tab</code></pre>
+  </div>
+</section>
+
+<section class="feature" id="feedback-detail-replay">
+  <h2>Feedback detail &amp; replay</h2>
+  <p class="one-liner">See the whole conversation behind the rating.</p>
+  <div class="slice">
+    <video src="./shorts/feedback-detail-replay.mp4" poster="./shorts/feedback-detail-replay-poster.png" autoplay loop muted playsinline></video>
+    <p>Click any rating and a detail panel reconstructs the interaction behind it: the user, agent, and session — each with a copy button — plus an <strong>Open in Chat</strong> link that drops you into the live session to continue or correct the thread.</p>
+    <p>Below the author's comment, the full transcript renders exactly as it did in chat — tool calls, reasoning, citations, and todo lists included — read-only, so you review what the user actually saw.</p>
+    <div class="snippet-label">GraphQL — the replay is one query for the session transcript:</div>
+    <pre><code>query GetAgentSessionMessages(
+  $page: Int!
+  $limit: Int!
+  $filters: [FilterAgent_message]
+) {
+  agent_messagesPagination(page: $page, limit: $limit, filters: $filters) {
+    items {
+      id
+      session
+      content
+      createdAt
+    }
+  }
+}</code></pre>
+  </div>
+</section>
+
+<section class="feature" id="summary-stat">
+  <h2>The health of every answer, in one line</h2>
+  <p class="one-liner">A percent-positive / negative-count split that reads the whole corpus, not just the page.</p>
+  <div class="slice">
+    <p>The page header sums it up in one line — <strong>"{percent}% positive · {negative} negative"</strong> — counted across every rating, not just the page you're on. The numbers refresh every 30 seconds, so the split stays current as new thumbs land.</p>
+    <p>The negative count is a link: click it and you're looking at exactly the ratings that need fixing, no manual refresh required.</p>
+  </div>
+</section>
+
+<section class="feature" id="feedback-list">
+  <h2>Names, not ids — and delete fifty at once</h2>
+  <p class="one-liner">The list hydrates raw ids into real names, then lets reviewers clear ratings in bulk.</p>
+  <div class="slice">
+    <p>Rows show real names, not raw ids: every author and agent on the page resolves to a display name, falling back to email — and only as a last resort the id. The full table on desktop collapses into a tap-friendly card list on smaller screens.</p>
+    <p>Select any number of rows and delete them in one pass. A confirm dialog spells out the stakes first: deletion is permanent, but the chat sessions themselves are never touched.</p>
+    <div class="snippet-label">GraphQL — the console's only write op; every bulk and single delete goes through it:</div>
+    <pre><code>mutation DeleteFeedback($id: ID!) {
+  feedbackRemoveOneById(id: $id) {
+    id
+  }
+}</code></pre>
+  </div>
+</section>
+
+<section class="feature" id="rbac-console">
+  <h2>An admin surface that fails closed</h2>
+  <p class="one-liner">The gate is enforced on the server, not hidden in the client.</p>
+  <div class="slice">
+    <p>Access to <code>/feedback</code> is enforced on the server: an account without the right never sees guarded content, and the denial page names the missing permission instead of silently bouncing you. Today the console requires <strong>super_admin</strong>.</p>
+    <p>It's the review end of a loop that starts in chat — the thumbs up and down users leave on agent answers create the ratings; <code>/feedback</code> is where an admin triages what they produced.</p>
+  </div>
+</section>

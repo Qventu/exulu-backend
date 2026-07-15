@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Skill editor mini-IDE — edit, Cmd+S, saved</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      svg.ic { stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin: 30px auto 0; max-width: 1040px;
+        font-size: 104px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.04;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ---------------------------- skill editor card --------------------------- */
+      #app { display: grid; place-items: center; }
+      #card {
+        position: relative; width: 1120px; height: 640px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 8px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08), 0 24px 60px -24px rgba(0, 0, 0, 0.18);
+        overflow: hidden; display: flex; flex-direction: column;
+        opacity: 0;
+      }
+
+      /* top bar */
+      #topbar {
+        flex: none; height: 48px; display: flex; align-items: center; gap: 8px;
+        padding: 0 12px; border-bottom: 1px solid #e7e7ee; background: #fdfdfd;
+      }
+      .ghost-32 {
+        width: 32px; height: 32px; display: grid; place-items: center;
+        border-radius: 6px; color: #525252; flex: none;
+      }
+      .vsep { width: 1px; height: 20px; background: #e7e7ee; flex: none; }
+      #identity { display: flex; align-items: center; gap: 8px; margin-left: 4px; }
+      #identity .sparkles { color: #7033ff; display: inline-flex; }
+      #skill-name { font-size: 14px; font-weight: 600; color: #0a0a0a; letter-spacing: -0.01em; }
+      .badge-secondary {
+        display: inline-block; background: #edf1f5; border-radius: 6px; padding: 2px 10px;
+        font-family: "JetBrains Mono", monospace; font-size: 12px; color: #1a1a1a; letter-spacing: 0;
+      }
+      #topbar-spacer { flex: 1; }
+      .btn-sm {
+        display: inline-flex; align-items: center; gap: 6px; height: 32px;
+        border-radius: 6px; font-size: 13px; font-weight: 500; padding: 0 12px;
+        white-space: nowrap; letter-spacing: -0.01em; flex: none;
+      }
+      #btn-history {
+        border: 1px solid #e7e7ee; background: #fdfdfd; color: #1a1a1a;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      #btn-save-version { background: #7033ff; color: #fff; }
+
+      /* body: sidebar + editor */
+      #ide-body { flex: 1; display: flex; min-height: 0; }
+
+      #sidebar {
+        flex: none; width: 240px; border-right: 1px solid #e7e7ee;
+        display: flex; flex-direction: column; background: #fcfcfc;
+      }
+      #sidebar-header {
+        flex: none; display: flex; align-items: center; justify-content: space-between;
+        padding: 4px 12px; border-bottom: 1px solid #e7e7ee; background: #f9f9f9;
+      }
+      #sidebar-header .label {
+        font-size: 12px; font-weight: 600; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #525252;
+      }
+      #sidebar-header .actions { display: flex; align-items: center; gap: 2px; }
+      .ghost-28 {
+        width: 28px; height: 28px; display: grid; place-items: center;
+        border-radius: 6px; color: #525252; flex: none;
+      }
+      #tree { flex: 1; padding: 8px; }
+      .tree-row {
+        display: flex; align-items: center; gap: 8px; height: 28px;
+        border-radius: 4px; font-size: 12px; color: #1a1a1a; letter-spacing: -0.01em;
+      }
+      .tree-row.file { padding-left: 22px; }
+      .tree-row.folder { padding-left: 8px; font-weight: 500; }
+      .tree-row.folder .chev { display: inline-flex; color: #525252; margin-right: -4px; }
+      .tree-row .ric { color: #525252; display: inline-flex; }
+      .tree-row.selected { background: rgba(112, 51, 255, 0.1); color: #7033ff; font-weight: 600; }
+      .tree-row.selected .ric { color: #7033ff; }
+      #sidebar-footer {
+        flex: none; display: flex; align-items: center; justify-content: space-between;
+        padding: 6px 12px; border-top: 1px solid #e7e7ee;
+      }
+      #sidebar-footer .count { font-size: 12px; color: #525252; }
+      .badge-outline {
+        display: inline-block; border: 1px solid #e7e7ee; border-radius: 6px; padding: 1px 10px;
+        font-family: "JetBrains Mono", monospace; font-size: 12px; color: #1a1a1a; letter-spacing: 0;
+      }
+
+      #editor { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #fff; }
+      #file-header {
+        flex: none; display: flex; align-items: center; justify-content: space-between;
+        padding: 7px 16px; border-bottom: 1px solid #e7e7ee; background: #f9f9f9;
+      }
+      #file-path-wrap { display: flex; align-items: center; gap: 8px; }
+      #file-path { font-family: "JetBrains Mono", monospace; font-size: 12px; color: #525252; letter-spacing: 0; }
+      #badge-unsaved {
+        display: inline-block; border: 1px solid #e7e7ee; border-radius: 6px; padding: 1px 10px;
+        background: #fdfdfd; font-size: 12px; font-weight: 600; color: #0a0a0a; letter-spacing: -0.01em;
+        opacity: 0;
+      }
+      #btn-save {
+        display: inline-flex; align-items: center; gap: 6px; height: 30px;
+        border-radius: 6px; background: #7033ff; color: #fff;
+        font-size: 13px; font-weight: 500; padding: 0 12px; letter-spacing: -0.01em;
+        opacity: 0.5;
+      }
+
+      #md-toolbar {
+        flex: none; height: 32px; display: flex; align-items: center; gap: 14px;
+        padding: 0 14px; border-bottom: 1px solid #e7e7ee; color: #525252;
+      }
+      #md-toolbar .tsep { width: 1px; height: 14px; background: #e7e7ee; }
+
+      #md-source {
+        flex: 1; padding: 16px; background: #fff;
+        font-family: "JetBrains Mono", monospace; font-size: 13px; line-height: 1.7;
+        color: #1a1a1a; letter-spacing: 0;
+      }
+      .md-line { height: 22.1px; white-space: nowrap; }
+      #line4 { display: flex; align-items: center; }
+      #typed { display: block; overflow: hidden; white-space: nowrap; flex: none; }
+      .caret {
+        display: inline-block; width: 2px; height: 15px; background: #1a1a1a;
+        vertical-align: -2px; margin-left: 1px; opacity: 0; flex: none;
+      }
+      #caret-b { margin-left: 0; }
+
+      /* ------------------------------ keycap chip ------------------------------ */
+      #keycaps-clip { display: grid; place-items: end center; }
+      #keycaps { display: flex; gap: 10px; margin-bottom: 104px; opacity: 0; }
+      .keycap {
+        width: 58px; height: 58px; display: grid; place-items: center;
+        background: #ffffff; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 10px 24px -12px rgba(0, 0, 0, 0.18);
+        font-size: 24px; font-weight: 500; color: #1a1a1a; letter-spacing: 0;
+      }
+
+      /* --------------------------------- toast --------------------------------- */
+      #toast {
+        position: absolute; right: 56px; bottom: 56px;
+        display: inline-flex; align-items: center; gap: 10px;
+        background: #ffffff; border: 1px solid #e7e7ee; border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1), 0 20px 48px -16px rgba(0, 0, 0, 0.18);
+        padding: 14px 18px; opacity: 0;
+      }
+      #toast .t-text { font-size: 14px; font-weight: 500; color: #000; white-space: nowrap; letter-spacing: -0.01em; }
+
+      /* -------------------------------- payoff --------------------------------- */
+      #payoff { display: grid; place-items: end center; }
+      #payoff-card {
+        position: relative; margin-bottom: 86px; padding: 26px 44px;
+        background: #fff; border: 1px solid #e7e7ee; border-radius: 14px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.12), 0 20px 48px -16px rgba(0, 0, 0, 0.2);
+        font-size: 33px; font-weight: 600; opacity: 0; white-space: nowrap;
+      }
+      #payoff-card .a { color: #7033ff; }
+      #payoff-card .b { color: #1a1a1a; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="skill-ide"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.5"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <div id="hook" class="clip" data-start="0" data-duration="2.4" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Skill Library</span>
+          <h1>Build agent skills like a <em>code project</em>.</h1>
+        </div>
+      </div>
+
+      <!-- skill editor mini-IDE card -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.6" data-track-index="3">
+        <div id="card">
+          <div id="topbar">
+            <span class="ghost-32">
+              <!-- PanelLeftClose -->
+              <svg class="ic" width="16" height="16" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
+            </span>
+            <span class="vsep"></span>
+            <span class="ghost-32">
+              <!-- ArrowLeft -->
+              <svg class="ic" width="16" height="16" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+            </span>
+            <span class="vsep"></span>
+            <span id="identity">
+              <span class="sparkles">
+                <!-- Sparkles -->
+                <svg class="ic" width="16" height="16" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/></svg>
+              </span>
+              <span id="skill-name">Quarterly report</span>
+              <span class="badge-secondary">v2</span>
+            </span>
+            <span id="topbar-spacer"></span>
+            <span class="ghost-32">
+              <!-- RefreshCw -->
+              <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            </span>
+            <span class="btn-sm" id="btn-history">
+              <!-- History -->
+              <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              History
+            </span>
+            <span class="btn-sm" id="btn-save-version">
+              <!-- GitBranch -->
+              <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              Save version
+            </span>
+            <span class="ghost-32">
+              <!-- MoreHorizontal -->
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </span>
+          </div>
+
+          <div id="ide-body">
+            <div id="sidebar">
+              <div id="sidebar-header">
+                <span class="label">Files</span>
+                <span class="actions">
+                  <span class="ghost-28">
+                    <!-- FilePlus -->
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M9 15h6"/><path d="M12 12v6"/></svg>
+                  </span>
+                  <span class="ghost-28">
+                    <!-- FolderPlus -->
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                  </span>
+                </span>
+              </div>
+              <div id="tree">
+                <div class="tree-row file selected">
+                  <span class="ric">
+                    <!-- File -->
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                  </span>
+                  SKILL.md
+                </div>
+                <div class="tree-row folder">
+                  <span class="chev">
+                    <!-- ChevronRight -->
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+                  </span>
+                  <span class="ric">
+                    <!-- Folder -->
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                  </span>
+                  scripts
+                </div>
+                <div class="tree-row folder">
+                  <span class="chev">
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
+                  </span>
+                  <span class="ric">
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                  </span>
+                  references
+                </div>
+                <div class="tree-row file">
+                  <span class="ric">
+                    <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+                  </span>
+                  checklist.md
+                </div>
+              </div>
+              <div id="sidebar-footer">
+                <span class="count">5 files</span>
+                <span class="badge-outline">v2</span>
+              </div>
+            </div>
+
+            <div id="editor">
+              <div id="file-header">
+                <span id="file-path-wrap">
+                  <span id="file-path">SKILL.md</span>
+                  <span id="badge-unsaved">Unsaved</span>
+                </span>
+                <span id="btn-save">
+                  <!-- Save (floppy) -->
+                  <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+                  Save
+                </span>
+              </div>
+
+              <div id="md-toolbar">
+                <!-- Bold -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg>
+                <!-- Italic -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg>
+                <!-- Strikethrough -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/></svg>
+                <span class="tsep"></span>
+                <!-- Link -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <!-- Quote -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12v6"/></svg>
+                <!-- Code -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+                <!-- Image -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                <span class="tsep"></span>
+                <!-- List -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+                <!-- ListOrdered -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M10 12h11"/><path d="M10 18h11"/><path d="M10 6h11"/><path d="M4 10h2"/><path d="M4 6h1v4"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+                <!-- CheckSquare -->
+                <svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              </div>
+
+              <div id="md-source">
+                <div class="md-line">---</div>
+                <div class="md-line">name: quarterly-report</div>
+                <div class="md-line">description: Assemble the quarterly report from workspace data.</div>
+                <div class="md-line">---</div>
+                <div class="md-line">&nbsp;</div>
+                <div class="md-line"># Quarterly report</div>
+                <div class="md-line">&nbsp;</div>
+                <div class="md-line">## Steps</div>
+                <div class="md-line">1. Pull the latest figures from the data explorer.</div>
+                <div class="md-line">2. Draft the summary section.</div>
+                <div class="md-line">3. Attach charts to the final document.<span class="caret" id="caret-a"></span></div>
+                <div class="md-line" id="line4"><span id="typed" data-layout-ignore>4. Cite sources.</span><span class="caret" id="caret-b"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ⌘S keycap affordance -->
+      <div id="keycaps-clip" class="clip" data-start="4.8" data-duration="1.8" data-track-index="4">
+        <div id="keycaps">
+          <span class="keycap">⌘</span>
+          <span class="keycap">S</span>
+        </div>
+      </div>
+
+      <div id="toast-clip" class="clip" data-start="5.35" data-duration="4.15" data-track-index="5">
+        <div id="toast">
+          <span style="color: #16a34a; display: inline-flex">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Zm4.28-12.72a.75.75 0 0 0-1.06-1.06L11 12.44l-2.22-2.22a.75.75 0 1 0-1.06 1.06l2.75 2.75a.75.75 0 0 0 1.06 0l4.75-4.75Z"/></svg>
+          </span>
+          <span class="t-text">File saved</span>
+        </div>
+      </div>
+
+      <div id="payoff" class="clip" data-start="6.55" data-duration="2.95" data-track-index="6">
+        <div id="payoff-card">
+          <span class="a">Files, versions, Cmd+S</span><span class="b"> — in the browser.</span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* hook: enter 0.08–0.40, hold static 0.40–1.95 (1.55s) */
+      tl.fromTo("#hook-inner", { y: 36, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.08);
+
+      /* 1.95–2.40 crossfade: hook out, editor card in */
+      tl.to("#hook-inner", { y: -26, opacity: 0, duration: 0.4, ease: "power2.in" }, 1.95);
+      tl.fromTo("#card", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "power2.out" }, 1.95);
+
+      /* 2.40–3.00 orient hold: caret blinks at the end of the last "Steps" line */
+      tl.set("#caret-a", { opacity: 1 }, 2.42);
+      tl.set("#caret-a", { opacity: 0 }, 2.68);
+      tl.set("#caret-a", { opacity: 1 }, 2.88);
+      tl.set("#caret-a", { opacity: 0 }, 3.0);
+
+      /* 3.00–4.20 typing "4. Cite sources." (15 chars ≈ 14 cps); caret rides the new line */
+      tl.set("#caret-b", { opacity: 1 }, 3.0);
+      tl.fromTo("#typed", { width: 0 }, { width: "auto", duration: 1.05, ease: "steps(15)" }, 3.0);
+
+      /* first keystroke (~3.07): "Unsaved" badge scales/fades in, Save enables */
+      tl.fromTo("#badge-unsaved", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.15, ease: "power2.out" }, 3.07);
+      tl.to("#btn-save", { opacity: 1, duration: 0.15, ease: "power1.out" }, 3.07);
+
+      /* 4.20–4.80 dirty state holds completely still */
+
+      /* 4.80–5.35 keycap chip "⌘ S" enters bottom-center; keys press at ~5.15 */
+      tl.fromTo("#keycaps", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, ease: "power2.out" }, 4.82);
+      tl.to(".keycap", { scale: 0.94, backgroundColor: "#edf1f5", duration: 0.12, ease: "power1.in" }, 5.15);
+      tl.to(".keycap", { scale: 1, backgroundColor: "#ffffff", duration: 0.12, ease: "power1.out", overwrite: "auto" }, 5.28);
+
+      /* 5.35–5.75 save lands: badge fades out, Save back to disabled, toast slides in */
+      tl.to("#badge-unsaved", { opacity: 0, scale: 0.95, duration: 0.15, ease: "power1.out" }, 5.38);
+      tl.to("#btn-save", { opacity: 0.5, duration: 0.15, ease: "power1.out" }, 5.42);
+      tl.fromTo("#toast", { y: 46, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, ease: "power2.out" }, 5.42);
+
+      /* 5.75–6.60 result holds completely still; keycap chip fades out at 6.30 */
+      tl.to("#keycaps", { opacity: 0, duration: 0.25, ease: "power1.out" }, 6.3);
+      tl.set("#keycaps", { opacity: 0 }, 6.58);
+
+      /* 6.60–7.00 payoff lower third enters; 7.00–9.50 holds (last 600ms = loop resting frame) */
+      tl.fromTo("#payoff-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 6.6);
+
+      window.__timelines["skill-ide"] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+      <section class="feature" id="session-files-panel">
+        <h2>Session files panel</h2>
+        <p class="one-liner">Every chat now has its own workspace.</p>
+
+        <div class="slice">
+          <video src="./shorts/01-session-files-panel.mp4" autoplay loop muted playsinline></video>
+          <p>A folder icon in the chat header opens a sidebar listing every file the session has touched — files the agent wrote, files you uploaded, artifacts from tool runs. Click any row to preview text, code, markdown, images, PDFs, and Office documents.</p>
+          <p>Drop new files into the upload zone and the agent can read them on its next turn — no restart needed. Session files stay private to the session: they never cross into other sessions, projects, or knowledge bases.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="followup-suggestions">
+        <h2>Follow-up suggestions</h2>
+        <p class="one-liner">Never stare at a blank input again.</p>
+
+        <div class="slice">
+          <video src="./shorts/02-followup-suggestions.mp4" autoplay loop muted playsinline></video>
+          <p>Turn on <code>suggestions_enabled</code> for an agent and the chat offers up to three short follow-up prompts after each assistant reply. Click one to fill the input — you still press send yourself.</p>
+          <p>Suggestions run on the agent's own model, and their tokens count toward the same per-agent rate limits and statistics as the conversation itself. If a suggestion call fails for any reason, the row simply doesn't appear — your chat is never interrupted.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="litellm-proxy">
+        <h2>LiteLLM proxy integration</h2>
+        <p class="one-liner">Bring your own model gateway.</p>
+
+        <div class="slice">
+          <video src="./shorts/03-litellm-proxy.mp4" autoplay loop muted playsinline></video>
+          <p>Set <code>EXULU_USE_LITELLM=true</code> and Exulu runs LiteLLM as a managed sidecar, routing every model call through the proxy. Model names map directly to the <code>model_name</code> entries in your LiteLLM catalog.</p>
+          <p>The Models admin page becomes a read-only view of that catalog, and the agent and chat model pickers draw from the same list. Rate limits, token budgets, cost tracking, and cross-provider routing all live in <code>config.yaml</code> — one file, every provider.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Enable</div>
+<pre><code>EXULU_USE_LITELLM=true
+LITELLM_MASTER_KEY=sk-…
+LITELLM_CONFIG_PATH=ee/python/.litellm/config.yaml  # default</code></pre>
+
+            <div class="snippet-label">Catalog (config.yaml)</div>
+<pre><code>general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+model_list:
+  - model_name: vertex-flash
+    litellm_params:
+      model: vertex_ai/gemini-2.5-flash
+      vertex_project: os.environ/GOOGLE_VERTEX_PROJECT
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-bundle-upload">
+        <h2>Skill bundle upload</h2>
+        <p class="one-liner">Drop a <code>.zip</code>, get a skill.</p>
+
+        <div class="slice">
+          <video src="./shorts/04-skill-bundle-upload.mp4" autoplay loop muted playsinline></video>
+          <p>The New Skill modal now offers two paths: create blank, or <strong>Create from upload</strong>. In upload mode, drag in a <code>.zip</code> or a single <code>SKILL.md</code>, name the skill, and click Create — you land straight in the skill editor with every file in place.</p>
+          <p>Uploads are validated before anything is stored: Anthropic-style zips with a wrapper folder are unwrapped automatically, and archives over 50 MB, bundles with more than 500 files, or uploads missing a <code>SKILL.md</code> are rejected with a clear error message.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="gdpr-export-delete">
+        <h2>GDPR export &amp; delete</h2>
+        <p class="one-liner">Article 15 and Article 17, in two HTTP calls.</p>
+
+        <div class="slice">
+          <video src="./shorts/05-gdpr-export-delete.mp4" autoplay loop muted playsinline></video>
+          <p>Two super-admin endpoints cover data subject rights end to end. <code>GET /users/:id/data-export</code> streams a ZIP with the user's account data (auth secrets stripped), every session with its messages, feedback, prompt favorites, and tracking events — plus a README referencing DSGVO Art. 15.</p>
+          <p><code>DELETE /users/:id</code> erases that same footprint in one atomic database operation and sweeps the user's stored files from storage. Super-admins can't delete their own account, and deletion is final — no soft-delete, no recovery window.</p>
+
+          <div class="snippet-pair">
+            <div class="snippet-label">Export — DSGVO Art. 15</div>
+<pre><code>curl -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42/data-export \
+     -o user-42-export.zip</code></pre>
+
+            <div class="snippet-label">Delete — DSGVO Art. 17</div>
+<pre><code>curl -X DELETE \
+     -H "Authorization: Bearer $TOKEN" \
+     https://api.exulu.com/users/42</code></pre>
+          </div>
+        </div>
+      </section>

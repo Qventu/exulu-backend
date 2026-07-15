@@ -1,0 +1,222 @@
+---
+title: "API sync — ticketing"
+description: "A production-hardened source for a paginated REST ticketing API: cursor pagination, retry with exponential backoff on 429, partial-failure logging, and incremental sync via external_id upserts."
+icon: "ticket"
+---
+
+**Problem:** you need a source that reliably syncs large volumes of tickets from a REST API with cursor pagination, handles rate limiting gracefully, and logs partial failures without aborting the whole run.
+
+This is a tighter, production-hardened version of the pattern introduced in [Data sources and sync](/developers/tutorials/data-sources-and-sync). Read that tutorial first; this recipe assumes you are already familiar with the `ExuluContextSource` shape.
+
+## Complete source listing
+
+The listing below is a self-contained module. Drop it in `src/integrations/ticketing/` and import it into your context definition.
+
+```typescript src/integrations/ticketing/source.ts
+import { type ExuluContextSource, type ExuluItem } from "@exulu/backend";
+import { ExuluQueues } from "@exulu/backend";
+import { createHash } from "crypto";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type ApiTicket = {
+  id:         string;
+  subject:    string;
+  body:       string;
+  status:     "open" | "pending" | "solved" | "closed";
+  priority:   "low" | "normal" | "high" | "urgent";
+  submitter:  string;
+  created_at: string;
+  updated_at: string;
+};
+
+type TicketsPage = {
+  tickets:       ApiTicket[];
+  next_cursor:   string | null;
+  end_of_stream: boolean;
+};
+
+// ── Rate-limit-aware fetcher ──────────────────────────────────────────────────
+
+const MAX_RETRIES = 3;
+
+async function fetchPage(params: {
+  cursor:     string | null;
+  limit:      number;
+  start_time?: string;
+  attempt?:   number;
+}): Promise<TicketsPage> {
+  const { cursor, limit, start_time, attempt = 0 } = params;
+
+  const url = new URL("https://api.example.com/v2/tickets");
+  url.searchParams.set("limit",  String(limit));
+  url.searchParams.set("status", "solved");
+  if (cursor)     url.searchParams.set("cursor",     cursor);
+  if (start_time) url.searchParams.set("start_time", start_time);
+
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.TICKETING_API_TOKEN}` },
+  });
+
+  // ── 429: honour Retry-After with exponential fallback ────────────────────
+  if (res.status === 429) {
+    if (attempt >= MAX_RETRIES) {
+      throw new Error(`Ticketing API rate-limited after ${MAX_RETRIES} retries.`);
+    }
+    const retryAfter = Number(res.headers.get("Retry-After") ?? 0);
+    const backoff    = retryAfter > 0
+      ? retryAfter * 1_000
+      : Math.min(2 ** attempt * 1_000, 30_000); // 1s, 2s, 4s … capped at 30s
+
+    console.warn(
+      `[ticketing_source] 429 received — waiting ${backoff}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+    );
+    await new Promise((r) => setTimeout(r, backoff));
+    return fetchPage({ ...params, attempt: attempt + 1 });
+  }
+
+  if (!res.ok) {
+    throw new Error(`Ticketing API ${res.status}: ${await res.text()}`);
+  }
+
+  return res.json() as Promise<TicketsPage>;
+}
+
+// ── Full incremental fetch ────────────────────────────────────────────────────
+
+async function fetchAllTickets(startTime?: string): Promise<ApiTicket[]> {
+  const all: ApiTicket[] = [];
+  let cursor: string | null = null;
+  let page = 0;
+
+  do {
+    const result = await fetchPage({ cursor, limit: 100, start_time: startTime });
+    all.push(...result.tickets);
+    cursor = result.next_cursor;
+    page++;
+    if (result.end_of_stream) break;
+  } while (cursor);
+
+  console.log(`[ticketing_source] Fetched ${all.length} tickets across ${page} pages`);
+  return all;
+}
+
+// ── Item mapping ──────────────────────────────────────────────────────────────
+
+function toExuluItem(ticket: ApiTicket): ExuluItem {
+  const content_hash = createHash("sha256")
+    .update(ticket.subject + ticket.body + ticket.status + ticket.updated_at)
+    .digest("hex");
+
+  return {
+    external_id:  ticket.id,
+    name:         ticket.subject,
+    body:         ticket.body,
+    status:       ticket.status,
+    priority:     ticket.priority,
+    submitter:    ticket.submitter,
+    created_at:   new Date(ticket.created_at),
+    content_hash,
+    rights_mode:  "users",
+  };
+}
+
+// ── Queue ─────────────────────────────────────────────────────────────────────
+
+export const ticketSyncQueue = ExuluQueues.register(
+  "ticket_api_sync",
+  { worker: 1, queue: 1 }, // one sync at a time
+  1,
+  60 * 30,                 // 30-minute timeout
+);
+
+// ── Source definition ─────────────────────────────────────────────────────────
+
+export const ticketingApiSource: ExuluContextSource = {
+  id:          "ticketing_api_source",
+  name:        "Ticketing API source",
+  description: "Pulls solved tickets updated since the last run; skips unchanged items via content hash.",
+
+  config: {
+    schedule: "0 2 * * *",  // daily at 02:00 UTC
+    queue:    ticketSyncQueue.use(),
+    retries:  3,
+    backoff:  { type: "exponential", delay: 2_000 },
+    params: [
+      {
+        name:        "start_time",
+        description: "ISO datetime — fetch tickets updated after this time. Defaults to 25 hours ago.",
+      },
+      {
+        name:        "full_sync",
+        description: "Set to 'true' to fetch all tickets regardless of start_time.",
+        default:     "false",
+      },
+    ],
+  },
+
+  execute: async ({ start_time: inputStartTime, full_sync: inputFullSync, exuluConfig }) => {
+    const fullSync  = inputFullSync === "true";
+    const startTime = fullSync
+      ? undefined
+      : (inputStartTime ?? new Date(Date.now() - 25 * 60 * 60 * 1_000).toISOString());
+
+    console.log("[ticketing_api_source] Starting sync", { startTime, fullSync });
+
+    // ── Fetch from API ────────────────────────────────────────────────────────
+    const tickets = await fetchAllTickets(startTime);
+
+    // ── Map to ExuluItem[] with partial-failure logging ───────────────────────
+    const items: ExuluItem[] = [];
+    for (const ticket of tickets) {
+      try {
+        items.push(toExuluItem(ticket));
+      } catch (err) {
+        // Log and continue — one bad ticket should not abort the whole sync
+        console.error(`[ticketing_api_source] Failed to map ticket ${ticket.id}:`, err);
+      }
+    }
+
+    console.log(`[ticketing_api_source] Returning ${items.length} items (${tickets.length - items.length} mapping failures)`);
+    return items;
+  },
+};
+```
+
+Then attach the source to your context:
+
+```typescript src/contexts/index.ts
+import { ticketingApiSource } from "../integrations/ticketing/source";
+
+export const supportTicketsContext = new ExuluContext({
+  id: "support_tickets_context",
+  // ... fields, embedder, chunker, configuration from the tutorials
+
+  sources: [ticketingApiSource],
+});
+```
+
+## Production hardening notes
+
+| Concern | Approach in this recipe |
+|---|---|
+| Rate limiting | Exponential backoff on 429, honouring `Retry-After`; capped at 30 s |
+| Retry cap | `MAX_RETRIES = 3` — throws after the third failure so the BullMQ job fails cleanly and can be retried |
+| Partial failures | `try/catch` around `toExuluItem` — one malformed ticket is logged and skipped |
+| Upsert key | `external_id` set to the ticket's API `id` — IMP uses `onConflict("external_id").merge()` |
+| Change detection | `content_hash` includes `updated_at` — any upstream edit changes the hash |
+| Incremental window | 25-hour window ensures a one-hour overlap across daily runs; `full_sync=true` rebuilds from scratch |
+
+## Related recipes
+
+<CardGroup cols={2}>
+  <Card title="Incremental sync deep dive" icon="refresh-cw" href="/developers/recipes/incremental-sync">
+    Upsert matching, hash checks, and deletion semantics explained.
+  </Card>
+  <Card title="SQL source" icon="database" href="/developers/recipes/sql-source">
+    Query rows from an external database with an updated_at watermark.
+  </Card>
+  <Card title="Data sources and sync tutorial" icon="refresh-cw" href="/developers/tutorials/data-sources-and-sync">
+    The full tutorial that introduces sources and the ExuluContextSource shape.
+  </Card>
+</CardGroup>

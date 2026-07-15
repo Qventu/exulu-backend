@@ -1,0 +1,80 @@
+---
+title: "Recording meetings"
+description: "Send a bot to join a Zoom, Google Meet, or Teams meeting, then receive a transcript when it ends."
+icon: "video"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="Transcripts (a transcription backend or meeting bots must be configured)" />
+
+## How meeting recording works
+
+When you record a meeting, a bot joins the call at the meeting URL you provide. It records the audio and, once the meeting ends, the recording flows through the same transcription and review pipeline as an uploaded audio file: the transcript lands in **Needs review**, you name the speakers, and then save it to Knowledge.
+
+<Note>
+Meeting recording requires a meeting bot integration configured by your administrator. If it is not configured, the **Record a meeting** mode is not available.
+</Note>
+
+## Start recording
+
+<Frame caption="Recording a meeting: switch the composer to Record a meeting, paste the meeting URL, and click Start recording — the bot joins and the job appears under Processing as 'In the meeting…'.">
+  <video autoPlay muted loop playsInline src="/videos/record-meeting.mp4" />
+</Frame>
+
+<Steps>
+  <Step title="Open the composer">
+    Click **New transcription** on the Transcripts page. If both audio upload and meeting recording are enabled, select **Record a meeting** from the mode toggle.
+  </Step>
+  <Step title="Paste the meeting URL">
+    Type or paste the meeting URL into **Meeting URL** (placeholder: "https://… (Zoom, Meet, Teams)"). The URL must be a public or shareable link for the bot to be able to join.
+  </Step>
+  <Step title="Name the bot (optional)">
+    **Bot name** sets the display name participants see in the meeting. The default is "IMP Notetaker".
+  </Step>
+  <Step title="Set when to join">
+    Under **When to join**, choose:
+    - **Join now** — the bot joins immediately after you click **Start recording**.
+    - **Schedule** — pick a date and time under **Join at**. The bot joins at that time.
+  </Step>
+  <Step title="Notify participants (optional)">
+    Check **Notify participants in chat that the meeting is recorded** if you want the bot to send a message in the meeting chat when it joins.
+  </Step>
+  <Step title="Add post-processing prompts (optional)">
+    Under **Post-processing**, add one or more `{prompt, agent}` pairs. Each prompt runs automatically on the transcript as soon as it is ready. Click **Add prompt**, choose a prompt from the library, and select an agent to run it.
+
+    You can add as many pairs as you need; each runs independently.
+  </Step>
+  <Step title="Start">
+    Click **Start recording**. A status row appears: if the bot joins immediately, it shows "In the meeting…". When the meeting ends and processing finishes, the row moves to **Needs review** (or, if you scheduled a join time, it waits until then).
+  </Step>
+</Steps>
+
+## During the meeting
+
+The row in the Processing group shows "In the meeting…" while the bot is active. You can leave the Transcripts page and return later — the job persists.
+
+<Tip>
+A bot joining a meeting is visible to participants (it appears as a named participant). If your organization's policy requires disclosure of recording, check the **Notify participants in chat** option.
+</Tip>
+
+## Post-processing
+
+If you added post-processing prompts, IMP runs them automatically when the transcript is ready — before or after you open the review sheet. Results appear in the **Post-processing** section of the review sheet. You can re-run any individual prompt from there using **Re-run**.
+
+## After the meeting
+
+When recording and transcription finish, the row moves to **Needs review**. Open it to review and save the transcript. See [Reviewing and saving](/user-guide/transcripts/reviewing-and-saving) for the full review flow.
+
+Audio preview is not available for meeting recordings — only the transcript text and speaker segments are shown in the review sheet.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Review and save" icon="check-square" href="/user-guide/transcripts/reviewing-and-saving">
+    Name speakers and save the transcript to Knowledge.
+  </Card>
+  <Card title="Transcripts overview" icon="mic" href="/user-guide/transcripts/overview">
+    Upload audio or view the full transcript queue.
+  </Card>
+</Columns>

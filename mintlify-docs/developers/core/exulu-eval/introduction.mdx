@@ -1,0 +1,148 @@
+---
+title: "Introduction"
+description: "ExuluEval is the code-level class for custom evaluation functions — a typed scorer that receives an agent record, a provider instance, a conversation, and a test case, and returns a 0–100 quality score."
+icon: "chart-bar"
+---
+
+`ExuluEval` defines a single evaluation function: a name, an `execute` callback that scores a completed agent run on a 0–100 scale, and an optional queue for background execution. Evals you register on [ExuluApp](/developers/core/exulu-app/introduction) are merged with the platform's built-in LLM-as-judge eval and appear in the evals workbench, where administrators create test cases and trigger eval runs. See [Evals](/building/evals/overview) for the UI side.
+
+<Note>
+Evals require Redis (`REDIS_HOST` + `REDIS_PORT`). Without Redis, `app.create()` skips eval registration entirely — including the evals you pass and the built-in ones. Confirm Redis is reachable before relying on eval runs.
+</Note>
+
+## What an eval gives you
+
+<CardGroup cols={2}>
+  <Card title="0–100 score contract" icon="chart-bar">
+    `run()` enforces the range — scores outside 0–100 throw immediately, so upstream code can always treat the return value as a valid percentage.
+  </Card>
+  <Card title="Full conversation access" icon="message-circle">
+    `execute` receives the complete `UIMessage[]` array including tool calls, so you can score tool usage, response content, and conversation flow.
+  </Card>
+  <Card title="Test case structure" icon="clipboard-check">
+    Structured test cases carry `expected_output`, `expected_tools`, `expected_knowledge_sources`, and `expected_agent_tools` for richly typed assertions.
+  </Card>
+  <Card title="LLM-as-judge flag" icon="scale">
+    Declare `llm: true` to signal that the eval calls a language model internally — the platform UI uses this to warn about cost and latency.
+  </Card>
+  <Card title="Queue support" icon="layers">
+    Pass a `queue` and IMP can run eval jobs in the background via BullMQ. Requires the Enterprise Edition license.
+  </Card>
+  <Card title="Config params" icon="sliders">
+    An optional `config` array lets administrators pass runtime parameters (for example, a list of required keywords or a judge agent ID) without modifying code.
+  </Card>
+</CardGroup>
+
+## Minimal example
+
+```typescript
+import { ExuluEval } from "@exulu/backend";
+
+export const keywordPresenceEval = new ExuluEval({
+  id: "keyword_presence",
+  name: "Keyword presence",
+  description: "Checks whether the agent's response contains all required keywords.",
+  llm: false,
+  execute: async ({ messages, testCase, config }) => {
+    const lastMessage = messages[messages.length - 1];
+    const response = (lastMessage?.content ?? "").toLowerCase();
+
+    const keywords: string[] = config?.keywords ?? [];
+    if (keywords.length === 0) return 100;
+
+    const found = keywords.filter((kw) => response.includes(kw.toLowerCase()));
+    return (found.length / keywords.length) * 100;
+  },
+  config: [
+    { name: "keywords", description: "Keywords that must appear in the response." },
+  ],
+  queue: evalQueue,
+});
+```
+
+Register it on the app:
+
+```typescript
+await app.create({
+  evals: [keywordPresenceEval],
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+  },
+});
+```
+
+## Scoring approaches
+
+<Tabs>
+  <Tab title="Exact or partial match">
+    Compare the response text to `testCase.expected_output` directly — ideal for deterministic outputs like dates, numbers, or codes.
+
+    ```typescript
+    execute: async ({ messages, testCase }) => {
+      const response = messages[messages.length - 1]?.content ?? "";
+      return response.trim() === testCase.expected_output.trim() ? 100 : 0;
+    }
+    ```
+  </Tab>
+  <Tab title="Tool usage">
+    Check whether the agent called the right tools. `messages` includes tool-call invocations in the AI-SDK `UIMessage` format.
+
+    ```typescript
+    execute: async ({ messages, testCase }) => {
+      const toolCalls = messages
+        .flatMap((m) => (m as any).toolInvocations ?? [])
+        .map((inv: any) => inv.toolName);
+      const expected = testCase.expected_tools ?? [];
+      if (expected.length === 0) return 100;
+      const matched = expected.filter((t) => toolCalls.includes(t));
+      return (matched.length / expected.length) * 100;
+    }
+    ```
+  </Tab>
+  <Tab title="LLM-as-judge">
+    Use a provider to score qualitative criteria like clarity, accuracy, or tone. Set `llm: true` to signal the platform.
+
+    ```typescript
+    execute: async ({ provider, messages, testCase }) => {
+      const response = messages[messages.length - 1]?.content ?? "";
+      const judgePrompt = `Rate this response 0-100 for accuracy.\n\nExpected: ${testCase.expected_output}\n\nActual: ${response}\n\nRespond with only a number.`;
+      const text = await provider.generateSync({
+        prompt: judgePrompt,
+        languageModel: judgeModel,
+      });
+      const score = parseInt(String(text).trim(), 10);
+      return isNaN(score) ? 0 : Math.max(0, Math.min(100, score));
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Running an eval
+
+Call `run()` to execute the eval against a resolved agent run:
+
+```typescript
+const score = await keywordPresenceEval.run(
+  agentRecord,         // ExuluAgent — the database agent record
+  supportProvider,     // ExuluProvider — the runtime provider instance
+  testCase,            // TestCase — from the platform's test-case table
+  messages,            // UIMessage[] — the full conversation
+  { keywords: ["return policy", "14 days"] },  // optional runtime config
+);
+
+console.log(`Score: ${score}/100`);
+```
+
+`run()` invokes `execute`, validates that the returned number is in `[0, 100]`, and throws a descriptive error if it is not — so any score that reaches the caller is always valid.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-eval/configuration">
+    Every constructor option: id, llm, execute, config, and queue.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-eval/api-reference">
+    The run() method, score-range enforcement, and public properties.
+  </Card>
+</CardGroup>

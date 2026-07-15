@@ -1,0 +1,58 @@
+      <section class="feature" id="composer-autocomplete">
+        <h2>Type / — every tool, one keystroke away</h2>
+        <p class="one-liner">The composer now autocompletes your agent's tools and skills inline — no toolbar hunting, no leaving the keyboard.</p>
+        <div class="slice">
+          <video src="./shorts/composer-slash-autocomplete.mp4" poster="./shorts/composer-slash-autocomplete-poster.png" autoplay loop muted playsinline></video>
+          <p>Type <strong>/</strong> and a menu lists everything your agent can do — its tools and skills, each with a one-line description. Keep typing to filter, hit Enter, and the tool name lands in your sentence as plain text, right where you meant it. On agents with a file sandbox, <strong>@</strong> lists the session's files the same way.</p>
+          <p>It's just text — no hidden commands, no side effects. Fractions like 3/4 and email addresses never trigger the menu, and switched-off tools stay visible, greyed with an "off" badge.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="context-presets">
+        <h2>Context presets, full lifecycle</h2>
+        <p class="one-liner">Apply a preset, tweak it live, save it back — without leaving the chat.</p>
+        <div class="slice">
+          <video src="./shorts/context-preset-update.mp4" poster="./shorts/context-preset-update-poster.png" autoplay loop muted playsinline></video>
+          <p>Applying a preset now replaces your pinned context cleanly and shows a named chip in the pinned row. Pin an extra source or drop one mid-conversation and the chip marks itself <em>modified</em>, with an <strong>Update preset</strong> button that saves your current set back in one click. Deselecting the chip clears the pinned items for this chat only — the preset itself is untouched.</p>
+          <p>The preset browser adds the other half: edit a preset's name, description, tags, and sharing, or delete it with an inline confirm. All of it is permission-gated — admins, the preset's creator, and anyone with write access.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="trajectory-feedback">
+        <h2>A thumbs-up teaches your agent</h2>
+        <p class="one-liner">Rate an answer and the retrieval approach behind it gets remembered — and reused on similar questions.</p>
+        <div class="slice">
+          <video src="./shorts/trajectory-reuse-feedback.mp4" poster="./shorts/trajectory-reuse-feedback-poster.png" autoplay loop muted playsinline></video>
+          <p>A thumbs-up marks the retrieval approach behind an answer as proven, making it eligible for instant reuse when a similar question comes in — no extra latency. A thumbs-down with a comment goes further: the strategy is pruned or rewritten so the same miss doesn't repeat.</p>
+          <p>When an answer reuses a proven approach, a quiet badge says <em>"Answered like a similar earlier request."</em> Your rating always credits the original approach, even on a replayed answer — and a thumbs-up can never delete or rewrite anything.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="token-transparency">
+        <h2>Every answer shows its receipt</h2>
+        <p class="one-liner">Retrieval cost and per-message token split, inline — nothing to configure, nothing new to learn.</p>
+        <div class="slice">
+          <div class="receipt-list">
+            <div class="receipt-row">
+              <p class="r-where">Under every knowledge-search result</p>
+              <p class="r-line">↳ retrieval · 2,412 in / 486 out tokens · 3.2 s</p>
+            </div>
+            <div class="receipt-row">
+              <p class="r-where">In every message footer</p>
+              <p class="r-line">1,412 tokens · 1,120 in / 292 out</p>
+            </div>
+          </div>
+          <p>Every knowledge search now prints its cost right under the result — input and output tokens plus elapsed time — so a heavy query is visible the moment it runs, not at the end of the month in an analytics view.</p>
+          <p>Message footers follow suit: each assistant reply shows its input/output split instead of one opaque total, so input-heavy turns look different from output-heavy ones — exactly the difference you tune with presets, compaction, and retrieval budgets. Both lines are quiet, muted adornments that appear only when the metrics exist.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="transcription-delete">
+        <h2>Saved transcriptions, now deletable</h2>
+        <p class="one-liner">Remove the entry, keep the transcript — or cascade the delete into the knowledge base. Your call, per delete.</p>
+        <div class="slice">
+          <video src="./shorts/transcription-delete-cascade.mp4" poster="./shorts/transcription-delete-cascade-poster.png" autoplay loop muted playsinline></video>
+          <p>Saved rows on the Transcriptions page now have a delete. The confirm dialog gives you one clear choice: remove just the entry, or tick a checkbox to also delete the saved transcript from the knowledge base. The checkbox appears only when a linked knowledge item exists — and it starts unchecked, so the safe option is the default.</p>
+          <p>If the knowledge-base delete fails, the dialog stays open so you can retry or fall back to removing just the entry. Deletion is deliberately one row at a time — no bulk delete.</p>
+        </div>
+      </section>

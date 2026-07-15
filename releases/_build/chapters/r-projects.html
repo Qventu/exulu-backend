@@ -1,0 +1,69 @@
+<article class="chapter" id="r-projects" data-release="2026-07-08-projects" aria-labelledby="r-projects-h">
+  <header class="ch-head">
+    <div class="ch-meta">
+      <span class="ch-num" aria-hidden="true">40</span>
+      <span class="pill">July 8, 2026</span>
+      <span class="ch-name">Projects</span>
+    </div>
+    <h1 class="ch-title" id="r-projects-h">A <em>home</em> for every piece of work.</h1>
+    <p class="ch-lede">Projects are named, private workspaces that keep a team's chat sessions, pinned knowledge and shared files together — with a knowledge scope every session in the project inherits, and access controls and a configurable cascade delete when it's time to clean up.</p>
+  </header>
+  <section class="feature" id="r-projects--project-files"><h2>Files tab</h2>
+        <p class="one-liner">Pin the knowledge. Every session inherits it.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-projects__project-files.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Every project has a <strong>Files</strong> tab for pinned knowledge — and every session in the project inherits it automatically. Pin up to 15 files per project: individual items, an <strong>"Entire context"</strong>, or a saved preset applied in one click, with a live counter showing how many slots are used.</p>
+          <p>The cap is honest: a batch that would exceed it adds nothing and tells you how many slots remain, and if a pinned item is later deleted it stays visible as a removable placeholder instead of vanishing silently.</p>
+          <div class="snippet-label">GraphQL — pinned files are stored on the project as <code>project_items</code>:</div>
+          <pre><code>mutation UpdateProject($id: ID!, $input: projectInput!) {
+  projectsUpdateOneById(id: $id, input: $input) {
+    item {
+      id
+      name
+      project_items
+    }
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-projects--new-project"><h2>Projects index &amp; create dialog</h2>
+        <p class="one-liner">Named, private workspaces for your team's AI.</p>
+        <div class="slice">
+          <figure class="demo"><video data-vid="2026-07-08-projects__new-project.mp4" muted playsinline loop preload="none"></video><button class="vbtn" type="button" aria-label="Pause video" hidden></button></figure>
+          <p>Projects live on a clean <code>/projects</code> index with a single primary action — <strong>"New project"</strong>. Creating one is a single dialog: name, description, and optional custom instructions tucked under <strong>"Advanced"</strong>. Every project starts private — only you can see it until you share it.</p>
+          <p>On create you land directly in the new workspace, ready to start a session; sharing stays a deliberate later step in Settings → Access. Switch between projects from the index or via ⌘K.</p>
+          <div class="snippet-label">GraphQL — one mutation, private by default:</div>
+          <pre><code>mutation CreateProject($input: projectInput!) {
+  projectsCreateOne(input: $input) {
+    item {
+      id
+      name
+      rights_mode
+    }
+  }
+}</code></pre>
+        </div></section>
+<section class="feature" id="r-projects--projects-list"><h2>Your workspaces, starred and searchable</h2>
+        <p class="one-liner">A standard collection page — favorites pinned, search on the server, nothing hidden past 200.</p>
+        <div class="slice">
+          <p>Star a project and it pins to the top under <strong>"Favorites"</strong>; the star stays in sync everywhere you see it, from the list to the project header. Search runs on the server, so it matches every project you can access — not just the rows already on screen.</p>
+          <p>Nothing hides past the fold: beyond 200 projects a <strong>"Load more"</strong> button appears, and empty states say plainly whether you have no projects yet or just no matches.</p>
+        </div></section>
+<section class="feature" id="r-projects--sessions-tab"><h2>Sessions tab</h2>
+        <p class="one-liner">Start, remove, undo — the work, not the paperwork.</p>
+        <div class="slice">
+          <p>The Sessions tab lists every conversation in the project — click a row to jump straight into the chat. <strong>"New session"</strong> opens an agent picker and drops you into the new conversation; sessions started in a project can be viewed by project members.</p>
+          <p><strong>"Remove from project"</strong> detaches a session instantly with an Undo toast, while "Delete session" asks for confirmation because it's permanent. Both actions respect your access rights. Past 50 sessions, a Load more button brings in the rest.</p>
+        </div></section>
+<section class="feature" id="r-projects--settings-tab"><h2>Settings tab</h2>
+        <p class="one-liner">Details, access, and a delete you configure with your eyes open.</p>
+        <div class="slice">
+          <p>Settings is three quiet sections — <strong>Details · Access · Danger zone</strong>. Details edits the name, description, and the custom instructions every session inherits; Access shares the project with specific users or roles, or keeps it private.</p>
+          <p>Deleting a project is a cascade you configure explicitly: checkboxes to also delete the project's files and sessions, with live counts and a warning that spells out exactly what will be removed. Sessions you don't delete are kept and detached — nothing is left pointing at a deleted project.</p>
+        </div></section>
+<section class="feature" id="r-projects--connections"><h2>Wired into what already shipped</h2>
+        <p class="one-liner">Pinned knowledge flows through agentic retrieval, and every project is a ready-made endpoint.</p>
+        <div class="slice">
+          <p>Files pinned in a project route through the same agentic retrieval pipeline as the rest of the platform — that shipped as <strong>project_search</strong> in <a href="https://docs.exulu.com">releases/2026-07-08-project-search-and-budgets</a>.</p>
+          <p>Every project is also a ready-made endpoint: the project menu offers Cowork, Claude Code, and continue.dev config downloads with per-project endpoint and credentials — see <a href="https://docs.exulu.com">releases/2026-07-07-tool-configs</a>.</p>
+        </div></section>
+</article>

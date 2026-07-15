@@ -1,0 +1,63 @@
+---
+title: "Settings"
+description: "Control how IMP looks, speaks, and responds to you — appearance, language, your personal system prompt, and your account identity."
+icon: "settings"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+## Open settings
+
+Click your name or avatar in the app sidebar to open the user menu, then choose **Settings**. You can also navigate to `/settings` directly.
+
+Settings is described as "How the IMP looks, speaks, and responds to you." It is organized into four sections separated by dividers: **Appearance**, **Language**, **Personal system prompt**, and **Account**.
+
+## Appearance
+
+Choose how the interface is themed. System follows your device setting.
+
+The control is a three-option segmented toggle:
+
+| Option | Effect |
+| --- | --- |
+| **Light** | Forces the light theme. |
+| **Dark** | Forces the dark theme. |
+| **System** | Follows your operating system's light/dark preference (default). |
+
+The selection takes effect immediately with no page reload.
+
+## Language
+
+Choose the language of the interface. The dropdown shows available languages as their native names (for example, "English", "Deutsch", "Français").
+
+<Note>
+Changing the language reloads the page. If you have unsaved edits in the Personal system prompt section, IMP warns "Discard unsaved changes?" and asks you to confirm before reloading.
+</Note>
+
+## Personal system prompt
+
+The personal system prompt is added to the system prompt of every chat you start, across all agents. Use it to tell the AI who you are and how it should respond.
+
+The placeholder reads: "e.g. I'm a backend engineer working in TypeScript. Keep answers concise and include code examples."
+
+A character count below the text area shows how long your prompt is, for example "340 characters".
+
+Click **Save** to apply. The button is enabled only when you have unsaved changes. After saving, IMP shows "Settings saved — your personal system prompt now applies to new chats."
+
+<Tip>
+The personal system prompt applies to new conversations only — existing open sessions are not affected.
+</Tip>
+
+## Account
+
+The Account section shows your identity on the platform. All fields are read-only.
+
+| Field | What it shows |
+| --- | --- |
+| **Name** | Your first and last name. |
+| **Email** | Your email address on this IMP instance. |
+| **Role** | Your assigned role (for example, "Admin"), and a **Super admin** badge if you have super-admin access. |
+
+Below the identity rows, a **Personal API token →** link takes you to `/token` where you can view or regenerate your personal API token. See [API keys and personal tokens](/administration/api-keys#personal-token-token) for details.

@@ -1,0 +1,152 @@
+---
+title: "ExuluTokenizer"
+description: "Tiktoken-based tokenizer for counting tokens, encoding text, and decoding token sequences."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" />
+
+`ExuluTokenizer` is a class that wraps [tiktoken](https://github.com/openai/tiktoken) to provide token counting, encoding, and decoding for any model supported by the tiktoken registry. It is used internally by IMP's chunkers and context pipeline to enforce chunk-size budgets and manage context-window limits.
+
+You receive an `ExuluTokenizer` instance pre-configured for your context's embedding model via the chunker infrastructure. You can also instantiate it directly when building custom chunkers or tooling that needs precise token counts.
+
+## Constructor
+
+```typescript
+new ExuluTokenizer()
+```
+
+Creates an uninitialized tokenizer. Call `create(modelName)` before encoding or decoding.
+
+## API surface
+
+### create
+
+```typescript
+tokenizer.create(modelName: TokenizerModelName): Promise<Tiktoken>
+```
+
+Loads the BPE (byte-pair encoding) data for the given model and initializes the encoder. Memoized — subsequent calls with the same instance return the cached encoder.
+
+<ParamField path="modelName" type="TokenizerModelName" required>
+  A model name from tiktoken's `model_to_encoding.json` (e.g. `"gpt-4o"`, `"gpt-4"`, `"claude-3-opus-20240229"`). `TokenizerModelName` is the union of all keys in that file.
+</ParamField>
+
+<ResponseField name="return" type="Promise<Tiktoken>">
+  The initialized `Tiktoken` encoder.
+</ResponseField>
+
+---
+
+### encode
+
+```typescript
+tokenizer.encode(text: string): Uint32Array
+```
+
+Encodes a string into a token ID array. Throws when the tokenizer has not been initialized via `create`.
+
+---
+
+### countTokens
+
+```typescript
+tokenizer.countTokens(text: string): number
+```
+
+Returns the number of tokens in `text`. Equivalent to `encode(text).length`.
+
+---
+
+### countTokensBatch
+
+```typescript
+tokenizer.countTokensBatch(texts: string[]): Promise<number[]>
+```
+
+Counts tokens for multiple strings. Returns an array of counts in the same order as the input.
+
+---
+
+### decode
+
+```typescript
+tokenizer.decode(tokens: Uint32Array): Promise<string>
+```
+
+Decodes a token ID array back to a string.
+
+---
+
+### decodeBatch
+
+```typescript
+tokenizer.decodeBatch(tokenSequences: Uint32Array[]): Promise<string[]>
+```
+
+Decodes multiple token sequences in parallel.
+
+---
+
+### free
+
+```typescript
+tokenizer.free(): Promise<void>
+```
+
+Frees the internal Tiktoken encoder's WASM memory. Call when you are done with the tokenizer in long-running processes to avoid memory leaks.
+
+## Example
+
+`ExuluTokenizer` is internal to the chunker infrastructure and is not exported from `@exulu/backend`. The built-in chunkers (`ExuluChunkers.sentence`, `ExuluChunkers.recursive`, etc.) create and manage a tokenizer instance internally — you do not instantiate `ExuluTokenizer` directly.
+
+If you need token counting inside a **custom chunker**, use any tiktoken-compatible library directly. For example, using the [`tiktoken`](https://www.npmjs.com/package/tiktoken) package:
+
+```typescript
+import { get_encoding } from "tiktoken";
+import type { ChunkerOperation } from "@exulu/backend";
+
+// A custom chunker that enforces a hard token budget per chunk.
+export const myChunker: ChunkerOperation = async (item, maxChunkSize) => {
+  const enc = get_encoding("cl100k_base"); // or "o200k_base" for gpt-4o
+
+  const text = typeof item.content === "string" ? item.content : "";
+  const words = text.split(" ");
+
+  const chunks: { content: string; index: number }[] = [];
+  let current: string[] = [];
+  let index = 0;
+
+  for (const word of words) {
+    const candidate = [...current, word].join(" ");
+    const tokenCount = enc.encode(candidate).length;
+
+    if (tokenCount > maxChunkSize && current.length > 0) {
+      chunks.push({ content: current.join(" "), index: index++ });
+      current = [word];
+    } else {
+      current.push(word);
+    }
+  }
+
+  if (current.length > 0) {
+    chunks.push({ content: current.join(" "), index: index++ });
+  }
+
+  enc.free();
+  return { item, chunks };
+};
+```
+
+See [ExuluChunkers — API reference](/developers/core/exulu-chunkers/api-reference) for the full `ChunkerOperation` signature and how to register a custom chunker on a context.
+
+## Notes
+
+- `ExuluTokenizer` is used by the base chunker class to enforce `maxChunkSize` token budgets. It is an internal implementation detail and is not part of the public `@exulu/backend` API.
+- The `encoder` property is `null` before `create` is called. Calling `encode`, `decode`, or `countTokens` before initialization throws `"Tokenizer not initialized"`.
+- Loading the BPE data is the expensive step — it is logged with timing. Memoization on the instance means the cost is paid once per `ExuluTokenizer` instance.
+
+## Related
+
+- [ExuluChunkers — introduction](/developers/core/exulu-chunkers/introduction): chunkers use `ExuluTokenizer` to enforce chunk-size budgets.

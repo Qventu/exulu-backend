@@ -1,0 +1,124 @@
+---
+title: "Introduction"
+description: "ExuluProvider is the code-level class for model providers — it wraps an AI-SDK LanguageModel factory with agent metadata, capabilities, and the generate methods that power chat and background runs."
+icon: "cpu"
+---
+
+<Note>
+**Naming note:** `ExuluProvider` is the runtime class you instantiate to define a model-backed agent. The term `ExuluAgent` still exists in the codebase but refers only to the TypeScript type for agent database rows — the records an administrator creates and saves through the platform UI. When you write code to define and register a model provider, you use `ExuluProvider`.
+</Note>
+
+`ExuluProvider` declares a model factory, describes the agent's modalities and capabilities, and exposes two generation methods: `generateSync` for non-streaming programmatic runs and `generateStream` for the live-chat flow. Providers you register on [ExuluApp](/developers/core/exulu-app/introduction) appear in the agent workbench alongside the 19 built-in defaults, where administrators can select them for their agents. See the [Get Started](/get-started/what-is-imp) guide for where providers fit in the platform.
+
+## What a provider gives you
+
+<CardGroup cols={2}>
+  <Card title="AI-SDK LanguageModel factory" icon="cpu">
+    A `model.create()` function that returns a Vercel AI-SDK `LanguageModel`. IMP calls it with the resolved API key, user, role, project, and agent ID.
+  </Card>
+  <Card title="Capability declaration" icon="file-image">
+    Declare which modalities the model accepts: text, image types, document types, audio, and video.
+  </Card>
+  <Card title="Streaming and sync generation" icon="activity">
+    `generateStream` powers the chat UI; `generateSync` is for background jobs, evaluations, and direct API calls.
+  </Card>
+  <Card title="Multi-agent tooling" icon="share-2">
+    `tool()` exports the provider as an `ExuluTool` an orchestrating agent can call — requires the `multi-agent-tooling` Enterprise Edition license.
+  </Card>
+  <Card title="Memory retrieval" icon="brain">
+    When `agent.memory` is set to a context ID, both generate methods retrieve relevant chunks before building the system prompt.
+  </Card>
+  <Card title="Context budget guard" icon="shield">
+    Both generate methods enforce a context-window occupancy check before calling the model, returning a structured error when the budget is exceeded so the UI can trigger compaction.
+  </Card>
+</CardGroup>
+
+## Minimal example
+
+```typescript
+import { ExuluProvider } from "@exulu/backend";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+export const supportProvider = new ExuluProvider({
+  id: "support_agent",
+  name: "Support agent",
+  description: "Answers customer support questions using the product knowledge base.",
+  type: "agent",
+  provider: "anthropic",
+  config: {
+    name: "claude-sonnet-4-5",
+    model: {
+      create: ({ apiKey }) =>
+        createAnthropic({ apiKey })("claude-sonnet-4-5-20251219"),
+    },
+    instructions: "You are a helpful support agent. Answer questions clearly and escalate billing issues.",
+  },
+  capabilities: {
+    text: true,
+    images: [".png", ".jpg", ".jpeg", ".webp"],
+    files: [".pdf", ".docx", ".txt"],
+    audio: [],
+    video: [],
+  },
+  maxContextLength: 200_000,
+});
+```
+
+Register it on the app:
+
+```typescript
+await app.create({
+  providers: [supportProvider],
+  config: {
+    workers: { enabled: true },
+    MCP: { enabled: false },
+  },
+});
+```
+
+## Streaming vs synchronous generation
+
+| Method | Returns | When to use |
+|---|---|---|
+| `generateStream` | `{ stream, originalMessages, previousMessages }` | Live chat UI — the stream is piped to the client in real time. |
+| `generateSync` | `string \| object` | Background jobs, evals, API-triggered runs, agent-as-tool execution. |
+
+Both methods load session history, apply context-budget guards, build the system prompt (including memory retrieval, skill listings, and citation instructions), convert tools via the AI-SDK pipeline, and call the configured model. The difference is only in the underlying AI-SDK call: `streamText` vs `generateText`.
+
+## Multi-agent tooling
+
+`provider.tool(instanceId, providers, contexts)` exports the provider as a tool that an orchestrating agent can call. The tool accepts a `prompt` and an `information` field; the sub-agent runs `generateSync` and returns its text response.
+
+```typescript
+const specialistTool = await sqlSpecialistProvider.tool(
+  "sql_specialist_agent_db_id",
+  [sqlSpecialistProvider],
+  [productDocsContext],
+);
+
+// Pass the tool to an orchestrating agent's generateSync call
+const answer = await orchestratorProvider.generateSync({
+  prompt: "Write a query to find the top 10 customers by revenue last quarter.",
+  currentTools: [specialistTool],
+  languageModel: orchestratorModel,
+  // ...
+});
+```
+
+<Note>
+`tool()` checks the `multi-agent-tooling` entitlement from your `EXULU_ENTERPRISE_LICENSE`. Without the license, the method logs a warning and still returns the tool — invocations fail at call time without the license. Add the license before relying on multi-agent flows.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="settings" href="/developers/core/exulu-provider/configuration">
+    Every constructor option: config.model, capabilities, workflows, maxContextLength.
+  </Card>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-provider/api-reference">
+    generateSync, generateStream, tool(), and all public properties.
+  </Card>
+  <Card title="Agents in the IMP UI" icon="layout" href="/building/agents/overview">
+    How administrators register and configure providers in the platform workbench.
+  </Card>
+</CardGroup>

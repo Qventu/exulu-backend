@@ -1,0 +1,242 @@
+---
+title: "Custom tools"
+description: "Build a complete ExuluTool with a Zod input schema and admin config params, add a streaming AsyncGenerator variant, and register both on the app."
+icon: "wrench"
+---
+
+Tools are the functions agents call during a conversation. This tutorial builds two tools: a standard async function that looks up an order from a REST API and returns JSON, and a streaming generator variant that yields progress updates while processing a batch operation.
+
+## Prerequisites
+
+- Completed [Your first app](/developers/tutorials/first-app) — you have a working project with `src/exulu.ts`.
+- Read [ExuluTool — introduction](/developers/core/exulu-tool/introduction) and [ExuluTool — configuration](/developers/core/exulu-tool/configuration).
+
+## What you will build
+
+1. `order_lookup` — a standard tool with a Zod schema, two admin config params, `needsApproval: false`, and a `{result}` return.
+2. `batch_report_generator` — a streaming tool that yields results incrementally as it processes items.
+
+<Steps>
+
+<Step title="Create the tools file">
+
+Create `src/tools/index.ts`:
+
+```typescript src/tools/index.ts
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const tools = [
+  orderLookupTool,
+  batchReportTool,
+];
+
+export default tools;
+```
+
+You will fill in `orderLookupTool` and `batchReportTool` in the following steps.
+
+</Step>
+
+<Step title="Build the order lookup tool">
+
+The order lookup tool fetches order details from an internal API. Because it is read-only and low-risk, `needsApproval` is `false` — the agent calls it without interrupting the user:
+
+```typescript src/tools/order-lookup.ts
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const orderLookupTool = new ExuluTool({
+  id: "order_lookup",
+  name: "Order lookup",
+  description: "Fetches order details from the order management system by order ID. Use this tool when the user asks about a specific order, its status, or its line items.",
+  type: "function",
+  category: "orders",
+
+  inputSchema: z.object({
+    orderId: z
+      .string()
+      .describe("The order ID to look up, e.g. ORD-2026-00123."),
+    includeLineItems: z
+      .boolean()
+      .optional()
+      .describe("Whether to include individual line items in the response. Defaults to false."),
+  }),
+
+  config: [
+    {
+      name: "orders_api_url",
+      description: "Base URL of the order management API.",
+      type: "string",
+      default: "https://orders.internal/api/v2",
+    },
+    {
+      name: "orders_api_key",
+      description: "API key for the order management system (stored encrypted).",
+      type: "variable",
+    },
+  ],
+
+  needsApproval: false,
+
+  execute: async ({ orderId, includeLineItems = false }, options) => {
+    const apiUrl = options?.config?.orders_api_url ?? "https://orders.internal/api/v2";
+    const apiKey = options?.config?.orders_api_key;
+
+    const url = new URL(`${apiUrl}/orders/${orderId}`);
+    if (includeLineItems) url.searchParams.set("expand", "line_items");
+
+    const response = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+
+    if (response.status === 404) {
+      return { result: JSON.stringify({ error: "Order not found", orderId }) };
+    }
+    if (!response.ok) {
+      return { result: JSON.stringify({ error: `API error ${response.status}`, orderId }) };
+    }
+
+    const order = await response.json();
+    return { result: JSON.stringify(order) };
+  },
+});
+```
+
+A few points about this tool:
+
+- **`config` params** — `orders_api_url` (type `"string"`) and `orders_api_key` (type `"variable"`) are set by an administrator in the agent workbench, not in code. Variable-type params are stored encrypted and looked up at call time. The agent never sees them.
+- **`needsApproval: false`** — read-only, reversible operations should not block the user. Set `true` (the default) for any action that modifies data or has side effects.
+- **Return shape** — `{ result: string }` is the standard return for tools that produce a text or JSON response. Always `JSON.stringify` objects before returning — agents parse JSON automatically.
+
+</Step>
+
+<Step title="Build a streaming tool">
+
+Return an `AsyncGenerator` from `execute` for long-running operations that should stream progress to the agent. Each yielded value is the same `{ result }` shape:
+
+```typescript src/tools/batch-report.ts
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const batchReportTool = new ExuluTool({
+  id: "batch_report_generator",
+  name: "Batch report generator",
+  description: "Generates a usage report for a list of account IDs. Each account is processed in sequence and results are streamed back as they complete.",
+  type: "function",
+  category: "reports",
+
+  inputSchema: z.object({
+    accountIds: z
+      .array(z.string())
+      .min(1)
+      .max(50)
+      .describe("Account IDs to include in the report, e.g. [\"ACC-001\", \"ACC-002\"]."),
+    period: z
+      .enum(["last_7_days", "last_30_days", "last_90_days"])
+      .describe("Reporting period."),
+  }),
+
+  config: [
+    {
+      name: "reporting_api_url",
+      description: "Base URL of the reporting service.",
+      type: "string",
+      default: "https://reporting.internal/api",
+    },
+  ],
+
+  needsApproval: true, // prompts the user before running — it hits external services
+
+  execute: async function* ({ accountIds, period }, options) {
+    const apiUrl = options?.config?.reporting_api_url ?? "https://reporting.internal/api";
+
+    for (const accountId of accountIds) {
+      try {
+        const response = await fetch(`${apiUrl}/accounts/${accountId}/report?period=${period}`);
+        const data = await response.json();
+
+        yield {
+          result: JSON.stringify({
+            accountId,
+            status: "ok",
+            report: data,
+          }),
+        };
+      } catch (error) {
+        yield {
+          result: JSON.stringify({
+            accountId,
+            status: "error",
+            message: error instanceof Error ? error.message : "Unknown error",
+          }),
+        };
+      }
+    }
+  },
+});
+```
+
+The `async function*` syntax marks `execute` as an async generator. IMP's framework handles both the regular `Promise` and `AsyncGenerator` return types — the agent sees a stream of result tokens as each `yield` resolves.
+
+</Step>
+
+<Step title="Register the tools on the app">
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+import { orderLookupTool } from "./tools/order-lookup";
+import { batchReportTool } from "./tools/batch-report";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region:   process.env.COMPANION_S3_REGION!,
+      s3key:      process.env.COMPANION_S3_KEY!,
+      s3secret:   process.env.COMPANION_S3_SECRET!,
+      s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    workers: { enabled: true },
+    MCP:     { enabled: false },
+  },
+  contexts,
+  tools: [orderLookupTool, batchReportTool],
+});
+```
+
+After starting the server, both tools appear in the agent workbench under **Build → Agents → [agent] → Tools & skills**. An administrator enables them per agent and fills in the config param values.
+
+</Step>
+
+<Step title="Verify tool behavior">
+
+Start the server and open the agent workbench. Enable `order_lookup` on an agent, set the config params, and send a test message that prompts the agent to look up an order. Because `needsApproval: false`, the agent calls the tool immediately without a confirmation prompt.
+
+Enable `batch_report_generator` on the same agent. When prompted to generate a report, the agent surfaces a **Confirm** dialog (because `needsApproval: true`) before calling the tool. After approval, streaming results appear in the conversation.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- `order_lookup` — a standard async tool with a Zod schema, two admin config params (one a `"variable"` for secrets), and `needsApproval: false`.
+- `batch_report_generator` — a streaming `AsyncGenerator` tool that yields progress for each processed account.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="OAuth tools" icon="lock" href="/developers/tutorials/oauth-tools">
+    Wrap a tool in an OAuth 2.0 flow so agents can act on behalf of the signed-in user.
+  </Card>
+  <Card title="ExuluTool — configuration" icon="settings" href="/developers/core/exulu-tool/configuration">
+    Full reference for every constructor option including the ExuluOauthConfig shape.
+  </Card>
+  <Card title="Tools and skills" icon="wrench" href="/building/agents/tools-and-skills">
+    Enable and configure tools in the agent workbench UI.
+  </Card>
+</CardGroup>

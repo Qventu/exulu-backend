@@ -1,0 +1,748 @@
+---
+title: "API reference"
+description: "Every public method and property of ExuluContext: search, item CRUD, embeddings, processing, sources, the entity layer, and table management."
+icon: "code"
+---
+
+All signatures on this page are verified against the current `@exulu/backend` source. For constructor options, see [Configuration](/developers/core/exulu-context/configuration).
+
+## Constructor
+
+```typescript
+const context = new ExuluContext(options);
+```
+
+See [Configuration](/developers/core/exulu-context/configuration) for the full options object.
+
+## Search
+
+### search()
+
+Runs vector, full-text, or hybrid retrieval over the context's chunks, with RBAC filtering, score cutoffs, and chunk expansion.
+
+```typescript
+search(options: {
+  query?: string;
+  keywords?: string[];
+  itemFilters: SearchFilters;
+  chunkFilters: SearchFilters;
+  user?: User;
+  role?: string;
+  method: VectorMethod;          // "cosineDistance" | "tsvector" | "hybridSearch"
+  sort: any;
+  trigger: STATISTICS_LABELS;    // "tool" | "agent" | "flow" | "api" | "claude-code" | "user" | "processor"
+  limit: number;
+  page: number;
+  cutoffs?: { cosineDistance?: number; tsvector?: number; hybrid?: number };
+  expand?: { before?: number; after?: number };
+  entityFilter?: EntityFilter;
+  queryEmbedding?: number[];
+}): Promise<{
+  itemFilters: SearchFilters;
+  chunkFilters: SearchFilters;
+  query?: string;
+  keywords?: string[];
+  method: VectorMethod;
+  context: { name: string; id: string; embedder: string };
+  chunks: VectorSearchChunkResult[];
+  entityInsights?: EntityInsights;
+}>
+```
+
+<ParamField path="options.query" type="string">
+  Natural-language query. Embedded via the context's embedding model for `cosineDistance` and `hybridSearch`. If a `queryRewriter` is configured, it runs first.
+</ParamField>
+
+<ParamField path="options.keywords" type="string[]">
+  Keywords for full-text matching (`tsvector` and `hybridSearch`).
+</ParamField>
+
+<ParamField path="options.itemFilters" type="SearchFilters" required>
+  Filters on item columns. `SearchFilters` is an array of objects mapping field names to operators: `eq`, `ne`, `in`, `contains`, `and`, `or` — plus `lte`/`gte` for numbers and dates. Pass `[]` for none.
+</ParamField>
+
+<ParamField path="options.chunkFilters" type="SearchFilters" required>
+  Filters on chunk columns, same operator shape. Pass `[]` for none.
+</ParamField>
+
+<ParamField path="options.user" type="User">
+  When set, access control is applied — only chunks from items the user may read (by `rights_mode`, ownership, role, or team) are returned.
+</ParamField>
+
+<ParamField path="options.role" type="string">
+  Role ID used alongside `user` for access control.
+</ParamField>
+
+<ParamField path="options.method" type="VectorMethod" required>
+  `"cosineDistance"` (vector similarity), `"tsvector"` (full-text), or `"hybridSearch"` (both combined).
+</ParamField>
+
+<ParamField path="options.sort" type="any" required>
+  Sort configuration; pass `undefined` for relevance ordering.
+</ParamField>
+
+<ParamField path="options.trigger" type="STATISTICS_LABELS" required>
+  Where the search originated, recorded in usage statistics — for example `"api"` or `"agent"`.
+</ParamField>
+
+<ParamField path="options.limit" type="number" required>
+  Maximum results. When falsy, falls back to `configuration.maxRetrievalResults` (default 10).
+</ParamField>
+
+<ParamField path="options.page" type="number" required>
+  Page number for pagination.
+</ParamField>
+
+<ParamField path="options.cutoffs" type="object">
+  Per-call override of the configured score cutoffs.
+</ParamField>
+
+<ParamField path="options.expand" type="object">
+  Per-call override of the configured chunk expansion window.
+</ParamField>
+
+<ParamField path="options.entityFilter" type="EntityFilter">
+  Entity-layer filter: `{ entityIds?: string[]; entities?: { type: string; name: string }[]; mode?: "any" | "all" }`. With `"any"` (default) a chunk must mention at least one of the entities; with `"all"`, all of them. Requires the entity layer.
+</ParamField>
+
+<ParamField path="options.queryEmbedding" type="number[]">
+  Precomputed query embedding — skips re-embedding the query. Must come from this context's embedding model.
+</ParamField>
+
+<ResponseField name="chunks" type="VectorSearchChunkResult[]">
+  Matched chunks. Each carries `chunk_content`, `chunk_index`, `chunk_id`, `chunk_source`, `chunk_metadata`, timestamps, `item_id`, `item_external_id`, `item_name`, item timestamps, the method-specific scores (`chunk_cosine_distance`, `chunk_fts_rank`, `chunk_hybrid_score`), and — with the entity layer on — `chunk_entities`.
+</ResponseField>
+
+<ResponseField name="context" type="object">
+  `{ name, id, embedder }` of the searched context.
+</ResponseField>
+
+<ResponseField name="entityInsights" type="EntityInsights">
+  Present when the entity layer is on: entities recognized in the query, how often they matched, and their top co-occurring entities.
+</ResponseField>
+
+```typescript
+const results = await context.search({
+  query: "How do I configure authentication?",
+  keywords: ["auth", "configuration"],
+  method: "hybridSearch",
+  itemFilters: [{ category: { eq: "guide" } }],
+  chunkFilters: [],
+  user: currentUser,
+  sort: undefined,
+  trigger: "api",
+  limit: 10,
+  page: 1,
+  expand: { before: 1, after: 2 },
+});
+
+for (const chunk of results.chunks) {
+  console.log(chunk.item_name, chunk.chunk_hybrid_score, chunk.chunk_content);
+}
+```
+
+## Item management
+
+### createItem()
+
+Inserts (or upserts) an item, then runs the processor and embedding generation as configured.
+
+```typescript
+createItem(
+  item: Item,
+  config: ExuluConfig,
+  user?: number,
+  role?: string,
+  upsert?: boolean,
+  generateEmbeddingsOverwrite?: boolean,
+): Promise<{ item: Item; job?: string }>
+```
+
+<ParamField path="item" type="Item" required>
+  Item data matching the context's schema. `json` field values that are objects or arrays are stringified automatically; `tags` arrays are joined to a comma-separated string.
+</ParamField>
+
+<ParamField path="config" type="ExuluConfig" required>
+  The app's `ExuluConfig` — needed for storage access in processors and chunkers.
+</ParamField>
+
+<ParamField path="user" type="number">
+  User ID for tracking and access control.
+</ParamField>
+
+<ParamField path="role" type="string">
+  Role ID for tracking and access control.
+</ParamField>
+
+<ParamField path="upsert" type="boolean" default="false">
+  When `true`, requires `external_id` or `id` on the item and merges on conflict — `external_id` takes precedence. Throws when neither is present.
+</ParamField>
+
+<ParamField path="generateEmbeddingsOverwrite" type="boolean">
+  Per-call override of `configuration.calculateVectors`: `true` forces embedding generation, `false` suppresses it.
+</ParamField>
+
+<ResponseField name="item" type="Item">
+  An object containing only the generated `id` — re-fetch with `getItem()` if you need the full row.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Comma-separated job IDs when the processor and/or embedder ran in queue mode.
+</ResponseField>
+
+```typescript
+const { item, job } = await context.createItem(
+  {
+    external_id: "doc-123",
+    name: "Getting started",
+    content: "Welcome to the platform…",
+    category: "guide",
+  },
+  config,
+  userId,
+  undefined,
+  true, // upsert on external_id
+);
+```
+
+<Info>
+Embeddings are generated when the context has an embedder, `generateEmbeddingsOverwrite` is not `false`, and either the override is `true` or `calculateVectors` is `onInsert` / `always`. The processor runs when its trigger is `onInsert`, `onUpdate`, or `always`.
+</Info>
+
+### updateItem()
+
+Updates an existing item by `id`, then runs the processor and embedding generation as configured.
+
+```typescript
+updateItem(
+  item: Item,
+  config: ExuluConfig,
+  user?: number,
+  role?: string,
+  generateEmbeddingsOverwrite?: boolean,
+  runProcessorOverwrite?: boolean,
+): Promise<{ item: Item; job?: string }>
+```
+
+<ParamField path="item" type="Item" required>
+  Must include `id` plus the fields to update. Throws when no row matches.
+</ParamField>
+
+<ParamField path="config" type="ExuluConfig" required>
+  The app's `ExuluConfig`.
+</ParamField>
+
+<ParamField path="user" type="number">
+  User ID for tracking.
+</ParamField>
+
+<ParamField path="role" type="string">
+  Role ID for tracking.
+</ParamField>
+
+<ParamField path="generateEmbeddingsOverwrite" type="boolean">
+  `true` forces embedding generation, `false` suppresses it; otherwise `calculateVectors` of `onUpdate` / `always` applies.
+</ParamField>
+
+<ParamField path="runProcessorOverwrite" type="boolean">
+  `true` forces the processor to run, `false` suppresses it; otherwise any non-`manual` trigger applies.
+</ParamField>
+
+<ResponseField name="item" type="Item">
+  The item **as it was before the update** — the method returns the previously fetched record, not the merged result.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Comma-separated job IDs when the processor and/or embedder ran in queue mode.
+</ResponseField>
+
+```typescript
+const { item, job } = await context.updateItem(
+  { id: "123e4567-e89b-12d3-a456-426614174000", content: "Updated content…" },
+  config,
+  userId,
+);
+```
+
+### deleteItem()
+
+Deletes an item and its chunks. Accepts either `id` or `external_id`.
+
+```typescript
+deleteItem(
+  item: Item,
+  user?: number,
+  role?: string,
+): Promise<{ id: string; job?: string }>
+```
+
+<ParamField path="item" type="Item" required>
+  Object with `id` or `external_id`. When only `external_id` is given, the row is resolved first; throws when not found.
+</ParamField>
+
+<ResponseField name="id" type="string">
+  ID of the deleted item.
+</ResponseField>
+
+```typescript
+await context.deleteItem({ external_id: "doc-123" });
+```
+
+<Warning>
+Permanently deletes the item and all of its embedding chunks. There is no undo.
+</Warning>
+
+### getItem()
+
+Fetches a single item by `id` or `external_id`, with its chunk count.
+
+```typescript
+getItem({ item }: { item: Item }): Promise<Item>
+```
+
+<ParamField path="item" type="Item" required>
+  Object with `id` or `external_id`.
+</ParamField>
+
+<ResponseField name="return" type="Promise<Item>">
+  The item with all columns plus a `chunksCount` property.
+</ResponseField>
+
+```typescript
+const item = await context.getItem({ item: { external_id: "doc-123" } });
+console.log(`${item.name} has ${item.chunksCount} chunks`);
+```
+
+<Warning>
+`getItem()` applies **no access control** — it is intended for internal use. Enforce permissions yourself, or pass a `user` to `getItems()`.
+</Warning>
+
+### getItems()
+
+Fetches items with optional filters, field selection, and access control.
+
+```typescript
+getItems(options: {
+  filters?: any[];
+  fields?: string[];
+  user?: User;
+  role?: string;
+}): Promise<Item[]>
+```
+
+<ParamField path="filters" type="any[]">
+  Filter array in the same operator shape as `search()` filters, for example `[{ category: { eq: "guide" } }]`.
+</ParamField>
+
+<ParamField path="fields" type="string[]">
+  Columns to return. Defaults to all.
+</ParamField>
+
+<ParamField path="user" type="User">
+  When set, access control is applied and only rows the user may read are returned. When omitted, no access control is applied.
+</ParamField>
+
+<ParamField path="role" type="string">
+  Role ID folded into the access-control check alongside `user`.
+</ParamField>
+
+```typescript
+const guides = await context.getItems({
+  filters: [{ category: { eq: "guide" } }],
+  fields: ["id", "name", "category"],
+  user: currentUser,
+});
+```
+
+### deleteAll()
+
+Deletes every item, every chunk, and — when the entity layer is on — every entity in the context.
+
+```typescript
+deleteAll(): Promise<{ count: number; results: any; errors?: string[] }>
+```
+
+```typescript
+await context.deleteAll();
+```
+
+<Warning>
+Destroys all data in the context. The returned `count` and `results` are currently placeholder values (`0` and `[]`) — don't build logic on them.
+</Warning>
+
+## Embeddings
+
+### embeddings.generate.one()
+
+Generates embeddings for one item: loads the full record, chunks it, embeds the chunks through LiteLLM, and replaces the item's rows in the chunks table. When the embedder has a `queue`, the work is scheduled as a job instead.
+
+```typescript
+embeddings.generate.one(options: {
+  item: Item;
+  user?: number;
+  role?: string;
+  trigger: STATISTICS_LABELS;
+  config: ExuluConfig;
+}): Promise<{ id: string; job?: string; chunks?: number }>
+```
+
+<ParamField path="options.item" type="Item" required>
+  Must contain `id`. The full record is re-fetched from the database, so partial items are safe.
+</ParamField>
+
+<ParamField path="options.trigger" type="STATISTICS_LABELS" required>
+  Statistics label, for example `"api"` or `"processor"`.
+</ParamField>
+
+<ParamField path="options.config" type="ExuluConfig" required>
+  The app's `ExuluConfig`.
+</ParamField>
+
+<ResponseField name="id" type="string">
+  The item ID.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Job ID when the embedder runs in queue mode (`chunks` is `0` in that case).
+</ResponseField>
+
+<ResponseField name="chunks" type="number">
+  Number of chunks written when run inline.
+</ResponseField>
+
+```typescript
+const { job, chunks } = await context.embeddings.generate.one({
+  item: { id: "123e4567-e89b-12d3-a456-426614174000" },
+  user: userId,
+  trigger: "api",
+  config,
+});
+
+console.log(job ? `Queued as job ${job}` : `Wrote ${chunks} chunks`);
+```
+
+<Warning>
+Throws when the context has no embedder or the item has no `id`.
+</Warning>
+
+### embeddings.generate.all()
+
+Generates (or queues) embeddings for all items in the context, one `generate.one()` call per item.
+
+```typescript
+embeddings.generate.all(
+  config: ExuluConfig,
+  userId?: number,
+  roleId?: string,
+  limit?: number,
+): Promise<{ jobs: string[]; items: number }>
+```
+
+<ParamField path="config" type="ExuluConfig" required>
+  The app's `ExuluConfig`.
+</ParamField>
+
+<ParamField path="userId" type="number">
+  User ID for tracking.
+</ParamField>
+
+<ParamField path="roleId" type="string">
+  Role ID for tracking.
+</ParamField>
+
+<ParamField path="limit" type="number">
+  Cap on the number of items to process.
+</ParamField>
+
+<ResponseField name="jobs" type="string[]">
+  Job IDs (queue mode).
+</ResponseField>
+
+<ResponseField name="items" type="number">
+  Number of items processed.
+</ResponseField>
+
+```typescript
+const { jobs, items } = await context.embeddings.generate.all(config, userId, undefined, 1000);
+console.log(`Processing ${items} items across ${jobs.length} jobs`);
+```
+
+<Warning>
+Without a queue on the embedder, this throws when the context holds more than 2,000 items — configure `embedder.queue` for bulk generation.
+</Warning>
+
+### createAndUpsertEmbeddings()
+
+Low-level worker used by `embeddings.generate.one()`: chunks, embeds, deletes the item's old chunks, inserts the new ones, updates `chunks_count` and `embeddings_updated_at`, and re-runs entity extraction when the entity layer is on.
+
+```typescript
+createAndUpsertEmbeddings(
+  item: Item,
+  config: ExuluConfig,
+  user?: number,
+  statistics?: ExuluStatisticParams,
+  role?: string,
+  job?: string,
+): Promise<{ id: string; chunks?: number; job?: string }>
+```
+
+<Warning>
+Internal — prefer `embeddings.generate.one()`, which handles queue mode and record hydration for you. Worker processes call this directly when executing embedding jobs.
+</Warning>
+
+## Processing
+
+### processField()
+
+Runs the configured processor on an item — either inline or, when the processor has a `queue`, as a background job. On inline success the result is written back to the items table with `last_processed_at` set, and embeddings are triggered when `processor.config.generateEmbeddings` is `true`.
+
+```typescript
+processField(
+  trigger: STATISTICS_LABELS,
+  item: Item,
+  exuluConfig: ExuluConfig,
+  user?: number,
+  role?: string,
+): Promise<{ result: Item | undefined; job?: string }>
+```
+
+<ParamField path="trigger" type="STATISTICS_LABELS" required>
+  Statistics label for the run.
+</ParamField>
+
+<ParamField path="item" type="Item" required>
+  The item to process.
+</ParamField>
+
+<ParamField path="exuluConfig" type="ExuluConfig" required>
+  The app's `ExuluConfig` — provides storage access to the processor's `utils.storage`.
+</ParamField>
+
+<ResponseField name="result" type="Item | undefined">
+  The processed item, or `undefined` when the job was queued or the processor's `filter` skipped the item.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Job ID in queue mode, or the follow-up embeddings job ID when `generateEmbeddings` queued one.
+</ResponseField>
+
+```typescript
+const { result, job } = await context.processField("api", item, config, userId);
+```
+
+<Warning>
+Throws when the context has no processor. Normally you don't call this yourself — `createItem()` and `updateItem()` invoke it based on the processor's trigger.
+</Warning>
+
+## Sources
+
+### executeSource()
+
+Runs a source's `execute` function with the given inputs and returns the fetched items. It does **not** write them — the worker's scheduled source jobs handle persistence, upserting returned items that carry an `external_id` (or `id`) and inserting the rest.
+
+```typescript
+executeSource(
+  source: ExuluContextSource,
+  inputs: any,
+  exuluConfig: ExuluConfig,
+): Promise<Item[]>
+```
+
+<ParamField path="source" type="ExuluContextSource" required>
+  One of the context's sources.
+</ParamField>
+
+<ParamField path="inputs" type="any" required>
+  Input values, spread into the source's `execute` arguments alongside `exuluConfig`.
+</ParamField>
+
+<ResponseField name="return" type="Promise<Item[]>">
+  The items the source produced.
+</ResponseField>
+
+```typescript
+const source = context.sources[0];
+const items = await context.executeSource(source, { since: "2026-01-01" }, config);
+console.log(`Fetched ${items.length} items from ${source.name}`);
+```
+
+## Entity layer
+
+Available under `context.entityLayer` when the [entity layer](/developers/core/exulu-context/configuration#entity-layer) is enabled. See [Entities](/building/knowledge/entities) for the admin UI these methods power.
+
+### entityLayer.countStale()
+
+Counts items whose entities were extracted with an out-of-date entity-type set — used for the admin "run backfill?" prompt.
+
+```typescript
+entityLayer.countStale(): Promise<number>
+```
+
+Returns `0` when the entity layer is disabled. When the signature column doesn't exist yet, every item counts as stale.
+
+```typescript
+const stale = await context.entityLayer.countStale();
+```
+
+### entityLayer.backfill()
+
+Re-extracts entities across existing items, inline and in batches.
+
+```typescript
+entityLayer.backfill(options?: {
+  onlyStale?: boolean;   // default true
+  limit?: number;        // safeguard cap, default 5000
+}): Promise<{ processed: number; skipped: number }>
+```
+
+<ParamField path="options.onlyStale" type="boolean" default="true">
+  Limit the run to items whose entity-type signature is out of date.
+</ParamField>
+
+<ParamField path="options.limit" type="number" default="5000">
+  Cap per run; items beyond it are reported in `skipped` and left for the next run.
+</ParamField>
+
+```typescript
+const { processed, skipped } = await context.entityLayer.backfill();
+```
+
+<Note>
+This re-runs entity extraction only — it does not re-embed items.
+</Note>
+
+### entityLayer.extractItem()
+
+Extracts and ingests entities for a single item. Powers the item detail page's extraction test action.
+
+```typescript
+entityLayer.extractItem(itemId: string): Promise<{ extracted: number }>
+```
+
+<Warning>
+Throws when the entity layer is not configured (no entity types, or no embedder).
+</Warning>
+
+### entityLayer.detachItem()
+
+Removes all entity links from one item and prunes entities that end up orphaned.
+
+```typescript
+entityLayer.detachItem(itemId: string): Promise<{ detached: number }>
+```
+
+### entityLayer.purgeType()
+
+Deletes all entities of a given type; their chunk mentions cascade away.
+
+```typescript
+entityLayer.purgeType(typeName: string): Promise<{ removed: number }>
+```
+
+```typescript
+await context.entityLayer.purgeType("Company");
+```
+
+## Table management
+
+These are called by `ExuluDatabase.init()` / platform database initialization — you rarely invoke them yourself.
+
+### createItemsTable()
+
+Creates `<id>_items` with the built-in columns, your custom fields, the generated `fts` tsvector column (per configured language), and a GIN index on it.
+
+```typescript
+createItemsTable(): Promise<void>
+```
+
+### createChunksTable()
+
+Creates `<id>_chunks` with `content`, JSONB `metadata`, `chunk_index`, a pgvector `embedding` column sized from the embedding model's declared dimensionality, a generated `fts` column, a GIN index, and an HNSW cosine index.
+
+```typescript
+createChunksTable(): Promise<void>
+```
+
+<Warning>
+Requires an embedder — the vector dimensionality comes from the model's `model_info` in `config.litellm.yaml`, and this throws when the model isn't declared or lacks a dimensionality.
+</Warning>
+
+### tableExists()
+
+```typescript
+tableExists(): Promise<boolean>
+```
+
+Whether `<id>_items` exists.
+
+### chunksTableExists()
+
+```typescript
+chunksTableExists(): Promise<boolean>
+```
+
+Whether `<id>_chunks` exists.
+
+```typescript
+if (!(await context.tableExists())) {
+  await context.createItemsTable();
+}
+```
+
+## Properties
+
+All constructor options are exposed as public properties:
+
+| Property | Type |
+|---|---|
+| `id` | `string` |
+| `name` | `string` |
+| `description` | `string` |
+| `active` | `boolean` |
+| `fields` | `ExuluContextFieldDefinition[]` |
+| `embedder` | `ExuluContextEmbedder \| undefined` |
+| `chunker` | `ChunkerOperation \| undefined` |
+| `processor` | `ExuluContextProcessor \| undefined` |
+| `sources` | `ExuluContextSource[]` |
+| `queryRewriter` | `((query: string) => Promise<string>) \| undefined` |
+| `resultReranker` | `function \| undefined` |
+| `configuration` | retrieval configuration object |
+| `entities` | `ExuluEntitiesConfig \| undefined` |
+
+```typescript
+console.log(context.id);                                  // "product_docs"
+console.log(context.configuration.maxRetrievalResults);   // 10
+console.log(context.fields.map((f) => `${f.name}: ${f.type}`));
+```
+
+## Complete workflow
+
+```typescript
+// Create
+const { item } = await context.createItem(
+  { external_id: "doc-1", name: "Getting started", content: "This guide…", category: "guide" },
+  config,
+  userId,
+);
+
+// Read
+const stored = await context.getItem({ item: { id: item.id } });
+
+// Update (embeddings regenerate when calculateVectors is "onUpdate" or "always")
+await context.updateItem({ id: item.id, content: "Updated content…" }, config, userId);
+
+// Search
+const results = await context.search({
+  query: "getting started",
+  method: "hybridSearch",
+  itemFilters: [],
+  chunkFilters: [],
+  sort: undefined,
+  trigger: "api",
+  limit: 10,
+  page: 1,
+});
+
+// Delete
+await context.deleteItem({ id: item.id });
+```

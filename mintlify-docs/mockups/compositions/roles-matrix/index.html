@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — roles matrix</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* tabs */
+      #root .tab-row { display: flex; gap: 0; padding: 0 28px; border-bottom: 1px solid var(--hair); }
+      #root .tab { padding: 10px 16px; font-size: 13px; color: var(--tx-lo); cursor: default; position: relative; }
+      #root .tab.active { color: var(--tx-hi); font-weight: 500; }
+      #root .tab.active::after { content: ""; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--ink); }
+
+      /* roles list on left of split */
+      #root .split { display: flex; flex: 1; min-height: 0; }
+      #root .roles-list { width: 320px; flex: none; border-right: 1px solid var(--hair); display: flex; flex-direction: column; overflow: hidden; }
+      #root .roles-toolbar { padding: 12px 16px; border-bottom: 1px solid var(--hair); }
+      #root .roles-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 10px; }
+      #root .roles-search svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .roles-search-text { font-size: 12.5px; color: var(--tx-faint); }
+      #root .role-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid var(--hair); cursor: default; }
+      #root .role-row.active { background: var(--surface-2); }
+      #root .role-name { font-size: 13px; color: var(--tx-hi); font-weight: 500; }
+      #root .role-perms { font-size: 11px; color: var(--tx-lo); font-family: var(--font-mono); margin-top: 2px; }
+      #root .system-badge { font-size: 10px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-faint); border: 1px solid var(--hair); padding: 1px 5px; }
+
+      /* detail panel */
+      #root .detail-panel { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .detail-header { padding: 20px 28px 16px; border-bottom: 1px solid var(--hair); display: flex; align-items: flex-start; justify-content: space-between; }
+      #root .detail-title { font-size: 17px; font-weight: 600; color: var(--tx-hi); }
+      #root .detail-meta { font-size: 12px; color: var(--tx-lo); margin-top: 3px; }
+      #root .detail-scroll { flex: 1; overflow: hidden; padding: 20px 28px; display: flex; flex-direction: column; gap: 20px; }
+
+      /* name field */
+      #root .field { display: flex; flex-direction: column; gap: 5px; }
+      #root .field-label { font-size: 11px; font-weight: 500; color: var(--tx-hi); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+      #root .field-input { border: 1px solid var(--hair); background: var(--bg); padding: 7px 11px; font-size: 13.5px; color: var(--tx-hi); }
+
+      /* section header */
+      #root .section-hd { font-size: 13px; font-weight: 600; color: var(--tx-hi); margin-bottom: 8px; }
+      #root .section-desc { font-size: 12px; color: var(--tx-lo); margin-top: 2px; margin-bottom: 12px; }
+
+      /* permission matrix rows */
+      #root .perm-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--hair); background: var(--surface); margin-bottom: 4px; }
+      #root .perm-left { display: flex; align-items: center; gap: 8px; }
+      #root .perm-icon { color: var(--tx-lo); }
+      #root .perm-icon svg { width: 14px; height: 14px; stroke-width: 1.5; }
+      #root .perm-name { font-size: 13px; font-weight: 500; color: var(--tx-hi); }
+      #root .perm-info { width: 16px; height: 16px; border: 1px solid var(--hair); display: grid; place-items: center; font-size: 10px; color: var(--tx-faint); }
+
+      /* segmented control */
+      #root .seg { display: flex; border: 1px solid var(--hair); overflow: hidden; }
+      #root .seg-item { padding: 5px 14px; font-size: 11.5px; color: var(--tx-lo); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border-right: 1px solid var(--hair); background: var(--bg); }
+      #root .seg-item:last-child { border-right: none; }
+      #root .seg-item.on { background: var(--ink); color: #fff; }
+      #root .seg-item.active { background: var(--surface-2); color: var(--tx-hi); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="roles-matrix"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+              Chat
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>
+              Agents
+            </div>
+            <div class="imp-sidebar-group">Administration</div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Users
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+              Budgets
+            </div>
+          </aside>
+
+          <!-- main -->
+          <div class="imp-main">
+            <div class="imp-topbar">
+              <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Users &amp; access</span>
+              <span class="imp-btn imp-btn-ink">+ New role</span>
+            </div>
+
+            <div class="imp-content" style="padding:0;display:flex;flex-direction:column;flex:1;min-height:0;">
+              <div class="tab-row">
+                <div class="tab">Users</div>
+                <div class="tab active">Roles</div>
+                <div class="tab">Teams</div>
+              </div>
+
+              <div class="split">
+                <!-- roles list -->
+                <div class="roles-list">
+                  <div class="roles-toolbar">
+                    <div class="roles-search">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                      <span class="roles-search-text">Search roles…</span>
+                    </div>
+                  </div>
+                  <div class="role-row">
+                    <div>
+                      <div class="role-name">Admin</div>
+                      <div class="role-perms">Agents RW · Users RW · API RW</div>
+                    </div>
+                    <span class="system-badge">System</span>
+                  </div>
+                  <div class="role-row active">
+                    <div>
+                      <div class="role-name">Editor</div>
+                      <div class="role-perms">Agents R · Routines R · Evals R</div>
+                    </div>
+                  </div>
+                  <div class="role-row">
+                    <div>
+                      <div class="role-name">Viewer</div>
+                      <div class="role-perms">Agents R</div>
+                    </div>
+                  </div>
+                  <div class="role-row">
+                    <div>
+                      <div class="role-name">Developer</div>
+                      <div class="role-perms">Agents RW · API RW · Evals RW</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- detail panel -->
+                <div class="detail-panel">
+                  <div class="detail-header">
+                    <div>
+                      <div class="detail-title">Editor</div>
+                      <div class="detail-meta">Updated 2 days ago</div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                      <span class="imp-btn imp-btn-ghost" style="opacity:0.5;">Save</span>
+                      <span style="width:32px;height:32px;border:1px solid var(--hair);display:grid;place-items:center;color:var(--tx-lo);font-size:16px;">⋯</span>
+                    </div>
+                  </div>
+                  <div class="detail-scroll">
+                    <div class="field">
+                      <div class="field-label">Role name</div>
+                      <div class="field-input">Editor</div>
+                    </div>
+
+                    <div>
+                      <div class="section-hd">Permissions</div>
+                      <div class="section-desc">Configure access levels for each area. Members of this role see navigation changes immediately.</div>
+
+                      <!-- Agents: Read -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg></span>
+                          <span class="perm-name">Agents</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item">None</span>
+                          <span class="seg-item on">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- Routines: Read -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/></svg></span>
+                          <span class="perm-name">Routines</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item">None</span>
+                          <span class="seg-item on">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- Variables: None -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></svg></span>
+                          <span class="perm-name">Variables</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item on">None</span>
+                          <span class="seg-item">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- Users: None -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span>
+                          <span class="perm-name">Users</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item on">None</span>
+                          <span class="seg-item">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- API: None -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span>
+                          <span class="perm-name">API</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item on">None</span>
+                          <span class="seg-item">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- Evals: Read -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg></span>
+                          <span class="perm-name">Evals</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item">None</span>
+                          <span class="seg-item on">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+
+                      <!-- Budgets: None -->
+                      <div class="perm-row">
+                        <div class="perm-left">
+                          <span class="perm-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg></span>
+                          <span class="perm-name">Budgets</span>
+                          <span class="perm-info">i</span>
+                        </div>
+                        <div class="seg">
+                          <span class="seg-item on">None</span>
+                          <span class="seg-item">Read</span>
+                          <span class="seg-item">Write</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["roles-matrix"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

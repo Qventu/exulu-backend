@@ -1,0 +1,73 @@
+---
+title: "Image generation"
+description: "Generate and edit images inside a chat conversation using the image generation widget."
+icon: "image"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="Requires LiteLLM and S3 configured on the server. The image generation tool only appears when at least one image model is registered in the LiteLLM catalog." />
+
+When the agent has the image generation tool available and decides to use it, it opens an interactive widget directly in the conversation. You control the prompt, model, style, count, size, and quality — the agent proposes a starting prompt but you refine it before anything is generated.
+
+<Frame caption="The image generation widget: set model, style, and prompt — click Generate to get a grid of results, then select the one you want.">
+  <video autoPlay muted loop playsInline src="/videos/generate-image.mp4" />
+</Frame>
+
+## The image generation widget
+
+The widget appears inline below the agent's message that triggered it. It stays active for the lifetime of the conversation, so you can return to it and generate more images at any time.
+
+### Settings
+
+At the top of the widget a settings panel shows the available controls:
+
+| Control | What it does |
+| --- | --- |
+| **Model** | Choose between image models registered in the LiteLLM catalog. Models that support editing show an "edits" badge. |
+| **Style** | Optionally apply a saved style that prefixes your prompt with specific instructions. Personal styles (pencil icon) and shared styles (people icon) are listed separately. Use the **+** button to create a new style or the pencil button to edit the selected one. |
+| **Size** | Output dimensions. The options depend on the selected model. |
+| **Quality** | Image quality preset. The options depend on the selected model. |
+| **Count** | Number of images to generate in one request. Use the **−** and **+** buttons, up to the model's maximum. Aria labels: "Decrease image count" / "Increase image count". |
+
+On small screens these controls collapse behind a **Settings** disclosure. The summary line shows the current selection at a glance.
+
+### Prompt
+
+Edit the initial prompt the agent suggested, or replace it entirely. The text area resizes as you type.
+
+### Reference images
+
+Attach one or more images to switch the widget into **edit mode**. In edit mode the model uses your references as a visual starting point and applies your prompt as an instruction. Only models with edit support (shown by the "edits" badge) can process reference images.
+
+- Click **Add** to upload PNG, JPG, or WebP files.
+- Remove a reference by clicking the × button on its thumbnail ("Remove reference image").
+
+If you select a model that does not support editing while references are attached, the widget shows a warning and blocks generation.
+
+### Generate
+
+Press **Generate** to start. The button changes to "Generating… (click to cancel)" while IMP calls the LiteLLM proxy. Typical wait time is 5–30 seconds. Click the button again to cancel.
+
+If generation fails, an error message appears below the button.
+
+## Reviewing and selecting images
+
+Generated images appear in a **History** section below the controls. Each row shows the model, size, quality, and prompt used, followed by the generated images.
+
+- Click an image to select it (a blue border and a check mark appear).
+- Hover or focus the image to reveal per-image actions: **Download image** and, for editable models, **Use as reference** (adds the image as a reference for the next generation).
+- Once you have selected the images you want to send to the agent, click **Use these** in the footer.
+
+When you click **Use these**, IMP marks your selection and inserts a system message so the agent can see which images were chosen. The widget collapses into a compact **Final selection** view. You can reopen it with **Edit again**.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Artifacts and sharing" icon="share-2" href="/user-guide/chat/artifacts-and-sharing">
+    Share generated images via a link.
+  </Card>
+  <Card title="Attachments and session files" icon="folder-open" href="/user-guide/chat/attachments-and-session-files">
+    Access images the agent saves to the session.
+  </Card>
+</Columns>

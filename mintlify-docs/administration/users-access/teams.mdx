@@ -1,0 +1,70 @@
+---
+title: "Teams"
+description: "Create and manage teams for grouping users, attributing costs, and organizing shared content."
+icon: "users-round"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="users (write)" />
+
+## What teams are
+
+A team is a named group of users. Teams serve two purposes:
+
+1. **Cost attribution** — spending on models by team members is attributed to the team so you can see per-team analytics and set team-level budgets.
+2. **Content grouping** — users on a team can share access to agents, knowledge, or projects that are scoped to the team.
+
+The Teams tab is at `/users?tab=teams` (also reachable via the `/teams` redirect).
+
+## The teams list
+
+The Teams tab shows all teams in a table with columns **Team**, **Description**, and **Updated**. Use the **Search teams…** field to filter by name.
+
+Click any team row to open the team detail panel.
+
+## Create a team
+
+Click **New team** in the page header. The create panel asks for:
+
+- **Team name** (required).
+- **Description** (optional) — a short explanation of the team's purpose.
+
+Click **Create** to save the team. You can then assign users to it from the [Users tab](/administration/users-access/overview) by editing individual users or using the bulk assign action.
+
+## Edit a team
+
+Open the team from the list. Update the name or description and click **Save**. The panel shows an "Unsaved changes" indicator while there are pending edits.
+
+## Delete a team
+
+Open the team's detail panel, scroll to **Danger zone**, and click **Delete team**. The confirmation dialog warns:
+
+> Users assigned to `{name}` lose this grouping; budget attribution for this team stops.
+
+Deleting a team is permanent and cannot be undone. Users who were members of the team keep their accounts but lose the team assignment; their spending is no longer attributed to the deleted team.
+
+## Assign users to a team
+
+You assign users to teams from the [Users tab](/administration/users-access/overview), not from the Teams tab:
+
+- **Single user** — open the user detail panel, find the **Team** selector under Access, and pick a team. A confirmation dialog summarizes the change.
+- **Bulk** — select multiple users in the Users table and use **Assign team…** in the selection bar.
+
+<Note>
+The **Budgets →** link that appears in the Teams tab connects directly to the Budgets page filtered to team budgets. Use it to set spending limits for the team as a whole.
+</Note>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Users overview" icon="users" href="/administration/users-access/overview">
+    Assign users to teams individually or in bulk.
+  </Card>
+  <Card title="Budgets" icon="wallet" href="/administration/budgets">
+    Set team-level spending limits that apply to the whole group.
+  </Card>
+  <Card title="Analytics" icon="bar-chart-3" href="/administration/analytics">
+    View spend and usage broken down by team.
+  </Card>
+</Columns>

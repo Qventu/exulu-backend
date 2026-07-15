@@ -1,0 +1,306 @@
+---
+title: "Configuration"
+description: "Every ExuluTool constructor option: id, name, description, type, inputSchema, config, needsApproval, oauth, and execute."
+icon: "settings"
+---
+
+The `ExuluTool` constructor takes a single options object. This page documents every option, verified against the current `@exulu/backend` source.
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+const tool = new ExuluTool({
+  id,            // string — required
+  name,          // string — required
+  description,   // string — required
+  type,          // PublicToolType — required
+  execute,       // function — required
+  config,        // config param array — required (pass [] if none)
+  category,      // string
+  inputSchema,   // z.ZodType
+  needsApproval, // boolean — default true
+  oauth,         // ExuluOauthConfig
+});
+```
+
+## Identity
+
+<ParamField path="id" type="string" required>
+  Unique identifier. Used for database references — never change it after the tool has been used. Must start with a letter or underscore, contain only letters, digits, and underscores, and be at most 80 characters; treat 5 as the practical minimum.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  Human-readable name shown in the platform UI and passed to the language model as the tool name. Agent tool-call names are derived from this value (sanitized).
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  Description surfaced to agents and administrators. Write it from the agent's point of view — explain what the tool does and when to call it. Good descriptions improve tool-selection accuracy.
+</ParamField>
+
+<ParamField path="category" type="string" default='"default"'>
+  Organizes tools in the admin UI. If omitted, defaults to `"default"`.
+</ParamField>
+
+<Warning>
+Never change `id` after the tool has data in the database — references stored by ID will silently point at nothing.
+</Warning>
+
+## Type
+
+<ParamField path="type" type='"function" | "web_search" | "skill" | "context"' required>
+  Categorization hint used by the platform UI and agent runtime to label and filter tools. Does not change how `execute` is called.
+</ParamField>
+
+| Value | Use for |
+|---|---|
+| `"function"` | Custom integrations, database queries, API calls, business logic. |
+| `"web_search"` | Tools that fetch real-time web results. |
+| `"skill"` | Tools that delegate to a named skill. |
+| `"context"` | Context-retrieval tools (context search). |
+
+<Note>
+`"agent"` and `"context"` types are managed by IMP internally and cannot be set via the public constructor. Passing `"agent"` throws immediately. Use `ExuluTool.internal()` only if you are building framework-level tooling.
+</Note>
+
+## Input schema
+
+<ParamField path="inputSchema" type="z.ZodType">
+  Zod schema that defines and validates the tool's input parameters. When omitted, defaults to an empty object schema (`z.object({})`). The schema is forwarded to the AI SDK and from there to the language model, so always add `.describe()` to every field.
+</ParamField>
+
+```typescript
+inputSchema: z.object({
+  orderId: z.string().describe("The order ID to look up, e.g. ORD-20261001-XZ."),
+  includeHistory: z.boolean().optional().describe("Include fulfillment history (default: false)."),
+  currency: z.enum(["EUR", "USD", "GBP"]).optional().describe("Currency for amounts."),
+})
+```
+
+<Note>
+Always add `.describe()` to every schema field. These descriptions are the only way the language model learns what each parameter is for — without them, tool-calling accuracy drops.
+</Note>
+
+## Admin-configurable params
+
+<ParamField path="config" type="object[]" required>
+  Array of runtime parameters that platform administrators configure per agent in the platform UI. Pass an empty array when the tool needs no admin configuration.
+</ParamField>
+
+```typescript
+type ExuluToolConfigParam = {
+  name: string;
+  description: string;
+  type: "boolean" | "string" | "number" | "variable" | "json";
+  default?: string | boolean | number | object;
+};
+```
+
+<ParamField path="config[].name" type="string" required>
+  Parameter name used as the key in the tool's config record.
+</ParamField>
+
+<ParamField path="config[].description" type="string" required>
+  Description shown to the administrator in the platform UI.
+</ParamField>
+
+<ParamField path="config[].type" type='"boolean" | "string" | "number" | "variable" | "json"' required>
+  The value type. `"variable"` means the value is looked up from the platform's encrypted variables table — suitable for API keys and secrets. `"json"` accepts any JSON-serializable object.
+</ParamField>
+
+<ParamField path="config[].default" type="string | boolean | number | object">
+  Default value surfaced in the admin UI before the administrator saves a custom value. Not applicable to `"variable"` type params (which must be set explicitly).
+</ParamField>
+
+```typescript
+config: [
+  {
+    name: "api_endpoint",
+    description: "Base URL of the upstream API.",
+    type: "string",
+    default: "https://api.example.com/v2",
+  },
+  {
+    name: "timeout_ms",
+    description: "Request timeout in milliseconds.",
+    type: "number",
+    default: 5000,
+  },
+  {
+    name: "enable_cache",
+    description: "Cache responses for the session.",
+    type: "boolean",
+    default: true,
+  },
+  {
+    name: "api_key",
+    description: "API authentication key (stored encrypted).",
+    type: "variable",
+  },
+  {
+    name: "filter_config",
+    description: "JSON filter object applied to all requests.",
+    type: "json",
+    default: { active: true },
+  },
+]
+```
+
+## Approval
+
+<ParamField path="needsApproval" type="boolean" default="true">
+  Whether the platform prompts the user to approve each tool call before `execute` runs. Defaults to `true`. Set `false` for read-only, low-risk tools where interruption is undesirable (for example, a price lookup or a knowledge search).
+</ParamField>
+
+## OAuth
+
+<ParamField path="oauth" type="ExuluOauthConfig">
+  When set, IMP wraps `execute` with an authorization-code OAuth 2.0 flow. The tool only runs when a valid access token exists for the `(provider, userId)` pair. When no token is present, `execute` is skipped and the tool returns an authorization URL that the agent surfaces to the user. After the user completes the flow, IMP retries the call with a fresh token.
+</ParamField>
+
+```typescript
+type ExuluOauthConfig = {
+  provider?: string;           // Shared key across tools — defaults to the tool's id
+  authorizationUrl: string;    // OAuth authorization endpoint
+  tokenUrl: string;            // OAuth token endpoint
+  clientId: string;
+  clientSecret: string;        // Server-side only — never exposed to the browser
+  scopes: string[];
+  pkce?: boolean;              // S256 PKCE — defaults to true
+  extraAuthParams?: Record<string, string>;  // Extra query params for the auth URL
+};
+```
+
+<ParamField path="oauth.provider" type="string">
+  Provider key shared across tools that use the same OAuth service (for example, `"google"`). Tools sharing a `provider` share tokens per user — one consent screen per provider per user instead of per tool. When omitted, defaults to the tool's `id`.
+</ParamField>
+
+<ParamField path="oauth.authorizationUrl" type="string" required>
+  The OAuth provider's authorization endpoint.
+</ParamField>
+
+<ParamField path="oauth.tokenUrl" type="string" required>
+  The OAuth provider's token endpoint. Used server-side in the token exchange — never exposed to the browser.
+</ParamField>
+
+<ParamField path="oauth.clientId" type="string" required>
+  OAuth client ID.
+</ParamField>
+
+<ParamField path="oauth.clientSecret" type="string" required>
+  OAuth client secret. Used server-side only.
+</ParamField>
+
+<ParamField path="oauth.scopes" type="string[]" required>
+  Scopes to request. Joined with spaces in the authorization URL.
+</ParamField>
+
+<ParamField path="oauth.pkce" type="boolean" default="true">
+  Whether to use PKCE (S256 code challenge). Most modern providers support it; set `false` for providers that reject PKCE.
+</ParamField>
+
+<ParamField path="oauth.extraAuthParams" type="Record<string, string>">
+  Extra query parameters appended to the authorization URL. For example, `{ access_type: "offline", prompt: "consent" }` forces Google to issue a refresh token.
+</ParamField>
+
+When `oauth` is declared, the framework injects an `oauth` field into the tool's `inputs` on every authenticated call:
+
+```typescript
+type ExuluOauthToolContext = {
+  accessToken: string;
+  expiresAt: Date | null;   // null when the provider did not report an expiry
+  scopes: string | null;    // space-joined granted scopes, when reported
+};
+```
+
+## Execute function
+
+<ParamField path="execute" type="function" required>
+  The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields (for example `oauth` when an OAuth config is present). `options` carries AI-SDK context such as `toolCallId` and `messages` — ignore it if you don't need it.
+</ParamField>
+
+The return value can be a `Promise` or an `AsyncGenerator` yielding the same shape:
+
+```typescript
+type ExuluToolResult = {
+  result?: string;   // The main result string passed back to the agent
+  job?: string;      // Job ID when the tool enqueued background work
+  items?: Item[];    // Items for context-retrieval tools
+};
+
+// Async function
+execute: async (inputs, options?) => Promise<ExuluToolResult>
+
+// Async generator (streaming)
+execute: async function* (inputs, options?) => AsyncGenerator<ExuluToolResult>
+```
+
+<ResponseField name="result" type="string">
+  The main result returned to the agent. Non-string values should be JSON-stringified before returning — agents parse JSON automatically.
+</ResponseField>
+
+<ResponseField name="job" type="string">
+  Job ID when the tool enqueued background work. Surfaced in the platform UI.
+</ResponseField>
+
+<ResponseField name="items" type="Item[]">
+  Items from a context search, for context-retrieval tools.
+</ResponseField>
+
+## Complete example
+
+```typescript
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const invoiceTool = new ExuluTool({
+  id: "invoice_lookup",
+  name: "Invoice lookup",
+  description: "Looks up invoice details from the accounting system by invoice number.",
+  type: "function",
+  category: "finance",
+
+  inputSchema: z.object({
+    invoiceNumber: z.string().describe("Invoice number, e.g. INV-2026-00123."),
+    includeLine: z.boolean().optional().describe("Include line items (default: false)."),
+  }),
+
+  config: [
+    {
+      name: "accounting_api_url",
+      description: "Base URL of the accounting API.",
+      type: "string",
+      default: "https://accounting.internal/api",
+    },
+    {
+      name: "accounting_api_key",
+      description: "API key for the accounting service.",
+      type: "variable",
+    },
+  ],
+
+  needsApproval: false,
+
+  execute: async ({ invoiceNumber, includeLine = false }) => {
+    const response = await fetch(
+      `https://accounting.internal/api/invoices/${invoiceNumber}?lines=${includeLine}`,
+    );
+    if (!response.ok) {
+      return { result: JSON.stringify({ error: "Invoice not found", invoiceNumber }) };
+    }
+    const invoice = await response.json();
+    return { result: JSON.stringify(invoice) };
+  },
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-tool/api-reference">
+    Public properties, the execute() method, and ExuluTool.internal().
+  </Card>
+  <Card title="ExuluApp" icon="layers" href="/developers/core/exulu-app/introduction">
+    Register the tool on the app.
+  </Card>
+</CardGroup>

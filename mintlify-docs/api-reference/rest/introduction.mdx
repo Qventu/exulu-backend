@@ -1,0 +1,168 @@
+---
+title: "REST API"
+description: "REST endpoints for agent runs, media processing, session files, and system utilities. GraphQL covers entity CRUD; REST covers everything that streams, uploads, or generates."
+---
+
+IMP exposes two complementary API surfaces. GraphQL is the right choice when you are creating, reading, updating, or deleting platform entities (agents, sessions, users, prompts, knowledge, evals). REST is the right choice for operations that involve streaming responses, file upload/download, media generation, or binary output — the things that do not map naturally to GraphQL's request/response model.
+
+<CardGroup cols={2}>
+  <Card title="Agent runs" icon="play" href="/api-reference/rest/introduction#agent-run-endpoint">
+    Stream or synchronously invoke any agent instance via `POST /agents/litellm/run/{instance}`.
+  </Card>
+  <Card title="Session files" icon="folder-open" href="/api-reference/rest/introduction#session-files">
+    List, upload, sync, and delete files attached to an agent session.
+  </Card>
+  <Card title="Media" icon="waveform" href="/api-reference/rest/introduction#media-endpoints">
+    Transcribe audio, synthesize speech, and generate or edit images.
+  </Card>
+  <Card title="System" icon="heartbeat" href="/api-reference/rest/introduction#system-endpoints">
+    Ping for auth status, fetch theme and platform config.
+  </Card>
+</CardGroup>
+
+## Base URL
+
+The IMP backend listens on port `9001` by default:
+
+```text
+http://your-imp-host:9001
+```
+
+All paths in this reference are relative to that base URL.
+
+## Authentication
+
+Three credential types are accepted across REST endpoints.
+
+### API key
+
+Pass an organisation API key in the `x-api-key` header (or the alias `exulu-api-key`):
+
+```bash
+curl -X POST https://your-imp-host/agents/litellm/run/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10 \
+  -H "x-api-key: sk_abc123.../my-key" \
+  -H "Content-Type: application/json" \
+  -H "stream: true" \
+  -d '{"message":{"id":"msg_01Ab","role":"user","parts":[{"type":"text","text":"Hello"}]}}'
+```
+
+Key format: `sk_<secret>/<keyname>` — the secret portion, a literal `/`, and the human-readable key name. A `Bearer ` prefix on the header value is tolerated and stripped. Keys can be scoped to a specific agent; a scoped key is rejected if used against a different agent. Manage keys under [API keys](/administration/api-keys) in the admin area.
+
+### Session JWT
+
+Pass a NextAuth session JWT as a bearer token in the `Authorization` header:
+
+```bash
+curl https://your-imp-host/ping \
+  -H "Authorization: Bearer <session-jwt>"
+```
+
+The token is HS256, signed with the deployment's `NEXTAUTH_SECRET`. This is what the IMP frontend sends automatically. You can copy your personal token from the [API keys](/administration/api-keys) page.
+
+<Note>
+The agent-run endpoint (`/agents/litellm/run/{instance}`) does not require authentication when the agent's `rights_mode` is set to `public`. All other REST endpoints require either an API key or a session JWT.
+
+The `internal-key` header (set to the deployment's `INTERNAL_SECRET`) is accepted only on the Uppy S3 proxy routes (`/s3/*`), which are part of the file-upload infrastructure and documented with the upload endpoints. The session-file routes (`/sessions/{sessionId}/files/...`) use the standard API key or Bearer JWT authentication.
+</Note>
+
+## When to use REST vs GraphQL
+
+| Use REST when… | Use GraphQL when… |
+| --- | --- |
+| Running an agent and consuming the response stream | Listing, filtering, or paginating agents, sessions, or messages |
+| Uploading or managing session files | Reading or updating agent configuration |
+| Transcribing audio or synthesizing speech | Querying knowledge context items or running vector search |
+| Generating or editing images | Creating eval runs or querying job results |
+| Polling for auth status (`/ping`) | Introspecting the full platform schema |
+
+## Streaming semantics
+
+When you call `POST /agents/litellm/run/{instance}` with the `stream: true` header, the response is an AI SDK UIMessage stream delivered over HTTP with `Content-Type: text/event-stream`. Each line is a server-sent event carrying a serialised UIMessage part.
+
+The stream follows the AI SDK protocol:
+
+- Lines prefixed `0:` carry the initial message envelope.
+- Lines prefixed `2:` carry incremental part deltas (text deltas, tool-call initiation, tool-result).
+- Lines prefixed `9:` carry finish-step events with per-step token usage.
+- Lines prefixed `e:` carry the final finish event with aggregate token usage in `messageMetadata`.
+
+On the client side, use the AI SDK's `useChat` hook or `streamText` utilities to consume the stream. The backend also pipes the stream to completion in the background so that `onFinish` fires even if the client disconnects mid-stream — session persistence is not lost on abort.
+
+A 413 response (rather than a stream error) is returned when the session's context window is full. Call `POST /agents/litellm/compact/{instance}` to compact the session history before retrying.
+
+## Agent-run worked example
+
+### Request
+
+```bash
+curl -X POST https://your-imp-host/agents/litellm/run/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10 \
+  -H "x-api-key: sk_abc123.../production-key" \
+  -H "Content-Type: application/json" \
+  -H "stream: true" \
+  -H "session: e7c3b8a2-0d4f-4b1e-9c72-3a6d5e8f1b20" \
+  -d '{
+    "message": {
+      "id": "msg_01Ab2Cd3Ef",
+      "role": "user",
+      "parts": [{ "type": "text", "text": "Summarise last quarter'\''s revenue figures." }]
+    }
+  }'
+```
+
+### Response (streaming, `stream: true`)
+
+The response body is a series of text/event-stream lines:
+
+```text
+0:{"id":"msg_res_01Xy","role":"assistant","parts":[]}
+2:{"type":"text-delta","textDelta":"Last quarter"}
+2:{"type":"text-delta","textDelta":" revenue reached $4.2M"}
+2:{"type":"text-delta","textDelta":", up 12% year over year."}
+9:{"finishReason":"stop","usage":{"inputTokens":102,"outputTokens":18},"isContinuation":false}
+e:{"finishReason":"stop","usage":{"inputTokens":102,"outputTokens":18},"messageMetadata":{"totalTokens":120,"inputTokens":102,"outputTokens":18}}
+```
+
+### Response (synchronous, `stream: false`)
+
+The sync response body is the assistant's text as a JSON-encoded string — the entire body is a quoted string, not an object. Use streaming mode if you need structured events or token usage.
+
+```json
+"Last quarter revenue reached $4.2M, up 12% year over year."
+```
+
+## Session files
+
+Session files are stored in S3 under the session's prefix. The typical flow is:
+
+1. Call `POST /sessions/{sessionId}/files/upload-sign` to get a presigned PUT URL and key.
+2. PUT the file bytes directly to the presigned URL.
+3. Call `POST /sessions/{sessionId}/files/sync-to-sandbox` with the returned key so the agent can read the file on its next tool call.
+
+Use `GET /sessions/{sessionId}/files` to list files and `DELETE /sessions/{sessionId}/files?key=<key>` to remove one.
+
+The `GET /sessions/{sessionId}/file/preview-pdf` endpoint converts Office files (`.docx`, `.xlsx`, `.pptx`, etc.) to PDF via LibreOffice for in-browser preview. The JWT may be passed as an `?auth=` query parameter so `<iframe>` elements can load the PDF without a custom request header.
+
+## Media endpoints
+
+**Transcription** (`POST /transcribe`) accepts multipart audio up to 25 MB and returns the transcribed text. Requires `EXULU_USE_LITELLM=true` and `TRANSCRIPTION_MODEL` to be set. An optional `language` field (ISO 639-1) prevents Whisper from mis-detecting the language on short clips.
+
+**Speech synthesis** (`POST /speech`) converts up to 4,000 characters of text to an MP3 audio file. Requires `EXULU_USE_LITELLM=true`, `TTS_MODEL`, and `TTS_VOICE`.
+
+**Image generation** (`POST /images/generate`, `POST /images/edit`, `POST /images/select`, `GET /images/history`) backs the in-chat image widget. Models are declared in `config.litellm.yaml` with `model_info.type: image_generation`. Generated images are stored in S3 and returned as presigned URLs.
+
+## System endpoints
+
+- `GET /ping` — returns `{ "authenticated": true/false }`. Useful for checking credentials without triggering a full agent run. No authentication required.
+- `GET /theme` — returns the platform theme (light/dark colour maps). No authentication required.
+- `GET /config` — returns the platform's active feature flags and service states (LiteLLM, workers, file uploads, MCP, telemetry). No authentication required.
+
+## Gateway endpoints
+
+IMP provides two integration surfaces for external clients:
+
+- **[LiteLLM gateway](/api-reference/rest/gateways-litellm)** — direct OpenAI-compatible pass-through at `/litellm/{project}/v1/...`. Call any model in your `config.litellm.yaml` by name using any OpenAI-compatible SDK or tool. Use this for raw model calls, embeddings, and batch jobs.
+- **[MCP endpoint](/api-reference/rest/mcp)** — Streamable HTTP MCP server at `/mcp/:agent` for Claude Desktop, Cursor, and any MCP-compatible client. Use this to expose a specific IMP agent with its instructions and knowledge.
+
+## GDPR / DSGVO
+
+Operator endpoints for fulfilling data-subject access and erasure requests are documented on the [GDPR endpoints](/api-reference/rest/gdpr) page. Both require `super_admin` and are intentionally API-only.

@@ -1,0 +1,113 @@
+      <section class="feature" id="results-matrix">
+        <h2>Results matrix</h2>
+        <p class="one-liner">Every run, every case, side by side.</p>
+        <div class="slice">
+          <video src="./shorts/results-matrix.mp4" poster="./shorts/results-matrix-poster.png" autoplay loop muted playsinline></video>
+          <p>Open an eval set and every run becomes a lane in a single cases &times; runs matrix: test cases down the left, one lane per run with its name, agent, date, and a pinned <strong>Average</strong> row. Scores color against each run's pass threshold — green at or above it, amber within twenty points below, red under that — so a whole suite's health reads at a glance.</p>
+          <p>The matrix updates live as results land — cells flip from Running to a colored score and lane averages recolor, no reload needed. It shows the last 3 runs by default, with a quiet rail to reveal older ones, and each lane's menu lets you refresh, start, copy, edit, or delete a run.</p>
+          <div class="snippet-label">GraphQL — start runs from the API and watch the matrix fill:</div>
+          <pre><code>mutation RunEval($id: ID!, $test_case_ids: [ID!]) {
+  runEval(id: $id, test_case_ids: $test_case_ids) {
+    jobs
+    count
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="eval-run-wizard">
+        <h2>Eval run wizard</h2>
+        <p class="one-liner">Test your agents like you test your code.</p>
+        <div class="slice">
+          <video src="./shorts/eval-run-wizard.mp4" poster="./shorts/eval-run-wizard-poster.png" autoplay loop muted playsinline></video>
+          <p>One dialog configures an eval run in three sections. <strong>Essentials</strong> picks the name, agent, and test cases — each case shows its scripted conversation length, with a live counter and one-click select all. <strong>Eval functions</strong> works the same way; the built-in LLM-as-Judge takes a <code>prompt</code> with <code>{actual_output}</code> and <code>{expected_output}</code> slots and scores 0&ndash;100.</p>
+          <p>Advanced options — scoring method (Average / Median / Sum), pass threshold, timeout — stay collapsed with sensible defaults, so most runs never touch them. The same dialog handles create, edit, and copy, and a run config is a plain API object you can script.</p>
+          <div class="snippet-label">GraphQL — script run configs directly:</div>
+          <pre><code>mutation CreateEvalRun($data: eval_runInput!) {
+  eval_runsCreateOne(input: $data) {
+    item {
+      id
+      name
+      agent_id
+      eval_functions
+      scoring_method
+      pass_threshold
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="result-deep-dive">
+        <h2>Result deep-dive</h2>
+        <p class="one-liner">Every score, explained.</p>
+        <div class="slice">
+          <video src="./shorts/result-deep-dive.mp4" poster="./shorts/result-deep-dive-poster.png" autoplay loop muted playsinline></video>
+          <p>Click any finished score and a details sheet slides in with four tabs. Overview shows the score, duration, status, and token usage split into input and output. <strong>Messages</strong> replays the eval conversation in the same renderer the chat page uses, so you audit exactly what the agent said. Functions breaks the composite score apart — one card per eval function with its individual score and the exact config it ran with — and Raw is the full result as JSON.</p>
+          <p>When a result carries an error, Overview adds an error card, so the same sheet doubles as your debugging view. Only real, finished results open — in-flight and failed cells stay as status labels.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="case-authoring">
+        <h2>Conversation test cases</h2>
+        <p class="one-liner">Test cases that talk like your users.</p>
+        <div class="slice">
+          <video src="./shorts/case-authoring.mp4" poster="./shorts/case-authoring-poster.png" autoplay loop muted playsinline></video>
+          <p>Test cases are authored as real multi-turn conversations, not one-line prompts. Script the user messages in order — press <strong>Enter</strong> to add one, Shift+Enter for a new line — and the agent responds between each message automatically when the case runs. The transcript is the product's actual chat renderer, with per-message edit and remove.</p>
+          <p>Attach up to ten files per message (images, PDF, Office docs, CSV, audio, video); the agent under test must support the attached media types. The scripted conversation is stored verbatim in the record's <code>inputs</code> field, so you can create cases programmatically too.</p>
+          <div class="snippet-label">GraphQL — script test cases directly:</div>
+          <pre><code>mutation CreateTestCase($data: test_caseInput!) {
+  test_casesCreateOne(input: $data) {
+    item {
+      id
+      name
+      inputs
+      expected_output
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="eval-sets">
+        <h2>Every eval set, one searchable home</h2>
+        <p class="one-liner">Eval suites get a permanent address, not a scattered set of fixtures.</p>
+        <div class="slice">
+          <p>The new <strong>/evals</strong> area gives eval suites a permanent home: a paginated table of eval sets with search-as-you-type name filtering and a shortcut to the test case library. Creating a suite is one dialog with just a name and description — add test cases after.</p>
+          <p>Access is gated on the <code>evals</code> permission: anyone without at least read access gets a clear lock screen instead of a broken page, and deleting a set is confirm-guarded and permanent.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="test-case-library">
+        <h2>A test-case library that outlives any one suite</h2>
+        <p class="one-liner">Cases are named, versioned records — authoring and suite assembly stay separate steps.</p>
+        <div class="slice">
+          <p>Test cases live in their own library at <strong>/evals/cases</strong> — every case a named, multi-turn conversation with an expected output, not a throwaway fixture buried inside a suite. Each row shows a message count for the user turns you authored; auto-generated placeholders never inflate it.</p>
+          <p>From any eval set, pull cases in with <strong>Add existing test cases</strong> — a case belongs to one set at a time, and sets hold up to 500 cases. The expected output can be an exact response or a description of what the output should contain.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="queue-console">
+        <h2>The run queue, one quiet chip away</h2>
+        <p class="one-liner">Runs execute on a background queue — its whole state fits in one chip, with a full console behind it.</p>
+        <div class="slice">
+          <p>Eval runs execute on a background queue, and its whole state fits in one chip above the results matrix — live active and failed counts that disappear when the queue is empty. Click it for the full console: status tabs (Active / Waiting / Failed / Completed), a jobs table with click-to-copy IDs, attempts and timestamps, and bulk retry and delete.</p>
+          <p>Queue controls — pause, resume, drain — are confirm-guarded and visible only with <code>evals: write</code>; readers can still open and inspect everything. Retry fires the same <code>runEval</code> mutation that fans a run out into jobs — pass <code>test_case_ids</code> to re-run just the cases that failed.</p>
+          <div class="snippet-label">GraphQL — the same mutation the console's Retry button makes:</div>
+          <pre><code>mutation RunEval($id: ID!, $test_case_ids: [ID!]) {
+  runEval(id: $id, test_case_ids: $test_case_ids) {
+    jobs
+    count
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="workers-guardrail">
+        <h2>A guardrail, not a dead end</h2>
+        <p class="one-liner">No background workers? The evals area says so — and stays fully browsable.</p>
+        <div class="slice">
+          <p>If your deployment has no background workers, the evals area says so instead of failing silently: a banner explains that eval sets stay viewable but runs can't execute until Redis is configured.</p>
+          <p>It's deliberately a warning, not an error — browsing and authoring keep working, and super-admins, the people who can fix it, get a direct link to configuration.</p>
+        </div>
+      </section>

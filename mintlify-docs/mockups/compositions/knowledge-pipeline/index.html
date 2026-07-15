@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — knowledge pipeline</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* workspace layout */
+      #root .ws-body { display: flex; flex: 1; min-height: 0; }
+      #root .ws-main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .ws-scroll { flex: 1; overflow: hidden; padding: 28px 40px; }
+      #root .ws-col { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+
+      /* topbar breadcrumb */
+      #root .tb-left { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--tx-lo); }
+      #root .tb-sep { color: var(--tx-faint); margin: 0 4px; }
+      #root .tb-ctx { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .tb-right { display: flex; align-items: center; gap: 10px; }
+
+      /* workspace tabs */
+      #root .ws-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--hair); }
+      #root .ws-tab { padding: 10px 20px; font-size: 13px; color: var(--tx-lo); cursor: default; }
+      #root .ws-tab.active { color: var(--tx-hi); font-weight: 500; border-bottom: 2px solid var(--ink); margin-bottom: -1px; }
+
+      /* pipeline health card */
+      #root .health-card { background: var(--surface); border: 1px solid var(--hair); padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+      #root .health-title { font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); }
+      #root .health-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+      #root .health-stat { display: flex; flex-direction: column; gap: 2px; }
+      #root .health-stat-val { font-size: 20px; font-weight: 600; color: var(--tx-hi); }
+      #root .health-stat-lbl { font-size: 11px; color: var(--tx-faint); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .health-flow { display: flex; align-items: center; gap: 0; background: var(--bg); border: 1px solid var(--hair); padding: 10px 16px; font-size: 12.5px; color: var(--tx-mid); gap: 6px; }
+      #root .flow-step { display: flex; align-items: center; gap: 6px; }
+      #root .flow-arrow { color: var(--tx-faint); }
+      #root .flow-badge { background: var(--chip-soft); color: var(--ink); padding: 2px 8px; font-size: 11.5px; font-family: var(--font-mono); }
+      #root .flow-badge.ok { background: var(--chip); }
+
+      /* stage cards */
+      #root .stage-list { display: flex; flex-direction: column; gap: 16px; }
+      #root .stage-card { background: var(--surface); border: 1px solid var(--hair); }
+      #root .stage-card-hd { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--hair); }
+      #root .stage-card-title { font-size: 13.5px; font-weight: 600; color: var(--tx-hi); }
+      #root .stage-card-desc { font-size: 12.5px; color: var(--tx-lo); margin-top: 2px; }
+      #root .stage-card-actions { display: flex; gap: 8px; align-items: center; }
+      #root .stage-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+      #root .stage-row { display: flex; align-items: baseline; gap: 10px; }
+      #root .stage-key { font-size: 11.5px; font-family: var(--font-mono); color: var(--tx-faint); text-transform: uppercase; letter-spacing: 0.05em; width: 100px; flex: none; }
+      #root .stage-val { font-size: 13px; color: var(--tx-mid); }
+      #root .stage-val.mono { font-family: var(--font-mono); font-size: 12px; }
+      #root .stage-connector { height: 24px; width: 1px; background: var(--hair); margin: 0 auto; }
+
+      /* status pills */
+      #root .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; }
+      #root .pill.ok { background: var(--chip-soft); color: var(--ink); }
+      #root .pill.warn { background: #fff3cc; color: #7a5a00; }
+      #root .pill.dot-ok::before { content: ''; display: inline-block; width: 6px; height: 6px; background: var(--accent); }
+      #root .pill.dot-warn::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #e5a000; }
+
+      /* activity log */
+      #root .activity-lbl { font-size: 11.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); }
+      #root .activity-list { display: flex; flex-direction: column; }
+      #root .activity-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--hair); font-size: 12.5px; color: var(--tx-mid); }
+      #root .activity-row:last-child { border-bottom: none; }
+      #root .activity-stage { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tx-faint); width: 80px; flex: none; }
+      #root .activity-name { flex: 1; color: var(--tx-hi); }
+      #root .activity-time { color: var(--tx-faint); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="knowledge-pipeline"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- app sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat</div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>Agents</div>
+            <div class="imp-nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/></svg>Knowledge</div>
+          </aside>
+
+          <div class="imp-main">
+            <!-- topbar -->
+            <div class="imp-topbar">
+              <span class="tb-left">
+                <span>Knowledge</span>
+                <span class="tb-sep">/</span>
+                <span class="tb-ctx">Product manuals</span>
+              </span>
+              <span class="tb-right">
+                <span class="imp-btn imp-btn-ghost" style="font-size:12px;">← Back to library</span>
+              </span>
+            </div>
+
+            <!-- workspace body -->
+            <div class="ws-body">
+              <div class="ws-main">
+                <!-- tabs -->
+                <div class="ws-tabs">
+                  <div class="ws-tab">Items</div>
+                  <div class="ws-tab active">Pipeline</div>
+                  <div class="ws-tab">Entities</div>
+                </div>
+
+                <div class="ws-scroll">
+                  <div class="ws-col">
+
+                    <!-- health card -->
+                    <div class="health-card">
+                      <div class="health-title">Pipeline health</div>
+                      <div class="health-stats">
+                        <div class="health-stat">
+                          <div class="health-stat-val">1,284</div>
+                          <div class="health-stat-lbl">Total items</div>
+                        </div>
+                        <div class="health-stat">
+                          <div class="health-stat-val" style="color:var(--accent)">1,247</div>
+                          <div class="health-stat-lbl">Embedded</div>
+                        </div>
+                        <div class="health-stat">
+                          <div class="health-stat-val" style="color:var(--destructive)">37</div>
+                          <div class="health-stat-lbl">Not embedded</div>
+                        </div>
+                        <div class="health-stat">
+                          <div class="health-stat-val">8,931</div>
+                          <div class="health-stat-lbl">Total chunks</div>
+                        </div>
+                        <div class="health-stat">
+                          <div class="health-stat-val">14</div>
+                          <div class="health-stat-lbl">Stale</div>
+                        </div>
+                      </div>
+                      <div class="health-flow">
+                        <div class="flow-step"><span class="flow-badge ok">1 source</span> connected · 1,284 items</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step"><span class="flow-badge">Processor</span></div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step"><span class="flow-badge">Embedder</span> 1,247 / 1,284 embedded</div>
+                        <span class="flow-arrow">→</span>
+                        <div class="flow-step"><span class="flow-badge ok">97% retrievable</span></div>
+                      </div>
+                    </div>
+
+                    <!-- stage list -->
+                    <div class="stage-list">
+
+                      <!-- Sources stage -->
+                      <div class="stage-card">
+                        <div class="stage-card-hd">
+                          <div>
+                            <div class="stage-card-title">Sources</div>
+                            <div class="stage-card-desc">Sources ingest external data into this context.</div>
+                          </div>
+                          <div class="stage-card-actions">
+                            <span class="pill ok dot-ok">1 source connected</span>
+                          </div>
+                        </div>
+                        <div class="stage-body">
+                          <div class="stage-row">
+                            <span class="stage-key">Name</span>
+                            <span class="stage-val">pdf-ingest</span>
+                            <span style="margin-left:auto;display:flex;gap:8px">
+                              <span class="imp-btn imp-btn-ghost" style="font-size:11px;padding:4px 10px;">Configuration</span>
+                              <span class="imp-btn imp-btn-ghost" style="font-size:11px;padding:4px 10px;">Jobs</span>
+                              <span class="imp-btn imp-btn-ink" style="font-size:11px;padding:4px 10px;">Run</span>
+                            </span>
+                          </div>
+                          <div class="stage-row">
+                            <span class="stage-key">Schedule</span>
+                            <span class="stage-val mono">0 3 * * *</span>
+                          </div>
+                          <div class="stage-row">
+                            <span class="stage-key">Queue</span>
+                            <span class="stage-val">default</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="stage-connector"></div>
+
+                      <!-- Processor stage -->
+                      <div class="stage-card">
+                        <div class="stage-card-hd">
+                          <div>
+                            <div class="stage-card-title">Processor</div>
+                            <div class="stage-card-desc">The processor transforms items before they are embedded.</div>
+                          </div>
+                          <div class="stage-card-actions">
+                            <span class="imp-btn imp-btn-ghost" style="font-size:11px;padding:4px 10px;">Jobs</span>
+                            <span class="imp-btn imp-btn-ink" style="font-size:11px;padding:4px 10px;">Trigger</span>
+                          </div>
+                        </div>
+                        <div class="stage-body">
+                          <div class="stage-row">
+                            <span class="stage-key">Name</span>
+                            <span class="stage-val">document-splitter</span>
+                          </div>
+                          <div class="stage-row">
+                            <span class="stage-key">Embeddings</span>
+                            <span class="stage-val">Generated automatically</span>
+                          </div>
+                          <div class="stage-row">
+                            <span class="stage-key">Timeout</span>
+                            <span class="stage-val">120 s</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="stage-connector"></div>
+
+                      <!-- Embedder stage -->
+                      <div class="stage-card">
+                        <div class="stage-card-hd">
+                          <div>
+                            <div class="stage-card-title">Embedder</div>
+                            <div class="stage-card-desc">The embedder generates retrieval vectors for items.</div>
+                          </div>
+                          <div class="stage-card-actions">
+                            <span class="imp-btn imp-btn-ghost" style="font-size:11px;padding:4px 10px;">Jobs</span>
+                            <span class="imp-btn imp-btn-ink" style="font-size:11px;padding:4px 10px;">Trigger</span>
+                          </div>
+                        </div>
+                        <div class="stage-body">
+                          <div class="stage-row">
+                            <span class="stage-key">Embedder</span>
+                            <span class="stage-val">text-embedding-3-small · OpenAI</span>
+                          </div>
+                          <div class="stage-row">
+                            <span class="stage-key">Bindings</span>
+                            <span class="stage-val" style="color:var(--accent)">2 bindings configured</span>
+                          </div>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    <!-- activity log -->
+                    <div>
+                      <div class="activity-lbl" style="margin-bottom:10px;">Recent activity</div>
+                      <div class="activity-list">
+                        <div class="activity-row"><span class="activity-stage">Embedded</span><span class="activity-name">IEC 61439 Low-voltage switchgear.pdf</span><span class="activity-time">just now</span></div>
+                        <div class="activity-row"><span class="activity-stage">Processed</span><span class="activity-name">IEC 61439 Low-voltage switchgear.pdf</span><span class="activity-time">1 min ago</span></div>
+                        <div class="activity-row"><span class="activity-stage">Embedded</span><span class="activity-name">Installation guide v4.2.pdf</span><span class="activity-time">3 min ago</span></div>
+                        <div class="activity-row"><span class="activity-stage">Processed</span><span class="activity-name">Installation guide v4.2.pdf</span><span class="activity-time">4 min ago</span></div>
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      // Static mockup: a settled hold for the full duration, no motion.
+      window.__timelines["knowledge-pipeline"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

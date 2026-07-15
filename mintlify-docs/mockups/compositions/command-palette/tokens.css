@@ -1,0 +1,25 @@
+/* IMP product-replica tokens — the warm/lime skin used in all release mockups.
+   Source of truth: releases/_build/reskin-videos-prep.mjs HEX_MAP.
+   Check drift with: node scripts/check-tokens.mjs */
+:root {
+  --bg: #f8f6f1;
+  --surface: #fbfaf7;
+  --surface-2: #efece4;
+  --hair: #e4ddd0;
+  --tx-hi: #241f1a;
+  --tx-mid: #55504a;
+  --tx-lo: #6b6560;
+  --tx-faint: #9b948d;
+  --accent: #6f9a37;
+  --accent-soft: #8fbf4d;
+  --chip: #cef79e;
+  --chip-soft: #eef3e2;
+  --ink: #222f30;
+  --void: #1b1714;
+  --destructive: #e54b50;
+  --code-bg: #22253a;
+  --code-fg: #f7f7ef;
+  --radius: 0;
+  --font-sans: "Aspekta", "Inter Tight", system-ui, sans-serif;
+  --font-mono: "RobotoMono", "Roboto Mono", monospace;
+}

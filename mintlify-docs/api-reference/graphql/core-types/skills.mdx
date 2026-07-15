@@ -1,0 +1,69 @@
+---
+title: "Skills"
+description: "The skill type represents a versioned tool bundle — a package of code and configuration that agents can call as a tool."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+A `skill` is a deployable tool bundle that extends what an agent can do. Each skill is stored in S3, versioned, and can be attached to one or more agents. See [Skills overview](/building/skills/overview) for product context.
+
+```graphql
+type skill {
+  name: String
+  description: String
+  s3folder: String
+  tags: JSON
+  usage_count: Float
+  favorite_count: Float
+  history: JSON
+  current_version: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `s3folder` | S3 key prefix under which this skill's versioned bundles are stored. |
+| `tags` | JSON string array for categorisation and search. |
+| `history` | JSON array recording previous versions; each entry captures the version number and upload timestamp. |
+| `current_version` | Numeric version counter; incremented on each successful bundle upload. |
+| `usage_count` | Number of times this skill has been invoked across all agents. |
+| `favorite_count` | Number of users who have favorited this skill. |
+| `rights_mode` | `"public"` or `"private"`; private skills are scoped via `RBAC`. |
+| `created_by` | Numeric ID of the user who created this skill. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  skillsPagination(
+    limit: 20
+    filters: [{ rights_mode: { eq: "public" } }]
+    sort: { field: "usage_count", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      description
+      current_version
+      tags
+      usage_count
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

@@ -1,0 +1,238 @@
+---
+title: "OAuth tools"
+description: "Wrap a tool in an authorization-code + PKCE flow using ExuluOauthConfig: declare the config shape, understand what IMP handles, and use the injected token in execute."
+icon: "lock"
+---
+
+When a tool needs to act on behalf of the signed-in user — reading their calendar, sending email from their account, or accessing a SaaS workspace — declare an `oauth` config on the tool. IMP handles the authorization-code flow including PKCE, token storage per user, and automatic retry after the user consents. Your `execute` function receives the access token as `inputs.oauth.accessToken`.
+
+## Prerequisites
+
+- Completed [Custom tools](/developers/tutorials/custom-tools) — you know how to build an `ExuluTool`.
+- Read [ExuluTool — configuration](/developers/core/exulu-tool/configuration) — the OAuth section explains `ExuluOauthConfig`.
+
+## What IMP handles for you
+
+When `oauth` is declared on a tool:
+
+1. **Authorization URL construction** — IMP builds the authorization URL from `authorizationUrl`, `clientId`, `scopes`, and `extraAuthParams`, adding PKCE challenge parameters (`code_challenge`, `code_challenge_method`) when `pkce: true`.
+2. **Token exchange** — After the user completes the consent screen, the platform's `/oauth/callback` route receives the code and exchanges it for an access and refresh token using `tokenUrl`, `clientId`, and `clientSecret` — server-side only.
+3. **Token storage** — Tokens are stored per `(provider, userId)` pair. Tools that share a `provider` key share the same token — one consent screen per provider per user.
+4. **Injection** — On every authenticated tool call where a valid token exists, IMP injects `oauth` into `inputs` before calling `execute`.
+5. **Authorization URL fallback** — When no valid token exists for the calling user, IMP short-circuits `execute` and returns an authorization URL. The agent surfaces this URL to the user ("Click here to connect your calendar"). After the user consents, IMP retries the original tool call with the fresh token.
+
+Your code only needs to declare the OAuth config and use `inputs.oauth.accessToken`.
+
+## What you will build
+
+A calendar events tool that reads upcoming events from a generic OAuth-protected calendar API. The tool uses a standard authorization-code + PKCE flow.
+
+<Steps>
+
+<Step title="Register the OAuth app with your provider">
+
+Before writing code, create an OAuth 2.0 application in your calendar provider's developer console:
+
+- **Redirect URI** — `https://your-imp-backend.example.com/oauth/callback`
+- **Scopes** — read-only calendar access (e.g. `calendar:read` or `https://provider.example.com/auth/calendar.readonly`)
+
+Note the **Client ID** and **Client Secret**. Store them as environment variables:
+
+```bash .env
+CALENDAR_CLIENT_ID=your-client-id
+CALENDAR_CLIENT_SECRET=your-client-secret
+```
+
+</Step>
+
+<Step title="Build the calendar events tool">
+
+```typescript src/tools/calendar-events.ts
+import { ExuluTool } from "@exulu/backend";
+import { z } from "zod";
+
+export const calendarEventsTool = new ExuluTool({
+  id: "calendar_events",
+  name: "Calendar events",
+  description: "Lists upcoming calendar events for the signed-in user. Use this tool when the user asks what is on their calendar, when their next meeting is, or what events are coming up.",
+  type: "function",
+  category: "calendar",
+
+  inputSchema: z.object({
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(30)
+      .describe("How many days ahead to look for events. Default is 7."),
+    calendar_id: z
+      .string()
+      .optional()
+      .describe("Specific calendar to query. Defaults to the primary calendar."),
+  }),
+
+  config: [
+    {
+      name: "calendar_api_base_url",
+      description: "Base URL of the calendar API.",
+      type: "string",
+      default: "https://api.example-calendar.com/v1",
+    },
+  ],
+
+  needsApproval: false,
+
+  oauth: {
+    provider: "example_calendar",      // Shared key — multiple tools can share this
+    authorizationUrl: "https://auth.example-calendar.com/oauth2/authorize",
+    tokenUrl:         "https://auth.example-calendar.com/oauth2/token",
+    clientId:         process.env.CALENDAR_CLIENT_ID!,
+    clientSecret:     process.env.CALENDAR_CLIENT_SECRET!,
+    scopes:           ["calendar:read", "profile:read"],
+    pkce:             true,
+    extraAuthParams:  { access_type: "offline", prompt: "consent" },
+  },
+
+  execute: async ({ days = 7, calendar_id, oauth }, options) => {
+    // oauth is injected by the framework when a valid token exists.
+    // If no token exists, IMP never reaches execute — it returns the auth URL instead.
+    const apiBase = options?.config?.calendar_api_base_url
+      ?? "https://api.example-calendar.com/v1";
+
+    const now = new Date();
+    const until = new Date(now.getTime() + days * 24 * 60 * 60 * 1_000);
+
+    const url = new URL(`${apiBase}/calendars/${calendar_id ?? "primary"}/events`);
+    url.searchParams.set("timeMin", now.toISOString());
+    url.searchParams.set("timeMax", until.toISOString());
+    url.searchParams.set("orderBy", "startTime");
+    url.searchParams.set("maxResults", "50");
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${oauth.accessToken}`,
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        result: JSON.stringify({
+          error: `Calendar API returned ${response.status}`,
+        }),
+      };
+    }
+
+    const data = await response.json();
+    return { result: JSON.stringify(data.events ?? []) };
+  },
+});
+```
+
+The `oauth` object injected into `inputs` has this shape:
+
+```typescript
+type ExuluOauthToolContext = {
+  accessToken: string;
+  expiresAt:   Date | null;   // null when the provider did not report an expiry
+  scopes:      string | null; // space-joined granted scopes
+};
+```
+
+</Step>
+
+<Step title="Understand the authorization URL fallback">
+
+When the agent calls `calendar_events` for a user who has not yet authorized:
+
+1. IMP checks its token store for a valid `(example_calendar, userId)` token.
+2. No token found — IMP builds the authorization URL and returns it as the tool result, skipping `execute`.
+3. The agent surfaces the URL to the user: "To list your calendar events, please authorize access: [link]".
+4. The user clicks the link, completes the OAuth consent screen at the provider, and is redirected to `/oauth/callback` on your IMP server.
+5. IMP exchanges the authorization code for tokens and stores them.
+6. On the next tool call (or when the agent retries), IMP finds the token and injects `oauth.accessToken` into `execute`.
+
+You do not need to handle this fallback in your code — IMP manages it entirely.
+
+</Step>
+
+<Step title="Share tokens across tools">
+
+Multiple tools that access the same provider (for example, a `create_calendar_event` tool alongside `calendar_events`) should share the same `provider` key so the user only goes through the consent screen once:
+
+```typescript
+// src/tools/create-event.ts
+export const createCalendarEventTool = new ExuluTool({
+  id: "create_calendar_event",
+  // ...
+  oauth: {
+    provider: "example_calendar",   // Same key as calendarEventsTool
+    authorizationUrl: "https://auth.example-calendar.com/oauth2/authorize",
+    tokenUrl:         "https://auth.example-calendar.com/oauth2/token",
+    clientId:         process.env.CALENDAR_CLIENT_ID!,
+    clientSecret:     process.env.CALENDAR_CLIENT_SECRET!,
+    scopes:           ["calendar:read", "calendar:write", "profile:read"],
+    pkce:             true,
+  },
+  execute: async ({ summary, startTime, oauth }) => {
+    // Same token, no second consent screen
+    const response = await fetch("https://api.example-calendar.com/v1/calendars/primary/events", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${oauth.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ summary, start: { dateTime: startTime } }),
+    });
+    const event = await response.json();
+    return { result: JSON.stringify(event) };
+  },
+  // ...
+});
+```
+
+Because both tools share `provider: "example_calendar"`, a user who authorized `calendarEventsTool` already has a token for `createCalendarEventTool`.
+
+<Warning>
+When tools share a `provider`, they also share the same token. Make sure the combined `scopes` of all tools using the provider are requested during the initial authorization. If a tool needs an additional scope that was not in the original consent, the user will need to re-authorize.
+</Warning>
+
+</Step>
+
+<Step title="Register on the app">
+
+```typescript src/exulu.ts
+import { calendarEventsTool }     from "./tools/calendar-events";
+import { createCalendarEventTool } from "./tools/create-event";
+
+export const ready = app.create({
+  // ...
+  tools: [calendarEventsTool, createCalendarEventTool],
+});
+```
+
+Enable the tools in the agent workbench and set any config params. The OAuth flow is handled transparently — no additional server configuration is needed beyond setting `CALENDAR_CLIENT_ID` and `CALENDAR_CLIENT_SECRET` in your environment.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- A calendar events tool with `ExuluOauthConfig` that handles the full authorization-code + PKCE flow.
+- An `execute` function that uses `inputs.oauth.accessToken` injected by the framework.
+- A shared `provider` key so multiple calendar tools reuse the same user token.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="ExuluTool — configuration" icon="settings" href="/developers/core/exulu-tool/configuration">
+    Full ExuluOauthConfig reference — every field and the injected ExuluOauthToolContext type.
+  </Card>
+  <Card title="Custom tools" icon="wrench" href="/developers/tutorials/custom-tools">
+    Build tools without OAuth using Zod schemas and admin config params.
+  </Card>
+  <Card title="Tool approvals" icon="check-circle" href="/user-guide/chat/tool-approvals">
+    How users see and approve tool calls in the chat interface.
+  </Card>
+</CardGroup>

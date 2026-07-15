@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Make the platform yours (Admin &amp; Theming)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 98.8235%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice .fineprint {
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .slice p a, .slice li a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · Admin</span>
+      <h1 class="hero">Make the platform <em>yours</em>.</h1>
+      <p class="lede">White-label the entire product with a live preview and an explicit publish gate, then run least-privilege roles, a secrets vault, scoped API keys, cost analytics, and an embedded API explorer from one admin surface.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="theme-studio">
+        <h2>Theme studio</h2>
+        <p class="one-liner">Your platform, your brand — previewed live.</p>
+        <div class="slice">
+          <video src="./shorts/theme-studio.mp4" poster="./shorts/theme-studio-poster.png" autoplay loop muted playsinline></video>
+          <p>The super-admin <strong>Theme</strong> page is a two-pane studio for white-labeling the whole product — "White-label IMP for your organization — changes apply to every user." On the left, every CSS design token from the manifest is grouped under quiet headings — Surfaces, Text, Brand, Semantic, Charts, Sidebar, Shape &amp; typography — behind Light and Dark tabs with per-mode modified-count badges. A "Filter variables…" search and a "Modified only" switch keep the list tight; each row carries a color swatch, its mono token name, an inline value input, and a per-token reset.</p>
+          <p>On the right, a sticky preview card samples the real UI — buttons, a card with badges, an input, a mini chat exchange, a 10-color chart ramp — and re-renders on every keystroke, with its own sun/moon toggle that never touches the admin's own app theme. Edit the <code>--primary</code> hue and the primary button, the Active badge and the user chat bubble sweep through color live, while everything reading a different token stays exactly where it was.</p>
+          <p>Publishing is a decision you can see. The confirm dialog "Publish this theme?" reports "{lightCount} light / {darkCount} dark overrides — this applies to every user." — the same counts as the tab badges, so what you confirm is what you just saw. On success, "Theme published — It's live for you now — other users get it the next time they load the app.": the publish swaps a runtime style tag with no reload for the publishing admin. Color tokens that don't parse get an advisory note — "Not a recognized color value — it will be published exactly as typed." — a guardrail, never a gate. And "Reset to defaults…" is a real destructive confirm: "Removes all overrides ({count}) and immediately publishes the stock theme to every user."</p>
+        </div>
+      </section>
+
+      <section class="feature" id="role-matrix">
+        <h2>Role matrix</h2>
+        <p class="one-liner">Least-privilege roles in seconds.</p>
+        <div class="slice">
+          <video src="./shorts/role-matrix.mp4" poster="./shorts/role-matrix-poster.png" autoplay loop muted playsinline></video>
+          <p>The role editor is now a single narrow panel with a real permission matrix. Seven rows — Agents, Routines, Variables, Users, API, Evals, Budgets — each carry an icon, a label, an info tooltip, and a three-state None / Read / Write segmented control. The whole access model of a role fits one viewport: the redesign collapsed ~1400px of stacked permission cards into ~320px, inside a 448px side panel, with no nested cards and no scrolling between areas.</p>
+          <p>Every change is instantly legible. Flip a segment and a sticky Save bar slides up from the panel bottom — "You have unsaved changes." with an outline Discard and a primary Save — the primitive renders nothing at all until the draft is dirty. A shield-marked line under the matrix states the blast radius plainly: "Members of this role see navigation changes immediately." Each row's tooltip carries the area's scope verbatim, from Agents' "AI agents and their configurations." to Budgets' "Spend budgets for users, roles, teams, projects, and agents."</p>
+          <p>The reserved roles are protected end to end. <code>admin</code> and <code>default</code> get a "System" badge, a locked name field ("System roles cannot be renamed.") and a disabled delete ("System roles cannot be deleted."). Deleting any other role keeps member accounts but revokes its grants ("Members of this role keep their accounts but lose its grants. This cannot be undone."). And legacy permission strings still render correctly: the matrix normalizes any stored value by keyword — write/create/update/delete become Write, read/view become Read — so old roles show up faithfully in the new control.</p>
+          <div class="snippet-label">Permissions are plain role fields — grant them via GraphQL:</div>
+          <pre><code>mutation UpdateUserRole($id: ID!, $budget_management: String) {
+  rolesUpdateOneById(
+    id: $id
+    input: { budget_management: $budget_management }
+  ) {
+    item {
+      id
+      name
+      budget_management
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="theme-css">
+        <h2>Theme CSS import &amp; export</h2>
+        <p class="one-liner">Paste a stylesheet, ship a brand.</p>
+        <div class="slice">
+          <p>The Theme studio's overflow menu round-trips whole themes as CSS. Paste any stylesheet with <code>:root</code> and <code>.dark</code> blocks into "Import theme CSS" and the dialog parses it live, before you commit: a running count reads "{lightCount} light · {darkCount} dark variables detected", unreadable declarations are listed under a non-blocking warning ("N lines couldn't be read and will be skipped:"), and a missing-block paste gets the honest hint "No :root or .dark block found — paste a complete CSS theme." The dialog is explicit that nothing ships yet — "Paste a full CSS theme with :root and .dark blocks. Detected variables merge into your draft — nothing changes for users until you publish."</p>
+          <p>Variables the manifest doesn't recognize don't get dropped — they land in a trailing, fully editable "Custom" group, and the editor flips to "Modified only" so you see exactly what arrived. Going the other way, "Export CSS" puts the published theme on the clipboard ("CSS copied to clipboard"), and "Show raw configuration" reveals the stored overrides as copyable JSON ("Stored configuration (JSON)") next to the generated stylesheet ("Generated CSS (published theme)") — deliberately the live theme, never the unpublished draft. The parser reads the first <code>:root</code> and <code>.dark</code> blocks, so import expects a flat theme file, not arbitrary nested CSS.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="variables-vault">
+        <h2>Variables vault</h2>
+        <p class="one-liner">Secrets that stay in the vault.</p>
+        <div class="slice">
+          <p>The rebuilt <code>/variables</code> vault treats every value as sensitive by default — "Secrets and environment variables your models, agents, and integrations depend on." New variables are created as "Secret — encrypted at rest" unless you explicitly pick "Plain text — stored as-is", and the list page never receives values at all: the list query selects only name, type, and timestamps, while a reveal in the detail panel fetches the value on demand under a no-cache policy, so the secret never lands in the client cache.</p>
+          <p>Revealed values re-mask themselves after 30 seconds ("Value revealed for 30 seconds."), copying works without revealing, and edits that can break things downstream go through a change-impact confirmation first: "Renaming \"{oldName}\" to \"{newName}\" will break any agent or model that references the old name." and "Switching from Secret to Plain stores the value without encryption — consumers that decrypt it may break." Consumer usage tracking isn't wired to the backend yet, and the UI is honest about it rather than faking a count — the "Used by" column reads "Usage unavailable" and the detail panel degrades to "Usage tracking is not yet available from the backend."</p>
+        </div>
+      </section>
+
+      <section class="feature" id="api-keys">
+        <h2>API keys cockpit</h2>
+        <p class="one-liner">Credentials with a paper trail.</p>
+        <div class="slice">
+          <p>The scoped keys announced yesterday now have a proper cockpit. The <code>/keys</code> page is a live audit surface: the table polls every 30 seconds, so "Last used" is current — and a credential that has never authenticated wears a "Never" badge, which the code itself calls an audit signal. Creating a key is a two-step wizard in one dialog: step one names the key and picks a scope from two option cards — "Admin" ("Full access. Currently acts as a super admin, regardless of the selected role.") with a role selector, or "Agents" ("Read-only access to the agents on the allowlist.") which replaces the role field with an agent-allowlist builder.</p>
+          <p>Step two reveals the key exactly once, with Esc, outside-click, and the close button all disabled until you press Done: "This key is shown only once — copy it now and store it securely. You won't be able to view it again." The plaintext is generated in the browser and hashed before it's stored, so the hash never travels to the list. Click any row and the detail panel opens with the log-matchable mask (<code>sk_…/production</code> — "The suffix after "sk_…/" identifies this key in logs."), role reassignment behind its own confirmation ("Change role?"), and revocation in a Danger zone: "Requests using this key stop working immediately." Optional team and project selectors attribute requests for cost tracking.</p>
+          <p class="fineprint">Admin-scope keys don't restrict by role yet, and the UI says so verbatim — "Admin keys currently act as a super admin — the selected role does not restrict them yet."</p>
+        </div>
+      </section>
+
+      <section class="feature" id="personal-token">
+        <h2>Personal token</h2>
+        <p class="one-liner">Your bearer token, five seconds flat.</p>
+        <div class="slice">
+          <p>The <code>/token</code> page is a single card built for one job: grab a working bearer token fast, without ever burning it onto the screen. Titled "Personal token" — "Your bearer token for the IMP API." — the token sits in a masked field where copy works without revealing, under the plain security note "This token acts as you. Keep it private." An expiry chip decodes the JWT's <code>exp</code> claim into an honest status: quiet green while more than an hour remains ("Expires in {hours} h"), orange under an hour ("Expires in {minutes} min"), red once dead ("Expired — sign in again"). The chip is static by design — a ticking countdown is anxiety, not transparency.</p>
+          <p>A collapsed "Usage example (cURL)" disclosure carries a copyable request with your deployment's backend URL pre-filled — and the token stays a placeholder in the snippet, because the page never renders the secret in plain text.</p>
+          <div class="snippet-label">From the /token page — cURL</div>
+          <pre><code>curl -X POST $EXULU_BACKEND/graphql \
+  -H "Authorization: Bearer $EXULU_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ agentsPagination(page: 1, limit: 10) { items { id name } } }"}'</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="analytics-lens">
+        <h2>Cost analytics</h2>
+        <p class="one-liner">The full cost picture got its own release.</p>
+        <div class="slice">
+          <p>The <code>/analytics</code> surface — the spend leaderboard by agent/team/user/project, the daily trend chart, the URL-driven lens, and CSV export — is covered in depth, with demos, on its own page: <strong><a href="../2026-07-08-analytics/index.html">Analytics &amp; Leaderboards →</a></strong></p>
+        </div>
+      </section>
+
+      <section class="feature" id="graphql-explorer">
+        <h2>GraphQL explorer</h2>
+        <p class="one-liner">The whole API, signed in as you.</p>
+        <div class="slice">
+          <p>The <code>/explorer</code> admin surface embeds a full GraphiQL workbench against your deployment's <code>/graphql</code> endpoint — schema docs, autocomplete, query history, the works. Your session token is injected automatically from the live session, so every query you run executes with your real permissions: what you can read here is exactly what your integrations can read with the same credentials, making it the honest sandbox for API work before you mint a key.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="n8n-embed">
+        <h2>n8n embed</h2>
+        <p class="one-liner">Automation, embedded (honestly).</p>
+        <div class="slice">
+          <p>The Automation page embeds the full n8n editor in an iframe sized to the remaining viewport — clipboard access allowed, a skeleton overlay until the canvas loads, and a ghost "Open in new tab" escape hatch — whenever <code>N8N_URL</code> is configured on the server ("Build and run automations in the embedded n8n editor."). Below desktop widths the page refuses to ship a cramped 390-px canvas and says so instead: "The n8n editor needs a larger screen", with "Open the editor in a new tab on desktop to build and debug automations." and the same open-in-new-tab action as the way out.</p>
+          <p class="fineprint">When <code>N8N_URL</code> is unset the route denies access, and the defensive empty state reads "Automation is not configured" / "Set N8N_URL on the server to enable the embedded editor."</p>
+        </div>
+      </section>
+
+      <section class="feature" id="projects-workspace">
+        <h2>Projects</h2>
+        <p class="one-liner">Named, private workspaces got their own release.</p>
+        <div class="slice">
+          <p>Projects — the Sessions / Files / Settings workspace, pinned knowledge every session inherits, and the configurable cascade delete — are covered in depth, with demos, on their own page: <strong><a href="../2026-07-08-projects/index.html">Projects →</a></strong></p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

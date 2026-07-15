@@ -1,0 +1,50 @@
+---
+title: "Budgets in chat"
+description: "Understand what the budget chip in the top bar means, what happens when your budget runs out, and when it resets."
+icon: "circle-dollar-sign"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+If your administrator has set a spending budget for your account, IMP shows a budget indicator in the application's top bar. The indicator keeps you informed before your budget runs out and stops sending when it does.
+
+<Frame caption="The chat screen with the budget chip showing 'Budget 100%' in red in the top bar, and the budget-reached banner and blocked composer below.">
+  <img src="/images/screens/chat-budget-chip.png" alt="IMP chat screen with a red Budget 100% chip in the top bar, a budget reached warning banner above the composer, and a disabled message input reading 'Budget reached — messaging is paused'" />
+</Frame>
+
+## The budget chip
+
+When a budget is configured and your administrator has opted to show it to users, a **Budget `{percent}`%** chip appears in the top bar on every screen. The percentage shown is the share of your budget already consumed in the current period.
+
+Click the chip (or open **Usage** from the conversation's **⋯** menu) to see a breakdown panel. Alongside the token usage for the current conversation, the panel shows a **Your budget** section with a bar indicating how much of the period budget you have spent and how much remains.
+
+## When the budget runs out
+
+Once you reach 100% of your budget, IMP pauses new messages:
+
+- The composer shows: "You've reached your budget for this period. Messaging is paused until it resets."
+- The message input changes to: "Budget reached — messaging is paused."
+- A toast notification appears: **Budget reached** — "You've used your full budget for this period. Messaging is paused until it resets."
+
+You cannot send new messages until the budget period resets. Existing conversations remain readable and any files or artifacts produced before the limit was reached stay accessible.
+
+## Reset dates
+
+Budgets reset on a schedule set by your administrator. By default the period is a calendar day, week, or month in UTC. Administrators can also set a custom reset date. When the reset happens, your spending counter returns to zero and you can send messages again.
+
+<Note>
+Budgets are set and managed by administrators. If you think your budget is too low, or if you do not see a budget chip when you expect one, contact your administrator. See [Administration → Budgets](/administration/budgets) for the admin-side configuration.
+</Note>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Model override and usage" icon="cpu" href="/user-guide/chat/model-override-and-usage">
+    View per-message token counts in the Usage panel.
+  </Card>
+  <Card title="Context compaction" icon="archive" href="/user-guide/chat/context-compaction">
+    Keep conversations within the model's context window.
+  </Card>
+</Columns>

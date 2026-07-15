@@ -1,0 +1,263 @@
+---
+title: "S3-backed context"
+description: "A context whose source lists an S3 document archive, computes content hashes, and upserts file-reference items. A processor fetches them via presigned URL."
+icon: "folder-open"
+---
+
+**Problem:** you have a document archive in S3 and want agents to retrieve content from those files. Items should upsert on every run, skip unchanged files, and let a processor fetch the bytes for extraction.
+
+**Prerequisite:** read [Data sources and sync](/developers/tutorials/data-sources-and-sync) and [Custom processors](/developers/tutorials/custom-processors) first — this recipe assumes you are familiar with the source and processor shapes.
+
+## What you will build
+
+- A context with a `file_s3key` field and a `content_hash` field.
+- A source that lists an S3 prefix concurrently, computes an ETag-based hash, and upserts one item per object.
+- A processor that fetches the file bytes via `utils.storage.getPresignedUrl` and extracts text.
+
+## Complete source listing
+
+```typescript src/contexts/document-archive-context.ts
+import { ExuluContext, ExuluQueues, ExuluChunkers, type ExuluItem } from "@exulu/backend";
+import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3"; // npm i @aws-sdk/client-s3
+import { createHash } from "crypto";
+import pLimit from "p-limit";
+
+// ── Queues ────────────────────────────────────────────────────────────────────
+
+const archiveSyncQueue = ExuluQueues.register(
+  "document_archive_sync",
+  { worker: 1, queue: 1 }, // one sync at a time
+  1,
+  60 * 30,                 // 30-minute timeout
+);
+
+const archiveProcessorQueue = ExuluQueues.register(
+  "document_archive_processor",
+  { worker: 2, queue: 8 },
+  2,                       // 2 documents per second
+  60 * 20,
+);
+
+const archiveEmbeddingsQueue = ExuluQueues.register(
+  "document_archive_embeddings",
+  { worker: 4, queue: 20 },
+  40,
+  300,
+);
+
+// ── Context ───────────────────────────────────────────────────────────────────
+
+export const documentArchiveContext = new ExuluContext({
+  id: "document_archive_context",
+  name: "Document archive",
+  description: "Files from the S3 document archive. Use when the user asks about stored documents.",
+  active: true,
+
+  fields: [
+    // Stores the S3 key for the raw file — IMP appends _s3key automatically for type: "file"
+    { name: "document",       type: "file", allowedFileTypes: [".pdf", ".txt", ".md"] },
+    // Hash of the S3 ETag; used to skip unchanged files on subsequent runs
+    { name: "content_hash",   type: "shortText", calculated: true },
+    // Text extracted by the processor
+    { name: "extracted_text", type: "longText",  calculated: true },
+    // Store the raw S3 path for reference
+    { name: "s3_key",         type: "shortText" },
+    // Byte size for display
+    { name: "file_size",      type: "integer" },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+    queue: archiveEmbeddingsQueue.use(),
+  },
+
+  chunker: async (item, maxChunkSize, utils) => {
+    const markdown = new ExuluChunkers.markdown();
+    const content  = [item.name, item.extracted_text ?? ""].join("\n\n");
+    const chunks   = await markdown.chunk(
+      content,
+      maxChunkSize,
+      `--- Document (${item.s3_key ?? item.external_id}) ---`,
+    );
+    return {
+      item,
+      chunks: chunks.map((c, i) => ({
+        content:  c.text,
+        index:    i,
+        metadata: { s3_key: item.s3_key, page: c.page },
+      })),
+    };
+  },
+
+  processor: {
+    name: "document_text_extractor",
+    description: "Fetches the raw file from S3 via presigned URL and extracts its text content into extracted_text.",
+    config: {
+      trigger:            "onInsert",
+      generateEmbeddings: true,
+      queue:              archiveProcessorQueue.use(),
+      timeoutInSeconds:   60 * 20,
+    },
+
+    filter: async ({ item }) => {
+      // Skip items that have no S3 key to process
+      if (!item.document_s3key && !item.s3_key) return null;
+      return item;
+    },
+
+    execute: async ({ item, utils, exuluConfig }) => {
+      const key = item.document_s3key ?? item.s3_key;
+      if (!key) throw new Error(`Item ${item.id} has no S3 key to fetch.`);
+
+      // getPresignedUrl requires the format <bucket>/<key>.
+      // Note: utils.storage.getPresignedUrl expects a "<bucket>/<key>" path.
+      const bucket = exuluConfig.fileUploads!.s3Bucket;
+      const prefixedKey = key.startsWith(`${bucket}/`) ? key : `${bucket}/${key}`;
+      const url   = await utils.storage.getPresignedUrl(prefixedKey);
+      const bytes = await fetch(url).then((r) => {
+        if (!r.ok) throw new Error(`Failed to fetch ${key}: ${r.status}`);
+        return r.arrayBuffer();
+      });
+
+      // ── Extract text ─────────────────────────────────────────────────────────
+      // Replace this block with the extraction library of your choice
+      // (e.g. pdf-parse for PDFs, or a plain text read for .txt/.md).
+      const text = Buffer.from(bytes).toString("utf-8");
+
+      return {
+        ...item,
+        extracted_text: text,
+      };
+    },
+  },
+
+  sources: [
+    {
+      id: "document_archive_s3_source",
+      name: "Document archive S3 source",
+      description: "Lists all objects under the configured S3 prefix and upserts one item per file.",
+      config: {
+        schedule: "0 3 * * *",    // daily at 03:00 UTC
+        queue: archiveSyncQueue.use(),
+        retries: 3,
+        backoff: { type: "exponential", delay: 2_000 },
+        params: [
+          {
+            name: "prefix",
+            description: "S3 prefix to scan (e.g. 'archive/2026/'). Defaults to the full archive.",
+            default: "archive/",
+          },
+          {
+            name: "full_sync",
+            description: "Set to 'true' to ignore the content hash and re-upsert every file.",
+            default: "false",
+          },
+        ],
+      },
+
+      execute: async ({ prefix = "archive/", full_sync: inputFullSync, exuluConfig }) => {
+        const fullSync = inputFullSync === "true";
+        console.log(`[document_archive_s3_source] Listing prefix=${prefix} fullSync=${fullSync}`);
+
+        // ── List S3 objects via AWS SDK ────────────────────────────────────────
+        const { fileUploads } = exuluConfig;
+        if (!fileUploads) throw new Error("fileUploads not configured");
+        const s3 = new S3Client({
+          region:      fileUploads.s3region,
+          credentials: { accessKeyId: fileUploads.s3key, secretAccessKey: fileUploads.s3secret },
+          ...(fileUploads.s3endpoint && { endpoint: fileUploads.s3endpoint }),
+        });
+        const objects: { key: string; size: number }[] = [];
+        let continuationToken: string | undefined;
+        do {
+          const resp = await s3.send(new ListObjectsV2Command({
+            Bucket: fileUploads.s3Bucket,
+            Prefix: prefix,
+            ...(continuationToken && { ContinuationToken: continuationToken }),
+          }));
+          for (const obj of resp.Contents ?? []) {
+            if (obj.Key && obj.Size !== undefined) {
+              objects.push({ key: obj.Key, size: obj.Size });
+            }
+          }
+          continuationToken = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+        } while (continuationToken);
+        console.log(`[document_archive_s3_source] Found ${objects.length} objects`);
+
+        // ── Load existing hashes for change detection ─────────────────────────
+        const existingItems = await documentArchiveContext.getItems({
+          fields: ["external_id", "content_hash"],
+        });
+        const existingHash = new Map(
+          existingItems
+            .filter((i) => i.external_id && i.content_hash)
+            .map((i) => [i.external_id as string, i.content_hash as string]),
+        );
+
+        // ── Concurrent listing with concurrency cap ───────────────────────────
+        const limit   = pLimit(10);  // max 10 concurrent hash computations
+        const results = await Promise.all(
+          objects.map((obj) =>
+            limit(async () => {
+              // Hash the object key + size. Size changes when the object is replaced,
+              // so this detects most updates without a full content read.
+              const hash = createHash("sha256").update(obj.key + String(obj.size)).digest("hex");
+
+              if (!fullSync && existingHash.get(obj.key) === hash) {
+                return null; // unchanged — skip
+              }
+
+              const fileName = obj.key.split("/").pop() ?? obj.key;
+
+              return {
+                external_id:  obj.key,
+                name:         fileName,
+                content_hash: hash,
+                s3_key:       obj.key,
+                file_size:    obj.size,
+                // document_s3key is set to the raw key so the processor can fetch it
+                document_s3key: obj.key,
+                rights_mode:  "users",
+              } satisfies ExuluItem;
+            }),
+          ),
+        );
+
+        const items = results.filter((i): i is ExuluItem => i !== null);
+        console.log(`[document_archive_s3_source] Upserting ${items.length} changed items`);
+        return items;
+      },
+    },
+  ],
+
+  configuration: {
+    calculateVectors: "manual", // processor triggers embeddings via generateEmbeddings: true
+    maxRetrievalResults: 5,
+    defaultRightsMode: "users",
+    cutoffs: { cosineDistance: 0.4, tsvector: 0.3, hybrid: 0.35 },
+    expand:  { before: 1, after: 1 },
+    languages: ["english"],
+  },
+});
+```
+
+## Key points
+
+| Concern | Approach |
+|---|---|
+| Change detection | Compare `content_hash` (SHA-256 of `obj.key + obj.size`) before upserting — size changes on replace |
+| Concurrency | `pLimit(10)` caps concurrent hash computations; use a lower value if your S3 rate limits are tight |
+| File fetching | Processor calls `utils.storage.getPresignedUrl("<bucket>/<key>")` — key must be prefixed with the bucket name |
+| Upsert key | `external_id` is set to the S3 object key; IMP uses `onConflict("external_id").merge()` |
+| Embeddings | `generateEmbeddings: true` on the processor config; `calculateVectors: "manual"` on the context |
+
+## Related recipes
+
+<CardGroup cols={2}>
+  <Card title="Incremental sync deep dive" icon="refresh-cw" href="/developers/recipes/incremental-sync">
+    How upsert matching, hash checks, and deletion work in detail.
+  </Card>
+  <Card title="Custom processors tutorial" icon="workflow" href="/developers/tutorials/custom-processors">
+    Full walkthrough of writing a processor with filter and execute.
+  </Card>
+</CardGroup>

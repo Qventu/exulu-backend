@@ -311,7 +311,7 @@ git add -A && git commit -m "feat: scaffold IMP docs site with website-CI theme"
 ```mdx
 export const RightsCallout = ({ right, flags }) => (
   <Info>
-    **Who sees this:** requires {right === "none" ? "no special rights — available to every signed-in user" : `the ${right} right (or super admin)`}.
+    Who sees this: requires {right === "none" ? "no special rights — available to every signed-in user" : `the ${right} right (or super admin)`}.
     {flags && flags !== "none" ? ` Only visible when the server enables ${flags}.` : ""}
   </Info>
 );

@@ -1,0 +1,56 @@
+services:
+  whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Pin for reproducible builds by setting EXULU_VERSION in .env
+        EXULU_VERSION: ${EXULU_VERSION:-latest}
+    image: exulu-whisper:latest
+    # Always build locally; never try to pull `exulu-whisper` from a registry
+    # (it isn't published anywhere). Without this, `docker compose up` on a host
+    # that hasn't built yet fails with "pull access denied for exulu-whisper".
+    pull_policy: build
+    container_name: exulu-whisper
+    restart: unless-stopped
+
+    # HF_AUTH_TOKEN, WHISPER_MODEL, WHISPER_BATCH_SIZE, WHISPER_DEVICE, …
+    env_file:
+      - .env
+
+    environment:
+      # Must stay 0.0.0.0 inside the container so the port is reachable.
+      WHISPER_HOST: 0.0.0.0
+      WHISPER_PORT: ${WHISPER_PORT:-9876}
+
+    ports:
+      - "${WHISPER_PORT:-9876}:${WHISPER_PORT:-9876}"
+
+    volumes:
+      # Reuse the HOST HuggingFace cache: the ~3 GB Whisper model (and the
+      # pyannote diarization models) download once and are shared across runs,
+      # exactly like running the server directly on the host.
+      #
+      # Default is the invoking user's ~/.cache/huggingface. Override with an
+      # ABSOLUTE path via HF_CACHE_DIR in .env if yours lives elsewhere, or if
+      # you run compose under sudo (then $HOME is root's, not yours).
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/root/.cache/huggingface
+
+    # Requires the NVIDIA Container Toolkit on the host. Equivalent to
+    # `docker run --gpus all`.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    healthcheck:
+      # /healthz only returns 200 once the model has finished loading.
+      test: ["CMD", "curl", "-fsS", "http://localhost:${WHISPER_PORT:-9876}/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      # Generous: the first boot downloads the ~3 GB model before it goes healthy.
+      start_period: 1200s

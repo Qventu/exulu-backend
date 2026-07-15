@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Platform Roundup, July 8, 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .kicker {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--primary));
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 0 0 10px;
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice ul { margin: 0 0 16px; padding-left: 22px; font-size: 16px; }
+    .slice li { margin-bottom: 10px; }
+    .slice li strong { font-weight: 600; }
+    .slice p code, .slice li code, .one-liner code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875em;
+      background: hsl(240 17% 95%);
+      border: 1px solid hsl(var(--border));
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · July 8, 2026</span>
+      <h1 class="hero">A platform roundup, <em>eleven upgrades deep</em>.</h1>
+      <p class="lede">No single marquee this time — a stack of improvements that landed together across the whole platform. Replies you can listen to, memory that asks before it writes, RBAC-safe reads for retrieval builders, one consent per OAuth provider, a live model catalog, and API keys safe enough to ship in a browser. From the chat surface all the way down to your GCP invoice — plus seven smaller fixes at the bottom.</p>
+    </header>
+
+    <main>
+      <!-- ============ CHAT EXPERIENCE ============ -->
+      <section class="feature" id="text-to-speech">
+        <p class="kicker">Chat experience</p>
+        <h2>Read replies aloud</h2>
+        <p class="one-liner">Any assistant message becomes audio — one click on the speaker.</p>
+        <div class="slice">
+          <video src="./shorts/text-to-speech.mp4" poster="./shorts/text-to-speech-poster.png" autoplay loop muted playsinline></video>
+          <p>Every completed assistant message now carries a speaker button in its actions row. Click it and the reply is cleaned up for listening — markdown stripped, code blocks skipped — synthesized to MP3, and played right there in the chat. Click again to pause; click a different message to switch. Replays are instant: each message keeps its audio cached, so a second listen never touches the backend.</p>
+          <p>Long replies don't make you wait, either. The message is split into sentence-sized chunks and synthesized with up to five requests in flight, so the first audio starts in roughly two to three seconds even on a multi-page answer.</p>
+          <p>The same endpoint is open to any authenticated client — text in, MP3 out. It's live on deployments running LiteLLM with a TTS model and voice configured (<code>EXULU_USE_LITELLM=true</code>, <code>TTS_MODEL</code>, <code>TTS_VOICE</code>), with a 4,000-character input cap per call.</p>
+          <div class="snippet-label">REST — text in, MP3 out</div>
+          <pre><code># Any authenticated client can synthesize speech:
+curl -X POST "$EXULU_BACKEND/speech" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Here is the summary you asked for."}' \
+  --output reply.mp3</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="memory-visibility">
+        <h2>Memory that asks first</h2>
+        <p class="one-liner">No memory is saved until you choose private or public.</p>
+        <div class="slice">
+          <video src="./shorts/memory-visibility.mp4" poster="./shorts/memory-visibility-poster.png" autoplay loop muted playsinline></video>
+          <p>When an agent wants to remember something, it now has to ask you first: <em>private</em> (visible only to you) or <em>public</em> (shared with the team). If the agent tries to save without that answer, nothing is written — the tool refuses and sends the agent back to ask. Your choice isn't a cosmetic label: it maps straight onto the record's rights mode, the same RBAC field that governs every other record in Exulu.</p>
+          <p>Recall quality got a quiet overhaul in the same pass. Structured memory fields are validated and normalized at write time, so a near-miss value gets fixed or dropped instead of persisting as un-recallable garbage. Every memory also captures the surrounding conversation context — so when it's retrieved months later, the agent knows <em>why</em> it exists — and memory types are persisted whenever the memory context defines one.</p>
+        </div>
+      </section>
+
+      <!-- ============ AGENT RUNTIME ============ -->
+      <section class="feature" id="file-sandbox-toggle">
+        <p class="kicker">Agent runtime</p>
+        <h2>File sandbox, per agent</h2>
+        <p class="one-liner">File tools only for the agents that need them.</p>
+        <div class="slice">
+          <video src="./shorts/file-sandbox-toggle.mp4" poster="./shorts/file-sandbox-toggle-poster.png" autoplay loop muted playsinline></video>
+          <p>Sandbox file tools — <code>readFile</code>, <code>writeFile</code>, <code>bash</code> — are now opt-in per agent. A single switch in the agent editor's <strong>Chat experience</strong> section decides whether the agent gets a sandbox at all. Knowledge-only agents stay lean: no shell, no file tools, and no more spurious shell calls from an agent that only ever needed to answer questions.</p>
+          <p>The chat composer follows the setting live. When the sandbox is off, the <em>Session files</em> entry in the ＋ menu is disabled with the reason spelled out inline — so users are never left wondering where their upload button went. Flip the switch on for agents that run skills or generate files, and everything lights back up.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="skill-sandbox-s3-artifacts">
+        <h2>Skill sandbox artifacts persist to S3</h2>
+        <p class="one-liner">Sandboxes are disposable. The files your agents make aren't anymore.</p>
+        <div class="slice">
+          <p>Sandboxes are ephemeral by design — which used to mean a process restart or sandbox teardown between turns silently ate every report, script, and dataset an agent had produced. Resume the session, and the agent's work was gone.</p>
+          <p>Now every artifact an agent writes is mirrored to S3 as it's written, scoped per user and session. On a cold start, previously written artifacts are restored into the session directory <em>before</em> the agent runs, so it picks up exactly where it left off — and local files always win over stale restores, so un-synced work is never overwritten. Skill source files are excluded; only artifacts persist. And it's fail-soft everywhere: missing S3 config or a failed upload never fails the tool call, because the local write already succeeded.</p>
+          <p>The bonus: <code>writeFile</code> now returns a presigned S3 URL alongside the local path. A generated report is a shareable link the moment it exists.</p>
+          <div class="snippet-label">writeFile now answers with a shareable URL</div>
+          <pre><code>{
+  "success": true,
+  "path": "sessions/3f2a.../quarterly-report.md",
+  "url": "https://s3.eu-central-1.amazonaws.com/…/user_42/sessions/3f2a…/quarterly-report.md?X-Amz-Signature=…",
+  "key": "uploads/user_42/sessions/3f2a.../quarterly-report.md"
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="sandbox-output-truncation">
+        <h2>Sandbox output truncation: overflow-proof tool results</h2>
+        <p class="one-liner"><code>cat</code> a 60-page PDF without killing the context.</p>
+        <div class="slice">
+          <p>One oversized tool result used to be fatal. An agent that read a huge file or ran a log-spewing script got the output back verbatim — enough to overflow the context window and take the whole turn down with it, unrecoverably.</p>
+          <p>Sandbox tool output is now capped at 25% of the agent's context window (128k tokens by default, so a 128,000-character cap per call). Oversized output keeps its head and tail, and the omitted middle is replaced by a marker that tells the agent exactly what happened — plus the surgical commands to fetch any specific section. The split matches where the signal lives: file reads keep 95% head (files are read top-to-bottom), while <code>stderr</code> keeps a 40% tail, because errors live at the end.</p>
+          <div class="snippet-label">What the agent sees instead of a context overflow</div>
+          <pre><code>[READFILE OUTPUT TRUNCATED: output was 412830 characters; showing first
+121600 and last 6400 characters (limit: 128000 = 25% of 128000-token
+context). 284830 characters omitted. To read specific sections use:
+  grep -n "pattern" &lt;file&gt;        # find specific text
+  sed -n '1,50p' &lt;file&gt;           # lines 1–50
+  head -n 100 &lt;file&gt;              # first 100 lines
+  tail -n 100 &lt;file&gt;              # last 100 lines
+  awk 'NR&gt;=10 &amp;&amp; NR&lt;=50' &lt;file&gt;   # lines 10–50]</code></pre>
+        </div>
+      </section>
+
+      <!-- ============ DEVELOPER PLATFORM ============ -->
+      <section class="feature" id="exulu-read-api">
+        <p class="kicker">Developer platform</p>
+        <h2>ExuluReadApi: RBAC-safe reads for retrieval clients</h2>
+        <p class="one-liner">Build retrieval on authorized rows — not on raw tables.</p>
+        <div class="slice">
+          <p>Custom retrieval pipelines need reads that <code>context.search()</code> can't express — "give me chunks 0–20 of this exact file", "does this context have an entity layer?" — and until now the answer was hand-rolled SQL against raw tables, one refactor away from silently skipping access control.</p>
+          <p>That surface is now supported SDK, one import away. <code>authorizedRead</code> reads chunks for known items with the RBAC clause applied <em>inside</em> the SQL query, so a user can never receive a chunk from an item they aren't allowed to see — and it refuses unconstrained reads outright, so an accidental table scan is impossible. <code>embedQuery</code> embeds a query with the same embedder the context indexes with, and <code>entitiesAvailable</code> probes whether a context's entity layer actually exists before you wire tools against it. <code>ExuluContext.getItems</code> became RBAC-aware in the same pass. And for code that must go lower, the table-name resolvers (<code>getTableName</code>, <code>getChunksTableName</code>) are exposed on the same surface, so per-context tables are resolved instead of hand-assembled.</p>
+          <p>This isn't speculative API design: it's the exact surface the agentic retrieval pipeline announced yesterday runs on. Supported surface, not internals.</p>
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>import { ExuluReadApi } from "@exulu/backend";
+
+// RBAC-safe chunk read for a known file — access control applied in SQL.
+const chunks = await ExuluReadApi.authorizedRead(context, user, roleId, {
+  externalIds: ["handbook.pdf"],
+  chunkIndexRange: { from: 0, to: 20 },
+});
+
+// Embed with the context's own embedder, resolved per caller.
+const vector = await ExuluReadApi.embedQuery(context, "notice period");
+
+// Probe the entity layer before wiring entity tools.
+const hasEntities = await ExuluReadApi.entitiesAvailable(context);</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="oauth-provider-scoped-tokens">
+        <h2>OAuth: one consent per provider</h2>
+        <p class="one-liner">Connect Google once — every Google tool is signed in.</p>
+        <div class="slice">
+          <p>Per-tool OAuth consent made multi-tool integrations feel broken: six <code>jira_*</code> tools meant clicking Connect six times against the same OAuth app, with the same scopes. Tokens were keyed per tool, so every tool had to earn its own.</p>
+          <p>Tokens are now keyed per <em>(provider, user)</em>. A tool opts in by declaring <code>provider: "jira"</code> on its OAuth config, and every tool sharing that provider shares one token per user — one consent screen, then everything works. Sharing is kept sane at construction time: tools claiming the same provider must agree on client credentials, endpoints, and the <em>identical</em> scope set, or registration throws with a precise error. No silent scope escalation, ever.</p>
+          <p>It's opt-in and non-breaking. Omit <code>provider</code> and tokens stay per-tool exactly as before; the originating tool id stays on every token row for audit.</p>
+          <div class="snippet-label">From the SDK — ExuluOauthConfig</div>
+          <pre><code>new ExuluTool({
+  id: "jira_create_issue",
+  // ...
+  oauth: {
+    provider: "jira", // ← share one consent across every jira_* tool
+    authorizationUrl: "https://auth.atlassian.com/authorize",
+    tokenUrl: "https://auth.atlassian.com/oauth/token",
+    clientId: process.env.JIRA_CLIENT_ID!,
+    clientSecret: process.env.JIRA_CLIENT_SECRET!,
+    scopes: JIRA_SCOPES, // must match across the provider — enforced at boot
+  },
+});</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="models-decoupling">
+        <h2>Models: agents decoupled from providers</h2>
+        <p class="one-liner">One model catalog. Every agent, every route, one resolver.</p>
+        <div class="slice">
+          <p>Agents used to hard-wire a provider and an API key — and the code that turned that pair into a language model was copy-pasted across eight call sites. Both are gone. Model configuration now lives in one place, the LiteLLM proxy's <code>config.yaml</code>, and every consumer — chat routes, the OpenAI-compatible gateway, MCP, evals, tools — resolves "agent → model" through a single resolver with RBAC in the loop.</p>
+          <p>The <strong>/models</strong> page renders that source of truth as a read-only catalog of everything the proxy serves: context windows, modalities (Vision / PDF / Audio / Tools), input and output cost per million tokens, active status, and tags — searchable, with a per-model detail sheet. What admins configure and what agents can use can no longer drift apart.</p>
+          <p>Traceability comes with it: the model used is persisted on every assistant message, so "which model wrote this?" is a query, not an archaeology project. And the <code>x-exulu-model-override</code> header swaps the language model for a single request — the chat model selector rides on exactly this.</p>
+          <div class="snippet-label">GraphQL — the catalog the UI renders</div>
+          <pre><code>query GetLiteLLMCatalog {
+  litellmCatalog {
+    model_name
+    active
+    type
+    max_input_tokens
+    max_output_tokens
+    supports_vision
+    supports_function_calling
+    input_cost_per_million_tokens
+    output_cost_per_million_tokens
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- ============ COST & GOVERNANCE ============ -->
+      <section class="feature" id="unattributed-spend-hint">
+        <p class="kicker">Cost &amp; governance</p>
+        <h2>Spend, fully accounted</h2>
+        <p class="one-liner">The gap tagged totals miss, now on the card.</p>
+        <div class="slice">
+          <video src="./shorts/unattributed-spend-hint.mp4" poster="./shorts/unattributed-spend-hint-poster.png" autoplay loop muted playsinline></video>
+          <p>Exulu's dashboards count user-attributed LLM requests — so the platform's totals always ran at or below what LiteLLM saw globally, and the difference was invisible. Health checks, background jobs, untagged calls: real spend, no explanation.</p>
+          <p>Now, whenever that unattributed gap exceeds 1% of the unfiltered total, a quiet second caption appears on the Spend and Tokens cards on Home and across the analytics KPI strip: <em>"+ $12.34 unattributed"</em>. Trivial and negative gaps stay hidden, and the hint only renders once both queries have resolved — no flash of wrong numbers while the dashboard loads. Your cards now add up to your bill.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="vertex-billing-labels">
+        <h2>Vertex billing labels</h2>
+        <p class="one-liner">Your GCP invoice now knows which agent spent what.</p>
+        <div class="slice">
+          <p>Vertex spend used to arrive in Google Cloud Billing as one undifferentiated line. Internal analytics could slice usage per user and agent — but the invoice itself couldn't, and finance works from the invoice.</p>
+          <p>Every Vertex <code>generateContent</code> call now carries up to six Google Cloud billing labels — provider, user, role, project, and agent — sanitized to GCP's rules and visible in Cloud Billing reports (with Google's usual ~24-hour lag). The injection is deliberately paranoid: any failure forwards the original request unmodified, so a billing label can never break a model call. And only opaque IDs leave the box — no emails, no names. Pair it with the in-product LiteLLM tagging: that one is for your dashboards, this one is for the bill.</p>
+          <div class="snippet-label">Injected into every Vertex generateContent call</div>
+          <pre><code>{
+  "contents": [ "..." ],
+  "labels": {
+    "provider_id": "default_vertex_gemini_2_5_flash_provider",
+    "provider_name": "gemini-2-5-flash",
+    "user_id": "42",
+    "role_id": "f3a91c",
+    "project_id": "7d20b4",
+    "agent_id": "9c51e8"
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="api-key-scoping">
+        <h2>API-key agent scoping (enterprise)</h2>
+        <p class="one-liner">Mint a key that can talk to one agent — and nothing else.</p>
+        <div class="slice">
+          <p>Any key you ship client-side is a leaked key, eventually. Until now, that was an unacceptable risk: an API key could reach every agent and every mutation on the platform, so embedding an agent in a public page meant either a proxy layer or crossed fingers.</p>
+          <p>API keys now declare a scope mode. <code>admin</code> keeps today's broad behavior — every existing key migrates there with zero change. <code>agents</code> carries a whitelist of agent IDs and can call <em>only</em> the run route for those agents: no GraphQL mutations, no other agents, no admin surface. Enforcement is two-layered — an early scope check rejects out-of-scope requests at the route, and the record-access layer's blanket API bypass is now narrowed to admin-mode keys. A leaked scoped key can talk to exactly the agents it was minted for.</p>
+          <p>Spend stays controlled too: usage and budget caps are enforced in the LiteLLM proxy layer, so scoped keys inherit them automatically.</p>
+          <div class="snippet-label">GraphQL — minting a scoped key</div>
+          <pre><code>mutation CreateUser(
+  $type: String, $apikey: String,
+  $scope_mode: String, $agent_ids: JSON
+) {
+  usersCreateOne(input: {
+    type: $type, apikey: $apikey,
+    scope_mode: $scope_mode,  # "admin" | "agents"
+    agent_ids: $agent_ids     # whitelist when scope_mode = "agents"
+  }) {
+    item { id }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- ============ ALSO SHIPPED ============ -->
+      <section class="feature" id="also-shipped">
+        <h2>Also shipped</h2>
+        <p class="one-liner">Small fixes that make the whole platform feel tighter.</p>
+        <div class="slice">
+          <ul>
+            <li><strong>Stale tool approvals auto-decline.</strong> Move on to a new message and pending approval prompts resolve themselves — no zombie "Awaiting Approval" chips.</li>
+            <li><strong>Chat text is WCAG AA.</strong> Response text now uses the theme foreground token — full contrast in both themes.</li>
+            <li><strong>Smoother streaming on heavy turns.</strong> Multi-file agent turns no longer saturate the browser main thread while streaming.</li>
+            <li><strong>Big PDFs OCR reliably.</strong> 60-page scans are split into ≤25-page chunks and processed in parallel — no more Vertex page-limit failures.</li>
+            <li><strong><code>x-api-key</code> accepted.</strong> API callers can authenticate with the industry-standard header alongside <code>exulu-api-key</code>.</li>
+            <li><strong>Faster vector search.</strong> HNSW search tuned on every connection, and query embeddings computed once and reused across retrieval phases.</li>
+            <li><strong>Redis fails fast.</strong> If Redis is unreachable at startup the server says so loudly and exits, instead of hanging half-alive.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 8, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

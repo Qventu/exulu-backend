@@ -1,0 +1,78 @@
+---
+title: "Core concepts"
+description: "The key terms used throughout IMP documentation and the platform UI, with a short definition of each."
+icon: "book-open"
+---
+
+This page is the terminology anchor for IMP. Every term below matches exactly what you see in the UI and in the API. When later sections use these words, they mean what is defined here.
+
+## Agent
+
+An agent is an AI assistant your organization has configured. It has a name, a system prompt, a model, a set of tools or skills, and optionally one or more knowledge contexts attached. End users chat with agents; power users build and configure them. A deployment can have many agents serving different audiences and tasks.
+
+See [Agents](/building/agents/overview) in the Building section for configuration reference.
+
+## Knowledge
+
+Knowledge is the organizational information made searchable for agents. The platform manages knowledge at three levels:
+
+- **Context** — a named collection of knowledge (e.g., "HR Handbook", "Product Documentation"). An agent can have multiple contexts attached.
+- **Item** — a single piece of source material inside a context: a file, a URL, a text paste, or a transcription.
+- **Chunk** — the fragment an item is split into for embedding and retrieval. Chunking happens automatically; you rarely need to manage individual chunks unless you are debugging retrieval quality.
+- **Embedding** — the vector representation of a chunk, used for semantic search. Embeddings are generated and stored automatically when you add items.
+
+See [Knowledge](/building/knowledge/overview) in the Building section for context configuration and item management.
+
+## Session
+
+A session is a single conversation thread between a user and an agent. Sessions have a transcript of all messages, metadata about which agent and model were used, tool calls made, and any files exchanged. Sessions are stored in full and can be searched and replayed.
+
+## Project
+
+A project is a named workspace that groups related sessions together. Users create projects to organize ongoing work — for example, one project per client engagement or research topic. Projects live in the Chat surface.
+
+## Prompt
+
+A prompt is a reusable instruction fragment stored in the prompt library. Users and power users can apply a prompt to a session to steer the agent's behavior without editing the agent's system prompt. Prompts can be personal or shared across the organization.
+
+See [Prompts](/building/prompts) in the Building section.
+
+## Skill
+
+A skill is a reusable capability you attach to an agent: a function, an API integration, or a multi-step tool the agent can call during a conversation. Skills are defined once and can be attached to multiple agents.
+
+See [Skills](/building/skills/overview) in the Building section.
+
+## Routine
+
+A routine is an automated execution of a conversation template on a schedule or trigger. You design the workflow by interacting with an agent, save it as a template, and then run it repeatedly with different inputs or on a cron schedule. Routines are an Enterprise Edition feature.
+
+See [Routines](/building/routines/overview) in the Building section.
+
+## Transcript
+
+A transcript is the full text record of a session, including all messages from the user and agent, tool calls, and citations. Transcripts can also be generated from audio recordings via the transcription feature. A transcript can be added to a knowledge context as an item, making meeting content searchable by agents.
+
+## Budget
+
+A budget controls how much a user, team, or the entire organization can spend on model tokens in a given period. Budgets are set in the Administration surface and enforced at request time. When a budget is reached, further requests to that agent or model are blocked until the period resets.
+
+See [Budgets](/administration/budgets) in the Administration section.
+
+## Role and team
+
+A **role** is a named set of permissions (e.g., "Editor", "Viewer", "Administrator"). A **team** is a group of users that can share role assignments and be scoped to specific agents or knowledge contexts. Roles and teams are managed in the Administration surface and require the `rbac` Enterprise Edition flag.
+
+See [Users and access](/administration/users-access/overview) in the Administration section.
+
+## Variable
+
+A variable is a named value stored server-side that agents and skills can reference. Variables are used for secrets (API keys, credentials), environment-specific configuration, and shared values you do not want to hard-code in prompts or skill definitions. Variables are managed by administrators.
+
+See [Variables](/administration/variables) in the Administration section.
+
+## Theme
+
+The theme is the visual configuration of the IMP frontend: logo, colors, and other white-label settings. Theme configuration is an Enterprise Edition feature (via the `custom-branding` flag) and is managed in the Administration surface.
+
+See [Theme](/administration/theme) in the Administration section.

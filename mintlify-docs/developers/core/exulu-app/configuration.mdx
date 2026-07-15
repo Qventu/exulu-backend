@@ -1,0 +1,316 @@
+---
+title: "Configuration"
+description: "Every option accepted by ExuluApp.create(), including the full ExuluConfig reference."
+icon: "settings"
+---
+
+`app.create()` takes a single options object: the components you want to register plus a `config` object of type `ExuluConfig`. This page documents every option, verified against the current `@exulu/backend` source.
+
+## create() options
+
+```typescript
+await app.create({
+  config,        // ExuluConfig — required
+  contexts,      // Record<string, ExuluContext>
+  providers,     // ExuluProvider[]
+  agents,        // ExuluAgent[]
+  tools,         // ExuluTool[]
+  evals,         // ExuluEval[]
+});
+```
+
+<ParamField path="config" type="ExuluConfig" required>
+  Platform configuration. `workers` and `MCP` are required fields inside it; everything else is optional. See the full reference below.
+</ParamField>
+
+<ParamField path="contexts" type="Record<string, ExuluContext>">
+  Map of context key to `ExuluContext` instance. IMP merges its built-in contexts (currently `transcriptions`) after yours, so a built-in wins on key collision — a warning is logged if you define a context under the key `transcriptions`.
+</ParamField>
+
+<ParamField path="providers" type="ExuluProvider[]">
+  Custom model providers, appended after the 19 built-in defaults. See [ExuluProvider](/developers/core/exulu-provider/introduction).
+</ParamField>
+
+<ParamField path="agents" type="ExuluAgent[]">
+  Code-defined agents. Agents can also be created in the database through the platform UI; `app.agent()` and `app.agents()` read from both. Code-defined agents without an explicit `RBAC` block default to public access.
+</ParamField>
+
+<ParamField path="tools" type="ExuluTool[]">
+  Custom tools, registered ahead of the built-in todo, question, Perplexity, email, and image-generation tools. See [ExuluTool](/developers/core/exulu-tool/introduction).
+</ParamField>
+
+<ParamField path="evals" type="ExuluEval[]">
+  Custom evaluations, merged with the built-in LLM-as-judge eval. Evals require Redis (`REDIS_HOST` + `REDIS_PORT`); without it, no evals are registered — including the ones you pass here.
+</ParamField>
+
+<Warning>
+Every context, tool, and provider ID must start with a letter or underscore, contain only letters, digits, and underscores, and be at most 80 characters. Treat 5 characters as the practical minimum — the runtime error message enforces intent at 5, though the current validator accepts shorter IDs; don't rely on that. `create()` throws on the first violation.
+</Warning>
+
+## ExuluConfig reference
+
+```typescript
+type ExuluConfig = {
+  workers: {
+    enabled: boolean;
+    logger?: { winston: { transports: transport[] } };
+    telemetry?: { enabled: boolean };
+  };
+  MCP: {
+    enabled: boolean;
+  };
+  telemetry?: {
+    enabled: boolean;
+  };
+  logger?: {
+    winston: { transports: transport[] };
+  };
+  fileUploads?: {
+    s3region: string;
+    s3key: string;
+    s3secret: string;
+    s3Bucket: string;
+    s3endpoint?: string;
+    s3prefix?: string;
+  };
+  privacy?: {
+    systemPromptPersonalization?: boolean;
+  };
+  requireSystemDependencies?: boolean;
+};
+```
+
+Both `workers` and `MCP` are required top-level fields. All others are optional.
+
+### Workers
+
+<ParamField path="workers.enabled" type="boolean" required>
+  Declare whether this deployment runs a worker process. The workers themselves start only when you call `app.bullmq.workers.create()` in a separate process.
+</ParamField>
+
+<ParamField path="workers.logger.winston.transports" type="winston.transport[]">
+  Winston transports used by the worker process. Falls back to `logger.winston.transports`, and finally to a built-in console transport (colorized with timestamps in development, JSON in production).
+</ParamField>
+
+<ParamField path="workers.telemetry.enabled" type="boolean" default="false">
+  Enable OpenTelemetry tracing and log forwarding in the worker process. Independent of the server-side `telemetry.enabled`.
+</ParamField>
+
+```typescript
+import winston from "winston";
+
+const config = {
+  workers: {
+    enabled: true,
+    logger: {
+      winston: {
+        transports: [
+          new winston.transports.File({ filename: "logs/workers.log" }),
+        ],
+      },
+    },
+    telemetry: { enabled: true },
+  },
+  MCP: { enabled: false },
+};
+```
+
+<Note>
+Workers require Redis (`REDIS_HOST` / `REDIS_PORT`) and an Enterprise Edition license (`EXULU_ENTERPRISE_LICENSE`). `app.bullmq.workers.create()` throws if the license is absent or invalid.
+</Note>
+
+### MCP
+
+<ParamField path="MCP.enabled" type="boolean" required>
+  When `true`, `app.express.init()` mounts a Model Context Protocol server on the Express application. Each agent becomes reachable as a streamable-HTTP MCP endpoint at `/mcp/:agent`, so external MCP clients can call your agents with their registered tools and contexts.
+</ParamField>
+
+```typescript
+const config = {
+  workers: { enabled: false },
+  MCP: { enabled: true },
+};
+```
+
+### Telemetry
+
+<ParamField path="telemetry.enabled" type="boolean" default="false">
+  Enable OpenTelemetry tracing for the Express server. Traces and logs are exported to the collector configured through your OTEL environment variables.
+</ParamField>
+
+```typescript
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  telemetry: { enabled: process.env.NODE_ENV === "production" },
+};
+```
+
+### Logging
+
+<ParamField path="logger.winston.transports" type="winston.transport[]">
+  Winston transports for the server process. When omitted, IMP uses a console transport: colorized with `HH:mm:ss` timestamps in development, JSON in production. Log messages longer than 50 lines are truncated with a `(… more lines omitted)` marker.
+</ParamField>
+
+```typescript
+import winston from "winston";
+
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  logger: {
+    winston: {
+      transports: [
+        new winston.transports.Console({ format: winston.format.json() }),
+        new winston.transports.File({ filename: "logs/server.log" }),
+      ],
+    },
+  },
+};
+```
+
+<Note>
+IMP routes `console.log`, `console.info`, `console.warn`, `console.error`, and `console.debug` through the configured Winston logger, so all output — including from your own code — flows through your transports.
+</Note>
+
+### File uploads
+
+S3-compatible object storage for chat attachments, knowledge files, and generated images. All four core fields are required together.
+
+<ParamField path="fileUploads.s3region" type="string" required>
+  Region of the bucket, for example `us-east-1`.
+</ParamField>
+
+<ParamField path="fileUploads.s3key" type="string" required>
+  Access key ID.
+</ParamField>
+
+<ParamField path="fileUploads.s3secret" type="string" required>
+  Secret access key.
+</ParamField>
+
+<ParamField path="fileUploads.s3Bucket" type="string" required>
+  Bucket name.
+</ParamField>
+
+<ParamField path="fileUploads.s3endpoint" type="string">
+  Custom endpoint URL for S3-compatible services such as MinIO. Omit for AWS S3.
+</ParamField>
+
+<ParamField path="fileUploads.s3prefix" type="string">
+  Key prefix applied to uploaded objects.
+</ParamField>
+
+<CodeGroup>
+```typescript MinIO
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  fileUploads: {
+    s3region: "us-east-1",
+    s3key: process.env.COMPANION_S3_KEY!,
+    s3secret: process.env.COMPANION_S3_SECRET!,
+    s3Bucket: "exulu-uploads",
+    s3endpoint: "http://localhost:9000",
+  },
+};
+```
+
+```typescript AWS S3
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  fileUploads: {
+    s3region: process.env.COMPANION_S3_REGION!,
+    s3key: process.env.COMPANION_S3_KEY!,
+    s3secret: process.env.COMPANION_S3_SECRET!,
+    s3Bucket: process.env.COMPANION_S3_BUCKET!,
+    s3prefix: "uploads/",
+  },
+};
+```
+</CodeGroup>
+
+<Info>
+The image-generation widget tool is only registered when both LiteLLM (`EXULU_USE_LITELLM=true`) and this `fileUploads` block are configured, because generated images are stored in S3.
+</Info>
+
+### Privacy
+
+<ParamField path="privacy.systemPromptPersonalization" type="boolean">
+  Controls whether user-specific personalization is injected into agent system prompts. When disabled, all users receive the same system prompts.
+</ParamField>
+
+```typescript
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  privacy: { systemPromptPersonalization: false },
+};
+```
+
+### System dependencies
+
+<ParamField path="requireSystemDependencies" type="boolean" default="true">
+  IMP probes for the `pandoc`, `soffice` (LibreOffice), and `pdftoppm` (Poppler) binaries and the globally installed `docx` npm package — all needed by the built-in document skills. By default (unset or `true`), `create()` throws when any is missing, so misconfigured production images fail fast. Set to `false` to log a warning instead; skills that need the missing dependency then fail at use time.
+</ParamField>
+
+```typescript
+const config = {
+  workers: { enabled: true },
+  MCP: { enabled: false },
+  requireSystemDependencies: process.env.NODE_ENV === "production",
+};
+```
+
+## Complete example
+
+```typescript
+import { ExuluApp, type ExuluConfig } from "@exulu/backend";
+import winston from "winston";
+
+const config: ExuluConfig = {
+  workers: {
+    enabled: true,
+    telemetry: { enabled: true },
+  },
+  MCP: { enabled: true },
+  telemetry: { enabled: process.env.NODE_ENV === "production" },
+  logger: {
+    winston: {
+      transports: [
+        new winston.transports.Console({ format: winston.format.json() }),
+      ],
+    },
+  },
+  fileUploads: {
+    s3region: process.env.COMPANION_S3_REGION!,
+    s3key: process.env.COMPANION_S3_KEY!,
+    s3secret: process.env.COMPANION_S3_SECRET!,
+    s3Bucket: process.env.COMPANION_S3_BUCKET!,
+    s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+  },
+  privacy: { systemPromptPersonalization: false },
+  requireSystemDependencies: process.env.NODE_ENV === "production",
+};
+
+export const app = new ExuluApp();
+export const ready = app.create({
+  config,
+  contexts: {},
+  tools: [],
+});
+```
+
+Environment variables referenced by the platform at runtime (Postgres, Redis, NextAuth, LiteLLM) are documented in [Environment variables](/self-hosting/environment-variables).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API reference" icon="code" href="/developers/core/exulu-app/api-reference">
+    Every public method and property of ExuluApp.
+  </Card>
+  <Card title="ExuluContext" icon="database" href="/developers/core/exulu-context/introduction">
+    Define knowledge contexts to register on the app.
+  </Card>
+</CardGroup>

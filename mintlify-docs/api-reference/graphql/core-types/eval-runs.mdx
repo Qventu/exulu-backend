@@ -1,0 +1,74 @@
+---
+title: "Eval runs"
+description: "The eval_run type represents a configured evaluation run — binding an agent, eval set, scoring criteria, and test case list."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Eval runs require an Enterprise Edition license (`evals` entitlement).
+
+An `eval_run` ties together an agent, a set of test cases, the evaluation functions to apply, and the pass threshold. You trigger an execution via the `runEval` mutation; each run produces `job_result` records. See [Evals overview](/building/evals/overview).
+
+```graphql
+type eval_run {
+  name: String
+  timeout_in_seconds: Float
+  eval_set_id: String!
+  agent_id: String!
+  eval_functions: JSON!
+  config: JSON
+  scoring_method: scoring_methodEnum!
+  pass_threshold: Float!
+  test_case_ids: JSON!
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `eval_set_id` | ID of the parent `eval_set` this run belongs to. |
+| `agent_id` | ID of the `agent` being evaluated. |
+| `eval_functions` | JSON array of eval function IDs (from `evals` registry query) applied to each test case response. |
+| `scoring_method` | One of `MEDIAN`, `SUM`, or `AVERAGE`; controls how per-test-case scores are aggregated. |
+| `pass_threshold` | Score value (0–100) that the aggregated result must reach to be considered passing. |
+| `test_case_ids` | JSON array of `test_case` IDs included in this run configuration. |
+| `config` | Optional JSON config blob forwarded to each eval function. |
+| `rights_mode` | `"public"` or `"private"`. |
+| `created_by` | Numeric ID of the creating user. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  eval_runsPagination(
+    limit: 10
+    filters: [{ agent_id: { eq: "agent-123" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      agent_id
+      eval_set_id
+      scoring_method
+      pass_threshold
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

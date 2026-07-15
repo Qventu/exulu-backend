@@ -1,0 +1,245 @@
+---
+title: "Troubleshooting"
+description: "Verified failure modes with symptom, cause, and fix for common IMP self-hosting problems."
+icon: "circle-help"
+---
+
+<AccordionGroup>
+
+<Accordion title="LiteLLM won't start / proxy keeps restarting">
+
+**Symptom.** Backend logs show `[EXULU-LITELLM] crash #N` repeatedly, or the supervisor state reaches `given_up`. Chat and model features fail with an error referencing the LiteLLM proxy.
+
+**Cause: `LITELLM_MASTER_KEY` is not set.**
+
+The backend throws at startup if `EXULU_USE_LITELLM=true` and `LITELLM_MASTER_KEY` is absent. Check:
+
+```bash
+docker logs exulu-backend 2>&1 | grep "LITELLM_MASTER_KEY"
+```
+
+Fix: set `LITELLM_MASTER_KEY` to a strong random value in your `.env` and restart the backend.
+
+**Cause: `config.litellm.yaml` is missing.**
+
+If the file does not exist when the backend starts, the supervisor logs an error and sets state `given_up` without ever spawning LiteLLM. Confirm the file is present in the container:
+
+```bash
+docker exec exulu-backend ls -la /app/config.litellm.yaml
+```
+
+If missing, copy the example config from the repo, fill in at least one model entry, and restart.
+
+**Cause: LiteLLM's database is unreachable.**
+
+If `database_url` is set in `config.litellm.yaml` and the target Postgres is down, LiteLLM crashes immediately on startup. Check the database connection and that `LITELLM_DATABASE_URL` / the `database_url` in the config file points at a reachable host.
+
+**Cause: shared database warning.**
+
+If both `database_url` and `POSTGRES_DB_NAME` point at the same database, IMP skips the `prisma db push` and logs a loud banner. LiteLLM itself still starts, but spend tracking and budget enforcement will not function correctly. See [LiteLLM service](/self-hosting/services/litellm) for the dedicated-database requirement.
+
+</Accordion>
+
+<Accordion title="Embeddings stuck / knowledge ingestion not progressing">
+
+**Symptom.** You upload a document or item to a knowledge context, it stays in a "processing" state and never completes. No eval runs execute. Routine jobs do not fire.
+
+**Cause: no worker running.**
+
+Background jobs are processed by the worker container. If `exulu-worker` is not running, jobs sit in the Redis queue indefinitely. Check:
+
+```bash
+docker ps | grep exulu-worker
+```
+
+If the worker is absent, start it:
+
+```bash
+docker compose -f docker-compose.worker.yml up -d
+```
+
+**Cause: worker started without credentials.**
+
+`docker-compose.worker.yml` does not include `env_file`. The worker needs `REDIS_HOST`, `REDIS_PORT`, `POSTGRES_DB_HOST`, etc. to function. Without them it crashes on startup (often silently, because pm2 keeps restarting it). Add `env_file: [.env]` to the worker service definition, or inject variables via Dokploy.
+
+**Cause: Redis is down or unreachable.**
+
+The worker implements a fail-fast guard: on startup it pings Redis before creating BullMQ connections. If Redis does not respond within the startup timeout, the worker exits with an error rather than hanging. Check:
+
+```bash
+docker logs exulu-worker 2>&1 | grep -i redis
+docker exec exulu-redis redis-cli ping
+```
+
+**Cause: queue is paused.**
+
+Queues can be paused via the administration UI or GraphQL. A paused queue holds jobs but does not dispatch them. Check the queue state in the admin panel and resume if paused.
+
+</Accordion>
+
+<Accordion title="Transcription fails">
+
+**Symptom.** Meeting recordings are uploaded but the transcript never appears. The backend logs show a transcription error.
+
+**Cause: `TRANSCRIPTION_SERVER` is not set.**
+
+Transcription is off by default. Set `TRANSCRIPTION_SERVER` on the backend to the URL of your Whisper server:
+
+```ini
+TRANSCRIPTION_SERVER=http://<whisper-host>:9876
+```
+
+Restart the backend after setting it.
+
+**Cause: Whisper server is still loading the model.**
+
+On first start, the Whisper container downloads the `large-v3` model (~3 GB). The container is not marked healthy until the model is ready. The health check `start_period` is 1200 seconds. Wait for:
+
+```bash
+docker logs <whisper-container> 2>&1 | grep "Ready"
+```
+
+**Cause: GPU not visible to the container / driver mismatch.**
+
+The Whisper container needs the NVIDIA Container Toolkit and a driver >= 550. Verify:
+
+```bash
+docker exec <whisper-container> nvidia-smi
+```
+
+If this fails, reinstall the NVIDIA Container Toolkit. See [Whisper service](/self-hosting/services/whisper).
+
+**Cause: speaker diarization disabled (missing HF token).**
+
+If transcripts complete but all speakers are labeled `unknown`, `HF_AUTH_TOKEN` is absent or invalid, or the pyannote model licences have not been accepted. Set `HF_AUTH_TOKEN` in the Whisper container environment and confirm you have accepted the licences at [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0).
+
+</Accordion>
+
+<Accordion title="File uploads fail">
+
+**Symptom.** Uploading a file in chat or to a knowledge context shows an error, or the upload hangs and times out.
+
+**Cause: bucket does not exist.**
+
+The S3 bucket named in `COMPANION_S3_BUCKET` must exist before the backend starts. IMP does not create it automatically. Create it through the MinIO console, AWS S3, or your provider's CLI.
+
+**Cause: CORS not configured on the bucket.**
+
+The frontend uploads directly to S3 from the browser. Without a CORS policy on the bucket that allows your `FRONTEND` origin, the browser upload is blocked at the preflight stage. See [S3 storage service](/self-hosting/services/s3-storage) for the required CORS policy.
+
+**Cause: checksum mismatch on presigned URLs.**
+
+The backend generates presigned URLs with SDK-level checksums disabled. If you use a proxy or CDN in front of MinIO that modifies or strips `x-amz-checksum-*` headers, uploads may fail with a `400 Bad Request` from S3. Bypass or configure the proxy to pass checksum headers through unchanged.
+
+**Cause: endpoint not reachable.**
+
+`COMPANION_S3_ENDPOINT` must be reachable from both the backend container (for generating presigned URLs) and from the browser (for the actual upload). If you set `http://exulu-minio:9000` (an internal Docker network address), the browser cannot reach it. Expose MinIO on a public or LAN-reachable address and set `COMPANION_S3_ENDPOINT` accordingly, or configure separate internal and public endpoints.
+
+</Accordion>
+
+<Accordion title="Login loops / authentication errors">
+
+**Symptom.** Logging in redirects back to the login page repeatedly, or API calls from the frontend return `401 Unauthorized`.
+
+**Cause: `NEXTAUTH_SECRET` mismatch.**
+
+The frontend signs JWTs with `NEXTAUTH_SECRET`. The backend verifies those JWTs with its own copy of `NEXTAUTH_SECRET`. If the values differ, every authenticated request fails. Verify they match:
+
+```bash
+docker exec exulu-backend printenv NEXTAUTH_SECRET
+docker exec exulu-frontend printenv NEXTAUTH_SECRET
+```
+
+Set the same value in both containers and restart.
+
+**Cause: `NEXTAUTH_URL` is wrong.**
+
+NextAuth uses `NEXTAUTH_URL` to build OAuth callback URLs and to validate the `origin` of requests. If it does not match the URL users actually navigate to, cookie-based sessions break. Set `NEXTAUTH_URL` to the public frontend URL (e.g., `https://imp.example.com`) — the same value as `FRONTEND`.
+
+**Cause: cookies blocked by mismatched domain.**
+
+If the frontend is on `imp.example.com` and the backend is on `api.example.com`, the session cookie set by the frontend is not sent to the backend API on a different domain. Configure your reverse proxy to route both under the same domain, or use the `NEXT_BACKEND` container-internal URL for server-to-server calls while exposing only one public domain.
+
+</Accordion>
+
+<Accordion title="Sandbox / bwrap errors">
+
+**Symptom.** Skill execution fails with an error containing `bwrap`, `user namespace`, `unshare`, or `permission denied`. Skills that run bash commands do not execute, or return generic errors.
+
+**Cause: `security_opt` flags are missing from the compose file.**
+
+Both the backend and worker containers require:
+
+```yaml
+security_opt:
+  - seccomp:unconfined
+  - apparmor:unconfined
+```
+
+Without these, Docker's default seccomp profile and AppArmor (on Ubuntu 23.10+) block the `unshare(CLONE_NEWUSER)` syscall that `bwrap` needs. Verify that both flags are present in your compose files, then restart the containers.
+
+**Cause: running on a host where user namespaces are disabled kernel-wide.**
+
+Some hardened kernels or container runtimes disable user namespaces globally. Check:
+
+```bash
+sysctl kernel.unprivileged_userns_clone
+```
+
+If this returns `0`, enable it:
+
+```bash
+sysctl -w kernel.unprivileged_userns_clone=1
+```
+
+Make the change persistent in `/etc/sysctl.conf`.
+
+**How to verify the sandbox is working:**
+
+```bash
+docker exec exulu-backend bwrap --dev-bind / / -- /bin/true
+echo $?  # should print 0
+```
+
+If `bwrap` exits non-zero, the security_opt flags are not effective or user namespaces are disabled.
+
+**Hardening without disabling the sandbox.**
+
+Set `EXULU_REQUIRE_SANDBOX=1` to make sandbox failures a hard error at the first sandboxed skill invocation rather than a silent degradation. This ensures skill isolation is always active or the invocation fails loudly.
+
+</Accordion>
+
+<Accordion title="Shared LiteLLM database warning banner">
+
+**Symptom.** On startup you see a banner:
+
+```
+════════════════════════════════════════════
+⚠  [EXULU-LITELLM] CONFIGURATION WARNING
+   LiteLLM's database_url points at the same
+   database as IMP. Skipping prisma db push.
+════════════════════════════════════════════
+```
+
+The backend boots successfully, but model routing, budget tracking, and spend logging do not work.
+
+**Cause:** `database_url` in `config.litellm.yaml` and `POSTGRES_DB_NAME` / `POSTGRES_DB_HOST` / `POSTGRES_DB_PORT` point at the same physical database. IMP detects this at startup, skips the `prisma db push` to avoid destroying your application data, and continues booting in a degraded state.
+
+**Fix:** Create a dedicated database for LiteLLM:
+
+```bash
+createdb -h <host> -U <user> litellm
+```
+
+Update `config.litellm.yaml`:
+
+```yaml
+general_settings:
+  database_url: postgres://<user>:<password>@<host>:5432/litellm
+```
+
+Restart the backend. The warning will be gone and LiteLLM features will initialise correctly.
+
+</Accordion>
+
+</AccordionGroup>

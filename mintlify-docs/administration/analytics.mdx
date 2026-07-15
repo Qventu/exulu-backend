@@ -1,0 +1,83 @@
+---
+title: "Analytics"
+description: "Organization-wide usage dashboard: KPI strip, trend chart, breakdowns by agent/user/team/role/project/routine, CSV export, and LiteLLM admin link."
+icon: "bar-chart-3"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="super admin" flags="none" />
+
+## What the analytics page is
+
+The **Analytics** page (`/analytics`) is the super-admin usage dashboard. It shows how the organization consumes model tokens across agents, users, teams, roles, projects, and routines — covering spend, token counts, session volume, and more.
+
+## KPI strip
+
+The top row summarizes the selected time range with seven metrics:
+
+| KPI | What it counts |
+| --- | --- |
+| **Sessions** | Total chat sessions started. |
+| **Requests** | Total model API calls (one session may have many requests). |
+| **Tokens** | Total tokens (input + output). |
+| **Spend** | Total USD cost of model calls. |
+| **Agent calls** | Total agent-initiated model calls. |
+| **Tool calls** | Total tool-use invocations. |
+| **Workflow runs** | Total routine executions. |
+
+Each KPI tile shows a comparison to the previous equal-length period (e.g., "vs previous: +12%").
+
+## Date range
+
+The range picker above the KPI strip has preset buttons: **24h**, **7d**, **14d**, **30d**, and **Custom**.
+
+<Note>
+The maximum selectable range is **30 days**. If a deep link carries a custom range longer than 30 days, IMP resets it to the last 14 days and shows a notification.
+</Note>
+
+Date presets anchor to the current moment. Custom ranges let you specify exact start and end dates up to the 30-day limit.
+
+## Trend chart
+
+Below the KPI strip, the **Trend** chart shows daily totals for the selected measure across the selected date range. Use the **Measure** switcher to change what is plotted:
+
+| Measure | What it shows |
+| --- | --- |
+| **Spend** | Daily USD cost (default). |
+| **Tokens** | Daily token volume. |
+| **Requests** | Daily request count. |
+
+## Breakdowns
+
+The **Breakdown** section ranks entities by the selected measure. Use the **View by** control to switch between dimensions:
+
+| Dimension | What it ranks |
+| --- | --- |
+| **Agents** | Individual agents by their share of usage (default). |
+| **Users** | Individual users. |
+| **Teams** | Teams. |
+| **Roles** | Roles. |
+| **Projects** | Projects. |
+| **Routines** | Routines. |
+
+Toggle between **List** view (ranked rows with values) and **Share** view (donut/proportional chart) using the view buttons in the breakdown header.
+
+## CSV export
+
+Click **Export CSV** in the page header to download the current breakdown as a CSV file. The export reflects the active dimension, measure, and date range.
+
+## LiteLLM admin link
+
+The footer of the Analytics page includes a link — **Open LiteLLM admin** — that opens the LiteLLM admin UI in a new tab. This gives direct access to LiteLLM's own spending and usage analytics, which may show additional detail not surfaced in IMP's dashboard.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Budgets" icon="wallet" href="/administration/budgets">
+    Set spending limits based on the trends you see here.
+  </Card>
+  <Card title="Users & access" icon="users" href="/administration/users-access/overview">
+    Manage the users and teams whose activity appears in analytics.
+  </Card>
+</Columns>

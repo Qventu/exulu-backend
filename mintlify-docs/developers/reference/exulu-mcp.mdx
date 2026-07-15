@@ -1,0 +1,121 @@
+---
+title: "ExuluMCP"
+description: "Expose any IMP agent as an MCP server — mounts Streamable HTTP endpoints on an Express app."
+---
+
+`ExuluMCP` is a class that mounts Model Context Protocol (MCP) endpoints on an Express application. It turns each IMP agent's enabled tools into MCP-registered tools, so external MCP clients (Claude Desktop, custom clients, etc.) can call those tools via the standard MCP Streamable HTTP transport.
+
+`ExuluMCP` is used internally by `ExuluApp` — you do not need to instantiate it directly unless you are building a custom server that manages Express yourself.
+
+## Constructor
+
+```typescript
+new ExuluMCP()
+```
+
+Creates an `ExuluMCP` instance. No configuration required at construction time; the MCP server for each agent is created lazily on the first request.
+
+## API surface
+
+### create
+
+```typescript
+exuluMcp.create(opts: {
+  express: Express;
+  allTools: ExuluTool[];
+  allProviders: ExuluProvider[];
+  allContexts: ExuluContext[];
+  config: ExuluConfig;
+}): Promise<Express>
+```
+
+Mounts MCP route handlers on the provided Express application and returns it. The handler is at `/mcp/:agent`, where `:agent` is the agent's ID.
+
+<ParamField path="express" type="Express" required>
+  An initialized Express application.
+</ParamField>
+
+<ParamField path="allTools" type="ExuluTool[]" required>
+  All registered tools. The handler filters to the agent's enabled tools at request time.
+</ParamField>
+
+<ParamField path="allProviders" type="ExuluProvider[]" required>
+  All registered providers. Used to resolve the agent's model.
+</ParamField>
+
+<ParamField path="allContexts" type="ExuluContext[]" required>
+  All registered contexts. Used to resolve context-bound tools.
+</ParamField>
+
+<ParamField path="config" type="ExuluConfig" required>
+  The application config from `ExuluApp`.
+</ParamField>
+
+<ResponseField name="return" type="Promise<Express>">
+  The same Express instance with MCP routes added.
+</ResponseField>
+
+## Endpoints
+
+After `create` is called, three routes are active:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/mcp/:agent` | Client-to-server messages (initialize, tool calls) |
+| `GET` | `/mcp/:agent` | Server-to-client notifications via SSE |
+| `DELETE` | `/mcp/:agent` | Session termination |
+
+Sessions are tracked by the `mcp-session-id` header. On the first `POST` without a session ID (an `initialize` request), a new session is created and the ID is returned in the response header.
+
+## Authentication and access control
+
+Every request to `/mcp/:agent` is authenticated using the standard IMP authentication stack (API key or session token). Access to the agent is then verified with `checkRecordAccess`. Unauthenticated or unauthorized requests receive `401` / `404` before any MCP processing occurs.
+
+## Built-in prompt tools
+
+In addition to the agent's enabled tools, two tools are registered on every MCP server:
+
+- `getListOfPromptTemplates` — lists prompt templates assigned to the agent (id, name, description).
+- `getPromptTemplateDetails` — retrieves the full content and metadata of a specific template by ID.
+
+## Example
+
+Enable MCP by setting `MCP.enabled: true` in your `config` when calling `app.create(...)`. `ExuluApp` mounts the MCP routes automatically — no direct instantiation of `ExuluMCP` required.
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+const app = new ExuluApp();
+
+await app.create({
+  config: {
+    MCP: { enabled: true },
+    workers: { enabled: false },
+    // ...other config
+  },
+  contexts: { /* your contexts */ },
+  tools: [ /* your tools */ ],
+});
+
+const server = await app.express.init();
+server.listen(3000);
+```
+
+Once the server is running, MCP endpoints are available at:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/mcp/:agent` | Client-to-server messages (initialize, tool calls) |
+| `GET` | `/mcp/:agent` | Server-to-client notifications via SSE |
+| `DELETE` | `/mcp/:agent` | Session termination |
+
+An MCP client connecting to this server would use the URL:
+
+```
+http://localhost:3000/mcp/<agent-id>
+```
+
+## Related
+
+- [ExuluApp — introduction](/developers/core/exulu-app/introduction): `ExuluApp` sets up MCP automatically when the server starts.
+- [ExuluTool — introduction](/developers/core/exulu-tool/introduction): define the tools exposed through MCP.

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — theme studio</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; background: var(--surface-2); }
+
+      /* two-pane layout */
+      #root .studio-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+      #root .editor-pane { width: 680px; flex: none; border-right: 1px solid var(--hair); display: flex; flex-direction: column; overflow: hidden; }
+      #root .preview-pane { flex: 1; background: var(--surface-2); padding: 20px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+
+      /* editor toolbar */
+      #root .editor-toolbar { padding: 12px 20px; border-bottom: 1px solid var(--hair); display: flex; align-items: center; gap: 8px; }
+      #root .search-field { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--bg); padding: 6px 10px; flex: 1; }
+      #root .search-icon svg { width: 13px; height: 13px; stroke-width: 1.5; color: var(--tx-faint); }
+      #root .search-text { font-size: 12.5px; color: var(--tx-faint); }
+      #root .mode-toggle { display: flex; border: 1px solid var(--hair); overflow: hidden; }
+      #root .mode-item { padding: 5px 12px; font-size: 11.5px; color: var(--tx-lo); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; border-right: 1px solid var(--hair); background: var(--bg); cursor: default; }
+      #root .mode-item:last-child { border-right: none; }
+      #root .mode-item.active { background: var(--ink); color: #fff; }
+      #root .filter-check { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--tx-lo); }
+      #root .cb { width: 13px; height: 13px; border: 1px solid var(--hair); background: var(--ink); flex: none; display: grid; place-items: center; }
+      #root .cb-tick { color: #fff; font-size: 9px; }
+
+      /* group header */
+      #root .group-hd { padding: 8px 20px 4px; background: var(--surface-2); border-bottom: 1px solid var(--hair); display: flex; align-items: center; justify-content: space-between; }
+      #root .group-name { font-size: 10.5px; font-weight: 600; color: var(--tx-hi); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+      #root .group-collapse { color: var(--tx-faint); font-size: 10px; }
+
+      /* token rows */
+      #root .token-row { display: flex; align-items: center; gap: 10px; padding: 7px 20px; border-bottom: 1px solid var(--hair); }
+      #root .token-row:hover { background: var(--surface); }
+      #root .token-name { font-size: 12px; font-family: var(--font-mono); color: var(--tx-mid); flex: 1; min-width: 0; truncate: ellipsis; overflow: hidden; white-space: nowrap; }
+      #root .token-swatch { width: 22px; height: 22px; border: 1px solid var(--hair); flex: none; }
+      #root .token-input { border: 1px solid var(--hair); background: var(--bg); padding: 4px 8px; font-size: 12px; font-family: var(--font-mono); color: var(--tx-hi); width: 160px; flex: none; }
+      #root .token-input.focus { border-color: var(--accent); }
+      #root .modified-badge { font-size: 10px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent); border: 1px solid var(--chip); padding: 1px 5px; background: var(--chip-soft); }
+      #root .reset-btn { color: var(--tx-faint); font-size: 13px; cursor: default; }
+
+      /* preview panel sections */
+      #root .preview-label { font-size: 11px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--tx-faint); margin-bottom: 8px; }
+      #root .preview-card { border: 1px solid var(--hair); background: var(--surface); padding: 14px 16px; }
+      #root .preview-chat { display: flex; flex-direction: column; gap: 8px; }
+      #root .preview-bubble-user { background: var(--surface-2); border: 1px solid var(--hair); padding: 8px 12px; font-size: 12.5px; color: var(--tx-hi); align-self: flex-end; max-width: 280px; }
+      #root .preview-bubble-agent { font-size: 12.5px; color: var(--tx-hi); max-width: 320px; line-height: 1.5; }
+      #root .preview-btn-row { display: flex; gap: 8px; margin-top: 4px; }
+      #root .preview-btn-primary { background: var(--accent); color: #fff; padding: 7px 16px; font-size: 12.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; }
+      #root .preview-btn-outline { border: 1px solid var(--hair); background: var(--bg); padding: 7px 16px; font-size: 12.5px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--tx-mid); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="theme-studio"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="2"
+    >
+      <section id="scene" class="clip" data-start="0" data-duration="2" data-track-index="1">
+        <div class="imp-shell">
+          <!-- sidebar -->
+          <aside class="imp-sidebar">
+            <div class="imp-wordmark">IMP</div>
+            <div class="imp-sidebar-group">Workspace</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+              Chat
+            </div>
+            <div class="imp-sidebar-group">Build</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>
+              Agents
+            </div>
+            <div class="imp-sidebar-group">Administration</div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              Users
+            </div>
+            <div class="imp-nav-item active">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+              Theme
+            </div>
+            <div class="imp-nav-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/></svg>
+              Variables
+            </div>
+          </aside>
+
+          <!-- main -->
+          <div class="imp-main">
+            <div class="imp-topbar">
+              <span style="font-size:14px;font-weight:600;color:var(--tx-hi);">Theme</span>
+              <span style="display:flex;align-items:center;gap:10px;">
+                <span style="font-size:12px;color:var(--tx-lo);display:flex;align-items:center;gap:5px;">
+                  <span style="width:6px;height:6px;background:var(--accent);display:inline-block;"></span>
+                  Unsaved changes
+                </span>
+                <span class="imp-btn imp-btn-ghost">Preview</span>
+                <span style="width:32px;height:32px;border:1px solid var(--hair);display:grid;place-items:center;color:var(--tx-lo);font-size:16px;">⋯</span>
+                <span class="imp-btn imp-btn-ink">Publish theme</span>
+              </span>
+            </div>
+
+            <div class="imp-content" style="padding:0;flex:1;min-height:0;display:flex;flex-direction:column;">
+              <div class="studio-body">
+                <!-- editor pane -->
+                <div class="editor-pane">
+                  <div class="editor-toolbar">
+                    <div class="search-field">
+                      <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
+                      <span class="search-text">Filter variables…</span>
+                    </div>
+                    <div class="mode-toggle">
+                      <span class="mode-item active">Light</span>
+                      <span class="mode-item">Dark</span>
+                    </div>
+                    <div class="filter-check">
+                      <span class="cb"><span class="cb-tick">✓</span></span>
+                      Modified only
+                    </div>
+                  </div>
+
+                  <!-- Brand group -->
+                  <div class="group-hd">
+                    <span class="group-name">Brand</span>
+                    <span class="group-collapse">▾</span>
+                  </div>
+
+                  <div class="token-row">
+                    <span class="token-name">--primary</span>
+                    <span class="token-swatch" style="background:hsl(142 76% 36%);"></span>
+                    <span class="token-input focus">142 76% 36%</span>
+                    <span class="modified-badge">Modified</span>
+                    <span class="reset-btn">↺</span>
+                  </div>
+                  <div class="token-row">
+                    <span class="token-name">--primary-foreground</span>
+                    <span class="token-swatch" style="background:#fff;"></span>
+                    <span class="token-input">0 0% 100%</span>
+                    <span style="width:68px;"></span>
+                    <span class="reset-btn">↺</span>
+                  </div>
+                  <div class="token-row">
+                    <span class="token-name">--accent</span>
+                    <span class="token-swatch" style="background:hsl(142 76% 36%);"></span>
+                    <span class="token-input">142 76% 36%</span>
+                    <span class="modified-badge">Modified</span>
+                    <span class="reset-btn">↺</span>
+                  </div>
+
+                  <!-- Surfaces group -->
+                  <div class="group-hd">
+                    <span class="group-name">Surfaces</span>
+                    <span class="group-collapse">▾</span>
+                  </div>
+                  <div class="token-row">
+                    <span class="token-name">--background</span>
+                    <span class="token-swatch" style="background:hsl(48 30% 97%);"></span>
+                    <span class="token-input">48 30% 97%</span>
+                    <span style="width:68px;"></span>
+                    <span class="reset-btn">↺</span>
+                  </div>
+                  <div class="token-row">
+                    <span class="token-name">--card</span>
+                    <span class="token-swatch" style="background:hsl(48 25% 99%);"></span>
+                    <span class="token-input">48 25% 99%</span>
+                    <span style="width:68px;"></span>
+                    <span class="reset-btn">↺</span>
+                  </div>
+
+                  <!-- Text group -->
+                  <div class="group-hd">
+                    <span class="group-name">Text</span>
+                    <span class="group-collapse">▶</span>
+                  </div>
+                  <!-- collapsed, no rows shown -->
+
+                  <!-- Shape group -->
+                  <div class="group-hd">
+                    <span class="group-name">Shape &amp; typography</span>
+                    <span class="group-collapse">▶</span>
+                  </div>
+                </div>
+
+                <!-- preview pane -->
+                <div class="preview-pane">
+                  <div class="preview-label">Preview</div>
+
+                  <!-- chat preview -->
+                  <div class="preview-card">
+                    <div class="preview-chat">
+                      <div class="preview-bubble-user">Summarize this document for me.</div>
+                      <div class="preview-bubble-agent">Here's a summary of the key points from the document…</div>
+                    </div>
+                  </div>
+
+                  <!-- buttons preview -->
+                  <div class="preview-card">
+                    <div class="preview-btn-row">
+                      <span class="preview-btn-primary">Primary</span>
+                      <span class="preview-btn-outline">Outline</span>
+                    </div>
+                  </div>
+
+                  <!-- card preview -->
+                  <div class="preview-card">
+                    <div style="font-size:13px;font-weight:600;color:var(--tx-hi);margin-bottom:4px;">Card title</div>
+                    <div style="font-size:12px;color:var(--tx-lo);">A short supporting description.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["theme-studio"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

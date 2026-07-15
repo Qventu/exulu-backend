@@ -1,0 +1,57 @@
+---
+title: "ExuluJobs"
+description: "Redis client accessor for job infrastructure — the entry point for custom queue operations outside the ExuluQueues abstraction."
+---
+
+`ExuluJobs` is a plain object that exposes the backend's Redis connection so you can interact with BullMQ queues and Redis data directly. It gives you access to the same Redis instance that `ExuluQueues` uses internally, without going through the queue registry.
+
+Use `ExuluJobs` when you need raw Redis access — for example, to read job data, publish pub/sub messages, or build tooling that sits alongside the queue system. For queue registration and worker management, use [ExuluQueues](/developers/core/exulu-queues/introduction) instead.
+
+## API surface
+
+### ExuluJobs.redis
+
+```typescript
+ExuluJobs.redis: () => Promise<{ client: RedisClientType | null }>
+```
+
+Async function that returns a connected `RedisClientType` instance, or `null` when Redis is not configured (no `REDIS_HOST` / `REDIS_PORT` in the environment). The client is memoized — calling `redis()` multiple times returns the same connection.
+
+```typescript
+const { client } = await ExuluJobs.redis();
+if (client) {
+  // raw redis-node client
+}
+```
+
+The returned `client` is a [node-redis](https://github.com/redis/node-redis) `RedisClientType`. All standard node-redis methods are available.
+
+## Example
+
+```typescript
+import { ExuluJobs } from "@exulu/backend";
+
+const { client } = await ExuluJobs.redis();
+
+if (!client) {
+  console.warn("Redis not configured — skipping.");
+} else {
+  // Publish a notification to a custom channel
+  await client.publish("my-channel", JSON.stringify({ event: "ping" }));
+
+  // Read a key
+  const value = await client.get("my:key");
+  console.log("value:", value);
+}
+```
+
+## Notes
+
+- When Redis credentials include a password, the client URL is constructed as `redis://<user>:<password>@<host>:<port>`.
+- Connection errors are logged to stderr; the function returns `{ client: null }` on failure rather than throwing, so callers can degrade gracefully.
+- `ExuluJobs.redis` is the same connection used internally by `ExuluQueues` — do not close it from application code.
+
+## Related
+
+- [ExuluQueues — introduction](/developers/core/exulu-queues/introduction): register queues and workers.
+- [Self-hosting / Redis](/self-hosting/services/redis): configure the Redis service.

@@ -1,0 +1,26 @@
+/* kit/chat.css — IMP chat session replica.
+   .imp-chat is a centered column; user messages are right-aligned surface-2
+   blocks, agent messages read as plain document text. */
+
+.imp-chat { width: 100%; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; font-family: var(--font-sans); font-size: 14px; line-height: 1.55; color: var(--tx-hi); }
+
+.imp-chat .imp-msg-meta { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--tx-faint); margin-bottom: 6px; }
+
+.imp-msg-user { align-self: flex-end; max-width: 78%; background: var(--surface-2); padding: 10px 14px; color: var(--tx-hi); }
+.imp-msg-user .imp-msg-meta { text-align: right; }
+
+.imp-msg-agent { align-self: flex-start; max-width: 100%; color: var(--tx-hi); }
+.imp-msg-agent p { margin: 0 0 10px; }
+.imp-msg-agent p:last-child { margin-bottom: 0; }
+.imp-msg-agent ul { margin: 0 0 10px; padding-left: 20px; }
+.imp-msg-agent li { margin-bottom: 4px; }
+.imp-msg-agent code { font-family: var(--font-mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; }
+
+/* composer: bordered input bar with icon buttons + ink send */
+.imp-composer { display: flex; align-items: center; gap: 8px; border: 1px solid var(--hair); background: var(--surface); padding: 9px 10px 9px 14px; }
+.imp-composer .imp-composer-input { flex: 1; font-size: 13px; color: var(--tx-faint); }
+.imp-composer .imp-composer-input.typed { color: var(--tx-hi); }
+.imp-composer .imp-composer-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; color: var(--tx-lo); }
+.imp-composer .imp-composer-icon svg { width: 15px; height: 15px; stroke-width: 1.5; }
+.imp-composer .imp-composer-send { width: 30px; height: 30px; flex: none; display: grid; place-items: center; background: var(--ink); color: #fff; }
+.imp-composer .imp-composer-send svg { width: 14px; height: 14px; stroke-width: 1.8; }

@@ -1,0 +1,54 @@
+---
+title: "Variables"
+description: "The variable type stores named configuration values and secrets used by agents, models, and integrations."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+`variable` records are named key-value pairs that agents and model configurations reference by name at runtime. Sensitive values can be encrypted at rest. See [Variables](/administration/variables) for product context.
+
+```graphql
+type variable {
+  name: String
+  value: String
+  encrypted: Boolean
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `name` | Unique identifier for this variable; referenced by `model.authvariable` and in agent tool configurations. |
+| `value` | The stored value. When `encrypted` is `true` this field is redacted in read responses; supply the plaintext value only in write mutations. |
+| `encrypted` | When `true`, the value is stored encrypted at rest and is not returned in query results. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  variablesPagination(
+    limit: 50
+    filters: [{ encrypted: { eq: false } }]
+    sort: { field: "name", direction: ASC }
+  ) {
+    items {
+      id
+      name
+      encrypted
+      updatedAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

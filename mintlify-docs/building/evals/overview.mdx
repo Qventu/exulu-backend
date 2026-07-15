@@ -1,0 +1,88 @@
+---
+title: "Evals overview"
+description: "Eval sets group test cases and run them against an agent to produce scored results — browse the list, create a set, and understand the evals area."
+icon: "book-check"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+import { EditionBadge } from "/snippets/edition-badge.mdx";
+
+<RightsCallout right="evals (read)" />
+
+<EditionBadge edition="ee" />
+
+Evals are an Enterprise Edition feature. The sidebar entry and routes are only accessible when the `evals` role key is set to `read` or `write` for your role.
+
+## What evals are
+
+An eval set is a collection of test cases that IMP runs against an agent. Each run records a score per test case — pass or fail relative to a configurable threshold — and the scores roll up into a matrix you can compare across runs over time.
+
+Evals answer the question: "does this agent still behave the way I expect?" after you change a prompt, swap a model, or add a skill.
+
+<Note>
+Evals require background workers (Redis-backed job queue). When workers are not configured, eval sets and test cases are still viewable but runs cannot execute. The Evals list page shows a warning banner in this case: "Background workers are not configured. Eval sets are viewable but runs can't execute. Configure Redis to enable evaluation runs."
+See [Operations](/self-hosting/operations) in the self-hosting section for worker setup.
+</Note>
+
+## The evals list
+
+Open **Evals** from the **Develop** group in the sidebar. The list shows every eval set your account can read.
+
+The toolbar has two controls:
+
+- **Search** — type into "Filter by name…" to filter by name against the server. Clearing the field restores the full list.
+- **Test case library** — a secondary button that navigates to the global `/evals/cases` library. See [Test cases](/building/evals/test-cases) for what lives there.
+
+Each row shows:
+
+| Column | What it shows |
+| --- | --- |
+| **Name** | The eval set name |
+| **Description** | Short description, or "—" if none |
+| **Updated** | Relative timestamp of last modification |
+| **Actions** | Row overflow (⋯) with **Open**, **Delete** |
+
+Click any row (outside the actions column) to open the eval set's detail page.
+
+<Note>
+"No eval sets yet" appears when no eval sets exist or when none match your search filter. The empty state reads: "Create your first eval set to start testing agents."
+</Note>
+
+## Create an eval set
+
+Click **New eval set** in the top-right corner of the list. The **Create eval set** dialog opens:
+
+- **Name** (required) — a descriptive identifier, e.g. "Customer Support Scenarios".
+- **Description** — what this set tests (optional).
+
+Click **Create eval set**. The set appears in the list and opens automatically. You can add test cases and run configs from there.
+
+## The eval set detail page
+
+Click a row to open the set at `/evals/{id}`. The detail page has a two-tab layout:
+
+- **Results** — the runs matrix. The primary **Run eval** button lives in the page header and is disabled until the set has at least one test case.
+- **Test cases · N** — the list of cases in this set, with a count badge.
+
+A **⋯** overflow menu in the header gives access to **Edit details** (rename/redescribe the set) and **New run config** (opens the run configuration dialog within the Results tab).
+
+## Visibility and access
+
+Access to the evals area is role-gated:
+
+| Role level | What you can do |
+| --- | --- |
+| **evals: read** | View eval sets, test cases, and run results |
+| **evals: write** | All of the above, plus create/edit/delete sets, test cases, and runs; manage the queue |
+| **super admin** | Full access |
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Test cases" icon="list-checks" href="/building/evals/test-cases">
+    Create and manage the test cases that feed your eval sets.
+  </Card>
+  <Card title="Runs" icon="play" href="/building/evals/runs">
+    Run evals, read the results matrix, and manage the queue.
+  </Card>
+</Columns>

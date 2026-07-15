@@ -1,0 +1,405 @@
+---
+title: "Conventions"
+description: "The generated CRUD operation set, filter operators, sorting, pagination, and RBAC behavior shared by every type in the IMP GraphQL schema."
+---
+
+Every entity in the schema — core tables and [dynamic context types](/api-reference/graphql/dynamic-types) alike — gets the same generated operation set. Learn the pattern once and you can operate on any type. This page uses the `agent` entity for worked examples; substitute any other singular/plural pair.
+
+## Naming
+
+Operations are named from the entity's **singular** and **plural** table names. For core entities these pairs are, for example, `agent`/`agents`, `user`/`users`, `eval_run`/`eval_runs`, `prompt_library_item`/`prompt_library`. Type names are lowercase singular (`agent`, `eval_run`); result wrapper types capitalize the first letter (`AgentPaginationResult`, `FilterAgent`).
+
+## Queries
+
+| Operation | Shape | Purpose |
+| --- | --- | --- |
+| `{singular}ById` | `(id: ID!): {singular}` | Fetch one record by ID |
+| `{singular}ByIds` | `(ids: [ID!]!): [{singular}]!` | Batch fetch by IDs |
+| `{singular}One` | `(filters: [Filter{Singular}], sort: SortBy): {singular}` | First record matching filters |
+| `{plural}Pagination` | `(limit: Int, page: Int, filters: [Filter{Singular}], sort: SortBy): {Singular}PaginationResult` | Paginated list |
+| `{plural}Statistics` | `(filters: [Filter{Singular}], groupBy: String, limit: Int): [StatisticsResult]!` | Aggregate counts |
+
+For the `agent` entity, the generated fields are (verbatim from the core SDL):
+
+```graphql
+  agentById(id: ID!, project: ID): agent
+  agentByIds(ids: [ID!]!): [agent]!
+  agentsPagination(limit: Int, page: Int, filters: [FilterAgent], sort: SortBy): AgentPaginationResult
+  agentOne(filters: [FilterAgent], sort: SortBy): agent
+  agentsStatistics(filters: [FilterAgent], groupBy: String, limit: Int): [StatisticsResult]!
+```
+
+<Note>
+`agentById` is the one special case in the schema: it accepts an optional `project: ID` argument so agent lookups can be scoped to a project. Every other entity's `ById` takes only `id`.
+</Note>
+
+### Worked example: fetch and page
+
+```graphql
+query {
+  agentsPagination(
+    limit: 20
+    page: 1
+    filters: [
+      { name: { contains: "research" } }
+      { active: { eq: true } }
+    ]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      description
+      modelName
+    }
+    pageInfo {
+      currentPage
+      pageCount
+      itemCount
+      hasPreviousPage
+      hasNextPage
+    }
+  }
+}
+```
+
+Pagination results wrap items with page metadata:
+
+```graphql
+type AgentPaginationResult {
+  pageInfo: PageInfo!
+  items: [agent]!
+}
+```
+
+```graphql
+type PageInfo {
+  pageCount: Int!
+  itemCount: Int!
+  currentPage: Int!
+  hasPreviousPage: Boolean!
+  hasNextPage: Boolean!
+}
+```
+
+`limit` defaults to 10 and is capped at 10,000. `page` is 1-based: page 1 (or omitted) returns the first page, and the offset is `(page - 1) * limit`.
+
+### Worked example: statistics
+
+`{plural}Statistics` counts records, optionally grouped by a field. Without `groupBy` it returns a single row with `group: "total"`:
+
+```graphql
+query {
+  agentsStatistics(groupBy: "category", limit: 10) {
+    group
+    count
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "agentsStatistics": [
+      { "group": "assistants", "count": 14 },
+      { "group": "automation", "count": 6 }
+    ]
+  }
+}
+```
+
+```graphql
+type StatisticsResult {
+  group: String!
+  count: Int!
+}
+```
+
+## Mutations
+
+| Operation | Shape | Purpose |
+| --- | --- | --- |
+| `{plural}CreateOne` | `(input: {singular}Input!, upsert: Boolean): {singular}MutationPayload` | Create (or upsert) a record |
+| `{plural}CopyOneById` | `(id: ID!): {singular}MutationPayload` | Duplicate a record |
+| `{plural}UpdateOne` | `(where: [Filter{Singular}], input: {singular}Input!): {singular}MutationPayload` | Update the record matching filters |
+| `{plural}UpdateOneById` | `(id: ID!, input: {singular}Input!): {singular}MutationPayload` | Update by ID |
+| `{plural}RemoveOneById` | `(id: ID!): {singular}` | Delete by ID |
+| `{plural}RemoveOne` | `(where: JSON!): {singular}` | Delete by a plain column match |
+
+For `agents`, verbatim from the core SDL:
+
+```graphql
+  agentsCreateOne(input: agentInput!, upsert: Boolean): agentMutationPayload
+  agentsCopyOneById(id: ID!): agentMutationPayload
+  agentsUpdateOne(where: [FilterAgent], input: agentInput!): agentMutationPayload
+  agentsUpdateOneById(id: ID!, input: agentInput!): agentMutationPayload
+  agentsRemoveOneById(id: ID!): agent
+  agentsRemoveOne(where: JSON!): agent
+```
+
+Create, copy, and update mutations return a payload with the record plus an optional background-job ID (set when the write triggers processing, such as embedding generation on context items):
+
+```graphql
+type agentMutationPayload {
+  item: agent!
+  job: String
+}
+```
+
+<Warning>
+`RemoveOne` takes `where: JSON!` — a plain object of column/value pairs like `{ "session": "abc" }` — **not** the filter-operator syntax the other operations use. `RemoveOneById` and the two update mutations are usually the safer choice.
+</Warning>
+
+### Worked example: create, update, delete
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Support Triage"
+      description: "Routes inbound tickets to the right queue"
+      model: "claude-sonnet-4-5"
+      active: true
+    }
+    upsert: false
+  ) {
+    item {
+      id
+      name
+      createdAt
+    }
+    job
+  }
+}
+```
+
+```graphql
+mutation {
+  agentsUpdateOneById(
+    id: "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10"
+    input: { description: "Routes and prioritizes inbound tickets" }
+  ) {
+    item {
+      id
+      description
+      updatedAt
+    }
+  }
+}
+```
+
+```graphql
+mutation {
+  agentsRemoveOneById(id: "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10") {
+    id
+    name
+  }
+}
+```
+
+## Filters
+
+Every entity gets a `Filter{Singular}` input whose fields mirror the entity's columns, each typed with a per-scalar operator input. The `filters` argument is an **array**; all entries (and all fields within an entry) are combined with AND. Use the `or` operator inside a field for alternatives.
+
+The operator inputs, verbatim from the core SDL:
+
+```graphql
+input FilterOperatorString {
+  eq: String
+  ne: String
+  in: [String]
+  contains: String
+  and: [FilterOperatorString]
+  or: [FilterOperatorString]
+}
+```
+
+```graphql
+input FilterOperatorDate {
+  lte: Date
+  gte: Date
+  and: [FilterOperatorDate]
+  or: [FilterOperatorDate]
+}
+```
+
+```graphql
+input FilterOperatorFloat {
+  eq: Float
+  ne: Float
+  lte: Float
+  gte: Float
+  in: [Float]
+  and: [FilterOperatorFloat]
+  or: [FilterOperatorFloat]
+}
+```
+
+```graphql
+input FilterOperatorBoolean {
+  eq: Boolean
+  ne: Boolean
+  in: [Boolean]
+  and: [FilterOperatorBoolean]
+  or: [FilterOperatorBoolean]
+}
+```
+
+```graphql
+input FilterOperatorJSON {
+  eq: JSON
+  ne: JSON
+  in: [JSON]
+  contains: JSON
+}
+```
+
+Enum columns get their own operator input per enum. For example, the `feedback` entity's `status` column (verbatim):
+
+```graphql
+input FilterOperatorstatusEnum {
+  eq: statusEnum
+  ne: statusEnum
+  in: [statusEnum]
+  and: [FilterOperatorstatusEnum]
+  or: [FilterOperatorstatusEnum]
+}
+```
+
+| Column type | Operator input | Operators |
+| --- | --- | --- |
+| String | `FilterOperatorString` | `eq`, `ne`, `in`, `contains`, `and`, `or` |
+| Date | `FilterOperatorDate` | `lte`, `gte`, `and`, `or` |
+| Float | `FilterOperatorFloat` | `eq`, `ne`, `lte`, `gte`, `in`, `and`, `or` |
+| Boolean | `FilterOperatorBoolean` | `eq`, `ne`, `in`, `and`, `or` |
+| JSON | `FilterOperatorJSON` | `eq`, `ne`, `in`, `contains` (PostgreSQL containment) |
+| Enum | `FilterOperator{name}Enum` | `eq`, `ne`, `in`, `and`, `or` |
+
+### Worked example: AND and OR
+
+```graphql
+query {
+  agentsPagination(
+    filters: [
+      { active: { eq: true } }
+      { category: { or: [{ eq: "assistants" }, { eq: "automation" }] } }
+      { createdAt: { gte: "2026-01-01T00:00:00Z" } }
+    ]
+  ) {
+    items {
+      id
+      name
+      category
+      createdAt
+    }
+  }
+}
+```
+
+## Sorting
+
+All list operations accept a single `sort` argument:
+
+```graphql
+input SortBy {
+  field: String!
+  direction: SortDirection!
+}
+```
+
+```graphql
+enum SortDirection {
+  ASC
+  DESC
+}
+```
+
+```graphql
+query {
+  agent_sessionsPagination(
+    limit: 10
+    sort: { field: "updatedAt", direction: DESC }
+  ) {
+    items {
+      id
+      title
+      updatedAt
+    }
+  }
+}
+```
+
+## Access control
+
+Two layers apply to every operation:
+
+**Entity-type gates.** For `agents`, `workflow_templates`, `variables`, `users`, `test_cases`, `eval_sets`, and `eval_runs`, your role must grant at least `read` on the matching permission (`agents`, `workflows`, `variables`, `users`, `evals`). Without it, queries fail with `Access control error: no role found or no access to entity type.` Writes additionally require the `write` level, enforced per record.
+
+**Row-level RBAC.** Tables with RBAC enabled carry a `rights_mode` column (`private`, `public`, `users`, `roles`, `teams`) and a `created_by` column. List and read operations silently filter to rows you can see: public rows, rows you created, and rows shared with you, your role, or your team. Super admins bypass row-level filtering everywhere except `agent_sessions`, which always enforces the session's own sharing rules.
+
+RBAC-enabled types expose the resolved sharing state as a `RBAC` field, and accept sharing input on create/update:
+
+```graphql
+type RBACData {
+  type: String!
+  users: [RBACUser!]
+  roles: [RBACRole!]
+  teams: [RBACTeam!]
+}
+```
+
+```graphql
+input RBACInput {
+  users: [RBACUserInput!]
+  roles: [RBACRoleInput!]
+  teams: [RBACTeamInput!]
+}
+```
+
+Each entry pairs an `id` with a `rights` string (`"read"` or `"write"`):
+
+```graphql
+mutation {
+  agentsCreateOne(
+    input: {
+      name: "Team-internal agent"
+      RBAC: {
+        users: [{ id: "42", rights: "write" }]
+        roles: [{ id: "e1b7c9d2-5a44-4f3e-9c60-7d2f8a1b3c4e", rights: "read" }]
+      }
+    }
+  ) {
+    item {
+      id
+      RBAC {
+        type
+        users { id rights }
+        roles { id rights }
+      }
+    }
+  }
+}
+```
+
+For the full permission model see [Users & access](/administration/users-access/overview).
+
+## Computed fields
+
+Some fields are resolved at query time rather than read from a column:
+
+- **`agent`** — `providerName`, `modelName`, `streaming`, `capabilities`, `maxContextLength`, `authenticationInformation`, `systemInstructions`, `workflows`, and `slug` are resolved from the agent's provider and model configuration.
+- **`workflow_template`** — `variables: [String]` lists the `{variable}` placeholders extracted from the template's steps.
+- **`budget: JSON`** — present on `user`, `role`, `team`, `project`, `agent`, and `workflow_template`. Resolved from the model gateway at query time; `null` when the entity has no budget. See [Budgets](/administration/budgets).
+
+All entities also carry `createdAt`/`updatedAt` timestamps, plus `last_processed_at` and `embeddings_updated_at` processing markers.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Dynamic types" icon="wand-sparkles" href="/api-reference/graphql/dynamic-types">
+    Apply these patterns to your knowledge contexts.
+  </Card>
+  <Card title="Vector search" icon="search" href="/api-reference/graphql/vector-search">
+    The retrieval operations context types add on top of CRUD.
+  </Card>
+</CardGroup>

@@ -1,0 +1,284 @@
+---
+title: "Your first app"
+description: "Turn the three-file starter into a real project: folder layout, tsup config, package.json scripts, a first context, and running server and worker in development."
+icon: "rocket"
+---
+
+This tutorial extends [Getting started](/developers/getting-started) into a project you can build on. By the end you will have a structured folder layout with a tsup build pipeline, a `.env` file, a first knowledge context registered on the app, and both processes running locally.
+
+## Prerequisites
+
+- Completed [Setup](/developers/setup) — `@exulu/backend` installed, Node.js 22.18.0.
+- Completed [Getting started](/developers/getting-started) — you have `src/exulu.ts`, `src/server.ts`, and `src/worker.ts` in some form.
+- A running Postgres instance and a running Redis instance (see [Self-hosting quickstart](/self-hosting/quickstart) if you need them locally).
+
+## What you will build
+
+A project structured exactly as IMP expects in production: two separate entry points (server and worker), a shared app-initialization module, a first `ExuluContext` for a generic knowledge collection, and scripts that match the container split used in deployment.
+
+<Steps>
+
+<Step title="Organize the folder layout">
+
+The recommended layout mirrors the production container split:
+
+```
+my-imp-project/
+├── .env
+├── package.json
+├── tsconfig.json
+├── tsup.config.ts
+└── src/
+    ├── exulu.ts           # shared ExuluApp definition
+    ├── server.ts          # HTTP server entry point
+    ├── worker.ts          # BullMQ worker entry point
+    └── contexts/
+        └── index.ts       # all ExuluContext definitions
+```
+
+Create the `src/contexts` directory:
+
+```bash
+mkdir -p src/contexts
+```
+
+</Step>
+
+<Step title="Configure tsup">
+
+`tsup` compiles TypeScript into two separate output bundles — one for the server and one for the worker — that Node.js can run directly:
+
+```typescript tsup.config.ts
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+  format: ["esm"],
+  entry: {
+    server: "./src/server.ts",
+    worker: "./src/worker.ts",
+  },
+  dts: false,
+  skipNodeModulesBundle: true,
+  clean: true,
+});
+```
+
+Both entries share the same `src/exulu.ts` module at build time. tsup bundles each entry independently, so the server bundle and the worker bundle are separate files with no runtime coupling.
+
+</Step>
+
+<Step title="Add package.json scripts">
+
+```json package.json
+{
+  "name": "my-imp-project",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/worker.js"
+  },
+  "dependencies": {
+    "@exulu/backend": "latest"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.8.3"
+  }
+}
+```
+
+`dev:server` and `dev:worker` use `tsx watch` for fast iteration — file changes restart the process automatically. `start:server` and `start:worker` run the compiled output for production.
+
+</Step>
+
+<Step title="Create the .env file">
+
+```bash .env
+# Postgres
+POSTGRES_DB_HOST=localhost
+POSTGRES_DB_PORT=5432
+POSTGRES_DB_USER=postgres
+POSTGRES_DB_PASSWORD=changeme
+POSTGRES_DB_NAME=exulu
+
+# NextAuth (must match the frontend's NEXTAUTH_SECRET)
+NEXTAUTH_SECRET=your-32-char-secret-here
+
+# S3-compatible storage
+COMPANION_S3_REGION=us-east-1
+COMPANION_S3_KEY=your-access-key
+COMPANION_S3_SECRET=your-secret-key
+COMPANION_S3_BUCKET=my-imp-uploads
+COMPANION_S3_ENDPOINT=http://localhost:9000   # omit for AWS S3
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+`@exulu/backend` auto-loads this file via a `dotenv/config` import it prepends to every bundle — you do not need to call `dotenv` yourself.
+
+<Warning>
+Never commit `.env` to version control. Add it to `.gitignore` immediately.
+</Warning>
+
+</Step>
+
+<Step title="Define a first context">
+
+Create `src/contexts/index.ts` with a simple knowledge context:
+
+```typescript src/contexts/index.ts
+import { ExuluContext } from "@exulu/backend";
+
+export const teamKnowledgeContext = new ExuluContext({
+  id: "team_knowledge",
+  name: "Team knowledge",
+  description: "Internal notes, decisions, and how-to guides for the team.",
+  active: true,
+
+  fields: [
+    { name: "content",  type: "longText",  required: true },
+    { name: "category", type: "enum", enumValues: ["guide", "decision", "note"], index: true },
+    { name: "author",   type: "shortText" },
+  ],
+
+  embedder: {
+    model: "text-embedding-3-small",
+  },
+
+  sources: [],
+
+  configuration: {
+    calculateVectors: "onInsert",
+    maxRetrievalResults: 10,
+    defaultRightsMode: "users",
+    languages: ["english"],
+  },
+});
+
+export const contexts = {
+  team_knowledge: teamKnowledgeContext,
+};
+```
+
+This context has no data source yet — you will add items manually through the IMP UI or programmatically via `createItem()`. See [Defining contexts](/developers/tutorials/defining-contexts) for a full context with sources and embedder queues.
+
+</Step>
+
+<Step title="Wire everything in exulu.ts">
+
+```typescript src/exulu.ts
+import { ExuluApp } from "@exulu/backend";
+import { contexts } from "./contexts/index";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region:   process.env.COMPANION_S3_REGION!,
+      s3key:      process.env.COMPANION_S3_KEY!,
+      s3secret:   process.env.COMPANION_S3_SECRET!,
+      s3Bucket:   process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    workers: { enabled: true },
+    MCP:     { enabled: false },
+    requireSystemDependencies: false, // downgrade to warnings in development
+  },
+  contexts,
+  tools: [],
+});
+```
+
+`requireSystemDependencies: false` lets the server start even if `pandoc` or `soffice` are not installed locally. Remove this flag in production or when you need document processing.
+
+</Step>
+
+<Step title="Write server.ts and worker.ts">
+
+```typescript src/server.ts
+import { app, ready } from "./exulu";
+
+await ready;
+const server = await app.express.init();
+server.listen(Number(process.env.PORT ?? 9001), () => {
+  console.log("IMP server listening on :9001");
+});
+```
+
+```typescript src/worker.ts
+import { app, ready } from "./exulu";
+
+await ready;
+await app.bullmq.workers.create();
+```
+
+Both files import `ready` (the unresolved promise) and `await` it independently. `app.express.init()` registers routes and starts the LiteLLM proxy supervisor when `EXULU_USE_LITELLM=true`. `app.bullmq.workers.create()` connects to Redis and starts consuming all registered queues.
+
+</Step>
+
+<Step title="Run the project">
+
+Open two terminals.
+
+**Terminal 1 — server:**
+
+```bash
+npm run dev:server
+```
+
+On the very first boot you will see:
+
+```
+[EXULU] Database initialized.
+[EXULU] Default api key: sk_…
+[EXULU] Default password if using password auth: admin
+[EXULU] Default email if using password auth: admin@exulu.com
+```
+
+<Warning>
+Copy the API key immediately — IMP logs a new key on every startup but only persists the first one. Keys logged on later restarts do not work.
+</Warning>
+
+**Terminal 2 — worker:**
+
+```bash
+npm run dev:worker
+```
+
+The worker connects to Redis and starts processing jobs. With `team_knowledge` registered, it will embed any items you add to the context.
+
+</Step>
+
+</Steps>
+
+## What you built
+
+- A tsup project with separate server and worker entry points.
+- A `.env`-driven configuration that the package loads automatically.
+- A first `ExuluContext` (`team_knowledge`) registered on the app, ready to store items and generate embeddings on insert.
+- Two development scripts that hot-reload on file change.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Defining contexts" icon="database" href="/developers/tutorials/defining-contexts">
+    Add fields, sources, and embedder queues to build production-ready contexts.
+  </Card>
+  <Card title="Data sources and sync" icon="refresh-cw" href="/developers/tutorials/data-sources-and-sync">
+    Pull data from an external API on a cron schedule.
+  </Card>
+  <Card title="Queues and workers" icon="layers" href="/developers/tutorials/queues-and-workers">
+    Register BullMQ queues and scope your worker process.
+  </Card>
+  <Card title="Custom tools" icon="wrench" href="/developers/tutorials/custom-tools">
+    Give agents callable functions backed by your own code.
+  </Card>
+</CardGroup>

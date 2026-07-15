@@ -1,0 +1,102 @@
+---
+title: "Routines overview"
+description: "Routines are saved chat conversations that run on demand or on a cron schedule — browse the list, run a routine, and understand the workbench."
+icon: "clipboard-list"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="workflows (read)" />
+
+## What routines are
+
+A routine is a saved conversation template that IMP can replay — with the same steps, the same agent, and optionally the same or varied inputs — whenever you trigger it. Run a routine on demand from the list or from chat, or set it on a cron schedule to run automatically.
+
+Routines let you codify repeatable AI workflows: a weekly status digest, a nightly data-quality check, a customer onboarding conversation, or any pattern you find yourself asking an agent to repeat.
+
+<Frame caption="Saving a chat conversation as a routine: open the menu, name the routine, and click Save routine.">
+  <video autoPlay muted loop playsInline src="/videos/save-routine.mp4" />
+</Frame>
+
+<Note>
+Routines are created exclusively from chat via **Save as routine**. You cannot create a routine from scratch in the Routines section — you build the conversation in chat first, then promote it. See **Save as Routine** in the **⋯ menu** on the [Chat overview](/user-guide/chat/overview) page for how to save a conversation as a routine.
+</Note>
+
+## The routines list
+
+Open **Routines** from the sidebar under the Build group. The list shows every routine your account can read.
+
+The toolbar has two controls:
+
+- **Search** — type into "Search routines…" to filter by name in real time. Clearing the field restores the full list.
+- **Actions column** — each row has a **Run** button and a row overflow menu (⋯) with **Edit**, **View**, and **Delete**.
+
+Each row shows:
+
+| Column | What it shows |
+| --- | --- |
+| **Name** | The routine name and a visibility chip (Public / Private / Shared) |
+| **Last run** | Relative timestamp, or "Never run" |
+| **Schedule** | Active cron expression (e.g. `0 8 * * 1`) or blank if unscheduled |
+| **Actions** | Run button + overflow |
+
+<Note>
+"No routines yet" appears when no routines exist or when none match your search. The empty state reads: "Save any chat conversation as a routine to run it again — on demand or on a schedule."
+</Note>
+
+## Run a routine
+
+Click **Run** on any row. The **Run routine** dialog opens:
+
+- If the routine has no input variables: "No input variables required for this routine." Click **Run now** or **Queue routine** depending on whether the agent has a queue configured.
+- If the routine has variables: one text field per variable appears with the label and a placeholder ("Enter `{variable}`…"). Required fields are marked. Fill them in and click **Run now** or **Queue routine**.
+
+On success, a toast confirms "Routine run started" (immediate) or "Routine queued" (queued). The run appears in the routine's **Runs** section.
+
+<Note>
+If the agent attached to the routine has a job queue configured, runs are dispatched to that queue rather than executing immediately. The dialog shows "Queued on `{queue}`" vs. "Runs immediately" to tell you which applies.
+</Note>
+
+## The routine workbench
+
+Click a routine row (anywhere except the Run button) or click **Edit** in the overflow to open the routine's workbench at `/workflows/{id}`.
+
+The workbench is a scrollable page with a section nav rail on the left. Sections, in order:
+
+1. **Basics** — name, description, and the agent that runs this routine.
+2. **Access** — who can see and edit the routine (Private, Public, or shared with users/teams/roles).
+3. **Steps** — a read-only preview of the conversation steps, with an **Edit steps** button that opens a sheet editor.
+4. **Schedule** — set or remove a cron schedule.
+5. **Runs** — history of past runs with status, timestamps, and retry support.
+6. **Queue** — the job queue for this routine's agent; shows pending and recent jobs.
+7. **Danger zone** — permanent deletion (visible only if you have delete permission).
+
+Each section is described in detail on [Runs and schedules](/building/routines/runs-and-schedules).
+
+## Visibility and access
+
+Each routine has one of these visibility settings:
+
+| Setting | Who can access it |
+| --- | --- |
+| **Private** | Only you |
+| **Public** | Everyone in the organization |
+| **Shared with users** | Specific users |
+| **Shared with roles** | Specific roles |
+| **Shared with teams** | Specific teams (requires team-sharing feature flag) |
+
+Read access lets someone view the routine and run it; write access lets them edit steps, schedule, and configuration. The Access section in the workbench controls this.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Runs and schedules" icon="calendar" href="/building/routines/runs-and-schedules">
+    View run history, set a cron schedule, manage the queue, and delete a routine.
+  </Card>
+  <Card title="Prompts" icon="clipboard-type" href="/building/prompts">
+    Use prompt templates to parameterize routine steps.
+  </Card>
+  <Card title="Agents overview" icon="bot" href="/building/agents/overview">
+    The agent attached to a routine determines the model, skills, and tools available.
+  </Card>
+</Columns>

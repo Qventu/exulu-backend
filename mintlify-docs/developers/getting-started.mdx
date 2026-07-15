@@ -1,0 +1,188 @@
+---
+title: "Getting started"
+description: "Bootstrap a minimal IMP backend: initialize ExuluApp, start the HTTP server, and launch the background worker."
+icon: "rocket"
+---
+
+This page walks you through the minimal working IMP backend — three files that boot the platform and serve the API. Complete [Setup](/developers/setup) before continuing.
+
+## The three-file structure
+
+An IMP backend separates concerns across three source files:
+
+| File | Role |
+|---|---|
+| `src/exulu.ts` | Initializes `ExuluApp` and exports the `ready` promise. |
+| `src/server.ts` | Awaits `ready`, then starts the Express HTTP server. |
+| `src/worker.ts` | Awaits `ready`, then starts the BullMQ worker process. |
+
+The server and worker run as separate processes in production. They share the same `exulu.ts` module so configuration is defined once.
+
+## src/exulu.ts
+
+```typescript
+import { ExuluApp } from "@exulu/backend";
+
+export const app = new ExuluApp();
+
+export const ready = app.create({
+  config: {
+    fileUploads: {
+      s3region: process.env.COMPANION_S3_REGION!,
+      s3key: process.env.COMPANION_S3_KEY!,
+      s3secret: process.env.COMPANION_S3_SECRET!,
+      s3Bucket: process.env.COMPANION_S3_BUCKET!,
+      s3endpoint: process.env.COMPANION_S3_ENDPOINT,
+    },
+    telemetry: { enabled: false },
+    workers: { enabled: true },
+    MCP: { enabled: true },
+  },
+  contexts: {},
+  tools: [],
+});
+```
+
+`app.create()` is async and returns a promise that resolves to the initialized `ExuluApp`. Exporting `ready` (the promise itself, not awaited) lets both `server.ts` and `worker.ts` import and await it independently.
+
+## src/server.ts
+
+```typescript
+import { app, ready } from "./exulu";
+
+await ready;
+const server = await app.express.init();
+server.listen(Number(process.env.PORT ?? 9001), () => {
+  console.log("IMP backend listening on :9001");
+});
+```
+
+`app.express.init()` registers the GraphQL and REST routes, sets up authentication middleware, and — when `EXULU_USE_LITELLM=true` — starts the LiteLLM proxy supervisor. It returns the Express application, which you listen on directly.
+
+## src/worker.ts
+
+```typescript
+import { app, ready } from "./exulu";
+
+await ready;
+await app.bullmq.workers.create();
+```
+
+The worker process connects to Redis (via `REDIS_HOST` / `REDIS_PORT`) and starts processing background jobs: knowledge ingestion, embedding generation, eval runs, and routines. It does not start an HTTP server.
+
+<Note>
+Workers require an Enterprise Edition license (`EXULU_ENTERPRISE_LICENSE`). The `app.bullmq.workers.create()` call throws if the license is absent or invalid.
+</Note>
+
+## What create() does
+
+When you call `app.create()`, IMP:
+
+1. **Merges built-in contexts** — the platform's internal contexts (including `transcriptions`) are merged after your custom contexts, so built-ins always win on key collision.
+2. **Registers 19 default providers** — Claude Sonnet 4, Claude Sonnet 4.5, Claude Opus 4, GPT-5, GPT-5 Mini, GPT-5 Pro, GPT-5 Codex, GPT-5 Nano, GPT-4.1, GPT-4.1 Mini, GPT-4o, GPT-4o Mini, Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 3 Pro, Llama Scout 4 (Vertex), GPT-OSS 120B (Cerebras), Llama 3 8B (Cerebras), and Llama 3.3 70B (Cerebras). Pass `providers` to add your own alongside the defaults.
+3. **Loads built-in tools** — todo, question, Perplexity, email, and (if LiteLLM and S3 are both configured) the image-generation widget.
+4. **Validates IDs** — every context, tool, and provider ID must start with a letter or underscore, use only letters, digits, and underscores, and be at most 80 characters. Treat 5 characters as the practical minimum — the runtime error message enforces intent at 5, though the current validator accepts shorter IDs; don't rely on that. `create()` throws immediately on validation violations.
+5. **Registers the `eval_runs` queue** — if Redis is reachable (`REDIS_HOST` + `REDIS_PORT`), the evaluation queue is registered automatically.
+6. **Probes system binaries** — checks for `pandoc`, `soffice`, and `pdftoppm`. By default (`requireSystemDependencies` unset or `true`), `create()` throws on missing system binaries; set `requireSystemDependencies: false` to downgrade to warnings instead (recommended in development).
+
+## ExuluConfig reference
+
+```typescript
+type ExuluConfig = {
+  workers: {
+    enabled: boolean;          // Required. Pass true if you run a worker process.
+    logger?: { winston: { transports: transport[] } };
+    telemetry?: { enabled: boolean };
+  };
+  MCP: {
+    enabled: boolean;          // Required. Exposes an MCP server endpoint when true.
+  };
+  telemetry?: {
+    enabled: boolean;          // OpenTelemetry tracing and logging.
+  };
+  logger?: {
+    winston: { transports: transport[] };
+  };
+  fileUploads?: {
+    s3region: string;
+    s3key: string;
+    s3secret: string;
+    s3Bucket: string;
+    s3endpoint?: string;       // Omit for AWS S3; set for MinIO or other S3-compatible endpoints.
+    s3prefix?: string;
+  };
+  privacy?: {
+    systemPromptPersonalization?: boolean;
+  };
+  requireSystemDependencies?: boolean;
+};
+```
+
+Both `workers` and `MCP` are **required** top-level fields (no `?`). All others are optional.
+
+## First run
+
+Start the server in development:
+
+```bash
+npm run dev:server
+```
+
+On the first ever boot, `initdb` runs automatically and prints to stdout:
+
+```
+[EXULU] Database initialized.
+[EXULU] Default api key: sk_…
+[EXULU] Default password if using password auth: admin
+[EXULU] Default email if using password auth: admin@exulu.com
+```
+
+<Warning>
+`initdb` runs on every startup and logs a freshly generated API key each time, but **only the key from the very first boot is ever persisted**. Keys logged on subsequent startups are not stored and will not authenticate. Copy the first-boot key to your secrets manager immediately.
+
+The admin email is `admin@exulu.com` and the initial password is `admin`. Change the password immediately after first login.
+</Warning>
+
+In a separate terminal, start the worker:
+
+```bash
+npm run dev:worker
+```
+
+## Environment variables
+
+At minimum, create a `.env` file with:
+
+```bash
+# Postgres
+POSTGRES_DB_HOST=localhost
+POSTGRES_DB_PORT=5432
+POSTGRES_DB_USER=postgres
+POSTGRES_DB_PASSWORD=changeme
+POSTGRES_DB_NAME=exulu
+
+# NextAuth (must match the frontend's value)
+NEXTAUTH_SECRET=your-32-char-secret
+
+# S3 (required when fileUploads is configured)
+COMPANION_S3_REGION=us-east-1
+COMPANION_S3_KEY=your-access-key
+COMPANION_S3_SECRET=your-secret-key
+COMPANION_S3_BUCKET=exulu-uploads
+COMPANION_S3_ENDPOINT=http://localhost:9000
+
+# Redis (required for workers)
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+See [Environment variables](/self-hosting/environment-variables) for the full reference.
+
+## Next steps
+
+{/* These links will become active as the Developers tab grows. */}
+
+- **ExuluApp deep dive** — [Introduction](/developers/core/exulu-app/introduction), [Configuration](/developers/core/exulu-app/configuration), and [API reference](/developers/core/exulu-app/api-reference)
+- **Defining contexts** — [ExuluContext](/developers/core/exulu-context/introduction) and [Defining contexts tutorial](/developers/tutorials/defining-contexts)
+- **Custom tools** — [ExuluTool](/developers/core/exulu-tool/introduction) and [Custom tools tutorial](/developers/tutorials/custom-tools)
+- **Custom providers** — [ExuluProvider](/developers/core/exulu-provider/introduction)

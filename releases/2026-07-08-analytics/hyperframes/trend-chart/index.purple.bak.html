@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Analytics — trend chart (measure switch)</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #fdfdfd; }
+      body { font-family: "Inter", system-ui, sans-serif; letter-spacing: -0.025em; color: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+
+      #bg-wash {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(900px 500px at 50% -10%, rgba(112, 51, 255, 0.07), transparent 70%),
+          #fdfdfd;
+      }
+
+      /* --------------------------------- hook --------------------------------- */
+      #hook { display: grid; place-items: center; }
+      #hook-inner { text-align: center; }
+      .pill {
+        display: inline-block; padding: 10px 22px; border-radius: 999px;
+        background: #e2ebff; color: #1e69dc; font-size: 26px; font-weight: 600; letter-spacing: 0;
+      }
+      #hook h1 {
+        margin: 30px auto 0; max-width: 1080px;
+        font-size: 96px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.06;
+      }
+      #hook h1 em { font-style: normal; color: #7033ff; }
+
+      /* ------------------------------ app / card ------------------------------ */
+      #app { display: grid; place-items: center; }
+      #app-inner { position: relative; width: 1120px; }
+
+      /* measure tabs row (above the card) */
+      #tabs-row { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+      #tabs {
+        position: relative;
+        display: inline-flex; align-items: center;
+        background: #f5f5f5; border-radius: 6px; padding: 4px;
+      }
+      #tabs-pill {
+        position: absolute; top: 4px; left: 4px;
+        width: 128px; height: 44px;
+        background: #ffffff; border-radius: 4px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16);
+      }
+      .tab {
+        position: relative; z-index: 1;
+        width: 128px; height: 44px;
+        display: grid; place-items: center;
+        font-size: 20px; font-weight: 500; color: #525252;
+      }
+      .tab.active { color: #000; }
+
+      /* card */
+      #card {
+        width: 1120px;
+        background: #fcfcfc; border: 1px solid #e7e7ee; border-radius: 6px;
+        box-shadow: 0 2px 3px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+      }
+      #card-header { padding: 28px 32px 8px; }
+      #card-title { font-size: 26px; font-weight: 600; color: #000; }
+      #card-desc-wrap { position: relative; height: 28px; margin-top: 6px; }
+      .card-desc {
+        position: absolute; left: 0; top: 0;
+        font-size: 20px; color: #525252;
+      }
+
+      #chart-body {
+        padding: 12px 32px 28px;
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        grid-template-rows: 372px 26px;
+      }
+
+      /* y-axis */
+      #yaxis { position: relative; }
+      .yset { position: absolute; inset: 0; }
+      .ytick {
+        position: absolute; right: 12px;
+        font-size: 16px; color: #525252; text-align: right;
+        font-variant-numeric: tabular-nums; transform: translateY(-50%);
+      }
+
+      /* plot */
+      #plot { position: relative; }
+      #plot svg { display: block; width: 100%; height: 100%; }
+      .grid-line { stroke: #e7e7ee; stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 3 3; }
+      #area-line { fill: none; stroke: #4ac885; stroke-width: 2; }
+      #active-dot { fill: #4ac885; stroke: #ffffff; stroke-width: 2; }
+
+      /* x-axis */
+      #xaxis {
+        position: relative;
+        display: flex; justify-content: space-between;
+        padding-top: 6px;
+      }
+      .xtick {
+        font-size: 16px; color: #525252;
+        white-space: nowrap;
+      }
+
+      /* -------------------------------- cursor -------------------------------- */
+      #cursor { position: absolute; left: 0; top: 0; width: 44px; z-index: 30; opacity: 0; }
+
+      /* -------------------------------- payoff -------------------------------- */
+      #payoff { display: grid; place-items: end center; }
+      #payoff-line {
+        margin-bottom: 104px; font-size: 40px; font-weight: 600; color: #1a1a1a;
+        letter-spacing: -0.02em;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook: 0.30–2.70 -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.7" data-track-index="2">
+        <div id="hook-inner">
+          <span class="pill">Analytics</span>
+          <h1>Every dollar, every day, <em>at a glance</em>.</h1>
+        </div>
+      </div>
+
+      <!-- app / trend card: enters 2.30 -->
+      <div id="app" class="clip" data-start="2.3" data-duration="6.7" data-track-index="3">
+        <div id="app-inner">
+          <!-- measure tabs -->
+          <div id="tabs-row">
+            <div id="tabs" role="tablist" aria-label="Measure">
+              <div id="tabs-pill"></div>
+              <div class="tab active" id="tab-spend">Spend</div>
+              <div class="tab" id="tab-tokens">Tokens</div>
+              <div class="tab" id="tab-requests">Requests</div>
+            </div>
+          </div>
+
+          <!-- card -->
+          <div id="card">
+            <div id="card-header">
+              <div id="card-title">Trend</div>
+              <div id="card-desc-wrap">
+                <div class="card-desc" id="desc-spend">Daily Spend across the selected range.</div>
+                <div class="card-desc" id="desc-tokens" style="opacity: 0">Daily Tokens across the selected range.</div>
+              </div>
+            </div>
+
+            <div id="chart-body">
+              <!-- y-axis (two sets, crossfaded) -->
+              <div id="yaxis">
+                <div class="yset" id="yset-spend">
+                  <div class="ytick" style="top: 6.2%">$60</div>
+                  <div class="ytick" style="top: 29.9%">$45</div>
+                  <div class="ytick" style="top: 53.6%">$30</div>
+                  <div class="ytick" style="top: 77.3%">$15</div>
+                  <div class="ytick" style="top: 98%">$0</div>
+                </div>
+                <div class="yset" id="yset-tokens" style="opacity: 0">
+                  <div class="ytick" style="top: 6.2%">200k</div>
+                  <div class="ytick" style="top: 29.9%">150k</div>
+                  <div class="ytick" style="top: 53.6%">100k</div>
+                  <div class="ytick" style="top: 77.3%">50k</div>
+                  <div class="ytick" style="top: 98%">0</div>
+                </div>
+              </div>
+
+              <!-- plot -->
+              <div id="plot">
+                <svg viewBox="0 0 1000 300" preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id="analyticsTrendFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stop-color="#4ac885" stop-opacity="0.35" />
+                      <stop offset="95%" stop-color="#4ac885" stop-opacity="0.05" />
+                    </linearGradient>
+                  </defs>
+                  <!-- horizontal grid lines only -->
+                  <line class="grid-line" x1="0" y1="18.6"  x2="1000" y2="18.6"  />
+                  <line class="grid-line" x1="0" y1="89.7"  x2="1000" y2="89.7"  />
+                  <line class="grid-line" x1="0" y1="160.8" x2="1000" y2="160.8" />
+                  <line class="grid-line" x1="0" y1="231.9" x2="1000" y2="231.9" />
+                  <line class="grid-line" x1="0" y1="292"   x2="1000" y2="292"   />
+                  <path id="area-fill" d="" fill="url(#analyticsTrendFill)" />
+                  <path id="area-line" d="" />
+                  <circle id="active-dot" r="4" cx="992" cy="34.59" />
+                </svg>
+              </div>
+
+              <!-- x-axis -->
+              <div></div>
+              <div id="xaxis">
+                <span class="xtick">Jun 25</span>
+                <span class="xtick">Jun 26</span>
+                <span class="xtick">Jun 27</span>
+                <span class="xtick">Jun 28</span>
+                <span class="xtick">Jun 29</span>
+                <span class="xtick">Jun 30</span>
+                <span class="xtick">Jul 01</span>
+                <span class="xtick">Jul 02</span>
+                <span class="xtick">Jul 03</span>
+                <span class="xtick">Jul 04</span>
+                <span class="xtick">Jul 05</span>
+                <span class="xtick">Jul 06</span>
+                <span class="xtick">Jul 07</span>
+                <span class="xtick">Jul 08</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- cursor lives inside app-inner so it can point at the tabs -->
+          <div id="cursor">
+            <svg width="44" height="44" viewBox="0 0 24 24" style="position: relative">
+              <path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z" fill="#000" stroke="#fff" stroke-width="1.4" />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- payoff caption: 5.30–9.00 -->
+      <div id="payoff" class="clip" data-start="5.3" data-duration="3.7" data-track-index="4">
+        <div id="payoff-line">Switch the measure — the trend redraws instantly.</div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ---------- chart path data (deterministic, precomputed) ------------- */
+      const XS   = [8,83.69,159.38,235.08,310.77,386.46,462.15,537.85,613.54,689.23,764.92,840.62,916.31,992];
+      const SP_Y = [249.1,233.01,243.74,216.92,195.47,206.2,174.02,190.11,147.21,125.76,141.85,104.31,72.13,34.59];
+      const SP_T = [-0.2125,0,0,-0.3149,0,0,0,0,-0.3779,0,0,-0.4578,-0.4578,-0.4959];
+      const TK_Y = [207.11,190.68,212.59,168.77,114.01,141.39,93.47,116.74,56.5,86.62,103.05,66.08,34.59,51.02];
+      const TK_T = [-0.2171,0,0,-0.6432,0,0,0,0,0,0.2809,0,-0.4493,0,0.2171];
+      const BASELINE = 292;
+
+      function buildPaths(p) {
+        // lerp Spend -> Tokens by p (0..1)
+        const n = XS.length;
+        const ys = new Array(n), ts = new Array(n);
+        for (let i = 0; i < n; i++) {
+          ys[i] = SP_Y[i] + (TK_Y[i] - SP_Y[i]) * p;
+          ts[i] = SP_T[i] + (TK_T[i] - SP_T[i]) * p;
+        }
+        let stroke = "M " + XS[0].toFixed(2) + " " + ys[0].toFixed(2);
+        for (let i = 0; i < n - 1; i++) {
+          const dx = XS[i + 1] - XS[i];
+          const c1x = XS[i] + dx / 3;
+          const c1y = ys[i] + ts[i] * dx / 3;
+          const c2x = XS[i + 1] - dx / 3;
+          const c2y = ys[i + 1] - ts[i + 1] * dx / 3;
+          stroke += " C " + c1x.toFixed(2) + " " + c1y.toFixed(2) + ", " +
+            c2x.toFixed(2) + " " + c2y.toFixed(2) + ", " +
+            XS[i + 1].toFixed(2) + " " + ys[i + 1].toFixed(2);
+        }
+        const area = stroke + " L " + XS[n - 1].toFixed(2) + " " + BASELINE +
+          " L " + XS[0].toFixed(2) + " " + BASELINE + " Z";
+        return { stroke, area, lastY: ys[n - 1] };
+      }
+
+      const morph = { p: 0 };
+      function applyChart() {
+        const { stroke, area, lastY } = buildPaths(morph.p);
+        const line = document.getElementById("area-line");
+        const fill = document.getElementById("area-fill");
+        const dot = document.getElementById("active-dot");
+        if (line) line.setAttribute("d", stroke);
+        if (fill) fill.setAttribute("d", area);
+        if (dot) dot.setAttribute("cy", lastY.toFixed(2));
+      }
+      applyChart(); // render Spend series at rest
+
+      /* ------------------------------- HOOK -------------------------------- */
+      /* enter 0.30–0.70 (fade + 8px rise), hold static 0.70–2.30 */
+      tl.from("#hook-inner", { y: 8, opacity: 0, duration: 0.4, ease: "power2.out" }, 0.3);
+      /* 2.30–2.70: hook crossfades out */
+      tl.to("#hook-inner", { y: -22, opacity: 0, duration: 0.4, ease: "power2.in" }, 2.3);
+
+      /* ------------------- CARD PIVOT: fades in populated ------------------- */
+      /* 2.30–2.70: trend card fades in already showing SPEND series */
+      tl.fromTo("#app-inner", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 2.3);
+      /* 2.70–3.40: card holds static (SPEND legible) */
+
+      /* ------------------------------ CURSOR ------------------------------- */
+      /* 3.40–3.90: glides in from lower-right toward the Tokens tab */
+      tl.set("#cursor", { x: 1240, y: 760 }, 3.4);
+      tl.to("#cursor", { opacity: 1, duration: 0.14, ease: "power1.out" }, 3.4);
+      tl.to("#cursor", { x: 912, y: 34, duration: 0.5, ease: "power2.inOut" }, 3.4);
+
+      /* 3.90–4.10: press Tokens — tab depresses (95% scale, 120ms) */
+      tl.to("#cursor svg", { scale: 0.9, duration: 0.09, ease: "power1.in" }, 3.9);
+      tl.to("#cursor svg", { scale: 1, duration: 0.11, ease: "power1.out" }, 3.99);
+      tl.to("#tabs", { scale: 0.97, duration: 0.06, ease: "power1.in", transformOrigin: "50% 50%" }, 3.9);
+      tl.to("#tabs", { scale: 1, duration: 0.08, ease: "power1.out" }, 3.96);
+
+      /* active pill slides Spend -> Tokens (one cell right = 132px) */
+      tl.to("#tabs-pill", { x: 132, duration: 0.18, ease: "power2.out" }, 3.9);
+      tl.to("#tab-spend", { color: "#525252", duration: 0.18, ease: "power2.out" }, 3.9);
+      tl.to("#tab-tokens", { color: "#000000", duration: 0.18, ease: "power2.out" }, 3.9);
+
+      /* --------------- MEASURE FLIP (4.10): desc + y-axis swap ------------- */
+      tl.to("#desc-spend", { opacity: 0, duration: 0.28, ease: "power2.out" }, 4.1);
+      tl.to("#desc-tokens", { opacity: 1, duration: 0.28, ease: "power2.out" }, 4.1);
+      tl.to("#yset-spend", { opacity: 0, duration: 0.28, ease: "power2.out" }, 4.1);
+      tl.to("#yset-tokens", { opacity: 1, duration: 0.28, ease: "power2.out" }, 4.1);
+
+      /* -------- AREA MORPH (4.10–4.40): Spend path -> Tokens path ---------- */
+      tl.to(morph, { p: 1, duration: 0.3, ease: "power2.out", onUpdate: applyChart }, 4.1);
+
+      /* ------------------------ CURSOR RETIRES ----------------------------- */
+      /* 4.45–4.70: eases back out of frame so the post-action hold is clean */
+      tl.to("#cursor", { x: 1280, y: 800, duration: 0.25, ease: "power2.in" }, 4.45);
+      tl.to("#cursor", { opacity: 0, duration: 0.2, ease: "power1.out" }, 4.5);
+      /* 4.70–5.30: TOKENS area holds completely still */
+
+      /* ------------------------------ PAYOFF ------------------------------- */
+      /* 5.30–5.80: payoff lower-third enters; still 5.80 -> 9.00 */
+      tl.fromTo("#payoff-line", { y: 20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 5.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

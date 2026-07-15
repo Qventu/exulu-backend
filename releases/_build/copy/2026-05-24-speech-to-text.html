@@ -1,0 +1,42 @@
+<section class="feature" id="speech-to-text">
+  <h2>Speech-to-text in chat</h2>
+  <p class="one-liner">Talk to your agent — we'll type it for you.</p>
+
+  <div class="slice">
+    <video
+      src="./shorts/speech-to-text.mp4"
+      autoplay
+      loop
+      muted
+      playsinline
+      preload="auto"
+    ></video>
+
+    <p>
+      A mic button now sits next to send in every chat. Click to record, click
+      again to stop — the transcript is appended to whatever you've already
+      typed. Nothing autosends: you review the wording and press send yourself.
+    </p>
+
+    <p>
+      Language is detected automatically, and an optional
+      <code class="inline">language</code> hint improves accuracy on short
+      clips. Recordings up to 25 MB are accepted — roughly 25 minutes of audio.
+    </p>
+
+    <div class="snippet-label">From the API</div>
+    <pre><span class="c"># POST a recording, get text back</span>
+curl -X POST <span class="s">"$EXULU_BACKEND/transcribe"</span> \
+  -H <span class="s">"Authorization: Bearer $TOKEN"</span> \
+  -F <span class="s">"file=@recording.webm"</span> \
+  -F <span class="s">"language=en"</span>
+
+<span class="c"># → { "text": "What's the status of the Q4 launch?" }</span></pre>
+
+    <div class="flag-note">
+      Available when <code>EXULU_USE_LITELLM=true</code> and
+      <code>TRANSCRIPTION_MODEL</code> is set. The mic button hides itself when
+      the feature isn't enabled on a deployment.
+    </div>
+  </div>
+</section>

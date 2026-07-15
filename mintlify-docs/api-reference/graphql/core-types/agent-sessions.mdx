@@ -1,0 +1,66 @@
+---
+title: "Agent sessions"
+description: "The agent_session type represents a conversation thread between a user and an agent."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+An `agent_session` groups all the messages in one conversation turn. Sessions carry the agent, user, project context, and optional role. See [Agents overview](/building/agents/overview) for product-level context.
+
+```graphql
+type agent_session {
+  agent: String
+  user: Float
+  role: String
+  session_items: JSON
+  title: String
+  project: String
+  metadata: JSON
+  currenttask: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `rights_mode` | `"public"` or `"private"`. Private sessions are only visible via the RBAC list. |
+| `created_by` | Numeric ID of the user who opened this session. |
+| `session_items` | JSON array of file or context attachments pinned for the session. |
+| `metadata` | Arbitrary key-value bag; used for integration metadata (e.g. source channel, external ticket ID). |
+| `currenttask` | Short description of what the agent was doing when the session was last persisted; useful for interrupted long-running tasks. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when the vector embeddings for this record were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  agent_sessionsPagination(
+    limit: 20
+    filters: [{ agent: { eq: "agent-123" } }]
+    sort: { field: "createdAt", direction: DESC }
+  ) {
+    items {
+      id
+      title
+      agent
+      user
+      project
+      createdAt
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

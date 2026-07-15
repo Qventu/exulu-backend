@@ -1,0 +1,64 @@
+---
+title: "Context presets"
+description: "The context_preset type stores a named, reusable selection of knowledge contexts that users can pin to a session."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+A `context_preset` lets users save a curated set of knowledge sources as a named group and attach it to any chat session with one click. See [Agents overview](/building/agents/overview) for product context around knowledge and presets.
+
+```graphql
+type context_preset {
+  name: String!
+  description: String
+  preset_items: JSON!
+  tags: JSON
+  usage_count: Float
+  favorite_count: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `preset_items` | JSON array of context source references included in this preset. Each entry identifies a knowledge context by its ID. |
+| `rights_mode` | `"public"` or `"private"`. Private presets are scoped to users, roles, or teams in `RBAC`. |
+| `created_by` | Numeric ID of the creating user. |
+| `usage_count` | Incremented each time this preset is attached to a session. |
+| `favorite_count` | Number of users who have favorited this preset. |
+| `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
+| `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
+
+## Example query
+
+```graphql
+query {
+  context_presetsPagination(
+    limit: 10
+    filters: [{ rights_mode: { eq: "public" } }]
+    sort: { field: "usage_count", direction: DESC }
+  ) {
+    items {
+      id
+      name
+      description
+      tags
+      usage_count
+      preset_items
+    }
+    pageInfo {
+      currentPage
+      hasNextPage
+    }
+  }
+}
+```

@@ -1,0 +1,198 @@
+---
+title: "Runs and schedules"
+description: "View run history, set a cron schedule, manage the queue, edit conversation steps, control access, and delete a routine."
+icon: "calendar"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="workflows (read)" />
+
+<Frame caption="Setting a cron schedule on a routine: choose a preset or enter a custom CRON expression, then click Update schedule.">
+  <video autoPlay muted loop playsInline src="/videos/schedule-routine.mp4" />
+</Frame>
+
+## The routine workbench
+
+Open any routine from the list and click its name or **Edit** to enter the workbench at `/workflows/{id}`. The workbench scrolls through seven sections, with a sticky section nav rail on the left (chip row on smaller screens).
+
+The topbar shows the breadcrumb (Routines / `{name}`), an **Open chat** link, and a **Run** button that opens the run dialog.
+
+<Note>
+The page-level save bar (at the bottom of the screen) tracks unsaved changes to **Basics** and **Access** only. Steps has its own independent save bar inside the sheet editor. Navigating away while either is dirty prompts a confirmation dialog.
+</Note>
+
+---
+
+## Basics
+
+The Basics section sets the routine's core identity:
+
+- **Name** (required) — the display name shown in the list and topbar.
+- **Description** — a longer explanation of what the routine does and when to use it.
+- **Agent** — the agent that runs this routine's conversation steps. Use the searchable selector to pick from available agents.
+
+Changes to Basics appear in the page-level save bar. Click **Save** in the save bar or **Discard** to revert.
+
+---
+
+## Access
+
+The Access section controls who can see and edit the routine:
+
+- **Private — only you** — the default for new routines.
+- **Public — anyone in your workspace** — everyone with Routines read permission can see and run it.
+- **Shared with users / roles / teams** — explicit grants to named subjects.
+
+Team sharing requires a backend feature flag. If it is not enabled, the section shows: "Team sharing requires backend support — currently read-only."
+
+Access changes are saved via the page-level save bar together with Basics changes.
+
+---
+
+## Steps
+
+The Steps section shows a read-only preview of the conversation that runs when the routine fires:
+
+- **`{n}` steps in this routine** — the count of conversation turns.
+- **Edit steps** (write access) or **View steps** (read-only) — opens the steps sheet.
+
+**Steps sheet**
+
+The sheet slides in from the right. It shows each step in the conversation as an editable turn:
+
+- Each turn is a message block. Edit the text directly.
+- Use `{variable_name}` syntax to create reusable input variables. Variables defined here appear as fields in the **Run routine** dialog.
+- Add or remove steps with the toolbar inside the sheet.
+- The sheet has its own save bar — unsaved step changes do not affect the page-level form.
+- Closing the sheet while steps are dirty opens a "Discard step changes?" confirmation.
+
+Click **Save** in the sheet save bar to apply. The steps preview in the main section updates immediately.
+
+<Tip>
+The description in the steps sheet reads: "Add or remove steps. Use `{variable_name}` syntax to create reusable variables." Variable names become fields in the Run dialog — name them clearly so whoever runs the routine knows what to fill in.
+</Tip>
+
+---
+
+## Schedule
+
+The Schedule section lets you run this routine automatically on a cron schedule.
+
+**When no schedule is set**, the section header shows "No schedule". Use the editor below to pick a preset or type a custom expression, then click **Save schedule**.
+
+**When a schedule is active**, the active cron expression appears as a `code` element in the section header (e.g. `0 0 * * 0`). A **Remove schedule** button is shown alongside the **Update schedule** button.
+
+### Schedule editor
+
+The editor has two tabs — **Presets** and **Custom CRON** — rendered as a two-button tab row at the top of the editor.
+
+**Presets tab** (default)
+
+A "Select a preset" dropdown (placeholder: "Choose a preset…") lists seven built-in schedules:
+
+| Label | CRON expression |
+| --- | --- |
+| Every day at 00:00 | `0 0 * * *` |
+| Every hour | `0 * * * *` |
+| Weekdays at 09:00 | `0 9 * * 1-5` |
+| Every 15 minutes | `*/15 * * * *` |
+| Every 30 minutes | `*/30 * * * *` |
+| Weekly on Sunday 00:00 | `0 0 * * 0` |
+| Monthly on 1st at 09:00 | `0 9 1 * *` |
+
+Selecting a preset shows the resulting cron expression in a read-only preview box labelled "CRON expression" below the dropdown. The editor also opens on this tab (with the preset pre-selected) when the saved schedule matches one of the preset values.
+
+**Custom CRON tab**
+
+A text input labelled "CRON expression" accepts any five-field cron expression (placeholder: `0 12 * * *`). The five fields are:
+
+| Field | Range |
+| --- | --- |
+| minute | 0–59 |
+| hour | 0–23 |
+| day | 1–31 |
+| month | 1–12 |
+| weekday | 0–7 (0 and 7 are both Sunday) |
+
+A collapsible **Format help** disclosure shows the field reference. If the expression is invalid, an inline error reads: "Invalid CRON expression. Format: minute hour day month weekday".
+
+### Next run
+
+When a schedule is saved, "Next run" appears below the editor showing the next scheduled execution time as a relative timestamp.
+
+### Save or update a schedule
+
+Click **Save schedule** (new schedule) or **Update schedule** (existing). A success toast confirms "Schedule saved".
+
+### Remove a schedule
+
+Click **Remove schedule**. A confirmation dialog appears:
+
+> Remove the cron schedule for "`{name}`". The routine stays — only the automatic schedule is removed.
+
+Confirm with **Remove**. The routine is not deleted — it remains available for on-demand runs.
+
+---
+
+## Runs
+
+The Runs section shows a history of every time this routine has been triggered.
+
+The list shows each run with:
+
+- **Status** — succeeded, failed, or running
+- **Started** — timestamp
+- **Duration** — elapsed time
+
+Click any run row to open a detail panel on the right, which shows:
+
+- **Error** — the error message if the run failed
+- **Metadata** — a key/value table of run metadata (variables, agent ID, etc.)
+- **Show raw payload** — toggle to see the full job payload as JSON
+- **Retry with edits** — opens the Run dialog pre-filled with the original inputs so you can adjust and rerun
+
+<Note>
+"No runs yet" appears when the routine has never been triggered. Click **Run** in the topbar to make a first run.
+</Note>
+
+---
+
+## Queue
+
+The Queue section shows the job queue for this routine's agent.
+
+If the agent has no queue configured, the section shows: "No queue configured for this routine's agent."
+
+If a queue is configured, click **Manage queue** to open the queue panel as a sheet. The panel shows:
+
+- Pending jobs waiting to run
+- Running jobs currently executing
+- Recently completed or failed jobs
+
+Each job row includes the job ID, status, and timestamps. Failed jobs can be retried — retrying a routine job opens the Run dialog pre-filled with the original inputs.
+
+---
+
+## Danger zone
+
+The Danger zone section appears at the bottom of the workbench for users with delete permission.
+
+It contains one action: **Delete**. Clicking it opens a confirmation dialog:
+
+> This permanently deletes the routine. To confirm, type its name below. Click the name to copy it.
+
+Type the routine's exact name and click **Delete routine**. The routine is permanently removed along with all its run history. This cannot be undone.
+
+---
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Routines overview" icon="clipboard-list" href="/building/routines/overview">
+    Browse the routines list, run a routine, and understand how routines are created.
+  </Card>
+  <Card title="Skills overview" icon="sparkles" href="/building/skills/overview">
+    Package reusable instruction sets for the agent running your routine.
+  </Card>
+</Columns>
