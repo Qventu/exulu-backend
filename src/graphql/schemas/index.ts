@@ -37,6 +37,9 @@ import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { cancelRoutineRunRow, casJobResultState, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
+import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
@@ -591,6 +594,12 @@ type PageInfo {
     workflowSchedule(workflow: ID!): WorkflowScheduleResult
     `;
 
+  // Routine runs (spec §6) — powers the per-routine Runs section and /runs.
+  typeDefs += `
+    routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage
+    routineRunsNeedingAttentionCount: Float!
+    `;
+
   typeDefs += `
     queue(queue: QueueEnum!): QueueResult
     `;
@@ -633,6 +642,11 @@ type PageInfo {
 
   mutationDefs += `
     deleteWorkflowSchedule(workflow: ID!): WorkflowScheduleReturnPayload
+    `;
+
+  mutationDefs += `
+    cancelRoutineRun(id: ID!): RoutineRun
+    retryRoutineRun(id: ID!): RoutineRun
     `;
 
   mutationDefs += `
@@ -727,6 +741,29 @@ type PageInfo {
   typeDefs += `
    meetingRecordingUsage: MeetingRecordingUsage
     `;
+
+  modelDefs += `
+type RoutineRun {
+  id: ID!
+  job_id: String
+  state: String!
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String!
+  workflowName: String
+  agent: String
+  error: JSON
+  tries: Float
+  createdAt: Date
+  updatedAt: Date
+}
+
+type RoutineRunPage {
+  items: [RoutineRun!]!
+  total: Float!
+}
+`;
 
   modelDefs += `
 type LiteLLMModel {
@@ -1271,6 +1308,169 @@ type LiteLLMModel {
       }
     }
   };
+  // ---- Routine runs API (spec §6) -------------------------------------
+  // job_results has no RBAC — access derives from the parent routine:
+  // applyAccessControl on workflow_templates also enforces the `workflows`
+  // role, then a single indexed query fetches the rows (no per-row N+1).
+  const readableRoutines = async (
+    db: any,
+    user: any,
+  ): Promise<Map<string, { id: string; name: string; agent: string }>> => {
+    const rows: { id: string; name: string; agent: string }[] = await applyAccessControl(
+      workflowTemplatesSchema,
+      db("workflow_templates").select("id", "name", "agent"),
+      user,
+    );
+    return new Map(rows.map((row) => [row.id, row]));
+  };
+
+  const loadRoutineRunForWrite = async (db: any, user: any, id: string) => {
+    const row = await db.from("job_results").where({ id }).first();
+    if (!row || row.type !== "workflow" || !row.workflow) {
+      throw new Error("Routine run not found.");
+    }
+    const routine = await db.from("workflow_templates").where({ id: row.workflow }).first();
+    if (!routine) {
+      throw new Error("Routine not found for this run.");
+    }
+    const hasAccess = await checkRecordAccess(routine, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this routine.");
+    }
+    return { row, routine };
+  };
+
+  resolvers.Query["routineRuns"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+
+    const routineById = await readableRoutines(db, user);
+    let allowedIds = [...routineById.keys()];
+    if (args.workflow) {
+      allowedIds = allowedIds.filter((id) => id === args.workflow);
+    }
+    if (allowedIds.length === 0) {
+      return { items: [], total: 0 };
+    }
+
+    const page = Math.max(1, args.page ?? 1);
+    const limit = Math.min(100, Math.max(1, args.limit ?? 20));
+
+    const countRows = await applyRoutineRunFilters(db("job_results"), args, allowedIds).count(
+      "* as count",
+    );
+    const total = Number(countRows[0]?.count ?? 0);
+
+    const rows = await applyRoutineRunFilters(db("job_results"), args, allowedIds)
+      .select("job_results.*")
+      .orderBy("job_results.createdAt", "desc")
+      .offset((page - 1) * limit)
+      .limit(limit);
+
+    return {
+      items: rows.map((row: any) => mapRoutineRunRow(row, routineById)),
+      total,
+    };
+  };
+
+  resolvers.Query["routineRunsNeedingAttentionCount"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const routineById = await readableRoutines(db, user);
+    if (routineById.size === 0) {
+      return 0;
+    }
+    const rows = await db("job_results")
+      .where({ type: "workflow", state: JOB_STATUS_ENUM.waiting_approval })
+      .whereIn("workflow", [...routineById.keys()])
+      .count("* as count");
+    return Number(rows[0]?.count ?? 0);
+  };
+
+  resolvers.Mutation["cancelRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row, routine } = await loadRoutineRunForWrite(db, user, args.id);
+
+    const cancellable: string[] = [
+      JOB_STATUS_ENUM.waiting,
+      JOB_STATUS_ENUM.active,
+      JOB_STATUS_ENUM.waiting_approval,
+    ];
+    if (!cancellable.includes(row.state)) {
+      throw new Error(`Run is in state '${row.state}' and cannot be cancelled.`);
+    }
+
+    // Shared cancel path (spec §5.6): CAS to cancelled + best-effort BullMQ
+    // job removal + stream-active cleanup — the SAME helper session deletion
+    // (postprocessDeletion) uses. A lost CAS race after the check above is a
+    // silent no-op (the run reached a terminal state concurrently).
+    await cancelRoutineRunRow(db, row, ExuluQueues);
+
+    const updated = await db.from("job_results").where({ id: row.id }).first();
+    return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
+  resolvers.Mutation["retryRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row, routine } = await loadRoutineRunForWrite(db, user, args.id);
+
+    if (row.state !== JOB_STATUS_ENUM.failed && row.state !== JOB_STATUS_ENUM.cancelled) {
+      throw new Error(`Only failed or cancelled runs can be retried (state: '${row.state}').`);
+    }
+
+    const runMetadata = parseRunMetadata(row.metadata);
+    const queueName =
+      typeof runMetadata.queue_name === "string" ? runMetadata.queue_name : undefined;
+    const entry = queueName ? ExuluQueues.list.get(queueName) : undefined;
+    if (!entry) {
+      // Pre-migration rows have no bookkeeping — an honest error beats a guess.
+      throw new Error("No queue recorded for this run; it cannot be retried.");
+    }
+    const queueConfig = await entry.use();
+
+    const moved = await casJobResultState(
+      db,
+      row.id,
+      [JOB_STATUS_ENUM.failed, JOB_STATUS_ENUM.cancelled],
+      JOB_STATUS_ENUM.waiting,
+    );
+    if (!moved) {
+      throw new Error("Run state changed concurrently; retry aborted.");
+    }
+    await db.from("job_results").where({ id: row.id }).update({ error: null });
+
+    const runAs = (runMetadata.run_as ?? {}) as { user?: number; role?: string };
+    const jobData: BullMqJobData = {
+      label: `Workflow Run ${row.workflow}`,
+      trigger: "api",
+      timeoutInSeconds: queueConfig.timeoutInSeconds || 180,
+      type: "workflow",
+      workflow: row.workflow,
+      inputs: (runMetadata.inputs as Record<string, unknown>) ?? {},
+      user: runAs.user ?? user.id,
+      role: runAs.role ?? user.role?.id,
+      session: row.session ?? undefined,
+      jobResultId: row.id,
+      // Resume from the failed step (spec §6) — 0 for runs that never started.
+      resumeFromIndex:
+        typeof runMetadata.current_step_index === "number" ? runMetadata.current_step_index : 0,
+      triggerSource: (row.trigger as BullMqJobData["triggerSource"]) ?? undefined,
+      triggerMetadata: row.trigger_metadata ? parseRunMetadata(row.trigger_metadata) : undefined,
+    };
+    await queueConfig.queue.add("workflow_run", jobData, {
+      jobId: uuidv4(),
+      attempts: queueConfig.retries || 3,
+      removeOnComplete: 5000,
+      removeOnFail: 10000,
+      backoff: queueConfig.backoff || { type: "exponential", delay: 2000 },
+    });
+
+    const updated = await db.from("job_results").where({ id: row.id }).first();
+    return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
   resolvers.Mutation["runEval"] = async (_, args, context, info) => {
     console.log("[EXULU] /evals/run/:id", args.id);
 
@@ -2378,6 +2578,9 @@ enum JobStateEnum {
   ${JOB_STATUS_ENUM.completed}
   ${JOB_STATUS_ENUM.paused}
   ${JOB_STATUS_ENUM.stuck}
+  ${JOB_STATUS_ENUM.waiting_approval}
+  ${JOB_STATUS_ENUM.filtered}
+  ${JOB_STATUS_ENUM.cancelled}
 }
 
 type StatisticsResult {
