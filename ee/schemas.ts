@@ -260,6 +260,27 @@ export const jobResultsSchema: ExuluTableDefinition = {
             name: "type",
             type: "text",
         },
+        // Email-triggered routines (spec 2026-07-15 §3.3): run provenance +
+        // session cross-link. `workflow` replaces label-substring filtering
+        // (indexed via the composite index created in init-exulu-db.ts).
+        // Pre-migration rows keep trigger = NULL (displayed as "—").
+        {
+            name: "trigger",
+            type: "text",
+        },
+        {
+            name: "trigger_metadata",
+            type: "json",
+        },
+        {
+            name: "session",
+            type: "text",
+        },
+        {
+            name: "workflow",
+            type: "text",
+            index: true,
+        },
     ],
 };
 
@@ -391,6 +412,13 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         name: "steps_json",
         type: "json",
         required: true,
+      },
+      // Escape hatch for the approval behavior change (spec §5.2): when true
+      // the run keeps the legacy blanket tool pre-approval and never pauses.
+      {
+        name: "auto_approve_tools",
+        type: "boolean",
+        default: false,
       },
     ],
   };
