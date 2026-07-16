@@ -3,7 +3,7 @@
  *
  * We now write a job_results row at enqueue time, so the table grows faster.
  * To bound it, every PRUNE_EVERY-th call we delete the oldest terminal rows
- * (state failed/completed) beyond the newest MAX_TERMINAL — keeping a rolling
+ * (states in TERMINAL_JOB_STATES) beyond the newest MAX_TERMINAL — keeping a rolling
  * window of recent finished jobs. Waiting/active/delayed rows are never
  * pruned (they're still live).
  *
@@ -13,9 +13,10 @@
  * overlapping runs.
  */
 
+import { TERMINAL_JOB_STATES } from "@EXULU_TYPES/enums/jobs";
+
 const MAX_TERMINAL = 10_000;
 const PRUNE_EVERY = 100;
-const TERMINAL_STATES = ["failed", "completed"];
 
 let sinceLastPrune = 0;
 let pruning = false;
@@ -30,7 +31,7 @@ export async function maybePruneJobResults(db: any): Promise<void> {
     // and everything older. Dialect-agnostic (knex offset/limit) so it works on
     // both Postgres and MySQL.
     const boundary = await db("job_results")
-      .whereIn("state", TERMINAL_STATES)
+      .whereIn("state", TERMINAL_JOB_STATES)
       .orderBy("createdAt", "desc")
       .offset(MAX_TERMINAL)
       .limit(1)
@@ -38,7 +39,7 @@ export async function maybePruneJobResults(db: any): Promise<void> {
 
     if (boundary?.createdAt) {
       const deleted = await db("job_results")
-        .whereIn("state", TERMINAL_STATES)
+        .whereIn("state", TERMINAL_JOB_STATES)
         .where("createdAt", "<=", boundary.createdAt)
         .del();
       if (deleted) {
