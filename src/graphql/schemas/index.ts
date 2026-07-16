@@ -46,6 +46,18 @@ import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
+import {
+  getEmailInboundConfig,
+  updateEmailInboundConfig,
+} from "@SRC/exulu/email-inbound/config";
+import {
+  validateEmailTriggerConfig,
+} from "@SRC/exulu/email-inbound/trigger-config";
+import { parseTriggerConfig } from "@SRC/exulu/email-inbound/types";
+import {
+  toEmailInboundConfigPayload,
+  insertTriggerWithRetry,
+} from "@SRC/exulu/email-inbound/resolver-helpers";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -673,6 +685,12 @@ type PageInfo {
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
     `;
 
+  mutationDefs += `
+    upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
+    deleteWorkflowTrigger(id: ID!): WorkflowTrigger
+    updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
+    `;
+
   modelDefs += `
     input TranscriptionJobStartInput {
       audio_s3key: String!
@@ -729,6 +747,31 @@ type PageInfo {
     }
   `;
 
+  // Email-triggered routines (spec §6). run_as_role is deliberately not
+  // exposed; the signing key is write-only (has_signing_key flag only).
+  modelDefs += `
+    type WorkflowTrigger {
+      id: ID!
+      workflow: ID!
+      type: String!
+      enabled: Boolean!
+      address: String!
+      config: JSON!
+      run_as_user: Float
+      createdAt: Date
+      updatedAt: Date
+    }
+
+    type EmailInboundConfig {
+      provider: String
+      inbound_domain: String
+      enabled: Boolean
+      last_webhook_at: Date
+      webhook_url: String
+      has_signing_key: Boolean
+    }
+  `;
+
   typeDefs += `
    tools(search: String, category: String, limit: Int, page: Int): ToolPaginationResult
    toolCategories: [String!]!
@@ -740,6 +783,11 @@ type PageInfo {
 
   typeDefs += `
    meetingRecordingUsage: MeetingRecordingUsage
+    `;
+
+  typeDefs += `
+   workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
+   emailInboundConfig: EmailInboundConfig
     `;
 
   modelDefs += `
@@ -1085,6 +1133,177 @@ type LiteLLMModel {
       status: "created",
       job: firstJob.id,
     };
+  };
+
+  // --- Email-triggered routines: trigger CRUD + platform inbound config ---
+  // workflow_triggers has RBAC:false — access derives from the parent
+  // routine (workflow_templates RBAC incl. teams), so load the routine with
+  // its rbac rows attached before checkRecordAccess (spec §3.1).
+  const loadWorkflowTemplateWithRBAC = async (db: any, workflowId: string) => {
+    const workflowTemplate = await db
+      .from("workflow_templates")
+      .where({ id: workflowId })
+      .first();
+    if (!workflowTemplate) {
+      throw new Error("Workflow template not found in database.");
+    }
+    workflowTemplate.RBAC = await RBACResolver(
+      db,
+      "workflow_template",
+      workflowTemplate.id,
+      workflowTemplate.rights_mode,
+    );
+    return workflowTemplate;
+  };
+
+  const requireWorkflowsWriteRole = (user: any) => {
+    if (!user.super_admin && (!user.role || user.role.workflows !== "write")) {
+      throw new Error(
+        "You don't have permission to manage routine triggers. Required: super_admin or workflows write access.",
+      );
+    }
+  };
+
+  // pg returns jsonb columns as objects, but normalize defensively.
+  const toWorkflowTriggerPayload = (row: any) => ({
+    ...row,
+    config: parseTriggerConfig(row.config),
+  });
+
+  // toEmailInboundConfigPayload is imported from resolver-helpers (unit-testable).
+
+  resolvers.Query["workflowTriggers"] = async (_, args, context) => {
+    if (!args.workflow) {
+      throw new Error("Workflow template ID is required");
+    }
+    const user = context.user;
+    const { db } = await postgresClient();
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, args.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "read", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+    const rows = await db
+      .from("workflow_triggers")
+      .where({ workflow: args.workflow })
+      .orderBy("createdAt", "asc");
+    return rows.map(toWorkflowTriggerPayload);
+  };
+
+  resolvers.Mutation["upsertWorkflowEmailTrigger"] = async (_, args, context) => {
+    if (!args.workflow) {
+      throw new Error("Workflow template ID is required");
+    }
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const license = checkLicense();
+    if (!license["queues"]) {
+      throw new Error("Email triggers require the queues entitlement.");
+    }
+
+    const { db } = await postgresClient();
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, args.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+
+    const inbound = await getEmailInboundConfig(db);
+    if (!inbound.enabled || !inbound.inbound_domain) {
+      throw new Error(
+        "Inbound email is not configured on this platform. A super admin must configure it in settings first.",
+      );
+    }
+
+    const validatedConfig = validateEmailTriggerConfig(args.config);
+
+    const existing = await db
+      .from("workflow_triggers")
+      .where({ workflow: args.workflow, type: "email" })
+      .first();
+    if (existing) {
+      const [updated] = await db
+        .from("workflow_triggers")
+        .where({ id: existing.id })
+        .update({
+          enabled: args.enabled,
+          config: JSON.stringify(validatedConfig),
+          // Re-capture the run identity from the saving admin (spec §3.1).
+          run_as_user: user.id,
+          run_as_role: user.role?.id ?? null,
+          updatedAt: new Date(),
+        })
+        .returning("*");
+      return toWorkflowTriggerPayload(updated);
+    }
+
+    // Server-generated address, unique with regenerate-on-collision
+    // (max 5 attempts, INSERT is inside the loop — race-safe, spec §3.1).
+    const created = await insertTriggerWithRetry(
+      async (row) => {
+        const [inserted] = await db
+          .from("workflow_triggers")
+          .insert(row)
+          .returning("*");
+        return inserted;
+      },
+      {
+        workflow: args.workflow,
+        type: "email",
+        enabled: args.enabled,
+        config: JSON.stringify(validatedConfig),
+        run_as_user: user.id,
+        run_as_role: user.role?.id ?? null,
+        created_by: user.id,
+      },
+      workflowTemplate.name,
+      inbound.inbound_domain,
+    );
+    return toWorkflowTriggerPayload(created);
+  };
+
+  resolvers.Mutation["deleteWorkflowTrigger"] = async (_, args, context) => {
+    if (!args.id) {
+      throw new Error("Trigger ID is required");
+    }
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) {
+      throw new Error("Workflow trigger not found in database.");
+    }
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+    await db.from("workflow_triggers").where({ id: args.id }).del();
+    return toWorkflowTriggerPayload(trigger);
+  };
+
+  resolvers.Query["emailInboundConfig"] = async (_, args, context) => {
+    const user = context.user;
+    if (!user?.super_admin) {
+      throw new Error("Only super admins can view the inbound email configuration.");
+    }
+    const { db } = await postgresClient();
+    return toEmailInboundConfigPayload(await getEmailInboundConfig(db));
+  };
+
+  resolvers.Mutation["updateEmailInboundConfig"] = async (_, args, context) => {
+    const user = context.user;
+    if (!user?.super_admin) {
+      throw new Error("Only super admins can update the inbound email configuration.");
+    }
+    const { db } = await postgresClient();
+    const updated = await updateEmailInboundConfig(db, {
+      ...(args.provider != null ? { provider: args.provider } : {}),
+      ...(args.inbound_domain != null ? { inbound_domain: args.inbound_domain } : {}),
+      ...(args.enabled != null ? { enabled: args.enabled } : {}),
+      ...(args.signing_key ? { signing_key: args.signing_key } : {}),
+    });
+    return toEmailInboundConfigPayload(updated);
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
