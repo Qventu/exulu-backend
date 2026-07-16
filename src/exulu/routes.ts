@@ -91,6 +91,12 @@ import {
   type BudgetSettings,
 } from "./litellm/budget-service.ts";
 import multer from "multer";
+import Busboy from "busboy";
+import { queues as ExuluQueues } from "@EE/queues/queues";
+import type { BullMqJobData } from "@EE/queues/decorator.ts";
+import { redisClient } from "@SRC/redis/client.ts";
+import { createEmailWebhookHandler } from "./email-inbound/webhook.ts";
+import { getEmailInboundConfig } from "./email-inbound/config.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
 import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
@@ -173,6 +179,93 @@ const {
   statisticsSchema,
   transcriptionJobsSchema,
 } = coreSchemas.get();
+
+/**
+ * Byte-faithful multipart field parser for the email webhook.
+ *
+ * Exported as a factory so it can be tested in isolation. The production
+ * wiring passes EMAIL_MIME_MAX_BYTES; tests may pass a smaller value to
+ * exercise the fieldSize-truncation branch cheaply.
+ *
+ * Every terminal event branch is guarded by a single `settled` flag so that
+ * busboy's event-ordering quirks (filesLimit → close, error → close) never
+ * cause double-dispatch (ERR_HTTP_HEADERS_SENT / next() after a 4xx).
+ */
+export const createEmailMultipartParser =
+  (fieldSizeLimit: number) =>
+  (req: Request, res: Response, next: () => void): void => {
+    let settled = false;
+    let bb: ReturnType<typeof Busboy>;
+
+    const settle = (act: () => void) => {
+      if (settled) return;
+      settled = true;
+      act();
+    };
+
+    const abort = () => {
+      req.unpipe(bb);
+      bb.removeAllListeners();
+      req.resume();
+    };
+
+    try {
+      bb = Busboy({
+        headers: req.headers,
+        defCharset: "latin1",
+        limits: { fieldSize: fieldSizeLimit, files: 0 },
+      });
+    } catch {
+      res.status(400).json({ detail: "Malformed multipart request." });
+      return;
+    }
+
+    const fields: Record<string, string> = {};
+    let truncated = false;
+
+    bb.on("field", (name: string, value: string, info: { valueTruncated: boolean }) => {
+      if (info.valueTruncated) {
+        truncated = true;
+        return;
+      }
+      fields[name] = value;
+    });
+
+    bb.on("file", (_name: string, stream: NodeJS.ReadableStream) => {
+      stream.resume();
+      settle(() => {
+        abort();
+        res.status(400).json({ detail: "Unexpected file part in email webhook." });
+      });
+    });
+
+    bb.on("filesLimit", () => {
+      settle(() => {
+        abort();
+        res.status(400).json({ detail: "Unexpected file part in email webhook." });
+      });
+    });
+
+    bb.on("error", (err: unknown) => {
+      settle(() => {
+        abort();
+        res.status(400).json({ detail: err instanceof Error ? err.message : "Malformed multipart request." });
+      });
+    });
+
+    bb.on("close", () => {
+      settle(() => {
+        if (truncated) {
+          res.status(413).json({ detail: "Email exceeds the 30MB intake limit." });
+          return;
+        }
+        req.body = fields;
+        next();
+      });
+    });
+
+    req.pipe(bb);
+  };
 
 export const createExpressRoutes = async (
   app: Express,
@@ -563,6 +656,85 @@ Mood: friendly and intelligent.
       console.error("[EXULU-RECALL] webhook processing failed", err);
     });
   });
+
+  // Mailgun EU inbound email webhook (raw-MIME forward variant): the
+  // catch-all route POSTs multipart/form-data with the signature fields plus
+  // the full raw MIME in `body-mime`. Durability ordering (verify → S3 →
+  // queue → ACK) lives in createEmailWebhookHandler; this block wires the
+  // real S3/queue/db/redis. Mailgun rejects >25MB upstream; parser cap 30MB.
+  // Design doc: docs/superpowers/specs/2026-07-15-email-triggered-routines-design.md §4.2
+  const EMAIL_MIME_MAX_BYTES = 30 * 1024 * 1024;
+
+  // Module-level config cache (30 s staleness accepted for enable/disable and
+  // key rotation — Mailgun retries cover brief 401 windows). Keeps every
+  // unauthenticated webhook request from hitting Postgres before signature
+  // verification.
+  let _emailConfigCache: Awaited<ReturnType<typeof getEmailInboundConfig>> | null = null;
+  let _emailConfigCacheAt = 0;
+  const EMAIL_CONFIG_CACHE_MS = 30_000;
+  const getCachedEmailInboundConfig = async (db: any) => {
+    const now = Date.now();
+    if (_emailConfigCache !== null && now - _emailConfigCacheAt < EMAIL_CONFIG_CACHE_MS) {
+      return _emailConfigCache;
+    }
+    _emailConfigCache = await getEmailInboundConfig(db);
+    _emailConfigCacheAt = now;
+    return _emailConfigCache;
+  };
+
+  // Byte-faithful multipart field parser for the email webhook. Delegates to
+  // the exported createEmailMultipartParser factory (see above) so the logic
+  // can be tested in isolation without instantiating the full routes.
+  const emailMultipartParser = createEmailMultipartParser(EMAIL_MIME_MAX_BYTES);
+
+  const emailWebhookHandler = createEmailWebhookHandler({
+    licensedForQueues: () => checkLicense()["queues"] === true,
+    getDb: async () => (await postgresClient()).db,
+    getRedis: async () => (await redisClient()).client,
+    getEmailConfig: getCachedEmailInboundConfig,
+    putRawEmail: async (key, body) => {
+      // global=true keeps the key out of any user_ prefix; strip the bucket
+      // prefix uploadFile prepends so the intake job can read the key back
+      // directly via getS3ObjectBytes.
+      const fullKey = await uploadFile(
+        body,
+        key,
+        config,
+        { contentType: "message/rfc822" },
+        undefined,
+        undefined,
+        true,
+      );
+      return fullKey.slice(fullKey.indexOf("/") + 1);
+    },
+    enqueueIntake: async (payload) => {
+      const queue = await ExuluQueues.register(
+        global_queues.email_intake,
+        { worker: 2, queue: 5 },
+        5,
+        300,
+      ).use();
+      const jobData: BullMqJobData = {
+        label: "Email intake",
+        type: "email_intake",
+        trigger: "api",
+        timeoutInSeconds: 300,
+        inputs: payload,
+      };
+      await queue.queue.add("email-intake", jobData, {
+        jobId: randomUUID(),
+        attempts: 3,
+        removeOnComplete: 5000,
+        removeOnFail: 10000,
+        backoff: { type: "exponential", delay: 5000 },
+      });
+    },
+  });
+  app.post(
+    "/webhooks/email/mime",
+    emailMultipartParser,
+    emailWebhookHandler,
+  );
 
   // Ping route that can be used to check if the request
   // is authenticated and the server is running.
