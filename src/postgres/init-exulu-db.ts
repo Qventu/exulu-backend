@@ -25,6 +25,7 @@ const {
   statisticsSchema,
   variablesSchema,
   workflowTemplatesSchema,
+  workflowTriggersSchema,
   rbacSchema,
   projectsSchema,
   jobResultsSchema,
@@ -97,6 +98,7 @@ const up = async function (knex: Knex) {
     variablesSchema(),
     skillsSchema(),
     workflowTemplatesSchema(),
+    workflowTriggersSchema(),
   ];
 
   const createTable = async (schema: ExuluTableDefinition) => {
@@ -132,6 +134,20 @@ const up = async function (knex: Knex) {
   await knex.raw(
     "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_provider_user_id_unique ON oauth_tokens (provider, user_id)",
   );
+
+  // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
+  // DB-backed so webhook retries, intake-job retries, and Redis restarts can
+  // never double-fire a run. Gated on the columns existing so boot order
+  // relative to the runs-engine migration (Plan 1) is safe; the index is
+  // created on the first boot after both are present.
+  if (
+    (await knex.schema.hasColumn("job_results", "workflow")) &&
+    (await knex.schema.hasColumn("job_results", "trigger_metadata"))
+  ) {
+    await knex.raw(
+      "CREATE INDEX IF NOT EXISTS job_results_email_dedup_idx ON job_results (workflow, (trigger_metadata->>'message_id'))",
+    );
+  }
 
   // One-time data migration: agents.provider + agents.providerapikey  ->  models row + agents.model
   // Idempotent: gated on existence of the old columns. After first successful run the columns
