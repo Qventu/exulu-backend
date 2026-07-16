@@ -101,3 +101,8 @@ Classification (id > external_id > create), the execution runner (concurrency, c
 ## Out of scope
 
 External-URL download (deferred; requires backend SSRF-guarded fetch endpoint), cross-instance file references, XLSX, batches >100, mixing flows.
+
+## UAT amendments (2026-07-16, Daniel)
+
+- **Apply-to-all removed.** The review-grid toolbar (field + value + apply button) is deleted, including its i18n keys — bulk constant-filling was judged not worth the surface.
+- **Error display: visible, no native tooltips.** Invalid cells show their translated error as inline text under the control (plus the existing red border/aria-invalid); native `title` tooltips are gone from the grid. Row-status badges use the app's shadcn Tooltip instead of the system tooltip.
