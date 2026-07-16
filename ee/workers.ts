@@ -34,6 +34,8 @@ import { saveChat, getAgentMessages } from "@SRC/exulu/provider.ts";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
+import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
 
 /**
  * Session-backed runs persist messages at each step boundary, so retries must
@@ -494,14 +496,31 @@ export const createWorkers = async (
 
               const label = `workflow-run-${data.workflow}`;
 
-              await db.from("job_results").insert({
-                job_id: bullmqJob.id,
-                label: label,
+              // Bookkeeping persisted in job_results.metadata so cancel /
+              // retry / approval-resume can re-enqueue without the ephemeral
+              // Redis payload (spec §5).
+              const runBookkeeping = {
+                run_as: { user: data.user, role: data.role },
+                inputs: (data.inputs ?? {}) as Record<string, unknown>,
+                queue_name: bullmqJob.queueName,
+              };
+
+              // Row first (before validation) so a payload/agent failure
+              // still surfaces as a failed run row — same as today.
+              const started = await upsertWorkflowRunStart(db, {
+                jobId: bullmqJob.id!,
+                jobResultId: data.jobResultId,
+                label,
                 state: await bullmqJob.getState(),
-                result: null,
-                metadata: {},
-                tries: 1,
+                workflow: data.workflow!,
+                session: data.session ?? null,
+                trigger: data.triggerSource ?? null,
+                triggerMetadata: data.triggerMetadata ?? null,
+                bookkeeping: runBookkeeping,
+                resumeFromIndex: data.resumeFromIndex ?? 0,
               });
+              const jobResultId = started.jobResultId;
+              let resumeFromIndex = started.resumeFromIndex;
 
               const {
                 agent,
@@ -511,10 +530,31 @@ export const createWorkers = async (
                 messages: inputMessages,
               } = await validateWorkflowPayload(data, providers);
 
+              // Session-backed runs (spec §3.4): reuse the session provided by
+              // the enqueuer (email intake / continuation / retry / previous
+              // BullMQ attempt), otherwise create one with the routine's rbac
+              // snapshot under the run identity.
+              let sessionId = started.session ?? undefined;
+              if (!sessionId) {
+                sessionId = await createRunSession({
+                  db,
+                  workflow: {
+                    id: workflow.id,
+                    name: workflow.name,
+                    agent: workflow.agent,
+                    rights_mode: workflow.rights_mode,
+                  },
+                  userId: user.id,
+                  title: `${workflow.name} — ${new Date().toISOString()}`,
+                  trigger: data.triggerSource ?? "api",
+                  jobResultId,
+                });
+                await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
+              }
+
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {
@@ -527,14 +567,18 @@ export const createWorkers = async (
                   };
                   duration: number;
                 };
+                pausedAtStepIndex?: number;
               }>(async (resolve, reject) => {
                 while (attempts < retries) {
                   try {
+                    // processUiMessagesFlow mutates inputMessages in place (ids
+                    // + substituted text) — pass a fresh deep copy each attempt
+                    // so a retry/resume never reuses the mutated array.
                     const messages = await processUiMessagesFlow({
                       providers,
                       agent,
                       provider,
-                      inputMessages,
+                      inputMessages: structuredClone(inputMessages),
                       contexts,
                       user,
                       tools,
@@ -542,6 +586,11 @@ export const createWorkers = async (
                       variables: data.inputs,
                       // Tag LLM spend to this routine (cron + ad-hoc share this path).
                       routine: { id: workflow.id, name: workflow.name },
+                      sessionId,
+                      resumeFromIndex,
+                      // Approval-gated tools pause unless the routine opted
+                      // back into blanket pre-approval (spec §5.2).
+                      respectToolApprovals: workflow.auto_approve_tools !== true,
                     });
                     resolve(messages);
                     break;
@@ -550,11 +599,34 @@ export const createWorkers = async (
                       `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
                       error instanceof Error ? error.message : String(error),
                     );
+                    if (error instanceof FlowStepError) {
+                      // Completed steps already persisted their messages —
+                      // resume at the failed step (spec §5.4).
+                      resumeFromIndex = error.stepIndex;
+                    }
                     attempts++;
                     if (attempts >= retries) {
+                      // Persist progress so BullMQ attempt-level retries and
+                      // retryRoutineRun resume from the failed step.
+                      try {
+                        await db
+                          .from("job_results")
+                          .where({ id: jobResultId })
+                          .update({
+                            metadata: JSON.stringify({
+                              ...runBookkeeping,
+                              current_step_index: resumeFromIndex,
+                            }),
+                          });
+                      } catch (persistError) {
+                        console.error(
+                          `[EXULU] failed to persist run progress for job ${bullmqJob.id}.`,
+                          persistError,
+                        );
+                      }
                       reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
-                    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
+                    await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
                   }
                 }
               });
@@ -563,11 +635,73 @@ export const createWorkers = async (
               const messages = result.messages;
               const metadata = result.metadata;
 
+              // Token accumulation across pause/resume (spec §5.7): a resumed
+              // continuation only counted its own steps — sum with any
+              // pre-pause token counts persisted on the row (kept there by
+              // upsertWorkflowRunStart's metadata merge). Fresh runs have no
+              // prior tokens and pass through unchanged.
+              const rowBeforeWrite = await db
+                .from("job_results")
+                .where({ id: jobResultId })
+                .first();
+              const priorTokens = parseRunMetadata(rowBeforeWrite?.metadata).tokens as
+                | Record<string, number>
+                | undefined;
+              const tokens = {
+                totalTokens: (priorTokens?.totalTokens ?? 0) + metadata.tokens.totalTokens,
+                reasoningTokens:
+                  (priorTokens?.reasoningTokens ?? 0) + metadata.tokens.reasoningTokens,
+                inputTokens: (priorTokens?.inputTokens ?? 0) + metadata.tokens.inputTokens,
+                outputTokens: (priorTokens?.outputTokens ?? 0) + metadata.tokens.outputTokens,
+                cachedInputTokens:
+                  (priorTokens?.cachedInputTokens ?? 0) + metadata.tokens.cachedInputTokens,
+              };
+
+              if (result.pausedAtStepIndex !== undefined) {
+                // Pause is success (spec §5.3): persist progress and flip to
+                // waiting_approval synchronously BEFORE returning — the
+                // completed-handler CAS (state = active) can then never
+                // clobber it. CAS keeps an admin cancel-during-pause intact.
+                await db
+                  .from("job_results")
+                  .where({ id: jobResultId })
+                  .update({
+                    result:
+                      messages.length > 0 ? JSON.stringify(messages[messages.length - 1]) : null,
+                    metadata: JSON.stringify({
+                      messages,
+                      ...metadata,
+                      tokens,
+                      ...runBookkeeping,
+                      current_step_index: result.pausedAtStepIndex,
+                    }),
+                  });
+                await casJobResultState(
+                  db,
+                  jobResultId,
+                  [JOB_STATUS_ENUM.active, JOB_STATUS_ENUM.waiting],
+                  JOB_STATUS_ENUM.waiting_approval,
+                );
+                return {
+                  result: messages[messages.length - 1],
+                  metadata: {
+                    messages,
+                    ...metadata,
+                    tokens,
+                    ...runBookkeeping,
+                    current_step_index: result.pausedAtStepIndex,
+                  },
+                };
+              }
+
               return {
                 result: messages[messages.length - 1], // last message
                 metadata: {
                   messages,
                   ...metadata,
+                  tokens,
+                  ...runBookkeeping,
+                  current_step_index: inputMessages.length - 1,
                 },
               };
             }
@@ -1019,9 +1153,12 @@ export const createWorkers = async (
 
         const { db } = await postgresClient();
 
+        // CAS (spec §5.3): a paused run returns from the handler with state
+        // already flipped to waiting_approval, and cancel may have won a race
+        // — only an active row may be completed.
         await db
           .from("job_results")
-          .where({ job_id: job.id })
+          .where({ job_id: job.id, state: JOB_STATUS_ENUM.active })
           .update({
             state: JOB_STATUS_ENUM.completed,
             result: returnvalue.result != null ? JSON.stringify(returnvalue.result) : null,
@@ -1039,10 +1176,21 @@ export const createWorkers = async (
 
         console.error(`[EXULU] failed job ${job.id}.`, error);
 
-        await db.from("job_results").where({ job_id: job.id }).update({
-          state: JOB_STATUS_ENUM.failed,
-          error,
-        });
+        // CAS: never clobber a pause (success), an admin cancel, or a
+        // completed row — e.g. a BullMQ lock-expiry "failure" arriving after
+        // the run already paused for approval.
+        await db
+          .from("job_results")
+          .where({ job_id: job.id })
+          .whereNotIn("state", [
+            JOB_STATUS_ENUM.waiting_approval,
+            JOB_STATUS_ENUM.cancelled,
+            JOB_STATUS_ENUM.completed,
+          ])
+          .update({
+            state: JOB_STATUS_ENUM.failed,
+            error,
+          });
 
         // Cap the table as rows become terminal (every Nth, idempotent).
         void maybePruneJobResults(db);
