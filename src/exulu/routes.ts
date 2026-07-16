@@ -142,6 +142,9 @@ const getExuluVersionNumber = async () => {
 
 export const global_queues = {
   eval_runs: "eval_runs",
+  // Underscore, not hyphen: registered queue names are interpolated
+  // verbatim into the GraphQL QueueEnum, where "-" is illegal.
+  email_intake: "email_intake",
 };
 
 const {

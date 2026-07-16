@@ -342,6 +342,18 @@ export class ExuluApp {
         },
         1,
       );
+      // Inbound email intake (email-triggered routines): registered before
+      // the list is materialized below so createWorkers() binds a worker.
+      // 5 min timeout covers MIME parse + attachment uploads.
+      ExuluQueues.register(
+        global_queues.email_intake,
+        {
+          worker: 2,
+          queue: 5,
+        },
+        5,
+        300,
+      );
       for (const queue of ExuluQueues.list.values()) {
         const config = await queue.use();
         queueSet.add(config);
