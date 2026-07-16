@@ -44,6 +44,7 @@ import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-sear
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
 import { guardExtractedFileText } from "./tool-output-offload";
+import { isRunSessionMetadata } from "./routines/run-session";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -880,6 +881,10 @@ export class ExuluProvider {
       const previousMessages = await getAgentMessages({
         session,
         user: user?.id,
+        // Run sessions (metadata.job_result_id) mix the run identity's
+        // messages with the approving admin's turns — load them all so the
+        // approval card resolves against the full transcript (spec §5.5).
+        includeAllUsers: isRunSessionMetadata(sessionData.metadata),
       });
       previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
     }
@@ -1227,15 +1232,23 @@ ${skillsList}
 export const getAgentMessages = async ({
   session,
   user,
+  includeAllUsers,
 }: {
   session: string;
   user?: number;
+  /**
+   * Routine-run sessions are multi-author (run identity + approving admin),
+   * and saveChat's message_id merge rewrites the user column — per-user
+   * filtering would drop resolved approvals from reloaded history. Set by
+   * generateStream for run sessions and by workflow resume reloads.
+   */
+  includeAllUsers?: boolean;
 }) => {
   const { db } = await postgresClient();
   console.log("[EXULU] getting agent messages for session: " + session + " and user: " + user);
   const messages = await db
     .from("agent_messages")
-    .where({ session, user: user || null })
+    .where(includeAllUsers ? { session } : { session, user: user || null })
     .orderBy([
       { column: "createdAt", order: "asc" },
       { column: "id", order: "asc" },
