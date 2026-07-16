@@ -1267,7 +1267,7 @@ type LiteLLMModel {
               if (attempts >= retries) {
                 reject(error instanceof Error ? error : new Error(String(error)));
               }
-              await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
+              await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
             }
           }
         });
@@ -1316,12 +1316,20 @@ type LiteLLMModel {
     db: any,
     user: any,
   ): Promise<Map<string, { id: string; name: string; agent: string }>> => {
-    const rows: { id: string; name: string; agent: string }[] = await applyAccessControl(
-      workflowTemplatesSchema,
-      db("workflow_templates").select("id", "name", "agent"),
-      user,
-    );
-    return new Map(rows.map((row) => [row.id, row]));
+    try {
+      const rows: { id: string; name: string; agent: string }[] = await applyAccessControl(
+        workflowTemplatesSchema,
+        db("workflow_templates").select("id", "name", "agent"),
+        user,
+      );
+      return new Map(rows.map((row) => [row.id, row]));
+    } catch (err) {
+      // Role-less users see zero runs (nav badge polls this).
+      if (err instanceof Error && err.message.startsWith("Access control error")) {
+        return new Map();
+      }
+      throw err;
+    }
   };
 
   const loadRoutineRunForWrite = async (db: any, user: any, id: string) => {

@@ -304,6 +304,12 @@ const up = async function (knex: Knex) {
       `CREATE INDEX IF NOT EXISTS job_results_workflow_state_trigger_created_idx
           ON job_results (workflow, state, trigger, "createdAt")`,
     );
+    // resumeRoutineRunIfWaiting queries by session on every chat turn;
+    // the partial index keeps the common no-waiting-run case an index-only miss.
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS job_results_session_waiting_idx
+          ON job_results (session) WHERE state = 'waiting_approval'`,
+    );
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {
