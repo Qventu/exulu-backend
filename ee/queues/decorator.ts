@@ -60,6 +60,17 @@ export type BullMqJobData = {
   evaluation?: string;
   item?: string;
   context?: string;
+  // Email-triggered routines (spec 2026-07-15): session-backed workflow runs.
+  /** agent_sessions id to run in; when absent the worker creates one. */
+  session?: string;
+  /** Existing job_results row to UPDATE instead of INSERT (continuation/retry/email intake). */
+  jobResultId?: string;
+  /** Skip steps before this index (resume after approval pause / retry-from-step). */
+  resumeFromIndex?: number;
+  /** Persisted to job_results.trigger — run provenance for the runs views. */
+  triggerSource?: "email" | "schedule" | "manual" | "api";
+  /** Persisted to job_results.trigger_metadata (email: from/subject/message_id; schedule: cron). */
+  triggerMetadata?: Record<string, unknown>;
 };
 
 export const bullmqDecorator = async ({

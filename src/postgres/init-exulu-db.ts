@@ -279,6 +279,33 @@ const up = async function (knex: Knex) {
     }
   }
 
+  // Email-triggered routines (spec 2026-07-15 §3.3): job_results gets an
+  // explicit `workflow` column (added above by addMissingFields from
+  // jobResultsSchema). One-time backfill parses the legacy label format
+  // 'workflow-run-<workflow_template_id>' ('workflow-run-' = 13 chars) and
+  // stamps type='workflow' so the runs API's type filter matches old rows.
+  // Idempotent: the WHERE clause matches zero rows on every boot after the
+  // first. `trigger` deliberately stays NULL for old rows (spec: don't guess).
+  if (await knex.schema.hasColumn("job_results", "workflow")) {
+    const backfilled = await knex.raw(
+      `UPDATE job_results
+          SET workflow = SUBSTRING(label FROM 14),
+              type = COALESCE(type, 'workflow')
+        WHERE label LIKE 'workflow-run-%'
+          AND workflow IS NULL`,
+    );
+    if (backfilled?.rowCount) {
+      console.log(
+        `[EXULU] Backfilled job_results.workflow on ${backfilled.rowCount} rows from labels.`,
+      );
+    }
+    // Runs views query by (workflow, state, trigger) ordered by createdAt.
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS job_results_workflow_state_trigger_created_idx
+          ON job_results (workflow, state, trigger, "createdAt")`,
+    );
+  }
+
   /*  if (!await knex.schema.hasTable('sessions')) {
          await knex.schema.createTable('sessions', table => {
              table.increments('id').primary();
