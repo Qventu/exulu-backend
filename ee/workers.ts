@@ -32,6 +32,7 @@ import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 import { saveChat, getAgentMessages } from "@SRC/exulu/provider.ts";
 import { exuluApp } from "@SRC/exulu/app/singleton";
+import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
@@ -1080,6 +1081,27 @@ export const createWorkers = async (
                   jobs,
                   items,
                 },
+              };
+            }
+
+            if (data.type === "email_intake") {
+              console.log("[EXULU] running an email intake job.", bullmqJob.name);
+
+              if (!data.inputs?.s3Key) {
+                throw new Error(`No s3Key set for email intake job.`);
+              }
+
+              const result = await handleEmailIntake(
+                {
+                  s3Key: data.inputs.s3Key,
+                  recipient: data.inputs.recipient,
+                },
+                { config, providers },
+              );
+
+              return {
+                result,
+                metadata: {},
               };
             }
 

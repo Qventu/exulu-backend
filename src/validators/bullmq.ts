@@ -20,14 +20,18 @@ export const bullmq = {
       data.type !== "processor" &&
       data.type !== "eval_run" &&
       data.type !== "eval_function" &&
-      data.type !== "source"
+      data.type !== "source" &&
+      data.type !== "email_intake"
     ) {
       throw new Error(
-        `Property "type" in data for job ${id} must be of value "embedder", "workflow", "processor", "eval_run", "eval_function" or "source".`,
+        `Property "type" in data for job ${id} must be of value "embedder", "workflow", "processor", "eval_run", "eval_function", "source" or "email_intake".`,
       );
     }
 
+    // email_intake jobs carry their target inside inputs (s3Key) — the
+    // entity-target requirement below does not apply to them.
     if (
+      data.type !== "email_intake" &&
       !data.workflow &&
       !data.embedder &&
       !data.processor &&
