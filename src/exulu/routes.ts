@@ -57,6 +57,7 @@ import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litell
 import { resolveContextWindow } from "./resolve-context-window.ts";
 import { ContextCompactionRequiredError, mapStreamErrorMessage } from "./context-budget.ts";
 import { markStreamActive, clearStreamActive, isStreamActive } from "./active-streams.ts";
+import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -921,6 +922,21 @@ Mood: friendly and intelligent.
                 model: resolvedModelId,
               });
               clearSessionCurrentTask(headers.session as string).catch(() => { });
+              // Routine-run sessions (spec §5.5): an answered approval card
+              // resumes the paused run — CAS winner enqueues the continuation.
+              // Messages are saved first so the continuation reload sees the
+              // resolved approval. Never let this break the chat response.
+              try {
+                const resumed = await resumeRoutineRunIfWaiting(db, headers.session as string);
+                if (resumed) {
+                  console.log("[EXULU] resumed routine run for session " + headers.session);
+                }
+              } catch (resumeError) {
+                console.error(
+                  "[EXULU] failed to resume routine run for session " + headers.session,
+                  resumeError,
+                );
+              }
             }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);
