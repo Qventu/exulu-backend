@@ -36,6 +36,7 @@ import { createMutations } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
+import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
@@ -1008,6 +1009,10 @@ type LiteLLMModel {
       inputs: args.variables,
       user: user.id,
       role: user.role?.id,
+      // Runs-view provenance (spec §3.3): fixes the bug where scheduled runs
+      // were displayed as "api".
+      triggerSource: "schedule",
+      triggerMetadata: { cron: args.schedule },
     };
 
     if (!queue) {
@@ -1103,6 +1108,9 @@ type LiteLLMModel {
       inputs: args.variables,
       user: user.id,
       role: user.role?.id,
+      // Runs-view provenance (spec §3.3): UI-initiated runs are "manual",
+      // API-key callers are "api".
+      triggerSource: user.type === "api" ? "api" : "manual",
     };
 
     if (queue) {
@@ -1141,6 +1149,9 @@ type LiteLLMModel {
           result: null,
           metadata: {},
           tries: 1,
+          type: "workflow",
+          workflow: workflow_template_id,
+          trigger: jobData.triggerSource ?? null,
         })
         .returning("id");
 
@@ -1154,6 +1165,23 @@ type LiteLLMModel {
           workflow,
           messages: inputMessages,
         } = await validateWorkflowPayload(jobData, providers);
+
+        // Session-backed (spec §3.4) — but keep the legacy blanket approval:
+        // without a queue there is no worker to resume a paused run.
+        const sessionId = await createRunSession({
+          db,
+          workflow: {
+            id: workflow.id,
+            name: workflow.name,
+            agent: workflow.agent,
+            rights_mode: workflow.rights_mode,
+          },
+          userId: user.id,
+          title: `${workflow.name} — ${new Date().toISOString()}`,
+          trigger: jobData.triggerSource ?? "manual",
+          jobResultId,
+        });
+        await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
 
         const retries = 3;
         let attempts = 0;
@@ -1186,6 +1214,7 @@ type LiteLLMModel {
                 variables: args.variables,
                 // Tag LLM spend to this routine (direct one-shot path mirrors the queued path).
                 routine: { id: workflow.id, name: workflow.name },
+                sessionId,
               });
               resolve(messages);
               break;
