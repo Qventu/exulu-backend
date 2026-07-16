@@ -16,6 +16,9 @@ import { encryptSensitiveFields } from "../utilities/encrypt-sensitive-fields.ts
 import bcrypt from "bcryptjs";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
+import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import { cancelRoutineRunRow } from "@SRC/exulu/routines/run-state.ts";
+import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
@@ -83,8 +86,28 @@ const postprocessDeletion = async ({
       await db
         .from("agent_messages")
         .where({ session: result.id })
-        .where({ session: result.id })
         .delete();
+      // Routine runs (spec §3.4/§5.6): deleting a run's session cancels the
+      // run with FULL cancel parity — the SAME shared helper as the
+      // cancelRoutineRun resolver (CAS to cancelled, so terminal rows keep
+      // their state + pending BullMQ job removal + stream-active cleanup) —
+      // and removes the session's point-in-time rbac snapshot.
+      const liveRuns = await db
+        .from("job_results")
+        .where({ session: result.id })
+        .whereIn("state", [
+          JOB_STATUS_ENUM.waiting,
+          JOB_STATUS_ENUM.active,
+          JOB_STATUS_ENUM.waiting_approval,
+        ])
+        .select("*");
+      for (const run of liveRuns) {
+        await cancelRoutineRunRow(db, run, ExuluQueues);
+      }
+      await db
+        .from("rbac")
+        .where({ entity: "agent_session", target_resource_id: result.id })
+        .del();
     }
     if (table.type === "eval_runs") {
       if (!result.id) {
