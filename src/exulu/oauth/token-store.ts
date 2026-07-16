@@ -14,10 +14,11 @@ export type OauthTokenRecord = {
 const TABLE = "oauth_tokens";
 
 // Same at-rest encryption pattern as the variables table (see ExuluVariables
-// in src/index.ts).
-const encrypt = (value: string) =>
+// in src/index.ts). Exported for reuse by other secret-at-rest stores
+// (email-inbound signing key).
+export const encrypt = (value: string) =>
   CryptoJS.AES.encrypt(value, process.env.NEXTAUTH_SECRET).toString();
-const decrypt = (value: string) =>
+export const decrypt = (value: string) =>
   CryptoJS.AES.decrypt(value, process.env.NEXTAUTH_SECRET).toString(CryptoJS.enc.Utf8);
 
 export const oauthTokenStore = {
