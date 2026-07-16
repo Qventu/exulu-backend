@@ -165,9 +165,12 @@ export async function upsertWorkflowRunStart(
  * the CAS is reverted so a later approval turn can try again.
  */
 export async function resumeRoutineRunIfWaiting(db: any, sessionId: string): Promise<boolean> {
+  // The state predicate matches the partial index job_results_session_waiting_idx
+  // (session) WHERE state = 'waiting_approval' — a session has at most one linked
+  // run row, so filtering here is semantics-equivalent to checking the newest row.
   const row = await db
     .from("job_results")
-    .where({ session: sessionId })
+    .where({ session: sessionId, state: JOB_STATUS_ENUM.waiting_approval })
     .orderBy("createdAt", "desc")
     .first();
 

@@ -279,7 +279,6 @@ export const jobResultsSchema: ExuluTableDefinition = {
         {
             name: "workflow",
             type: "text",
-            index: true,
         },
     ],
 };
