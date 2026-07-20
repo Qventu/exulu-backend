@@ -9,9 +9,19 @@ import { hashSharePassword } from "../../exulu/shared-artifacts";
  * - setting `guest_auth_mode` to anything but "password" clears the hash
  * Mutates and returns the same object, matching the generic mutation style.
  */
+const VALID_GUEST_AUTH_MODES = new Set(["public", "password", "regular"]);
+
 export const applyAgentGuestFieldTransforms = async (
   input: Record<string, any>,
 ): Promise<Record<string, any>> => {
+  if (
+    input.guest_auth_mode !== undefined &&
+    !VALID_GUEST_AUTH_MODES.has(input.guest_auth_mode)
+  ) {
+    throw new Error(
+      'guest_auth_mode must be "public", "password", or "regular".',
+    );
+  }
   delete input.guest_password_hash;
   if (typeof input.guest_password === "string" && input.guest_password.length > 0) {
     input.guest_password_hash = await hashSharePassword(input.guest_password);

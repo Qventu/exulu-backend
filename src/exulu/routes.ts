@@ -881,6 +881,21 @@ Mood: friendly and intelligent.
       const authenticationResult = await requestValidators.authenticate(req);
       const user = authenticationResult.user;
 
+      // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
+      // These run BEFORE the password gate so every attempt (including failed
+      // password guesses) consumes limiter budget — prevents bcrypt oracle.
+      if (!user?.id) {
+        const ip = extractClientIp(req as any);
+        if (guestRateLimitExceeded(ip)) {
+          res.status(429).json({ detail: "Too many requests. Try again later." });
+          return;
+        }
+        if (guestMessageTooLong(req.body)) {
+          res.status(413).json({ detail: "Message too long." });
+          return;
+        }
+      }
+
       // Guest access (spec §3.4): run-only gate. Covers legacy
       // rights_mode=public for anonymous callers and all guest_access modes.
       const guestGate = await evaluateGuestChatAccess(
@@ -894,19 +909,6 @@ Mood: friendly and intelligent.
           .status(guestGate.status)
           .json({ detail: guestGate.message });
         return;
-      }
-
-      if (!user?.id) {
-        // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
-        const ip = extractClientIp(req as any);
-        if (guestRateLimitExceeded(ip)) {
-          res.status(429).json({ detail: "Too many requests. Try again later." });
-          return;
-        }
-        if (guestMessageTooLong(req.body)) {
-          res.status(413).json({ detail: "Message too long." });
-          return;
-        }
       }
 
       // API key scope check — early reject for agents-scoped keys with a clear message.
@@ -5206,7 +5208,12 @@ Mood: friendly and intelligent.
     return (provider?.slug as string) || "";
   };
 
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   const getGuestAgentById = async (id: string) => {
+    // Reject non-UUID ids immediately — the DB uuid cast would throw a 500.
+    if (!UUID_RE.test(id)) return undefined;
     const { db } = await postgresClient();
     return db
       .from("agents")
@@ -5280,6 +5287,12 @@ Mood: friendly and intelligent.
   app.post(
     "/public-agents/:id/verify-password",
     async (req: Request, res: Response) => {
+      // Rate-limit before any DB lookup or bcrypt compare (spec §3.5).
+      const ip = extractClientIp(req as any);
+      if (guestRateLimitExceeded(ip)) {
+        res.status(429).json({ detail: "Too many requests. Try again later." });
+        return;
+      }
       const row = await getGuestAgentById(req.params.id ?? "");
       if (!row || row.guest_auth_mode !== "password") {
         res.status(404).json({ detail: "Not found." });
