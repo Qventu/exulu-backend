@@ -9,21 +9,23 @@ jest.mock("@SRC/utils/check-item-write-access", () => ({
 
 const writeGate = checkItemWriteAccess as jest.Mock;
 
+const BASE_FIELDS = [
+  { name: "price", type: "number", required: true },
+  { name: "category", type: "enum", enumValues: ["Hardware", "Software"] },
+  { name: "specs", type: "json" },
+  { name: "released_at", type: "date" },
+  { name: "manual", type: "file" },
+  { name: "legacy_ref", type: "uuid" },
+  { name: "score", type: "number", calculated: true },
+  { name: "audit_note", type: "text", editable: false },
+];
+
 const makeContext = (overrides: Record<string, unknown> = {}) =>
   ({
     id: "products",
     name: "Products",
     description: "Product catalog",
-    fields: [
-      { name: "price", type: "number", required: true },
-      { name: "category", type: "enum", enumValues: ["Hardware", "Software"] },
-      { name: "specs", type: "json" },
-      { name: "released_at", type: "date" },
-      { name: "manual", type: "file" },
-      { name: "legacy_ref", type: "uuid" },
-      { name: "score", type: "number", calculated: true },
-      { name: "audit_note", type: "text", editable: false },
-    ],
+    fields: BASE_FIELDS,
     createItem: jest.fn(async () => ({ item: { id: "new-1" }, job: undefined })),
     updateItem: jest.fn(async () => ({ item: { id: "item-1" }, job: undefined })),
     getItem: jest.fn(),
@@ -64,6 +66,26 @@ describe("createContextWriteTools", () => {
     expect(shapeKeys(updateTool)).toEqual(expect.arrayContaining(["id", "external_id"]));
   });
 
+  it("excludes fields whose name collides with a reserved runtime input key", () => {
+    const context = makeContext({ fields: [...BASE_FIELDS, { name: "model", type: "text" }] });
+    const [createTool, updateTool] = createContextWriteTools(context, { create: true, update: true }, false);
+    for (const keys of [shapeKeys(createTool), shapeKeys(updateTool)]) {
+      expect(keys).not.toEqual(expect.arrayContaining(["model"]));
+      expect(keys).toEqual(expect.arrayContaining(["price", "category", "specs", "released_at"]));
+    }
+  });
+
+  it("excludes hidden fields from both schemas", () => {
+    const context = makeContext({
+      fields: [...BASE_FIELDS, { name: "api_secret", type: "text", hidden: true }],
+    });
+    const [createTool, updateTool] = createContextWriteTools(context, { create: true, update: true }, false);
+    for (const keys of [shapeKeys(createTool), shapeKeys(updateTool)]) {
+      expect(keys).not.toEqual(expect.arrayContaining(["api_secret"]));
+      expect(keys).toEqual(expect.arrayContaining(["price", "category", "specs", "released_at"]));
+    }
+  });
+
   it("requires name and required fields on create, everything optional on update", () => {
     const [createTool, updateTool] = createContextWriteTools(makeContext(), { create: true, update: true }, false);
     const createShape = (createTool.inputSchema as z.ZodObject<any>).shape;
@@ -85,9 +107,15 @@ describe("createContextWriteTools", () => {
   describe("create execute", () => {
     const run = async (params: Record<string, unknown>, context = makeContext()) => {
       const [tool] = createContextWriteTools(context, { create: true, update: false }, false);
-      const result = await (tool.tool.execute as any)({ ...params, user, exuluConfig }, { toolCallId: "t", messages: [] });
+      const result = await (tool.tool.execute as any)({ user, exuluConfig, ...params }, { toolCallId: "t", messages: [] });
       return { result, context };
     };
+
+    it("refuses to create for an unauthenticated (guest) user", async () => {
+      const { result, context } = await run({ name: "Widget", price: 1, user: undefined });
+      expect(context.createItem).not.toHaveBeenCalled();
+      expect(result.result).toContain("authenticat");
+    });
 
     it("stamps created_by, copies only content keys, calls createItem without upsert", async () => {
       const { result, context } = await run({
@@ -128,7 +156,7 @@ describe("createContextWriteTools", () => {
   describe("update execute", () => {
     const run = async (params: Record<string, unknown>, context = makeContext()) => {
       const [tool] = createContextWriteTools(context, { create: false, update: true }, false);
-      const result = await (tool.tool.execute as any)({ ...params, user, exuluConfig }, { toolCallId: "t", messages: [] });
+      const result = await (tool.tool.execute as any)({ user, exuluConfig, ...params }, { toolCallId: "t", messages: [] });
       return { result, context };
     };
 
