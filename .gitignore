@@ -23,3 +23,4 @@ ee/python/**/*.egg-info/
 # PyInstaller build artifacts
 ee/python/documents/processing/build/
 ee/python/documents/processing/dist/
+.superpowers/sdd/
