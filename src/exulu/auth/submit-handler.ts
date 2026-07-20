@@ -72,9 +72,14 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
   }
 
   // Persist credentials
+  const uid = Number(nonceData.userId);
+  if (!Number.isInteger(uid) || uid <= 0) {
+    res.status(401).json({ ok: false, error: "nonce invalid" });
+    return;
+  }
   await credentialStore.upsert({
     provider: nonceData.provider,
-    userId: parseInt(nonceData.userId, 10),
+    userId: uid,
     authType: "user_credentials",
     data: values,
   });

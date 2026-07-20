@@ -168,6 +168,28 @@ describe("handleCredentialSubmit", () => {
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 
+  it("returns 401 when nonce userId parses to NaN", async () => {
+    mockVerifyCredentialNonce.mockReturnValue({
+      provider: "test_provider",
+      userId: "abc",
+      expiresAt: 9999999999,
+    });
+    mockValidate.mockResolvedValue(undefined);
+
+    const req = mockReq({
+      nonce: "valid-nonce",
+      values: { username: "alice", password: "secret" },
+    });
+    const res = mockRes();
+
+    await handleCredentialSubmit(req, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("nonce invalid");
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
   it("successfully submits credentials when all checks pass", async () => {
     mockVerifyCredentialNonce.mockReturnValue({
       provider: "test_provider",
