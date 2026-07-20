@@ -19,7 +19,14 @@ export { ExuluReadApi } from "./exulu/read-api.ts";
 export { postgresClient } from "./postgres/client";
 export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.ts";
 export { ExuluTool } from "./exulu/tool"
-export type { ExuluOauthConfig, ExuluOauthToolContext } from "./exulu/auth/types"
+export type {
+  ExuluAuthConfig,
+  ExuluOauthConfig,
+  ExuluUserCredentialsConfig,
+  CredentialField,
+  ExuluOauthToolContext,
+  ExuluCredentialsToolContext,
+} from "./exulu/auth/types"
 export { ExuluEval } from "./exulu/evals"
 // For script/CLI consumers that resolve models/embeddings against a proxy managed by a
 // separately running server process (same mechanism the worker boot path uses).
