@@ -63,6 +63,13 @@ export type ExuluContextFieldDefinition = {
   index?: boolean;
   enumValues?: string[];
   allowedFileTypes?: allFileTypes[];
+  /**
+   * Write-only secret: excluded from the generated GraphQL object type, Filter
+   * type, SQL read selections, and all read payloads. Still accepted as
+   * mutation INPUT (the mutation layer hashes/stores it) unless additionally
+   * excluded by name in the input generator.
+   */
+  hidden?: boolean;
 };
 
 
