@@ -1,4 +1,4 @@
-import type { ExuluOauthConfig } from "./types";
+import type { ExuluAuthConfig, ExuluOauthConfig } from "./types";
 
 const mockGetValidAccessToken = jest.fn();
 const mockBuildAuthorizationUrl = jest.fn();
@@ -8,9 +8,11 @@ jest.mock("./flow", () => ({
   buildAuthorizationUrl: (...args: any[]) => mockBuildAuthorizationUrl(...args),
 }));
 
-import { wrapExecuteWithOauth } from "./wrap-execute";
+import { wrapExecuteWithAuth } from "./wrap-execute";
 
 const config: ExuluOauthConfig = {
+  authType: "oauth",
+  provider: "test-provider",
   authorizationUrl: "https://provider.example.com/oauth/authorize",
   tokenUrl: "https://provider.example.com/oauth/token",
   clientId: "client-id",
@@ -22,10 +24,10 @@ beforeEach(() => {
   jest.resetAllMocks();
 });
 
-describe("wrapExecuteWithOauth", () => {
+describe("wrapExecuteWithAuth", () => {
   it("short-circuits without a user identity", async () => {
     const execute = jest.fn();
-    const wrapped = wrapExecuteWithOauth("my_tool", config, execute);
+    const wrapped = wrapExecuteWithAuth("my_tool", config, execute);
     const response = await wrapped({ query: "x" });
     expect(response.result).toMatch(/signed-in user/);
     expect(execute).not.toHaveBeenCalled();
@@ -36,11 +38,11 @@ describe("wrapExecuteWithOauth", () => {
     mockGetValidAccessToken.mockResolvedValue(null);
     mockBuildAuthorizationUrl.mockReturnValue("https://provider.example.com/authorize?state=abc");
     const execute = jest.fn();
-    const wrapped = wrapExecuteWithOauth("my_tool", config, execute);
+    const wrapped = wrapExecuteWithAuth("my_tool", config, execute);
 
     const response = await wrapped({ query: "x", user: { id: 42 } });
 
-    expect(mockGetValidAccessToken).toHaveBeenCalledWith({ providerKey: "my_tool", userId: 42, toolId: "my_tool", config });
+    expect(mockGetValidAccessToken).toHaveBeenCalledWith({ providerKey: "test-provider", userId: 42, toolId: "my_tool", config });
     expect(response.oauth.authorizationUrl).toBe("https://provider.example.com/authorize?state=abc");
     expect(response.result).toContain("https://provider.example.com/authorize?state=abc");
     expect(execute).not.toHaveBeenCalled();
@@ -55,7 +57,7 @@ describe("wrapExecuteWithOauth", () => {
       expiresAt,
     });
     const execute = jest.fn().mockResolvedValue({ result: "did the thing" });
-    const wrapped = wrapExecuteWithOauth("my_tool", config, execute);
+    const wrapped = wrapExecuteWithAuth("my_tool", config, execute);
 
     const options = { toolCallId: "call-1" };
     const response = await wrapped({ query: "x", user: { id: 42 } }, options);
@@ -77,7 +79,7 @@ describe("wrapExecuteWithOauth", () => {
       yield { result: "chunk-1" };
       yield { result: "chunk-2" };
     }
-    const wrapped = wrapExecuteWithOauth("my_tool", config, generatorExecute);
+    const wrapped = wrapExecuteWithAuth("my_tool", config, generatorExecute);
 
     const response = await wrapped({ user: { id: 1 } });
     const chunks = [];
@@ -96,9 +98,10 @@ describe("wrapExecuteWithOauth", () => {
       expiresAt: null,
     });
     const inner = jest.fn().mockResolvedValue({ result: "ok" });
-    const wrapped = wrapExecuteWithOauth(
+    const wrapped = wrapExecuteWithAuth(
       "jira_search",
       {
+        authType: "oauth",
         provider: "jira",
         authorizationUrl: "https://auth.example/authorize",
         tokenUrl: "https://auth.example/token",
@@ -112,5 +115,14 @@ describe("wrapExecuteWithOauth", () => {
     expect(mockGetValidAccessToken).toHaveBeenCalledWith(
       expect.objectContaining({ providerKey: "jira", toolId: "jira_search" }),
     );
+  });
+
+  it("throws on user_credentials authType (Phase 2 placeholder)", () => {
+    const cfg: ExuluAuthConfig = {
+      authType: "user_credentials",
+      provider: "test-p",
+      fields: [{ name: "k", label: "K", type: "password" }],
+    };
+    expect(() => wrapExecuteWithAuth("t", cfg, async () => "ok")).toThrow(/not yet supported/);
   });
 });
