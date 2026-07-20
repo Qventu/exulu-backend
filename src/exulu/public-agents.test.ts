@@ -123,4 +123,29 @@ describe("evaluateGuestChatAccess — authenticated (userId present)", () => {
     );
     expect(gate.allowed).toBe(false);
   });
+
+  test("authenticated + rights_mode=public + guest_access off → falls back to RBAC (not allowed here)", async () => {
+    const gate = await evaluateGuestChatAccess(
+      { rights_mode: "public", guest_access: false } as any,
+      "user-1",
+      undefined,
+    );
+    expect(gate).toEqual({ allowed: false, status: 401, message: "Authentication required." });
+  });
+});
+
+describe("evaluateGuestChatAccess — anonymous password-mode edge case", () => {
+  test("password mode with no stored hash rejects even when a password is sent", async () => {
+    const gate = await evaluateGuestChatAccess(
+      {
+        rights_mode: "private",
+        guest_access: true,
+        guest_auth_mode: "password",
+        guest_password_hash: null,
+      } as any,
+      undefined,
+      "hunter2",
+    );
+    expect(gate).toEqual({ allowed: false, status: 401, message: "Password required." });
+  });
 });
