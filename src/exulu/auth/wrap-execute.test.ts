@@ -189,4 +189,14 @@ describe("wrapExecuteWithAuth — user_credentials branch", () => {
     expect(out).toHaveProperty("credentialRequest.provider", "wrap-test");
     expect(mockCredentialStoreDelete).toHaveBeenCalledWith("wrap-test", 1);
   });
+
+  it("rethrows CredentialInvalidError from a different provider (not swallowed)", async () => {
+    mockGetValidUserCredentials.mockResolvedValue({ k: "v" });
+    const inner = jest.fn(async () => { throw new CredentialInvalidError("other-provider", "401 from elsewhere"); });
+    const wrapped = wrapExecuteWithAuth("t", credentialsCfg, inner);
+    await expect(wrapped({ user: { id: 1 } }, undefined)).rejects.toThrow(CredentialInvalidError);
+    await expect(wrapped({ user: { id: 1 } }, undefined)).rejects.toThrow(/other-provider/);
+    // credentialStore.delete MUST NOT have been called — the error was for a different provider
+    expect(mockCredentialStoreDelete).not.toHaveBeenCalled();
+  });
 });
