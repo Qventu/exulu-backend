@@ -187,3 +187,103 @@ describe("document tool registration", () => {
     });
   });
 });
+
+describe("knowledge base write tool injection", () => {
+  const kbContext = {
+    id: "products",
+    name: "Products",
+    description: "Product catalog",
+    fields: [{ name: "price", type: "number", required: true }],
+    createItem: jest.fn(async () => ({ item: { id: "new-1" } })),
+    updateItem: jest.fn(async () => ({ item: { id: "i1" } })),
+    getItem: jest.fn(),
+  } as never;
+
+  const kbAgent = {
+    id: "agent-1",
+    name: "Agent",
+    tools: [
+      {
+        id: "knowledge_base_editor",
+        type: "function",
+        config: [
+          {
+            name: "knowledge_bases",
+            type: "json",
+            variable: JSON.stringify({ products: { create: true, update: true } }),
+          },
+          { name: "skip_approval", type: "boolean", variable: "false" },
+        ],
+      },
+    ],
+  } as never;
+
+  it("injects create/update tools for configured contexts", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [],
+      [],
+      [],
+      [],
+      (kbAgent as any).tools,
+      undefined,
+      [kbContext],
+      { id: 7 } as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kbAgent,
+    );
+    expect(Object.keys(tools)).toEqual(
+      expect.arrayContaining(["Create_Products_item", "Update_Products_item"]),
+    );
+  });
+
+  it("injects nothing when the agent has no knowledge_base_editor entry", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [],
+      [],
+      [],
+      [],
+      [],
+      undefined,
+      [kbContext],
+      { id: 7 } as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { id: "agent-1", name: "Agent", tools: [] } as never,
+    );
+    expect(Object.keys(tools)).not.toEqual(expect.arrayContaining(["Create_Products_item"]));
+  });
+
+  it("respects per-message disabledTools for generated write tools", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [],
+      [],
+      [],
+      [],
+      (kbAgent as any).tools,
+      undefined,
+      [kbContext],
+      { id: 7 } as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      kbAgent,
+      undefined,
+      undefined,
+      ["create_products_item"],
+    );
+    expect(Object.keys(tools)).not.toEqual(expect.arrayContaining(["Create_Products_item"]));
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["Update_Products_item"]));
+  });
+});

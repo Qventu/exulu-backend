@@ -6,6 +6,7 @@ import type { User } from "@EXULU_TYPES/models/user.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
+import { KB_EDITOR_TOOL_ID } from "@SRC/templates/tools/kb-editor-config";
 
 export const getEnabledTools = async (
   agent: ExuluAgent,
@@ -30,6 +31,12 @@ export const getEnabledTools = async (
             role: user?.role?.id,
             model: undefined,
           });
+        }
+        if (id === KB_EDITOR_TOOL_ID) {
+          // Config-only entry: it is expanded into per-context write tools in
+          // convertExuluToolsToAiSdkTools (which has the agent/context closures).
+          // Without this skip it would fall through to the registry lookup below.
+          return null;
         }
         if (type === "agent") {
           if (id === agent.id) {
