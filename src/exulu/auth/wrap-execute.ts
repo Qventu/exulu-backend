@@ -1,13 +1,18 @@
-import type { ExuluAuthConfig, ExuluOauthConfig, ExuluOauthToolContext } from "./types";
+import type { ExuluAuthConfig, ExuluOauthConfig, ExuluOauthToolContext, ExuluUserCredentialsConfig } from "./types";
 import { buildAuthorizationUrl, getValidAccessToken } from "./flow";
 import { providerKeyFor } from "./provider-key";
+import { getValidUserCredentials } from "./state";
+import { buildCredentialRequest } from "./credentials-request";
+import { credentialRequestResult } from "./short-circuit";
+import { credentialStore } from "./credential-store";
+import { CredentialInvalidError } from "./errors";
 
 type ExecuteFunction = (inputs: any, options?: any) => any;
 
 /**
  * Wraps a tool's execute with the appropriate authentication flow based on authType.
  * - oauth: 3-legged OAuth 2.0 flow (execute runs with a valid access token).
- * - user_credentials: not yet supported (placeholder for Phase 2).
+ * - user_credentials: credential prompt / inject / invalidation flow.
  */
 export const wrapExecuteWithAuth = (
   toolId: string,
@@ -18,12 +23,54 @@ export const wrapExecuteWithAuth = (
     return wrapExecuteWithOauthInternal(toolId, config, execute);
   }
   if (config.authType === "user_credentials") {
-    throw new Error(
-      `ExuluTool "${toolId}": user_credentials wrap is not yet supported (implemented in Phase 2).`,
-    );
+    return wrapUserCredentials(toolId, config, execute);
   }
   // unreachable given the union
   throw new Error(`ExuluTool "${toolId}": unknown authType`);
+};
+
+/**
+ * Internal wrapper for user-supplied credentials. Reads credentials from the
+ * store for the calling (provider, userId) pair. If none exist, short-circuits
+ * with a credential-request prompt the frontend can render as a form. On cache
+ * hit, injects `credentials` into inputs and calls the inner execute. If the
+ * inner execute throws CredentialInvalidError for the same provider, the stored
+ * row is deleted and a fresh prompt is returned. All other errors are re-thrown.
+ */
+const wrapUserCredentials = (
+  toolId: string,
+  config: ExuluUserCredentialsConfig,
+  execute: ExecuteFunction,
+): ExecuteFunction => {
+  return async (inputs: any, options?: any) => {
+    const userId = inputs?.user?.id;
+    if (!userId) {
+      return {
+        result: `The "${toolId}" tool requires user-supplied credentials, which needs a signed-in user. No user identity is available for this run.`,
+      };
+    }
+    const baseUrl = (process.env.BACKEND ?? "").replace(/\/+$/, "");
+    if (!baseUrl) {
+      return {
+        result: `The "${toolId}" tool requires the BACKEND env var to build the credential submit URL.`,
+      };
+    }
+    const values = await getValidUserCredentials(config, userId);
+    if (!values) {
+      const request = buildCredentialRequest(config, { baseUrl, userId: String(userId) });
+      return credentialRequestResult(request);
+    }
+    try {
+      return await execute({ ...inputs, credentials: values }, options);
+    } catch (e) {
+      if (e instanceof CredentialInvalidError && e.provider === config.provider) {
+        await credentialStore.delete(config.provider, userId);
+        const request = buildCredentialRequest(config, { baseUrl, userId: String(userId) });
+        return credentialRequestResult(request);
+      }
+      throw e;
+    }
+  };
 };
 
 /**
