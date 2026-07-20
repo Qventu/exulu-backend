@@ -160,8 +160,15 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   return enumDefs + typeDef + inputDef;
 }
 
-function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
-  const fieldFilters = table.fields.map((field) => {
+export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
+  // Mirror the same exclusion applied in createExuluContextsTypeDefs (spec §7):
+  // guest_password_hash must never appear in any generated Filter input type
+  // because a queryable filter criterion would allow clients to use boolean /
+  // timing oracles to enumerate or probe stored bcrypt hashes.
+  const filterFields = table.fields.filter(
+    (field) => field.name !== "guest_password_hash",
+  );
+  const fieldFilters = filterFields.map((field) => {
     let type: string;
     if (field.type === "enum" && field.enumValues) {
       type = `${field.name}Enum`;
@@ -178,7 +185,7 @@ function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string 
     table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
   // Create enum-specific filter operators
-  enumFilterOperators = table.fields
+  enumFilterOperators = filterFields
     .filter((field) => field.type === "enum" && field.enumValues)
     .map((field) => {
       const enumTypeName = `${field.name}Enum`;
