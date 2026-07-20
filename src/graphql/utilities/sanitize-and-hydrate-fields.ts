@@ -431,10 +431,20 @@ export const finalizeRequestedFields = async ({
         delete result.provider;
       }
       if (requestedFields.includes("guest_has_password")) {
+        // Derive the computed boolean BEFORE the generic hidden-field sweep
+        // below removes guest_password_hash from the result object.
         result.guest_has_password = !!result.guest_password_hash;
       }
-      // Never let the hash column reach a payload, requested or not.
-      delete result.guest_password_hash;
+    }
+    // Generic sweep: remove every hidden (write-only secret) field from the
+    // result for ALL tables, regardless of whether it was requested. This
+    // covers users (password, apikey, anthropic_token, temporary_token),
+    // agents (guest_password_hash), and shared_artifacts (password_hash).
+    // Runs AFTER the agent branch above so guest_has_password is already set.
+    for (const field of table.fields) {
+      if (field.hidden === true) {
+        delete result[field.name];
+      }
     }
     if (BUDGET_ENTITY_SINGULARS.has(table.name.singular)) {
       result = await addBudgetField(requestedFields, result, table.name.singular, user);

@@ -64,7 +64,7 @@ Auto generate schemas based on Exulu Table definitions in core-schema.ts
 and the fields provided by the implementation at the customer through 
 ExuluContext.
 */
-function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
+export function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Generate enum definitions for enum fields
   const enumDefs: string = table.fields
     .filter((field) => field.type === "enum" && field.enumValues)
@@ -90,10 +90,10 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     .filter((enumDef) => enumDef !== null)
     .join("\n");
 
-  // guest_password_hash is a DB column but never a GraphQL field (spec §7).
-  const graphqlFields = table.fields.filter(
-    (field) => field.name !== "guest_password_hash",
-  );
+  // Hidden fields (hidden: true) are write-only secrets: excluded from the
+  // GraphQL object type so they can never be read via any query or mutation
+  // return payload.
+  const graphqlFields = table.fields.filter((field) => field.hidden !== true);
   let fields = graphqlFields.map((field) => {
     let type: string;
     type = mapExuluFieldTypesToGraphqlTypes(field);
@@ -147,11 +147,18 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Add RBAC input field if enabled
   const rbacInputField = table.RBAC ? "  RBAC: RBACInput" : "";
 
+  // Input type includes hidden secret fields (password, apikey, anthropic_token,
+  // temporary_token) because the mutation layer reads and hashes/stores them —
+  // they must remain writable via input even though they are excluded from read
+  // payloads (graphqlFields above). The sole name-based exclusion here is
+  // guest_password_hash: clients must never set it directly; they use the
+  // guest_password input field instead (the resolver derives the hash).
+  const inputFields = table.fields.filter((f) => f.name !== "guest_password_hash");
   const inputExtra =
     table.name.singular === "agent" ? "  guest_password: String" : "";
   const inputDef = `
   input ${table.name.singular}Input {
-  ${graphqlFields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
+  ${inputFields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
   ${inputExtra}
   ${rbacInputField}
   }
@@ -161,13 +168,10 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
 }
 
 export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
-  // Mirror the same exclusion applied in createExuluContextsTypeDefs (spec §7):
-  // guest_password_hash must never appear in any generated Filter input type
-  // because a queryable filter criterion would allow clients to use boolean /
-  // timing oracles to enumerate or probe stored bcrypt hashes.
-  const filterFields = table.fields.filter(
-    (field) => field.name !== "guest_password_hash",
-  );
+  // Hidden fields (hidden: true) are write-only secrets: excluded from all
+  // Filter input types so clients cannot use boolean / timing oracles to
+  // enumerate or probe secret values (bcrypt hashes, tokens, API keys, etc.).
+  const filterFields = table.fields.filter((field) => field.hidden !== true);
   const fieldFilters = filterFields.map((field) => {
     let type: string;
     if (field.type === "enum" && field.enumValues) {

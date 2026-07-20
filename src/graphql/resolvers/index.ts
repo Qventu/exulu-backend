@@ -105,6 +105,18 @@ export const sanitizeRequestedFields = (
   table: ExuluTableDefinition,
   requestedFields: string[],
 ): string[] => {
+  // Strip any hidden secret fields before building the SQL SELECT list.
+  // They are write-only: they must never be returned by any read query.
+  // This runs before the agent swap below so that guest_password_hash is
+  // removed first — the swap then intentionally re-adds it for the
+  // guest_has_password computed field.
+  const hiddenNames = new Set(
+    table.fields.filter((f) => f.hidden === true).map((f) => f.name),
+  );
+  if (hiddenNames.size > 0) {
+    requestedFields = requestedFields.filter((f) => !hiddenNames.has(f));
+  }
+
   if (table.name.singular === "agent") {
     requestedFields = removeProviderFields(requestedFields);
     // guest_has_password is computed from the hash column: swap the computed
