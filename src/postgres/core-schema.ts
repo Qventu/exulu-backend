@@ -9,7 +9,8 @@ import {
   jobResultsSchema,
   evalRunsSchema,
   rbacSchema,
-  workflowTemplatesSchema
+  workflowTemplatesSchema,
+  workflowTriggersSchema
 } from "@EE/schemas"
 import { checkLicense } from "@EE/entitlements";
 
@@ -833,6 +834,7 @@ export const coreSchemas = {
 
     if (license["template-conversations"]) {
       schemas.workflowTemplatesSchema = (): ExuluTableDefinition => addCoreFields(workflowTemplatesSchema)
+      schemas.workflowTriggersSchema = (): ExuluTableDefinition => addCoreFields(workflowTriggersSchema)
     }
     
     if (license["queues"]) {

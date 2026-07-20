@@ -260,6 +260,26 @@ export const jobResultsSchema: ExuluTableDefinition = {
             name: "type",
             type: "text",
         },
+        // Email-triggered routines (spec 2026-07-15 §3.3): run provenance +
+        // session cross-link. `workflow` replaces label-substring filtering
+        // (indexed via the composite index created in init-exulu-db.ts).
+        // Pre-migration rows keep trigger = NULL (displayed as "—").
+        {
+            name: "trigger",
+            type: "text",
+        },
+        {
+            name: "trigger_metadata",
+            type: "json",
+        },
+        {
+            name: "session",
+            type: "text",
+        },
+        {
+            name: "workflow",
+            type: "text",
+        },
     ],
 };
 
@@ -392,5 +412,80 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         type: "json",
         required: true,
       },
+      // Escape hatch for the approval behavior change (spec §5.2): when true
+      // the run keeps the legacy blanket tool pre-approval and never pauses.
+      {
+        name: "auto_approve_tools",
+        type: "boolean",
+        default: false,
+      },
     ],
   };
+
+  // Email-triggered routines (spec §3.1): one inbound trigger per routine.
+  // RBAC is false — access is checked via the parent workflow_templates row
+  // (routine read for listing, routine write + workflows:write role for CRUD),
+  // resolved explicitly in the custom GraphQL resolvers. graphql: false keeps
+  // the auto-CRUD generator away from this table; the API surface is the
+  // custom workflowTriggers / upsertWorkflowEmailTrigger / deleteWorkflowTrigger
+  // resolvers only.
+  export const workflowTriggersSchema: ExuluTableDefinition = {
+      type: "workflow_triggers",
+      name: {
+        plural: "workflow_triggers",
+        singular: "workflow_trigger",
+      },
+      RBAC: false,
+      graphql: false,
+      fields: [
+        {
+          name: "workflow",
+          type: "uuid",
+          required: true,
+        },
+        {
+          // 'email' for now; extensible ('webhook' later).
+          name: "type",
+          type: "text",
+          required: true,
+        },
+        {
+          name: "enabled",
+          type: "boolean",
+          default: false,
+        },
+        {
+          // Generated server-side: {routine-slug}-{8 hex}@{inbound_domain}.
+          // Real UNIQUE column (not JSON) because the webhook resolves
+          // triggers by recipient address.
+          name: "address",
+          type: "text",
+          required: true,
+          unique: true,
+          index: true,
+        },
+        {
+          // allowed_senders / filters / filtered_run_retention /
+          // rate_limit_per_hour / sender_rate_limit_per_hour (spec §3.1).
+          name: "config",
+          type: "json",
+          required: true,
+        },
+        {
+          // Captured from the admin who saves the trigger; email runs execute
+          // under this identity (same principle as cron).
+          name: "run_as_user",
+          type: "number",
+        },
+        {
+          name: "run_as_role",
+          type: "uuid",
+        },
+        {
+          // RBAC:false means addCoreFields does not add created_by; add it
+          // explicitly (audit trail, spec §3.1 core fields).
+          name: "created_by",
+          type: "number",
+        },
+      ],
+    };

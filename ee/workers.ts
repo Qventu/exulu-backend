@@ -30,7 +30,28 @@ import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
+import { saveChat, getAgentMessages } from "@SRC/exulu/provider.ts";
 import { exuluApp } from "@SRC/exulu/app/singleton";
+import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
+import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
+import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
+import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
+
+/**
+ * Session-backed runs persist messages at each step boundary, so retries must
+ * resume AT the failed step instead of re-running (and re-persisting) earlier
+ * ones (spec §5.4). This wrapper carries the failing step index to the
+ * workflow handler's retry loop.
+ */
+export class FlowStepError extends Error {
+  public readonly stepIndex: number;
+  constructor(stepIndex: number, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "FlowStepError";
+    this.stepIndex = stepIndex;
+  }
+}
 
 let redisConnection: IORedis;
 
@@ -476,14 +497,31 @@ export const createWorkers = async (
 
               const label = `workflow-run-${data.workflow}`;
 
-              await db.from("job_results").insert({
-                job_id: bullmqJob.id,
-                label: label,
+              // Bookkeeping persisted in job_results.metadata so cancel /
+              // retry / approval-resume can re-enqueue without the ephemeral
+              // Redis payload (spec §5).
+              const runBookkeeping = {
+                run_as: { user: data.user, role: data.role },
+                inputs: (data.inputs ?? {}) as Record<string, unknown>,
+                queue_name: bullmqJob.queueName,
+              };
+
+              // Row first (before validation) so a payload/agent failure
+              // still surfaces as a failed run row — same as today.
+              const started = await upsertWorkflowRunStart(db, {
+                jobId: bullmqJob.id!,
+                jobResultId: data.jobResultId,
+                label,
                 state: await bullmqJob.getState(),
-                result: null,
-                metadata: {},
-                tries: 1,
+                workflow: data.workflow!,
+                session: data.session ?? null,
+                trigger: data.triggerSource ?? null,
+                triggerMetadata: data.triggerMetadata ?? null,
+                bookkeeping: runBookkeeping,
+                resumeFromIndex: data.resumeFromIndex ?? 0,
               });
+              const jobResultId = started.jobResultId;
+              let resumeFromIndex = started.resumeFromIndex;
 
               const {
                 agent,
@@ -493,10 +531,31 @@ export const createWorkers = async (
                 messages: inputMessages,
               } = await validateWorkflowPayload(data, providers);
 
+              // Session-backed runs (spec §3.4): reuse the session provided by
+              // the enqueuer (email intake / continuation / retry / previous
+              // BullMQ attempt), otherwise create one with the routine's rbac
+              // snapshot under the run identity.
+              let sessionId = started.session ?? undefined;
+              if (!sessionId) {
+                sessionId = await createRunSession({
+                  db,
+                  workflow: {
+                    id: workflow.id,
+                    name: workflow.name,
+                    agent: workflow.agent,
+                    rights_mode: workflow.rights_mode,
+                  },
+                  userId: user.id,
+                  title: `${workflow.name} — ${new Date().toISOString()}`,
+                  trigger: data.triggerSource ?? "api",
+                  jobResultId,
+                });
+                await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
+              }
+
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {
@@ -509,14 +568,18 @@ export const createWorkers = async (
                   };
                   duration: number;
                 };
+                pausedAtStepIndex?: number;
               }>(async (resolve, reject) => {
                 while (attempts < retries) {
                   try {
+                    // processUiMessagesFlow mutates inputMessages in place (ids
+                    // + substituted text) — pass a fresh deep copy each attempt
+                    // so a retry/resume never reuses the mutated array.
                     const messages = await processUiMessagesFlow({
                       providers,
                       agent,
                       provider,
-                      inputMessages,
+                      inputMessages: structuredClone(inputMessages),
                       contexts,
                       user,
                       tools,
@@ -524,6 +587,11 @@ export const createWorkers = async (
                       variables: data.inputs,
                       // Tag LLM spend to this routine (cron + ad-hoc share this path).
                       routine: { id: workflow.id, name: workflow.name },
+                      sessionId,
+                      resumeFromIndex,
+                      // Approval-gated tools pause unless the routine opted
+                      // back into blanket pre-approval (spec §5.2).
+                      respectToolApprovals: workflow.auto_approve_tools !== true,
                     });
                     resolve(messages);
                     break;
@@ -532,11 +600,34 @@ export const createWorkers = async (
                       `[EXULU] error processing UI messages flow for agent ${agent.name} (${agent.id}).`,
                       error instanceof Error ? error.message : String(error),
                     );
+                    if (error instanceof FlowStepError) {
+                      // Completed steps already persisted their messages —
+                      // resume at the failed step (spec §5.4).
+                      resumeFromIndex = error.stepIndex;
+                    }
                     attempts++;
                     if (attempts >= retries) {
+                      // Persist progress so BullMQ attempt-level retries and
+                      // retryRoutineRun resume from the failed step.
+                      try {
+                        await db
+                          .from("job_results")
+                          .where({ id: jobResultId })
+                          .update({
+                            metadata: JSON.stringify({
+                              ...runBookkeeping,
+                              current_step_index: resumeFromIndex,
+                            }),
+                          });
+                      } catch (persistError) {
+                        console.error(
+                          `[EXULU] failed to persist run progress for job ${bullmqJob.id}.`,
+                          persistError,
+                        );
+                      }
                       reject(new Error(error instanceof Error ? error.message : String(error)));
                     }
-                    await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
+                    await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
                   }
                 }
               });
@@ -545,11 +636,73 @@ export const createWorkers = async (
               const messages = result.messages;
               const metadata = result.metadata;
 
+              // Token accumulation across pause/resume (spec §5.7): a resumed
+              // continuation only counted its own steps — sum with any
+              // pre-pause token counts persisted on the row (kept there by
+              // upsertWorkflowRunStart's metadata merge). Fresh runs have no
+              // prior tokens and pass through unchanged.
+              const rowBeforeWrite = await db
+                .from("job_results")
+                .where({ id: jobResultId })
+                .first();
+              const priorTokens = parseRunMetadata(rowBeforeWrite?.metadata).tokens as
+                | Record<string, number>
+                | undefined;
+              const tokens = {
+                totalTokens: (priorTokens?.totalTokens ?? 0) + metadata.tokens.totalTokens,
+                reasoningTokens:
+                  (priorTokens?.reasoningTokens ?? 0) + metadata.tokens.reasoningTokens,
+                inputTokens: (priorTokens?.inputTokens ?? 0) + metadata.tokens.inputTokens,
+                outputTokens: (priorTokens?.outputTokens ?? 0) + metadata.tokens.outputTokens,
+                cachedInputTokens:
+                  (priorTokens?.cachedInputTokens ?? 0) + metadata.tokens.cachedInputTokens,
+              };
+
+              if (result.pausedAtStepIndex !== undefined) {
+                // Pause is success (spec §5.3): persist progress and flip to
+                // waiting_approval synchronously BEFORE returning — the
+                // completed-handler CAS (state = active) can then never
+                // clobber it. CAS keeps an admin cancel-during-pause intact.
+                await db
+                  .from("job_results")
+                  .where({ id: jobResultId })
+                  .update({
+                    result:
+                      messages.length > 0 ? JSON.stringify(messages[messages.length - 1]) : null,
+                    metadata: JSON.stringify({
+                      messages,
+                      ...metadata,
+                      tokens,
+                      ...runBookkeeping,
+                      current_step_index: result.pausedAtStepIndex,
+                    }),
+                  });
+                await casJobResultState(
+                  db,
+                  jobResultId,
+                  [JOB_STATUS_ENUM.active, JOB_STATUS_ENUM.waiting],
+                  JOB_STATUS_ENUM.waiting_approval,
+                );
+                return {
+                  result: messages[messages.length - 1],
+                  metadata: {
+                    messages,
+                    ...metadata,
+                    tokens,
+                    ...runBookkeeping,
+                    current_step_index: result.pausedAtStepIndex,
+                  },
+                };
+              }
+
               return {
                 result: messages[messages.length - 1], // last message
                 metadata: {
                   messages,
                   ...metadata,
+                  tokens,
+                  ...runBookkeeping,
+                  current_step_index: inputMessages.length - 1,
                 },
               };
             }
@@ -931,6 +1084,27 @@ export const createWorkers = async (
               };
             }
 
+            if (data.type === "email_intake") {
+              console.log("[EXULU] running an email intake job.", bullmqJob.name);
+
+              if (!data.inputs?.s3Key) {
+                throw new Error(`No s3Key set for email intake job.`);
+              }
+
+              const result = await handleEmailIntake(
+                {
+                  s3Key: data.inputs.s3Key,
+                  recipient: data.inputs.recipient,
+                },
+                { config, providers },
+              );
+
+              return {
+                result,
+                metadata: {},
+              };
+            }
+
             throw new Error(`Invalid job type: ${data.type} for job ${bullmqJob.name}.`);
           } catch (error: unknown) {
             console.error(
@@ -1001,9 +1175,12 @@ export const createWorkers = async (
 
         const { db } = await postgresClient();
 
+        // CAS (spec §5.3): a paused run returns from the handler with state
+        // already flipped to waiting_approval, and cancel may have won a race
+        // — only an active row may be completed.
         await db
           .from("job_results")
-          .where({ job_id: job.id })
+          .where({ job_id: job.id, state: JOB_STATUS_ENUM.active })
           .update({
             state: JOB_STATUS_ENUM.completed,
             result: returnvalue.result != null ? JSON.stringify(returnvalue.result) : null,
@@ -1021,10 +1198,21 @@ export const createWorkers = async (
 
         console.error(`[EXULU] failed job ${job.id}.`, error);
 
-        await db.from("job_results").where({ job_id: job.id }).update({
-          state: JOB_STATUS_ENUM.failed,
-          error,
-        });
+        // CAS: never clobber a pause (success), an admin cancel, or a
+        // completed row — e.g. a BullMQ lock-expiry "failure" arriving after
+        // the run already paused for approval.
+        await db
+          .from("job_results")
+          .where({ job_id: job.id })
+          .whereNotIn("state", [
+            JOB_STATUS_ENUM.waiting_approval,
+            JOB_STATUS_ENUM.cancelled,
+            JOB_STATUS_ENUM.completed,
+          ])
+          .update({
+            state: JOB_STATUS_ENUM.failed,
+            error,
+          });
 
         // Cap the table as rows become terminal (every Nth, idempotent).
         void maybePruneJobResults(db);
@@ -1325,6 +1513,9 @@ export const processUiMessagesFlow = async ({
   config,
   variables,
   routine,
+  sessionId,
+  resumeFromIndex,
+  respectToolApprovals,
 }: {
   providers: ExuluProvider[];
   agent: ExuluAgent;
@@ -1343,6 +1534,21 @@ export const processUiMessagesFlow = async ({
    * callers leave this undefined — they have no routine context.
    */
   routine?: { id: string; name: string };
+  /**
+   * Session-backed runs (spec §5.1): persist each step's messages to
+   * agent_messages at the step boundary, pass the session to generateStream
+   * (which reloads history from the DB per step), and hold the
+   * stream-active flag for the session while executing.
+   */
+  sessionId?: string;
+  /** Skip steps before this index (approval resume / retry-from-step). Default 0. */
+  resumeFromIndex?: number;
+  /**
+   * When true, do NOT blanket-approve every tool — approval-gated tools pause
+   * the run (pausedAtStepIndex). Routines with auto_approve_tools = true and
+   * all legacy callers keep the blanket pre-approval (spec §5.2).
+   */
+  respectToolApprovals?: boolean;
 }): Promise<{
   messages: UIMessage[];
   metadata: {
@@ -1355,6 +1561,8 @@ export const processUiMessagesFlow = async ({
     };
     duration: number;
   };
+  /** Set when the run paused on an approval-requested tool part (spec §5.3). */
+  pausedAtStepIndex?: number;
 }> => {
   console.log("[EXULU] processing UI messages flow for agent.");
   console.log("[EXULU] input messages", inputMessages);
@@ -1403,8 +1611,6 @@ export const processUiMessagesFlow = async ({
 
   console.log("[EXULU] messages without placeholder", messagesWithoutPlaceholder);
 
-  // Iterate through the conversation
-  let index = 0;
   let messageHistory: {
     messages: UIMessage[];
     metadata: {
@@ -1432,171 +1638,206 @@ export const processUiMessagesFlow = async ({
   };
 
   console.log("[EXULU] variables", variables);
-  for (const currentMessage of messagesWithoutPlaceholder) {
-    console.log("[EXULU] running through the conversation");
-    console.log("[EXULU] current index", index);
-    console.log("[EXULU] current message", currentMessage);
-    console.log("[EXULU] message history", messageHistory);
 
-    // Identify {variable_name} in the current message parts
-    // Replace them with the values in variables
-    // If any are missing, throw an error
-    for (const part of currentMessage.parts) {
-      if (part.type === "text") {
-        const text = part.text;
-        const variableNames = [...text.matchAll(/{([^}]+)}/g)].map((match) => match[1]);
-        if (variableNames) {
-          for (const variableName of variableNames) {
-            if (!variableName) {
-              continue;
+  const startIndex = resumeFromIndex ?? 0;
+
+  // Resume: prior steps already persisted their messages — reload them so the
+  // returned transcript is complete. generateStream reloads its own copy from
+  // the session per step; this keeps messageHistory (the return value +
+  // previousMessages for headless callers) consistent with it.
+  if (sessionId && startIndex > 0) {
+    const priorRows = await getAgentMessages({ session: sessionId, includeAllUsers: true });
+    messageHistory.messages = priorRows.map(
+      (row: { content: string }) => JSON.parse(row.content) as UIMessage,
+    );
+  }
+
+  if (sessionId) markStreamActive(sessionId);
+  try {
+    for (let stepIndex = 0; stepIndex < messagesWithoutPlaceholder.length; stepIndex++) {
+      const currentMessage = messagesWithoutPlaceholder[stepIndex]!;
+      if (stepIndex < startIndex) {
+        continue;
+      }
+      console.log("[EXULU] running through the conversation");
+      console.log("[EXULU] current index", stepIndex);
+      console.log("[EXULU] current message", currentMessage);
+      console.log("[EXULU] message history", messageHistory);
+
+      // steps_json message ids repeat across runs of the same routine, and
+      // agent_messages.message_id is globally unique (saveChat merges on it) —
+      // persisted run messages need a fresh id per run.
+      if (sessionId) {
+        currentMessage.id = `wfmsg-${uuidv4()}`;
+      }
+
+      // Identify {variable_name} in the current message parts and replace them
+      // with the values in variables. Throws when a required value is missing;
+      // the auto-provided email variables are empty-safe (spec §4.5).
+      substituteVariablesInMessage(currentMessage, variables);
+
+      const statistics = {
+        label: agent.name,
+        trigger: "agent" as STATISTICS_LABELS,
+      };
+
+      try {
+        messageHistory = await new Promise<{
+          messages: UIMessage[];
+          metadata: {
+            tokens: {
+              totalTokens: number;
+              reasoningTokens: number;
+              inputTokens: number;
+              outputTokens: number;
+              cachedInputTokens: number;
+            };
+            duration: number;
+          };
+        }>(async (resolve, reject) => {
+          const startTime = Date.now();
+
+          try {
+            const result = await provider.generateStream({
+              contexts,
+              agent: agent,
+              user,
+              // Legacy blanket pre-approval unless this run respects
+              // approvals (spec §5.2 — auto_approve_tools = false routines).
+              approvedTools: respectToolApprovals
+                ? undefined
+                : tools.map((tool) => "tool-" + sanitizeToolName(tool.name)),
+              instructions: agent.instructions,
+              session: sessionId,
+              previousMessages: messageHistory.messages,
+              message: currentMessage,
+              currentTools: enabledTools,
+              allExuluTools: tools,
+              languageModel: resolvedLanguageModel,
+              providerapikey,
+              toolConfigs: agent.tools,
+              exuluConfig: config,
+            });
+
+            console.log("[EXULU] consuming stream for agent.");
+            const stream = result.stream.toUIMessageStream({
+              messageMetadata: ({ part }) => {
+                console.log("[EXULU] part", part.type);
+                if (part.type === "finish") {
+                  return {
+                    totalTokens: part.totalUsage.totalTokens,
+                    reasoningTokens: part.totalUsage.reasoningTokens,
+                    inputTokens: part.totalUsage.inputTokens,
+                    outputTokens: part.totalUsage.outputTokens,
+                    cachedInputTokens: part.totalUsage.cachedInputTokens,
+                  };
+                }
+                return undefined;
+              },
+              originalMessages: result.originalMessages,
+              sendReasoning: true,
+              sendSources: true,
+              onError: (error) => {
+                console.error("[EXULU] Ui message stream error.", error);
+                reject(new Error(error instanceof Error ? error.message : String(error)));
+                return `Ui message stream error: ${error instanceof Error ? error.message : String(error)}`;
+              },
+              onFinish: async ({ messages }) => {
+                const metadata = messages[messages.length - 1]?.metadata as any;
+                console.log("[EXULU] Stream finished with messages:", messages);
+                console.log("[EXULU] Stream metadata", metadata);
+                await Promise.all([
+                  updateStatistic({
+                    name: "count",
+                    label: statistics.label,
+                    type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                    trigger: statistics.trigger,
+                    count: 1,
+                    user: user.id,
+                    role: user?.role?.id,
+                  }),
+                  ...(metadata?.inputTokens
+                    ? [
+                        updateStatistic({
+                          name: "inputTokens",
+                          label: statistics.label,
+                          type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                          trigger: statistics.trigger,
+                          count: metadata?.inputTokens,
+                          user: user.id,
+                          role: user?.role?.id,
+                        }),
+                      ]
+                    : []),
+                  ...(metadata?.outputTokens
+                    ? [
+                        updateStatistic({
+                          name: "outputTokens",
+                          label: statistics.label,
+                          type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
+                          trigger: statistics.trigger,
+                          count: metadata?.outputTokens,
+                        }),
+                      ]
+                    : []),
+                ]);
+                resolve({
+                  messages,
+                  metadata: {
+                    tokens: {
+                      totalTokens:
+                        messageHistory.metadata.tokens.totalTokens + metadata?.totalTokens,
+                      reasoningTokens:
+                        messageHistory.metadata.tokens.reasoningTokens + metadata?.reasoningTokens,
+                      inputTokens:
+                        messageHistory.metadata.tokens.inputTokens + metadata?.inputTokens,
+                      outputTokens:
+                        messageHistory.metadata.tokens.outputTokens + metadata?.outputTokens,
+                      cachedInputTokens:
+                        messageHistory.metadata.tokens.cachedInputTokens +
+                        metadata?.cachedInputTokens,
+                    },
+                    duration: messageHistory.metadata.duration + (Date.now() - startTime),
+                  },
+                });
+              },
+            });
+
+            // Consume the stream to ensure it runs to completion & triggers onFinish
+            for await (const message of stream) {
+              console.log("[EXULU] message", message);
             }
-            console.log("[EXULU] variableName", variableName);
-            const variableValue = variables?.[variableName];
-            console.log("[EXULU] variableValue", variableValue);
-            if (variableValue) {
-              part.text = part.text.replaceAll(`{${variableName}}`, variableValue);
-            } else {
-              throw new Error(
-                `Value for variable ${variableName} not provided in variables for processing message flow. Either remove it from the messages, or provide it as an argument.`,
-              );
-            }
+          } catch (error: unknown) {
+            console.error(
+              `[EXULU] error generating stream for agent ${agent.name} (${agent.id}).`,
+              error,
+            );
+            reject(new Error(error instanceof Error ? error.message : String(error)));
           }
+        });
+      } catch (error: unknown) {
+        // Carry the failing step so the workflow handler's retry loop resumes
+        // here instead of re-running (and re-persisting) earlier steps.
+        throw new FlowStepError(stepIndex, error);
+      }
+
+      if (sessionId) {
+        // Step boundary (spec §5.1): persist the accumulated transcript.
+        // saveChat merges on message_id, so re-saving prior messages is
+        // idempotent (no duplicates on resume or re-save).
+        await saveChat({ session: sessionId, user: user.id, messages: messageHistory.messages });
+      }
+
+      if (respectToolApprovals && sessionId) {
+        const lastMessage = messageHistory.messages[messageHistory.messages.length - 1];
+        if (messageHasPendingApproval(lastMessage)) {
+          console.log("[EXULU] run paused for tool approval at step", stepIndex);
+          return { ...messageHistory, pausedAtStepIndex: stepIndex };
         }
       }
     }
-
-    const statistics = {
-      label: agent.name,
-      trigger: "agent" as STATISTICS_LABELS,
-    };
-
-    messageHistory = await new Promise<{
-      messages: UIMessage[];
-      metadata: {
-        tokens: {
-          totalTokens: number;
-          reasoningTokens: number;
-          inputTokens: number;
-          outputTokens: number;
-          cachedInputTokens: number;
-        };
-        duration: number;
-      };
-    }>(async (resolve, reject) => {
-      const startTime = Date.now();
-
-      try {
-        const result = await provider.generateStream({
-          contexts,
-          agent: agent,
-          user,
-          approvedTools: tools.map((tool) => "tool-" + sanitizeToolName(tool.name)),
-          instructions: agent.instructions,
-          session: undefined,
-          previousMessages: messageHistory.messages,
-          message: currentMessage,
-          currentTools: enabledTools,
-          allExuluTools: tools,
-          languageModel: resolvedLanguageModel,
-          providerapikey,
-          toolConfigs: agent.tools,
-          exuluConfig: config,
-        });
-
-        console.log("[EXULU] consuming stream for agent.");
-        const stream = result.stream.toUIMessageStream({
-          messageMetadata: ({ part }) => {
-            console.log("[EXULU] part", part.type);
-            if (part.type === "finish") {
-              return {
-                totalTokens: part.totalUsage.totalTokens,
-                reasoningTokens: part.totalUsage.reasoningTokens,
-                inputTokens: part.totalUsage.inputTokens,
-                outputTokens: part.totalUsage.outputTokens,
-                cachedInputTokens: part.totalUsage.cachedInputTokens,
-              };
-            }
-            return undefined;
-          },
-          originalMessages: result.originalMessages,
-          sendReasoning: true,
-          sendSources: true,
-          onError: (error) => {
-            console.error("[EXULU] Ui message stream error.", error);
-            reject(new Error(error instanceof Error ? error.message : String(error)));
-            return `Ui message stream error: ${error instanceof Error ? error.message : String(error)}`;
-          },
-          onFinish: async ({ messages }) => {
-            const metadata = messages[messages.length - 1]?.metadata as any;
-            console.log("[EXULU] Stream finished with messages:", messages);
-            console.log("[EXULU] Stream metadata", metadata);
-            await Promise.all([
-              updateStatistic({
-                name: "count",
-                label: statistics.label,
-                type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                trigger: statistics.trigger,
-                count: 1,
-                user: user.id,
-                role: user?.role?.id,
-              }),
-              ...(metadata?.inputTokens
-                ? [
-                    updateStatistic({
-                      name: "inputTokens",
-                      label: statistics.label,
-                      type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                      trigger: statistics.trigger,
-                      count: metadata?.inputTokens,
-                      user: user.id,
-                      role: user?.role?.id,
-                    }),
-                  ]
-                : []),
-              ...(metadata?.outputTokens
-                ? [
-                    updateStatistic({
-                      name: "outputTokens",
-                      label: statistics.label,
-                      type: STATISTICS_TYPE_ENUM.AGENT_RUN as STATISTICS_TYPE,
-                      trigger: statistics.trigger,
-                      count: metadata?.outputTokens,
-                    }),
-                  ]
-                : []),
-            ]);
-            resolve({
-              messages,
-              metadata: {
-                tokens: {
-                  totalTokens: messageHistory.metadata.tokens.totalTokens + metadata?.totalTokens,
-                  reasoningTokens:
-                    messageHistory.metadata.tokens.reasoningTokens + metadata?.reasoningTokens,
-                  inputTokens: messageHistory.metadata.tokens.inputTokens + metadata?.inputTokens,
-                  outputTokens:
-                    messageHistory.metadata.tokens.outputTokens + metadata?.outputTokens,
-                  cachedInputTokens:
-                    messageHistory.metadata.tokens.cachedInputTokens + metadata?.cachedInputTokens,
-                },
-                duration: messageHistory.metadata.duration + (Date.now() - startTime),
-              },
-            });
-          },
-        });
-
-        // Consume the stream to ensure it runs to completion & triggers onFinish
-        for await (const message of stream) {
-          console.log("[EXULU] message", message);
-        }
-      } catch (error: unknown) {
-        console.error(
-          `[EXULU] error generating stream for agent ${agent.name} (${agent.id}).`,
-          error,
-        );
-        reject(new Error(error instanceof Error ? error.message : String(error)));
-      }
-    });
-    index++;
+  } finally {
+    if (sessionId) clearStreamActive(sessionId);
   }
   console.log(
     "[EXULU] finished processing UI messages flow for agent, messages result",

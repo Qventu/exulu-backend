@@ -9,7 +9,7 @@ type PendingApprovalPart = {
   approval: { id: string };
 };
 
-const isPendingApprovalToolPart = (part: unknown): part is PendingApprovalPart => {
+export const isPendingApprovalToolPart = (part: unknown): part is PendingApprovalPart => {
   const candidate = part as PendingApprovalPart | undefined;
   return (
     (candidate?.type === "dynamic-tool" || (typeof candidate?.type === "string" && candidate.type.startsWith("tool-"))) &&

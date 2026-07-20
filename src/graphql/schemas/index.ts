@@ -36,12 +36,28 @@ import { createMutations } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
+import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
+import { cancelRoutineRunRow, casJobResultState, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
+import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
+import {
+  getEmailInboundConfig,
+  updateEmailInboundConfig,
+} from "@SRC/exulu/email-inbound/config";
+import {
+  validateEmailTriggerConfig,
+} from "@SRC/exulu/email-inbound/trigger-config";
+import { parseTriggerConfig } from "@SRC/exulu/email-inbound/types";
+import {
+  toEmailInboundConfigPayload,
+  insertTriggerWithRetry,
+} from "@SRC/exulu/email-inbound/resolver-helpers";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -590,6 +606,12 @@ type PageInfo {
     workflowSchedule(workflow: ID!): WorkflowScheduleResult
     `;
 
+  // Routine runs (spec §6) — powers the per-routine Runs section and /runs.
+  typeDefs += `
+    routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage
+    routineRunsNeedingAttentionCount: Float!
+    `;
+
   typeDefs += `
     queue(queue: QueueEnum!): QueueResult
     `;
@@ -635,6 +657,11 @@ type PageInfo {
     `;
 
   mutationDefs += `
+    cancelRoutineRun(id: ID!): RoutineRun
+    retryRoutineRun(id: ID!): RoutineRun
+    `;
+
+  mutationDefs += `
     drainQueue(queue: QueueEnum!): JobActionReturnPayload
     `;
 
@@ -656,6 +683,12 @@ type PageInfo {
     transcriptionJobCancel(id: ID!): transcription_job
     meetingBotStart(input: MeetingBotStartInput!): transcription_job
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
+    `;
+
+  mutationDefs += `
+    upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
+    deleteWorkflowTrigger(id: ID!): WorkflowTrigger
+    updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
     `;
 
   modelDefs += `
@@ -714,6 +747,31 @@ type PageInfo {
     }
   `;
 
+  // Email-triggered routines (spec §6). run_as_role is deliberately not
+  // exposed; the signing key is write-only (has_signing_key flag only).
+  modelDefs += `
+    type WorkflowTrigger {
+      id: ID!
+      workflow: ID!
+      type: String!
+      enabled: Boolean!
+      address: String!
+      config: JSON!
+      run_as_user: Float
+      createdAt: Date
+      updatedAt: Date
+    }
+
+    type EmailInboundConfig {
+      provider: String
+      inbound_domain: String
+      enabled: Boolean
+      last_webhook_at: Date
+      webhook_url: String
+      has_signing_key: Boolean
+    }
+  `;
+
   typeDefs += `
    tools(search: String, category: String, limit: Int, page: Int): ToolPaginationResult
    toolCategories: [String!]!
@@ -726,6 +784,34 @@ type PageInfo {
   typeDefs += `
    meetingRecordingUsage: MeetingRecordingUsage
     `;
+
+  typeDefs += `
+   workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
+   emailInboundConfig: EmailInboundConfig
+    `;
+
+  modelDefs += `
+type RoutineRun {
+  id: ID!
+  job_id: String
+  state: String!
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String!
+  workflowName: String
+  agent: String
+  error: JSON
+  tries: Float
+  createdAt: Date
+  updatedAt: Date
+}
+
+type RoutineRunPage {
+  items: [RoutineRun!]!
+  total: Float!
+}
+`;
 
   modelDefs += `
 type LiteLLMModel {
@@ -1008,6 +1094,10 @@ type LiteLLMModel {
       inputs: args.variables,
       user: user.id,
       role: user.role?.id,
+      // Runs-view provenance (spec §3.3): fixes the bug where scheduled runs
+      // were displayed as "api".
+      triggerSource: "schedule",
+      triggerMetadata: { cron: args.schedule },
     };
 
     if (!queue) {
@@ -1043,6 +1133,177 @@ type LiteLLMModel {
       status: "created",
       job: firstJob.id,
     };
+  };
+
+  // --- Email-triggered routines: trigger CRUD + platform inbound config ---
+  // workflow_triggers has RBAC:false — access derives from the parent
+  // routine (workflow_templates RBAC incl. teams), so load the routine with
+  // its rbac rows attached before checkRecordAccess (spec §3.1).
+  const loadWorkflowTemplateWithRBAC = async (db: any, workflowId: string) => {
+    const workflowTemplate = await db
+      .from("workflow_templates")
+      .where({ id: workflowId })
+      .first();
+    if (!workflowTemplate) {
+      throw new Error("Workflow template not found in database.");
+    }
+    workflowTemplate.RBAC = await RBACResolver(
+      db,
+      "workflow_template",
+      workflowTemplate.id,
+      workflowTemplate.rights_mode,
+    );
+    return workflowTemplate;
+  };
+
+  const requireWorkflowsWriteRole = (user: any) => {
+    if (!user.super_admin && (!user.role || user.role.workflows !== "write")) {
+      throw new Error(
+        "You don't have permission to manage routine triggers. Required: super_admin or workflows write access.",
+      );
+    }
+  };
+
+  // pg returns jsonb columns as objects, but normalize defensively.
+  const toWorkflowTriggerPayload = (row: any) => ({
+    ...row,
+    config: parseTriggerConfig(row.config),
+  });
+
+  // toEmailInboundConfigPayload is imported from resolver-helpers (unit-testable).
+
+  resolvers.Query["workflowTriggers"] = async (_, args, context) => {
+    if (!args.workflow) {
+      throw new Error("Workflow template ID is required");
+    }
+    const user = context.user;
+    const { db } = await postgresClient();
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, args.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "read", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+    const rows = await db
+      .from("workflow_triggers")
+      .where({ workflow: args.workflow })
+      .orderBy("createdAt", "asc");
+    return rows.map(toWorkflowTriggerPayload);
+  };
+
+  resolvers.Mutation["upsertWorkflowEmailTrigger"] = async (_, args, context) => {
+    if (!args.workflow) {
+      throw new Error("Workflow template ID is required");
+    }
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const license = checkLicense();
+    if (!license["queues"]) {
+      throw new Error("Email triggers require the queues entitlement.");
+    }
+
+    const { db } = await postgresClient();
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, args.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+
+    const inbound = await getEmailInboundConfig(db);
+    if (!inbound.enabled || !inbound.inbound_domain) {
+      throw new Error(
+        "Inbound email is not configured on this platform. A super admin must configure it in settings first.",
+      );
+    }
+
+    const validatedConfig = validateEmailTriggerConfig(args.config);
+
+    const existing = await db
+      .from("workflow_triggers")
+      .where({ workflow: args.workflow, type: "email" })
+      .first();
+    if (existing) {
+      const [updated] = await db
+        .from("workflow_triggers")
+        .where({ id: existing.id })
+        .update({
+          enabled: args.enabled,
+          config: JSON.stringify(validatedConfig),
+          // Re-capture the run identity from the saving admin (spec §3.1).
+          run_as_user: user.id,
+          run_as_role: user.role?.id ?? null,
+          updatedAt: new Date(),
+        })
+        .returning("*");
+      return toWorkflowTriggerPayload(updated);
+    }
+
+    // Server-generated address, unique with regenerate-on-collision
+    // (max 5 attempts, INSERT is inside the loop — race-safe, spec §3.1).
+    const created = await insertTriggerWithRetry(
+      async (row) => {
+        const [inserted] = await db
+          .from("workflow_triggers")
+          .insert(row)
+          .returning("*");
+        return inserted;
+      },
+      {
+        workflow: args.workflow,
+        type: "email",
+        enabled: args.enabled,
+        config: JSON.stringify(validatedConfig),
+        run_as_user: user.id,
+        run_as_role: user.role?.id ?? null,
+        created_by: user.id,
+      },
+      workflowTemplate.name,
+      inbound.inbound_domain,
+    );
+    return toWorkflowTriggerPayload(created);
+  };
+
+  resolvers.Mutation["deleteWorkflowTrigger"] = async (_, args, context) => {
+    if (!args.id) {
+      throw new Error("Trigger ID is required");
+    }
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) {
+      throw new Error("Workflow trigger not found in database.");
+    }
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this workflow template.");
+    }
+    await db.from("workflow_triggers").where({ id: args.id }).del();
+    return toWorkflowTriggerPayload(trigger);
+  };
+
+  resolvers.Query["emailInboundConfig"] = async (_, args, context) => {
+    const user = context.user;
+    if (!user?.super_admin) {
+      throw new Error("Only super admins can view the inbound email configuration.");
+    }
+    const { db } = await postgresClient();
+    return toEmailInboundConfigPayload(await getEmailInboundConfig(db));
+  };
+
+  resolvers.Mutation["updateEmailInboundConfig"] = async (_, args, context) => {
+    const user = context.user;
+    if (!user?.super_admin) {
+      throw new Error("Only super admins can update the inbound email configuration.");
+    }
+    const { db } = await postgresClient();
+    const updated = await updateEmailInboundConfig(db, {
+      ...(args.provider != null ? { provider: args.provider } : {}),
+      ...(args.inbound_domain != null ? { inbound_domain: args.inbound_domain } : {}),
+      ...(args.enabled != null ? { enabled: args.enabled } : {}),
+      ...(args.signing_key ? { signing_key: args.signing_key } : {}),
+    });
+    return toEmailInboundConfigPayload(updated);
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
@@ -1103,6 +1364,9 @@ type LiteLLMModel {
       inputs: args.variables,
       user: user.id,
       role: user.role?.id,
+      // Runs-view provenance (spec §3.3): UI-initiated runs are "manual",
+      // API-key callers are "api".
+      triggerSource: user.type === "api" ? "api" : "manual",
     };
 
     if (queue) {
@@ -1141,6 +1405,9 @@ type LiteLLMModel {
           result: null,
           metadata: {},
           tries: 1,
+          type: "workflow",
+          workflow: workflow_template_id,
+          trigger: jobData.triggerSource ?? null,
         })
         .returning("id");
 
@@ -1154,6 +1421,23 @@ type LiteLLMModel {
           workflow,
           messages: inputMessages,
         } = await validateWorkflowPayload(jobData, providers);
+
+        // Session-backed (spec §3.4) — but keep the legacy blanket approval:
+        // without a queue there is no worker to resume a paused run.
+        const sessionId = await createRunSession({
+          db,
+          workflow: {
+            id: workflow.id,
+            name: workflow.name,
+            agent: workflow.agent,
+            rights_mode: workflow.rights_mode,
+          },
+          userId: user.id,
+          title: `${workflow.name} — ${new Date().toISOString()}`,
+          trigger: jobData.triggerSource ?? "manual",
+          jobResultId,
+        });
+        await db.from("job_results").where({ id: jobResultId }).update({ session: sessionId });
 
         const retries = 3;
         let attempts = 0;
@@ -1186,6 +1470,7 @@ type LiteLLMModel {
                 variables: args.variables,
                 // Tag LLM spend to this routine (direct one-shot path mirrors the queued path).
                 routine: { id: workflow.id, name: workflow.name },
+                sessionId,
               });
               resolve(messages);
               break;
@@ -1201,7 +1486,7 @@ type LiteLLMModel {
               if (attempts >= retries) {
                 reject(error instanceof Error ? error : new Error(String(error)));
               }
-              await new Promise((resolve) => setTimeout((resolve) => resolve(true), 2000));
+              await new Promise((resolve) => setTimeout(() => resolve(true), 2000));
             }
           }
         });
@@ -1242,6 +1527,177 @@ type LiteLLMModel {
       }
     }
   };
+  // ---- Routine runs API (spec §6) -------------------------------------
+  // job_results has no RBAC — access derives from the parent routine:
+  // applyAccessControl on workflow_templates also enforces the `workflows`
+  // role, then a single indexed query fetches the rows (no per-row N+1).
+  const readableRoutines = async (
+    db: any,
+    user: any,
+  ): Promise<Map<string, { id: string; name: string; agent: string }>> => {
+    try {
+      const rows: { id: string; name: string; agent: string }[] = await applyAccessControl(
+        workflowTemplatesSchema,
+        db("workflow_templates").select("id", "name", "agent"),
+        user,
+      );
+      return new Map(rows.map((row) => [row.id, row]));
+    } catch (err) {
+      // Role-less users see zero runs (nav badge polls this).
+      if (err instanceof Error && err.message.startsWith("Access control error")) {
+        return new Map();
+      }
+      throw err;
+    }
+  };
+
+  const loadRoutineRunForWrite = async (db: any, user: any, id: string) => {
+    const row = await db.from("job_results").where({ id }).first();
+    if (!row || row.type !== "workflow" || !row.workflow) {
+      throw new Error("Routine run not found.");
+    }
+    const routine = await db.from("workflow_templates").where({ id: row.workflow }).first();
+    if (!routine) {
+      throw new Error("Routine not found for this run.");
+    }
+    const hasAccess = await checkRecordAccess(routine, "write", user);
+    if (!hasAccess) {
+      throw new Error("You don't have access to this routine.");
+    }
+    return { row, routine };
+  };
+
+  resolvers.Query["routineRuns"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+
+    const routineById = await readableRoutines(db, user);
+    let allowedIds = [...routineById.keys()];
+    if (args.workflow) {
+      allowedIds = allowedIds.filter((id) => id === args.workflow);
+    }
+    if (allowedIds.length === 0) {
+      return { items: [], total: 0 };
+    }
+
+    const page = Math.max(1, args.page ?? 1);
+    const limit = Math.min(100, Math.max(1, args.limit ?? 20));
+
+    const countRows = await applyRoutineRunFilters(db("job_results"), args, allowedIds).count(
+      "* as count",
+    );
+    const total = Number(countRows[0]?.count ?? 0);
+
+    const rows = await applyRoutineRunFilters(db("job_results"), args, allowedIds)
+      .select("job_results.*")
+      .orderBy("job_results.createdAt", "desc")
+      .offset((page - 1) * limit)
+      .limit(limit);
+
+    return {
+      items: rows.map((row: any) => mapRoutineRunRow(row, routineById)),
+      total,
+    };
+  };
+
+  resolvers.Query["routineRunsNeedingAttentionCount"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const routineById = await readableRoutines(db, user);
+    if (routineById.size === 0) {
+      return 0;
+    }
+    const rows = await db("job_results")
+      .where({ type: "workflow", state: JOB_STATUS_ENUM.waiting_approval })
+      .whereIn("workflow", [...routineById.keys()])
+      .count("* as count");
+    return Number(rows[0]?.count ?? 0);
+  };
+
+  resolvers.Mutation["cancelRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row, routine } = await loadRoutineRunForWrite(db, user, args.id);
+
+    const cancellable: string[] = [
+      JOB_STATUS_ENUM.waiting,
+      JOB_STATUS_ENUM.active,
+      JOB_STATUS_ENUM.waiting_approval,
+    ];
+    if (!cancellable.includes(row.state)) {
+      throw new Error(`Run is in state '${row.state}' and cannot be cancelled.`);
+    }
+
+    // Shared cancel path (spec §5.6): CAS to cancelled + best-effort BullMQ
+    // job removal + stream-active cleanup — the SAME helper session deletion
+    // (postprocessDeletion) uses. A lost CAS race after the check above is a
+    // silent no-op (the run reached a terminal state concurrently).
+    await cancelRoutineRunRow(db, row, ExuluQueues);
+
+    const updated = await db.from("job_results").where({ id: row.id }).first();
+    return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
+  resolvers.Mutation["retryRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row, routine } = await loadRoutineRunForWrite(db, user, args.id);
+
+    if (row.state !== JOB_STATUS_ENUM.failed && row.state !== JOB_STATUS_ENUM.cancelled) {
+      throw new Error(`Only failed or cancelled runs can be retried (state: '${row.state}').`);
+    }
+
+    const runMetadata = parseRunMetadata(row.metadata);
+    const queueName =
+      typeof runMetadata.queue_name === "string" ? runMetadata.queue_name : undefined;
+    const entry = queueName ? ExuluQueues.list.get(queueName) : undefined;
+    if (!entry) {
+      // Pre-migration rows have no bookkeeping — an honest error beats a guess.
+      throw new Error("No queue recorded for this run; it cannot be retried.");
+    }
+    const queueConfig = await entry.use();
+
+    const moved = await casJobResultState(
+      db,
+      row.id,
+      [JOB_STATUS_ENUM.failed, JOB_STATUS_ENUM.cancelled],
+      JOB_STATUS_ENUM.waiting,
+    );
+    if (!moved) {
+      throw new Error("Run state changed concurrently; retry aborted.");
+    }
+    await db.from("job_results").where({ id: row.id }).update({ error: null });
+
+    const runAs = (runMetadata.run_as ?? {}) as { user?: number; role?: string };
+    const jobData: BullMqJobData = {
+      label: `Workflow Run ${row.workflow}`,
+      trigger: "api",
+      timeoutInSeconds: queueConfig.timeoutInSeconds || 180,
+      type: "workflow",
+      workflow: row.workflow,
+      inputs: (runMetadata.inputs as Record<string, unknown>) ?? {},
+      user: runAs.user ?? user.id,
+      role: runAs.role ?? user.role?.id,
+      session: row.session ?? undefined,
+      jobResultId: row.id,
+      // Resume from the failed step (spec §6) — 0 for runs that never started.
+      resumeFromIndex:
+        typeof runMetadata.current_step_index === "number" ? runMetadata.current_step_index : 0,
+      triggerSource: (row.trigger as BullMqJobData["triggerSource"]) ?? undefined,
+      triggerMetadata: row.trigger_metadata ? parseRunMetadata(row.trigger_metadata) : undefined,
+    };
+    await queueConfig.queue.add("workflow_run", jobData, {
+      jobId: uuidv4(),
+      attempts: queueConfig.retries || 3,
+      removeOnComplete: 5000,
+      removeOnFail: 10000,
+      backoff: queueConfig.backoff || { type: "exponential", delay: 2000 },
+    });
+
+    const updated = await db.from("job_results").where({ id: row.id }).first();
+    return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
   resolvers.Mutation["runEval"] = async (_, args, context, info) => {
     console.log("[EXULU] /evals/run/:id", args.id);
 
@@ -2349,6 +2805,9 @@ enum JobStateEnum {
   ${JOB_STATUS_ENUM.completed}
   ${JOB_STATUS_ENUM.paused}
   ${JOB_STATUS_ENUM.stuck}
+  ${JOB_STATUS_ENUM.waiting_approval}
+  ${JOB_STATUS_ENUM.filtered}
+  ${JOB_STATUS_ENUM.cancelled}
 }
 
 type StatisticsResult {
