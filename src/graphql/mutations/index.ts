@@ -336,7 +336,9 @@ export function createMutations(
             entity: table.name.singular,
             target_resource_id: id,
             access_type: "Role",
-            role_id: user.role,
+            // auth.ts hydrates user.role into the full roles row when it
+            // exists; unhydrated it is still the uuid string.
+            role_id: user.role?.id ?? user.role,
             rights: "write",
           })
           .first();
@@ -355,7 +357,8 @@ export function createMutations(
             entity: table.name.singular,
             target_resource_id: id,
             access_type: "Team",
-            team_id: user.team,
+            // Same best-effort hydration as user.role above.
+            team_id: user.team?.id ?? user.team,
             rights: "write",
           })
           .first();
