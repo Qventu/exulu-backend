@@ -121,7 +121,12 @@ import {
   deriveFilename,
   contentHeadersFor,
 } from "./shared-artifacts.ts";
-import { publicAgentView } from "./public-agents.ts";
+import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
+import {
+  extractClientIp,
+  guestMessageTooLong,
+  guestRateLimitExceeded,
+} from "./guest-rate-limit.ts";
 import {
   resolveSkillByName,
   canAccessSkill,
@@ -874,14 +879,35 @@ Mood: friendly and intelligent.
 
       console.log("[EXULU] agent.rights_mode", agent.rights_mode);
       const authenticationResult = await requestValidators.authenticate(req);
-      if (!authenticationResult.user?.id && agent.rights_mode !== "public") {
+      const user = authenticationResult.user;
+
+      // Guest access (spec §3.4): run-only gate. Covers legacy
+      // rights_mode=public for anonymous callers and all guest_access modes.
+      const guestGate = await evaluateGuestChatAccess(
+        agent,
+        user?.id,
+        req.headers["x-guest-password"] as string | undefined,
+      );
+
+      if (!user?.id && !guestGate.allowed) {
         res
-          .status(authenticationResult.code || 500)
-          .json({ detail: `${authenticationResult.message}` });
+          .status(guestGate.status)
+          .json({ detail: guestGate.message });
         return;
       }
 
-      const user = authenticationResult.user;
+      if (!user?.id) {
+        // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
+        const ip = extractClientIp(req as any);
+        if (guestRateLimitExceeded(ip)) {
+          res.status(429).json({ detail: "Too many requests. Try again later." });
+          return;
+        }
+        if (guestMessageTooLong(req.body)) {
+          res.status(413).json({ detail: "Message too long." });
+          return;
+        }
+      }
 
       // API key scope check — early reject for agents-scoped keys with a clear message.
       const scopeCheck = checkApiKeyScope(user, instance);
@@ -890,7 +916,8 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+      const hasAccessToAgent =
+        guestGate.allowed || (await checkRecordAccess(agent, "read", user));
 
       if (!hasAccessToAgent) {
         res.status(401).json({
