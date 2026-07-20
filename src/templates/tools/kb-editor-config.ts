@@ -21,7 +21,11 @@ const permissionsSchema = z.object({
   update: z.boolean().catch(false).default(false),
 });
 
-const EMPTY: KbEditorConfig = { enabled: false, knowledgeBases: {}, skipApproval: false };
+const emptyConfig = (): KbEditorConfig => ({
+  enabled: false,
+  knowledgeBases: {},
+  skipApproval: false,
+});
 
 // Never throws. Malformed input degrades to "no writable contexts" — write
 // access must never appear by accident (inverse of the retrieval pipeline's
@@ -34,16 +38,16 @@ export const parseKbEditorConfig = (
     try {
       entries = JSON.parse(entries);
     } catch {
-      return { ...EMPTY };
+      return emptyConfig();
     }
   }
   if (!Array.isArray(entries)) {
-    return { ...EMPTY };
+    return emptyConfig();
   }
 
   const entry = (entries as ExuluAgentToolConfig[]).find((t) => t?.id === KB_EDITOR_TOOL_ID);
   if (!entry) {
-    return { ...EMPTY };
+    return emptyConfig();
   }
 
   const rawValue = (name: string): unknown => {
