@@ -1,7 +1,6 @@
 import Fuse from "fuse.js";
-import { generateText, Output } from "ai";
 import { z } from "zod";
-import { withRetry } from "@SRC/utils/with-retry";
+import { microCall } from "./micro-call";
 import { normalizeFileName } from "./text-utils";
 import { DEFAULT_PREFILTER_CUTOFF, type IdentifierSet, type KbKind } from "./config";
 import type { PhaseStep } from "./types";
@@ -322,24 +321,16 @@ export async function resolveIdentifierPins({
     identifierSets.map(async (set) => {
       if (!set.contexts.length) return;
       try {
-        const { output } = await withRetry(
-          () =>
-            generateText({
-              model,
-              temperature: 0,
-              system:
-                set.strategy === "exact" ? EXACT_EXTRACTION_PROMPT(set) : FUZZY_EXTRACTION_PROMPT(set),
-              messages: [{ role: "user", content: question }],
-              output: Output.object({
-                schema: z.object({
-                  hasMatches: z.boolean(),
-                  matches: z.array(z.string()).optional(),
-                }),
-              }),
-              maxOutputTokens: 300,
-            }),
-          3,
-        );
+        const { output } = await microCall({
+          model,
+          system:
+            set.strategy === "exact" ? EXACT_EXTRACTION_PROMPT(set) : FUZZY_EXTRACTION_PROMPT(set),
+          messages: [{ role: "user", content: question }],
+          schema: z.object({
+            hasMatches: z.boolean(),
+            matches: z.array(z.string()).optional(),
+          }),
+        });
         if (!output?.hasMatches || !output.matches?.length) return;
         steps.push({ text: `Detected ${set.name} in the question: ${output.matches.join(", ")}` });
 

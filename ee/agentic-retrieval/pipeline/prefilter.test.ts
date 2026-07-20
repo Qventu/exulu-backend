@@ -1,6 +1,7 @@
 import { fuzzyPrefilter, exactTokenPrefilter, resolveIdentifierPins, clearPrefilterCaches } from "./prefilter";
 
 jest.mock("ai", () => ({
+  ...jest.requireActual("ai"),
   generateText: jest.fn(),
   Output: { object: jest.fn((o) => o) },
 }));

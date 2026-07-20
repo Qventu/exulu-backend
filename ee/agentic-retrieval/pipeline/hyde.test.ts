@@ -1,6 +1,6 @@
 import { generateHydePassage, clearHydeCache } from "./hyde";
 
-jest.mock("ai", () => ({ generateText: jest.fn() }));
+jest.mock("ai", () => ({ ...jest.requireActual("ai"), generateText: jest.fn() }));
 import { generateText } from "ai";
 
 beforeEach(() => {

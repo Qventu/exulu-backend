@@ -1,6 +1,5 @@
-import { generateText, Output } from "ai";
 import { z } from "zod";
-import { withRetry } from "@SRC/utils/with-retry";
+import { microCall } from "./micro-call";
 import { singleSearch } from "./multi-query";
 import { fuzzyPrefilter } from "./prefilter";
 import { deriveKeywordVariants, normalizeFileName, stripSeparators } from "./text-utils";
@@ -219,35 +218,27 @@ export async function runMemoryPhase({
 
     let relevantMemoryChunks: Chunk[] = [];
     try {
-      const { output: output_relevant_memory } = await withRetry(
-        () =>
-          generateText({
-            model,
-            temperature: 0,
-            system: CHECK_MEMORIES_FOR_RELEVANT_INFORMATION,
-            messages: [
-              {
-                role: "user",
-                content: `
+      const { output: output_relevant_memory } = await microCall({
+        model,
+        system: CHECK_MEMORIES_FOR_RELEVANT_INFORMATION,
+        messages: [
+          {
+            role: "user",
+            content: `
             <user_question>${question}</user_question>
             <relevant_keywords>${keywords.join(", ")}</relevant_keywords>
             <important_keyword>${importantKeyword}</important_keyword>
             `,
-              },
-            ],
-            output: Output.object({
-              schema: z.object({
-                relevantChunkIds: z
-                  .array(z.string())
-                  .describe(
-                    "The chunk_ids (UUIDs at the start of each bullet) of chunks containing information relevant to the user's question. Empty array if none are relevant.",
-                  ),
-              }),
-            }),
-            maxOutputTokens: 400,
-          }),
-        3,
-      );
+          },
+        ],
+        schema: z.object({
+          relevantChunkIds: z
+            .array(z.string())
+            .describe(
+              "The chunk_ids (UUIDs at the start of each bullet) of chunks containing information relevant to the user's question. Empty array if none are relevant.",
+            ),
+        }),
+      });
 
       const ids = new Set(output_relevant_memory?.relevantChunkIds ?? []);
       relevantMemoryChunks =
@@ -360,50 +351,42 @@ export async function runMemoryPhase({
       const [overrideResult, fileResult, queryResult] = await Promise.all([
         // Override check: strict gate to decide if memory should be authoritative
         memoryConfig.override
-          ? withRetry(
-              () =>
-                generateText({
-                  model,
-                  temperature: 0,
-                  system: CHECK_MEMORY_OVERRIDE,
-                  messages: [
-                    {
-                      role: "user",
-                      content: `
+          ? microCall({
+              model,
+              system: CHECK_MEMORY_OVERRIDE,
+              messages: [
+                {
+                  role: "user",
+                  content: `
                   <user_question>${question}</user_question>
                   <relevant_keywords>${keywords.join(", ")}</relevant_keywords>
                   <important_keyword>${importantKeyword}</important_keyword>
                   `,
-                    },
-                  ],
-                  output: Output.object({
-                    schema: z.object({
-                      overrides: z
-                        .boolean()
-                        .describe(
-                          "True ONLY if a memory chunk directly and sufficiently answers the user's question and should be authoritative over the documents. Be strict; when unsure, false.",
-                        ),
-                      confidence: z
-                        .enum(["high", "medium", "low"])
-                        .describe(
-                          "Confidence that the selected memory chunk(s) fully and directly answer the question.",
-                        ),
-                      authoritativeChunkIds: z
-                        .array(z.string())
-                        .describe(
-                          "The chunk_ids of the memory chunk(s) that directly answer the question. Empty if overrides is false.",
-                        ),
-                      reason: z
-                        .string()
-                        .describe(
-                          "One short sentence: why this memory does or does not directly answer the question.",
-                        ),
-                    }),
-                  }),
-                  maxOutputTokens: 300,
-                }),
-              3,
-            ).catch(() => ({
+                },
+              ],
+              schema: z.object({
+                overrides: z
+                  .boolean()
+                  .describe(
+                    "True ONLY if a memory chunk directly and sufficiently answers the user's question and should be authoritative over the documents. Be strict; when unsure, false.",
+                  ),
+                confidence: z
+                  .enum(["high", "medium", "low"])
+                  .describe(
+                    "Confidence that the selected memory chunk(s) fully and directly answer the question.",
+                  ),
+                authoritativeChunkIds: z
+                  .array(z.string())
+                  .describe(
+                    "The chunk_ids of the memory chunk(s) that directly answer the question. Empty if overrides is false.",
+                  ),
+                reason: z
+                  .string()
+                  .describe(
+                    "One short sentence: why this memory does or does not directly answer the question.",
+                  ),
+              }),
+            }).catch(() => ({
               output: {
                 overrides: false,
                 confidence: "low",
@@ -422,24 +405,16 @@ export async function runMemoryPhase({
 
         // File prioritization: detect explicit document-pinning instructions in memory
         memoryConfig.filePrioritization
-          ? withRetry(
-              () =>
-                generateText({
-                  model,
-                  temperature: 0,
-                  system:
-                    "You are a helpful assistant that will strictly follow the user's instructions.",
-                  messages: [{ role: "user", content: PROMPT_EXTRACT_PRIORITIZED_FILES }],
-                  output: Output.object({
-                    schema: z.object({
-                      shouldPrioritizeFiles: z.boolean(),
-                      fileNameHints: z.array(z.string()).optional(),
-                    }),
-                  }),
-                  maxOutputTokens: 300,
-                }),
-              3,
-            ).catch(() => ({
+          ? microCall({
+              model,
+              system:
+                "You are a helpful assistant that will strictly follow the user's instructions.",
+              messages: [{ role: "user", content: PROMPT_EXTRACT_PRIORITIZED_FILES }],
+              schema: z.object({
+                shouldPrioritizeFiles: z.boolean(),
+                fileNameHints: z.array(z.string()).optional(),
+              }),
+            }).catch(() => ({
               output: { shouldPrioritizeFiles: false, fileNameHints: [] as string[] },
             }))
           : Promise.resolve({
@@ -448,25 +423,17 @@ export async function runMemoryPhase({
 
         // Query augmentation: expand keywords with synonyms/abbreviations from memory
         memoryConfig.queryAugmentation && hasAugmentationContent
-          ? withRetry(
-              () =>
-                generateText({
-                  model,
-                  temperature: 0,
-                  system:
-                    "You are a helpful assistant that will strictly follow the user's instructions.",
-                  messages: [{ role: "user", content: QUERY_AUGMENTATION_PROMPT }],
-                  output: Output.object({
-                    schema: z.object({
-                      updatedUserQuestion: z.string(),
-                      updatedRelevantKeywords: z.array(z.string()),
-                      updatedImportantKeyword: z.string(),
-                    }),
-                  }),
-                  maxOutputTokens: 600,
-                }),
-              3,
-            ).catch(() => ({
+          ? microCall({
+              model,
+              system:
+                "You are a helpful assistant that will strictly follow the user's instructions.",
+              messages: [{ role: "user", content: QUERY_AUGMENTATION_PROMPT }],
+              schema: z.object({
+                updatedUserQuestion: z.string(),
+                updatedRelevantKeywords: z.array(z.string()),
+                updatedImportantKeyword: z.string(),
+              }),
+            }).catch(() => ({
               output: {
                 updatedUserQuestion: question,
                 updatedRelevantKeywords: [],
