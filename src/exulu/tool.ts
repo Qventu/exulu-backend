@@ -8,7 +8,7 @@ import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
-import type { ExuluOauthConfig } from "./auth/types";
+import type { ExuluAuthConfig } from "./auth/types";
 import { validateAuthConfig } from "./auth/validate";
 import { authRegistry } from "./auth/registry";
 import { wrapExecuteWithOauth } from "./auth/wrap-execute";
@@ -40,7 +40,7 @@ export class ExuluTool {
   public type: ToolType;
   public tool: Tool;
   public needsApproval: boolean;
-  public oauth?: ExuluOauthConfig;
+  public authentication?: ExuluAuthConfig;
   public config: {
     name: string;
     description: string;
@@ -58,7 +58,7 @@ export class ExuluTool {
     execute,
     config,
     needsApproval,
-    oauth,
+    authentication,
   }: {
     id: string;
     name: string;
@@ -73,11 +73,13 @@ export class ExuluTool {
       default?: string | boolean | number | object;
     }[];
     needsApproval?: boolean;
-    // When set, Exulu wraps execute with the OAuth 2.0 authorization-code
-    // flow: execute only runs with a valid access token for the calling
-    // (toolId, userId) — injected as inputs.oauth — and otherwise
-    // short-circuits with an authorization URL the agent shows the user.
-    oauth?: ExuluOauthConfig;
+    // When set, Exulu wraps execute with the appropriate authentication flow:
+    // - oauth: 3-legged OAuth 2.0 (execute runs with a valid access token
+    //   for the calling (toolId, userId); short-circuits with an authorization
+    //   URL when no token exists).
+    // - user_credentials: user-supplied credentials collected in-chat and
+    //   stored per (provider, userId); wrap dispatch added in Phase 2.
+    authentication?: ExuluAuthConfig;
     // The AI SDK's wrapped tool.execute is invoked with (input, options),
     // where options carries fields like `toolCallId` and `messages`. We
     // expose `options` as a second arg so tools that need it (e.g.
@@ -105,11 +107,11 @@ export class ExuluTool {
         )}. The "agent" and "context" types are managed by Exulu internally and cannot be set on a tool.`,
       );
     }
-    if (oauth) {
-      validateAuthConfig(id, oauth);
-      authRegistry.register(id, oauth);
+    if (authentication) {
+      validateAuthConfig(id, authentication);
+      authRegistry.register(id, authentication);
     }
-    this.oauth = oauth;
+    this.authentication = authentication;
     this.id = id;
     this.config = config;
     this.needsApproval = needsApproval ?? true;
@@ -121,7 +123,7 @@ export class ExuluTool {
     this.tool = tool({
       description: description,
       inputSchema: inputSchema || z.object({}),
-      execute: oauth ? wrapExecuteWithOauth(id, oauth, execute) : execute,
+      execute: authentication?.authType === "oauth" ? wrapExecuteWithOauth(id, authentication, execute) : execute,
     });
   }
 
