@@ -1,6 +1,6 @@
 import type { Knex } from "knex";
 import { postgresClient } from "./client";
-import { coreSchemas } from "./core-schema";
+import { coreSchemas, userCredentialsSchema } from "./core-schema";
 import { mapType } from "@SRC/utils/map-types";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { encryptString, generateApiKey } from "@SRC/auth/generate-key";
@@ -35,7 +35,6 @@ const {
   promptFavoritesSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
-  oauthTokensSchema,
   sharedArtifactsSchema,
 } = coreSchemas.get();
 
@@ -90,7 +89,6 @@ const up = async function (knex: Knex) {
     promptFavoritesSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
-    oauthTokensSchema(),
     sharedArtifactsSchema(),
     rbacSchema(),
     agentsSchema(),
@@ -127,13 +125,11 @@ const up = async function (knex: Knex) {
     await createTable(schema);
   }
 
-  // OAuth tokens are keyed by (provider, user_id). No backfill is required —
-  // the feature had no production users when the key changed. DROP IF EXISTS
-  // handles dev installs that had the earlier tool_id-based index.
-  await knex.raw("DROP INDEX IF EXISTS oauth_tokens_tool_id_user_id_unique");
-  await knex.raw(
-    "CREATE UNIQUE INDEX IF NOT EXISTS oauth_tokens_provider_user_id_unique ON oauth_tokens (provider, user_id)",
-  );
+  // User credentials table replaces oauth_tokens. No backfill is required —
+  // the feature had no production users. DROP IF EXISTS with CASCADE handles
+  // dev installs that had the earlier oauth_tokens table.
+  await knex.raw("DROP TABLE IF EXISTS oauth_tokens CASCADE;");
+  await knex.raw(userCredentialsSchema());
 
   // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
   // DB-backed so webhook retries, intake-job retries, and Redis restarts can
