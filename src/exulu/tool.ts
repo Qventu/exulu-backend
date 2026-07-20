@@ -8,10 +8,10 @@ import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
-import type { ExuluOauthConfig } from "./oauth/types";
-import { validateOauthConfig } from "./oauth/validate";
-import { oauthRegistry } from "./oauth/registry";
-import { wrapExecuteWithOauth } from "./oauth/wrap-execute";
+import type { ExuluOauthConfig } from "./auth/types";
+import { validateOauthConfig } from "./auth/validate";
+import { oauthRegistry } from "./auth/registry";
+import { wrapExecuteWithOauth } from "./auth/wrap-execute";
 
 // Tool kinds a package consumer is allowed to declare. "function" is the
 // normal custom tool; "web_search" and "skill" are categorization hints that
