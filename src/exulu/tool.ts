@@ -11,7 +11,7 @@ import { resolveModel } from "./resolve-model";
 import type { ExuluAuthConfig } from "./auth/types";
 import { validateAuthConfig } from "./auth/validate";
 import { authRegistry } from "./auth/registry";
-import { wrapExecuteWithOauth } from "./auth/wrap-execute";
+import { wrapExecuteWithAuth } from "./auth/wrap-execute";
 
 // Tool kinds a package consumer is allowed to declare. "function" is the
 // normal custom tool; "web_search" and "skill" are categorization hints that
@@ -123,7 +123,7 @@ export class ExuluTool {
     this.tool = tool({
       description: description,
       inputSchema: inputSchema || z.object({}),
-      execute: authentication?.authType === "oauth" ? wrapExecuteWithOauth(id, authentication, execute) : execute,
+      execute: authentication ? wrapExecuteWithAuth(id, authentication, execute) : execute,
     });
   }
 
