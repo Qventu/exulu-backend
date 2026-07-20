@@ -62,11 +62,11 @@ export const evaluateGuestChatAccess = async (
   userId: string | number | undefined,
   guestPassword: string | undefined,
 ): Promise<GuestGate> => {
-  if (!userId && agent.rights_mode === "public") {
+  if (userId == null && agent.rights_mode === "public") {
     return { allowed: true, via: "rbac-public" };
   }
   if (agent.guest_access) {
-    if (userId) return { allowed: true, via: "guest" };
+    if (userId != null) return { allowed: true, via: "guest" };
     const mode = (agent.guest_auth_mode as GuestAuthMode) || "regular";
     if (mode === "public") return { allowed: true, via: "guest" };
     if (mode === "password") {
