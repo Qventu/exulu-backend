@@ -19,11 +19,7 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
   try {
     parsed = bodySchema.parse(req.body);
   } catch (caught) {
-    let detail = "Invalid request body";
-    if (caught instanceof z.ZodError && Array.isArray(caught.errors) && caught.errors.length > 0) {
-      detail = caught.errors[0].message;
-    }
-    res.status(400).json({ detail });
+    res.status(400).json({ ok: false, error: "invalid body" });
     return;
   }
 
@@ -33,9 +29,10 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
   let nonceData;
   try {
     nonceData = verifyCredentialNonce(nonce);
-  } catch {
+  } catch (e: any) {
     res.status(401).json({
-      detail: "Invalid or expired nonce",
+      ok: false,
+      error: /expired/i.test(e.message) ? "nonce expired" : "nonce invalid",
     });
     return;
   }
@@ -43,7 +40,8 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
   const config = authRegistry.getByProvider(nonceData.provider);
   if (!config || config.authType !== "user_credentials") {
     res.status(400).json({
-      detail: `No user_credentials configuration for provider "${nonceData.provider}"`,
+      ok: false,
+      error: "provider is not a user_credentials provider",
     });
     return;
   }
@@ -54,7 +52,8 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
 
   if (expectedFields.size !== submittedFields.size || [...expectedFields].some((f) => !submittedFields.has(f))) {
     res.status(400).json({
-      detail: "Submitted fields do not match expected fields",
+      ok: false,
+      error: "field set mismatch",
     });
     return;
   }
@@ -63,9 +62,10 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
   if (config.validate) {
     try {
       await config.validate(values);
-    } catch (caught) {
+    } catch (e: any) {
       res.status(400).json({
-        detail: caught instanceof Error ? caught.message : "Validation failed",
+        ok: false,
+        error: `validation failed: ${e.message}`,
       });
       return;
     }

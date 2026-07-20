@@ -93,7 +93,8 @@ describe("handleCredentialSubmit", () => {
     await handleCredentialSubmit(req, res);
 
     expect(res.statusCode).toBe(400);
-    expect(res.body?.detail).toBeDefined();
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("invalid body");
   });
 
   it("returns 401 for invalid or expired nonce", async () => {
@@ -107,7 +108,8 @@ describe("handleCredentialSubmit", () => {
     await handleCredentialSubmit(req, res);
 
     expect(res.statusCode).toBe(401);
-    expect(res.body?.detail).toBe("Invalid or expired nonce");
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("nonce expired");
   });
 
   it("returns 400 when provider is not user_credentials", async () => {
@@ -119,7 +121,8 @@ describe("handleCredentialSubmit", () => {
     await handleCredentialSubmit(req, res);
 
     expect(res.statusCode).toBe(400);
-    expect(res.body?.detail).toContain("No user_credentials configuration");
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("provider is not a user_credentials provider");
   });
 
   it("returns 400 when submitted fields do not match expected fields", async () => {
@@ -138,7 +141,8 @@ describe("handleCredentialSubmit", () => {
     await handleCredentialSubmit(req, res);
 
     expect(res.statusCode).toBe(400);
-    expect(res.body?.detail).toContain("Submitted fields do not match expected fields");
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("field set mismatch");
   });
 
   it("returns 400 when validation hook fails", async () => {
@@ -158,7 +162,8 @@ describe("handleCredentialSubmit", () => {
     await handleCredentialSubmit(req, res);
 
     expect(res.statusCode).toBe(400);
-    expect(res.body?.detail).toBe("Invalid credentials");
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("validation failed: Invalid credentials");
     expect(mockValidate).toHaveBeenCalledWith({ username: "alice", password: "secret" });
     expect(mockUpsert).not.toHaveBeenCalled();
   });
