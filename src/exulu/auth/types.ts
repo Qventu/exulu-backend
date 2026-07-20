@@ -11,7 +11,8 @@
  * declared in code (source them from env vars or however you like) — none of
  * them are exposed as admin-configurable tool config.
  */
-export type ExuluOauthConfig = {
+export interface ExuluOauthConfig {
+  authType: "oauth";
   /**
    * Identifier for the OAuth provider (e.g., "google", "jira", "github").
    * Tools sharing the same provider share tokens under (provider, userId) —
@@ -19,7 +20,7 @@ export type ExuluOauthConfig = {
    * omitted, defaults to the tool's `id`, preserving per-tool behavior for
    * tools that don't opt in.
    */
-  provider?: string;
+  provider: string;
   /** The provider's authorization endpoint, e.g. https://app.hubspot.com/oauth/authorize */
   authorizationUrl: string;
   /** The provider's token endpoint, e.g. https://api.hubapi.com/oauth/v1/token */
@@ -28,7 +29,7 @@ export type ExuluOauthConfig = {
   /** Never leaves the server: used only in the server-side token exchange. */
   clientSecret: string;
   /** Scopes to request; joined with spaces in the authorization URL. */
-  scopes: string[];
+  scopes: readonly string[];
   /** PKCE (S256). Defaults to true; set false for providers that reject PKCE. */
   pkce?: boolean;
   /**
@@ -37,7 +38,30 @@ export type ExuluOauthConfig = {
    * refresh token.
    */
   extraAuthParams?: Record<string, string>;
-};
+}
+
+export interface CredentialField {
+  name: string;
+  label: string;
+  type: "text" | "password";
+  placeholder?: string;
+  help?: string;
+}
+
+export interface ExuluUserCredentialsConfig {
+  authType: "user_credentials";
+  provider: string;
+  fields: CredentialField[];
+  validate?: (values: Record<string, string>) => Promise<void>;
+}
+
+export type ExuluAuthConfig = ExuluOauthConfig | ExuluUserCredentialsConfig;
+
+export interface ExuluCredentialsToolContext {
+  userId: string;
+  provider: string;
+  credentials: Record<string, string>;
+}
 
 /** The oauth context injected into an oauth-enabled tool's execute inputs. */
 export type ExuluOauthToolContext = {
