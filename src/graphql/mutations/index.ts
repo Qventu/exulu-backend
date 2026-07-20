@@ -22,6 +22,7 @@ import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
+import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 
 const postprocessDeletion = async ({
   table,
@@ -485,6 +486,10 @@ export function createMutations(
         console.log("[EXULU] Hashed password", input.password);
       }
 
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
+      }
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -576,6 +581,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if
@@ -691,6 +700,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if

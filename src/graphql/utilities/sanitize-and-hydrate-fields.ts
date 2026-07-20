@@ -430,6 +430,11 @@ export const finalizeRequestedFields = async ({
       if (!requestedFields.includes("provider")) {
         delete result.provider;
       }
+      if (requestedFields.includes("guest_has_password")) {
+        result.guest_has_password = !!result.guest_password_hash;
+      }
+      // Never let the hash column reach a payload, requested or not.
+      delete result.guest_password_hash;
     }
     if (BUDGET_ENTITY_SINGULARS.has(table.name.singular)) {
       result = await addBudgetField(requestedFields, result, table.name.singular, user);
