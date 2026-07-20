@@ -39,4 +39,28 @@ describe("applyAgentGuestFieldTransforms", () => {
     const out = await applyAgentGuestFieldTransforms({ name: "y", active: true });
     expect(out).toEqual({ name: "y", active: true });
   });
+
+  test("rejects invalid guest_auth_mode with a descriptive error", async () => {
+    await expect(
+      applyAgentGuestFieldTransforms({ guest_auth_mode: "open" }),
+    ).rejects.toThrow('guest_auth_mode must be "public", "password", or "regular".');
+  });
+
+  test("accepts valid guest_auth_mode values without throwing", async () => {
+    await expect(
+      applyAgentGuestFieldTransforms({ guest_auth_mode: "public" }),
+    ).resolves.not.toThrow();
+    await expect(
+      applyAgentGuestFieldTransforms({ guest_auth_mode: "password" }),
+    ).resolves.not.toThrow();
+    await expect(
+      applyAgentGuestFieldTransforms({ guest_auth_mode: "regular" }),
+    ).resolves.not.toThrow();
+  });
+
+  test("undefined guest_auth_mode does not throw", async () => {
+    await expect(
+      applyAgentGuestFieldTransforms({ name: "z" }),
+    ).resolves.not.toThrow();
+  });
 });
