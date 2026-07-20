@@ -90,7 +90,11 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     .filter((enumDef) => enumDef !== null)
     .join("\n");
 
-  let fields = table.fields.map((field) => {
+  // guest_password_hash is a DB column but never a GraphQL field (spec §7).
+  const graphqlFields = table.fields.filter(
+    (field) => field.name !== "guest_password_hash",
+  );
+  let fields = graphqlFields.map((field) => {
     let type: string;
     type = mapExuluFieldTypesToGraphqlTypes(field);
     const required = field.required ? "!" : "";
@@ -113,6 +117,7 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     fields.push("  systemInstructions: String");
     fields.push("  workflows: AgentWorkflows");
     fields.push("  slug: String");
+    fields.push("  guest_has_password: Boolean");
   }
 
   if (table.name.singular === "workflow_template") {
@@ -142,9 +147,12 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Add RBAC input field if enabled
   const rbacInputField = table.RBAC ? "  RBAC: RBACInput" : "";
 
+  const inputExtra =
+    table.name.singular === "agent" ? "  guest_password: String" : "";
   const inputDef = `
   input ${table.name.singular}Input {
-  ${table.fields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
+  ${graphqlFields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
+  ${inputExtra}
   ${rbacInputField}
   }
   `;
@@ -152,8 +160,15 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   return enumDefs + typeDef + inputDef;
 }
 
-function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
-  const fieldFilters = table.fields.map((field) => {
+export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
+  // Mirror the same exclusion applied in createExuluContextsTypeDefs (spec §7):
+  // guest_password_hash must never appear in any generated Filter input type
+  // because a queryable filter criterion would allow clients to use boolean /
+  // timing oracles to enumerate or probe stored bcrypt hashes.
+  const filterFields = table.fields.filter(
+    (field) => field.name !== "guest_password_hash",
+  );
+  const fieldFilters = filterFields.map((field) => {
     let type: string;
     if (field.type === "enum" && field.enumValues) {
       type = `${field.name}Enum`;
@@ -170,7 +185,7 @@ function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string 
     table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
   // Create enum-specific filter operators
-  enumFilterOperators = table.fields
+  enumFilterOperators = filterFields
     .filter((field) => field.type === "enum" && field.enumValues)
     .map((field) => {
       const enumTypeName = `${field.name}Enum`;

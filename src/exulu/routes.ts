@@ -121,6 +121,12 @@ import {
   deriveFilename,
   contentHeadersFor,
 } from "./shared-artifacts.ts";
+import { publicAgentView, evaluateGuestChatAccess } from "./public-agents.ts";
+import {
+  extractClientIp,
+  guestMessageTooLong,
+  guestRateLimitExceeded,
+} from "./guest-rate-limit.ts";
 import {
   resolveSkillByName,
   canAccessSkill,
@@ -873,14 +879,37 @@ Mood: friendly and intelligent.
 
       console.log("[EXULU] agent.rights_mode", agent.rights_mode);
       const authenticationResult = await requestValidators.authenticate(req);
-      if (!authenticationResult.user?.id && agent.rights_mode !== "public") {
-        res
-          .status(authenticationResult.code || 500)
-          .json({ detail: `${authenticationResult.message}` });
-        return;
+      const user = authenticationResult.user;
+
+      // Anonymous guest traffic: per-IP rate limits + message caps (§3.5).
+      // These run BEFORE the password gate so every attempt (including failed
+      // password guesses) consumes limiter budget — prevents bcrypt oracle.
+      if (!user?.id) {
+        const ip = extractClientIp(req as any);
+        if (guestRateLimitExceeded(ip)) {
+          res.status(429).json({ detail: "Too many requests. Try again later." });
+          return;
+        }
+        if (guestMessageTooLong(req.body)) {
+          res.status(413).json({ detail: "Message too long." });
+          return;
+        }
       }
 
-      const user = authenticationResult.user;
+      // Guest access (spec §3.4): run-only gate. Covers legacy
+      // rights_mode=public for anonymous callers and all guest_access modes.
+      const guestGate = await evaluateGuestChatAccess(
+        agent,
+        user?.id,
+        req.headers["x-guest-password"] as string | undefined,
+      );
+
+      if (!user?.id && !guestGate.allowed) {
+        res
+          .status(guestGate.status)
+          .json({ detail: guestGate.message });
+        return;
+      }
 
       // API key scope check — early reject for agents-scoped keys with a clear message.
       const scopeCheck = checkApiKeyScope(user, instance);
@@ -889,7 +918,8 @@ Mood: friendly and intelligent.
         return;
       }
 
-      const hasAccessToAgent = await checkRecordAccess(agent, "read", user);
+      const hasAccessToAgent =
+        guestGate.allowed || (await checkRecordAccess(agent, "read", user));
 
       if (!hasAccessToAgent) {
         res.status(401).json({
@@ -5158,6 +5188,127 @@ Mood: friendly and intelligent.
     if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
     res.send(bytes);
   });
+
+  // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------
+  // Unauthenticated by design: only whitelisted fields ever leave here, and
+  // every handler re-checks guest_access so unpublishing is immediate.
+
+  const resolvePublicAgentSlug = async (
+    agentModel: string | null | undefined,
+  ): Promise<string> => {
+    // Mirrors the computed agent.slug in
+    // graphql/utilities/sanitize-and-hydrate-fields.ts (~line 125).
+    if (isLiteLLMEnabled()) return "/agents/litellm/run";
+    if (!agentModel) return "";
+    const { db } = await postgresClient();
+    const modelRow = await db.from("models").where({ id: agentModel }).first();
+    const provider = modelRow?.provider
+      ? providers.find((a) => a.id === modelRow.provider)
+      : undefined;
+    return (provider?.slug as string) || "";
+  };
+
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const getGuestAgentById = async (id: string) => {
+    // Reject non-UUID ids immediately — the DB uuid cast would throw a 500.
+    if (!UUID_RE.test(id)) return undefined;
+    const { db } = await postgresClient();
+    return db
+      .from("agents")
+      .where({ id, guest_access: true, active: true })
+      .first();
+  };
+
+  app.get("/public-agents", async (_req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const rows = await db
+      .from("agents")
+      .where({ guest_access: true, active: true })
+      .select(
+        "id",
+        "name",
+        "description",
+        "image",
+        "welcomemessage",
+        "model",
+        "guest_auth_mode",
+        "guest_cover_image",
+      );
+    const views = await Promise.all(
+      rows.map(async (row) =>
+        publicAgentView(row, await resolvePublicAgentSlug(row.model)),
+      ),
+    );
+    res.json(views);
+  });
+
+  app.get("/public-agents/:id/meta", async (req: Request, res: Response) => {
+    const row = await getGuestAgentById(req.params.id ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    res.json(publicAgentView(row, await resolvePublicAgentSlug(row.model)));
+  });
+
+  app.get("/public-agents/:id/cover", async (req: Request, res: Response) => {
+    const row = await getGuestAgentById(req.params.id ?? "");
+    if (!row?.guest_cover_image) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await getS3ObjectBytes(row.guest_cover_image, config);
+    } catch (e: any) {
+      if (
+        e?.name === "NoSuchKey" ||
+        e?.name === "NotFound" ||
+        e?.$metadata?.httpStatusCode === 404
+      ) {
+        res.status(404).json({ detail: "Cover not found." });
+        return;
+      }
+      console.error("[EXULU] public-agent cover read failed", e);
+      res.status(500).json({ detail: "Failed to read cover." });
+      return;
+    }
+    const ext = row.guest_cover_image.split(".").pop()?.toLowerCase();
+    const contentType =
+      ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(bytes);
+  });
+
+  app.post(
+    "/public-agents/:id/verify-password",
+    async (req: Request, res: Response) => {
+      // Rate-limit before any DB lookup or bcrypt compare (spec §3.5).
+      const ip = extractClientIp(req as any);
+      if (guestRateLimitExceeded(ip)) {
+        res.status(429).json({ detail: "Too many requests. Try again later." });
+        return;
+      }
+      const row = await getGuestAgentById(req.params.id ?? "");
+      if (!row || row.guest_auth_mode !== "password") {
+        res.status(404).json({ detail: "Not found." });
+        return;
+      }
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (
+        !row.guest_password_hash ||
+        !(await verifySharePassword(password, row.guest_password_hash))
+      ) {
+        res.status(401).json({ detail: "Incorrect password." });
+        return;
+      }
+      res.status(204).end();
+    },
+  );
 
   app.use(express.static("public"));
 

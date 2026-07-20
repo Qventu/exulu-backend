@@ -286,7 +286,30 @@ const agentsSchema: ExuluTableDefinition = {
       // (DEFAULT_MAX_STEPS in resolve-max-steps.ts). Auto-ALTERed on boot.
       name: "max_tool_steps",
       type: "number",
-    }
+    },
+    {
+      name: "guest_access",
+      type: "boolean",
+      default: false,
+    },
+    {
+      name: "guest_auth_mode",
+      type: "text",
+      default: "regular", // 'public' | 'password' | 'regular' (= login)
+    },
+    {
+      // bcrypt hash (hashSharePassword); NEVER exposed via GraphQL/REST —
+      // see sanitizeRequestedFields + createExuluContextsTypeDefs filtering.
+      name: "guest_password_hash",
+      type: "text",
+      required: false,
+    },
+    {
+      // S3 key of the custom login-page image shown on the public auth page.
+      name: "guest_cover_image",
+      type: "text",
+      required: false,
+    },
   ],
 };
 
