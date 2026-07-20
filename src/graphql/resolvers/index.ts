@@ -11,6 +11,7 @@ import { getRequestedFields } from "./utils";
 import { Knex as KnexType } from "knex";
 import type { User } from "@EXULU_TYPES/models/user";
 import { applySorting } from "./apply-sorting";
+import { assertAllowedField } from "./field-allow-list";
 import { applyFilters } from "./apply-filters";
 import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
@@ -69,7 +70,7 @@ export const itemsPaginationRequest = async ({
   dataQuery = applyFilters(dataQuery, filters, table);
   dataQuery = applyAccessControl(table, dataQuery, user);
 
-  dataQuery = applySorting(dataQuery, sort);
+  dataQuery = applySorting(dataQuery, sort, undefined, table);
   if (page > 1) {
     dataQuery = dataQuery.offset((page - 1) * limit);
   }
@@ -251,7 +252,7 @@ export function createQueries(
       let query = db.from(tableNamePlural).select(sanitizedFields);
       query = applyFilters(query, filters, table);
       query = applyAccessControl(table, query, context.user);
-      query = applySorting(query, sort);
+      query = applySorting(query, sort, undefined, table);
       let result = await query.first();
       // todo add coding based agents
       return finalizeRequestedFields({
@@ -308,6 +309,7 @@ export function createQueries(
 
       // Group by the specified field and count
       if (groupBy) {
+        assertAllowedField(table, groupBy, "group");
         query = query.select(groupBy).groupBy(groupBy);
 
         // if table is tracking, then instead of counting we sum the total column
