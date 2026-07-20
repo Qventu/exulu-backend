@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { oauthRegistry } from "./registry";
+import { authRegistry } from "./registry";
 import { decryptOauthState, exchangeCodeForTokens, type OauthTokenRecord } from "./flow";
 import { credentialStore } from "./credential-store";
 
@@ -77,12 +77,19 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
     );
   }
 
-  const config = oauthRegistry.getByProvider(parsed.provider);
+  const config = authRegistry.getByProvider(parsed.provider);
   if (!config) {
     return send(
       404,
       false,
       `No OAuth configuration is registered for provider "${parsed.provider}".`,
+    );
+  }
+  if (config.authType !== "oauth") {
+    return send(
+      500,
+      false,
+      `Provider "${parsed.provider}" is not configured for OAuth. This callback only handles OAuth flows.`,
     );
   }
 

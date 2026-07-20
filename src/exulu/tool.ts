@@ -10,7 +10,7 @@ import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
 import type { ExuluOauthConfig } from "./auth/types";
 import { validateOauthConfig } from "./auth/validate";
-import { oauthRegistry } from "./auth/registry";
+import { authRegistry } from "./auth/registry";
 import { wrapExecuteWithOauth } from "./auth/wrap-execute";
 
 // Tool kinds a package consumer is allowed to declare. "function" is the
@@ -107,7 +107,7 @@ export class ExuluTool {
     }
     if (oauth) {
       validateOauthConfig(id, oauth);
-      oauthRegistry.register(id, oauth);
+      authRegistry.register(id, oauth);
     }
     this.oauth = oauth;
     this.id = id;

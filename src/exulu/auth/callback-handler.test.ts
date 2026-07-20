@@ -16,9 +16,10 @@ jest.mock("./credential-store", () => ({
 }));
 
 import { handleOauthCallback } from "./callback-handler";
-import { oauthRegistry } from "./registry";
+import { authRegistry, __resetAuthRegistryForTests } from "./registry";
 
 const config: ExuluOauthConfig = {
+  authType: "oauth",
   authorizationUrl: "https://provider.example.com/oauth/authorize",
   tokenUrl: "https://provider.example.com/oauth/token",
   clientId: "client-id",
@@ -47,7 +48,8 @@ const makeReq = (query: Record<string, any>) => ({ query }) as any;
 
 beforeEach(() => {
   jest.resetAllMocks();
-  oauthRegistry.register("my_tool", config);
+  __resetAuthRegistryForTests();
+  authRegistry.register("my_tool", config);
 });
 
 describe("handleOauthCallback", () => {

@@ -1,7 +1,8 @@
-import type { ExuluOauthConfig } from "./types";
-import { __resetOauthRegistryForTests, oauthRegistry } from "./registry";
+import type { ExuluAuthConfig } from "./types";
+import { __resetAuthRegistryForTests, authRegistry } from "./registry";
 
-const baseConfig: ExuluOauthConfig = {
+const baseConfig: ExuluAuthConfig = {
+  authType: "oauth",
   authorizationUrl: "https://auth.example/authorize",
   tokenUrl: "https://auth.example/token",
   clientId: "cid",
@@ -10,36 +11,36 @@ const baseConfig: ExuluOauthConfig = {
 };
 
 beforeEach(() => {
-  __resetOauthRegistryForTests();
+  __resetAuthRegistryForTests();
 });
 
-describe("oauthRegistry.register", () => {
+describe("authRegistry.register", () => {
   it("registers a config keyed by toolId when provider is absent", () => {
-    oauthRegistry.register("solo_tool", baseConfig);
-    expect(oauthRegistry.getByTool("solo_tool")).toBe(baseConfig);
-    expect(oauthRegistry.getByProvider("solo_tool")).toBe(baseConfig);
+    authRegistry.register("solo_tool", baseConfig);
+    expect(authRegistry.getByTool("solo_tool")).toBe(baseConfig);
+    expect(authRegistry.getByProvider("solo_tool")).toBe(baseConfig);
   });
 
   it("registers a config keyed by provider when set", () => {
-    const cfg = { ...baseConfig, provider: "jira" };
-    oauthRegistry.register("jira_search", cfg);
-    expect(oauthRegistry.getByProvider("jira")).toBe(cfg);
-    expect(oauthRegistry.getByTool("jira_search")).toBe(cfg);
+    const cfg: ExuluAuthConfig = { ...baseConfig, provider: "jira" };
+    authRegistry.register("jira_search", cfg);
+    expect(authRegistry.getByProvider("jira")).toBe(cfg);
+    expect(authRegistry.getByTool("jira_search")).toBe(cfg);
   });
 
   it("shares a registry entry between two tools with the same provider and identical config", () => {
-    const cfg = { ...baseConfig, provider: "jira" };
-    oauthRegistry.register("jira_search", cfg);
-    oauthRegistry.register("jira_get", { ...cfg });
-    expect(oauthRegistry.getByTool("jira_search")).toBeDefined();
-    expect(oauthRegistry.getByTool("jira_get")).toBeDefined();
-    expect(oauthRegistry.getByProvider("jira")).toBeDefined();
+    const cfg: ExuluAuthConfig = { ...baseConfig, provider: "jira" };
+    authRegistry.register("jira_search", cfg);
+    authRegistry.register("jira_get", { ...cfg });
+    expect(authRegistry.getByTool("jira_search")).toBeDefined();
+    expect(authRegistry.getByTool("jira_get")).toBeDefined();
+    expect(authRegistry.getByProvider("jira")).toBeDefined();
   });
 
   it("throws when a second tool on the same provider disagrees on clientId", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         clientId: "different",
@@ -48,9 +49,9 @@ describe("oauthRegistry.register", () => {
   });
 
   it("throws when a second tool on the same provider disagrees on clientSecret", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         clientSecret: "different",
@@ -59,9 +60,9 @@ describe("oauthRegistry.register", () => {
   });
 
   it("throws when a second tool on the same provider disagrees on authorizationUrl", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         authorizationUrl: "https://other.example/authorize",
@@ -70,9 +71,9 @@ describe("oauthRegistry.register", () => {
   });
 
   it("throws when a second tool on the same provider disagrees on tokenUrl", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         tokenUrl: "https://other.example/token",
@@ -81,9 +82,9 @@ describe("oauthRegistry.register", () => {
   });
 
   it("throws when a second tool on the same provider declares a different scope set", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         scopes: ["read:a"],
@@ -92,13 +93,13 @@ describe("oauthRegistry.register", () => {
   });
 
   it("scope comparison is order-insensitive", () => {
-    oauthRegistry.register("jira_search", {
+    authRegistry.register("jira_search", {
       ...baseConfig,
       provider: "jira",
       scopes: ["read:a", "write:b"],
     });
     expect(() =>
-      oauthRegistry.register("jira_get", {
+      authRegistry.register("jira_get", {
         ...baseConfig,
         provider: "jira",
         scopes: ["write:b", "read:a"],
@@ -107,10 +108,45 @@ describe("oauthRegistry.register", () => {
   });
 
   it("re-registering the same toolId with identical config is a no-op", () => {
-    oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
+    authRegistry.register("jira_search", { ...baseConfig, provider: "jira" });
     expect(() =>
-      oauthRegistry.register("jira_search", { ...baseConfig, provider: "jira" }),
+      authRegistry.register("jira_search", { ...baseConfig, provider: "jira" }),
     ).not.toThrow();
   });
 
+  // user_credentials: two tools sharing a provider with identical fields
+  it("shares a registry entry between two user_credentials tools with the same provider and identical fields", () => {
+    const fields = [{ name: "api_key", label: "API Key", type: "password" as const }];
+    const cfg1: ExuluAuthConfig = { authType: "user_credentials", provider: "moco", fields };
+    const cfg2: ExuluAuthConfig = { authType: "user_credentials", provider: "moco", fields: [...fields] };
+    authRegistry.register("moco_projects", cfg1);
+    authRegistry.register("moco_activities", cfg2);
+    expect(authRegistry.getByTool("moco_projects")).toBe(cfg1);
+    expect(authRegistry.getByTool("moco_activities")).toBe(cfg1); // shared entry — returns first registered
+    expect(authRegistry.getByProvider("moco")).toBe(cfg1);
+  });
+
+  it("throws when a user_credentials tool registers with different fields than the existing provider entry", () => {
+    const fields = [{ name: "api_key", label: "API Key", type: "password" as const }];
+    authRegistry.register("moco_projects", { authType: "user_credentials", provider: "moco", fields });
+    expect(() =>
+      authRegistry.register("moco_extra", {
+        authType: "user_credentials",
+        provider: "moco",
+        fields: [{ name: "api_key", label: "API Key", type: "password" }, { name: "subdomain", label: "Subdomain", type: "text" }],
+      }),
+    ).toThrow(/user_credentials\.fields disagrees.*provider "moco"/);
+  });
+
+  // authType mismatch: one oauth, one user_credentials on the same provider
+  it("throws when two tools on the same provider disagree on authType", () => {
+    authRegistry.register("shared_oauth", { ...baseConfig, provider: "mixed_provider" });
+    expect(() =>
+      authRegistry.register("shared_creds", {
+        authType: "user_credentials",
+        provider: "mixed_provider",
+        fields: [{ name: "key", label: "Key", type: "password" }],
+      }),
+    ).toThrow(/auth\.authType 'user_credentials' disagrees.*authType 'oauth'/);
+  });
 });
