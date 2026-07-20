@@ -214,3 +214,5 @@ export const ExuluPython = {
   validate: validatePythonEnvironment,
   instructions: getPythonSetupInstructions,
 }
+
+export { CredentialInvalidError } from "./exulu/auth/errors";
