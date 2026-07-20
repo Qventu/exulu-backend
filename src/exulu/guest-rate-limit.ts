@@ -20,6 +20,7 @@ interface WindowState {
   minuteCount: number;
   hourStart: number;
   hourCount: number;
+  lastSeen: number;
 }
 
 let windows = new Map<string, WindowState>();
@@ -37,6 +38,7 @@ export const guestRateLimitExceeded = (
     minuteCount: 0,
     hourStart: now,
     hourCount: 0,
+    lastSeen: now,
   };
   if (now - state.minuteStart >= MINUTE_MS) {
     state.minuteStart = now;
@@ -48,11 +50,13 @@ export const guestRateLimitExceeded = (
   }
   state.minuteCount += 1;
   state.hourCount += 1;
+  state.lastSeen = now;
   windows.set(ip, state);
   // Bound memory: drop stale IPs opportunistically once the map grows.
+  // Deleting from a Map during for...of iteration is safe in V8/Node.
   if (windows.size > 10_000) {
     for (const [key, value] of windows) {
-      if (now - value.hourStart >= HOUR_MS) windows.delete(key);
+      if (now - value.lastSeen >= HOUR_MS) windows.delete(key);
     }
   }
   return state.minuteCount > perMinuteLimit() || state.hourCount > perHourLimit();
