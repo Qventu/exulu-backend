@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { exuluApp } from "./app/singleton";
 import { resolveModel } from "./resolve-model";
 import type { ExuluOauthConfig } from "./auth/types";
-import { validateOauthConfig } from "./auth/validate";
+import { validateAuthConfig } from "./auth/validate";
 import { authRegistry } from "./auth/registry";
 import { wrapExecuteWithOauth } from "./auth/wrap-execute";
 
@@ -106,7 +106,7 @@ export class ExuluTool {
       );
     }
     if (oauth) {
-      validateOauthConfig(id, oauth);
+      validateAuthConfig(id, oauth);
       authRegistry.register(id, oauth);
     }
     this.oauth = oauth;
