@@ -303,6 +303,7 @@ const agentsSchema: ExuluTableDefinition = {
       name: "guest_password_hash",
       type: "text",
       required: false,
+      hidden: true,
     },
     {
       // S3 key of the custom login-page image shown on the public auth page.
@@ -428,6 +429,7 @@ const usersSchema: ExuluTableDefinition = {
     {
       name: "temporary_token",
       type: "text",
+      hidden: true,
     },
     {
       name: "type",
@@ -454,6 +456,7 @@ const usersSchema: ExuluTableDefinition = {
     {
       name: "apikey",
       type: "text",
+      hidden: true,
     },
     {
       name: "scope_mode",
@@ -471,10 +474,12 @@ const usersSchema: ExuluTableDefinition = {
     {
       name: "password",
       type: "text",
+      hidden: true,
     },
     {
       name: "anthropic_token",
       type: "text",
+      hidden: true,
     },
     {
       name: "personal_system_prompt",
@@ -731,7 +736,7 @@ const sharedArtifactsSchema: ExuluTableDefinition = {
     { name: "name", type: "text", index: true, unique: true, required: true },
     { name: "s3key", type: "text", required: true },
     { name: "auth_mode", type: "text", default: "regular" },
-    { name: "password_hash", type: "text", required: false }, // bcrypt; password mode only
+    { name: "password_hash", type: "text", required: false, hidden: true }, // bcrypt; password mode only
     { name: "expires_at", type: "date", required: false }, // null = no expiry
     { name: "content_type", type: "text", required: false },
   ],

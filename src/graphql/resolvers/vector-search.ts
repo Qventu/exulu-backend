@@ -210,7 +210,7 @@ export const vectorSearch = async ({
   chunksQuery = applyFilters(chunksQuery, itemFilters, table, "items");
   chunksQuery = applyFilters(chunksQuery, chunkFilters, table, "chunks");
   chunksQuery = applyAccessControl(table, chunksQuery, user, "items");
-  chunksQuery = applySorting(chunksQuery, sort, "items");
+  chunksQuery = applySorting(chunksQuery, sort, "items", table);
 
   // Restrict to chunks mentioning the requested entities (agent exploration).
   if (filterEntityIds) {
