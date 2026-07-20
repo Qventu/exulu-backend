@@ -2,7 +2,7 @@
 // key "email_inbound". The Mailgun HTTP webhook signing key is AES-encrypted
 // at rest with the same crypto as oauth_tokens and is write-only via the API
 // (GraphQL only ever exposes has_signing_key).
-import { decrypt, encrypt } from "@SRC/exulu/auth/token-store";
+import { decrypt, encrypt } from "@SRC/exulu/auth/credential-store";
 
 export const EMAIL_INBOUND_CONFIG_KEY = "email_inbound";
 

@@ -9,8 +9,8 @@ jest.mock("./flow", () => ({
   exchangeCodeForTokens: (...args: any[]) => mockExchangeCodeForTokens(...args),
 }));
 
-jest.mock("./token-store", () => ({
-  oauthTokenStore: {
+jest.mock("./credential-store", () => ({
+  credentialStore: {
     upsert: (...args: any[]) => mockUpsert(...args),
   },
 }));
@@ -115,7 +115,14 @@ describe("handleOauthCallback", () => {
       code: "the-code",
       codeVerifier: "verifier",
     });
-    expect(mockUpsert).toHaveBeenCalledWith("my_tool", 42, "my_tool", record);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "my_tool",
+        userId: 42,
+        authType: "oauth",
+        data: expect.objectContaining({ accessToken: "access", refreshToken: "refresh" }),
+      }),
+    );
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain("Connected");
   });

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { oauthRegistry } from "./registry";
-import { decryptOauthState, exchangeCodeForTokens } from "./flow";
-import { oauthTokenStore } from "./token-store";
+import { decryptOauthState, exchangeCodeForTokens, type OauthTokenRecord } from "./flow";
+import { credentialStore } from "./credential-store";
 
 const escapeHtml = (s: string): string =>
   s
@@ -87,12 +87,23 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
   }
 
   try {
-    const record = await exchangeCodeForTokens({
+    const record: OauthTokenRecord = await exchangeCodeForTokens({
       config,
       code,
       codeVerifier: parsed.codeVerifier,
     });
-    await oauthTokenStore.upsert(parsed.provider, parsed.userId, parsed.toolId, record);
+    await credentialStore.upsert({
+      provider: parsed.provider,
+      userId: parsed.userId,
+      authType: "oauth",
+      data: {
+        accessToken: record.accessToken,
+        refreshToken: record.refreshToken ?? null,
+        tokenType: record.tokenType ?? null,
+        scopes: record.scopes ?? null,
+        expiresAt: record.expiresAt ? record.expiresAt.toISOString() : null,
+      },
+    });
   } catch (caught) {
     console.error("[EXULU] OAuth code exchange failed:", caught);
     return send(
