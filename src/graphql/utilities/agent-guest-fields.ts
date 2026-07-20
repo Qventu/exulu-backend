@@ -17,6 +17,10 @@ export const applyAgentGuestFieldTransforms = async (
     input.guest_password_hash = await hashSharePassword(input.guest_password);
   }
   delete input.guest_password;
+  // Mode takes precedence over password: if the caller sends both a
+  // guest_password AND a non-password guest_auth_mode, the freshly-hashed
+  // value computed above is intentionally overwritten to null here — the
+  // mode wins and no hash is stored.
   if (
     input.guest_auth_mode !== undefined &&
     input.guest_auth_mode !== "password"
