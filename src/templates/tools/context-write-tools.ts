@@ -13,6 +13,16 @@ const MAX_CONTEXT_SEGMENT = 68;
 
 type WriteMode = "create" | "update";
 
+// Keys the AI-SDK execute wrapper injects into tool inputs at runtime
+// (convert-exulu-tools-to-ai-sdk-tools.ts). A context field with one of
+// these names would be silently overwritten by the injected value, so it
+// cannot be exposed as a tool input.
+const RESERVED_INPUT_KEYS = new Set([
+  "model", "user", "contexts", "memory", "req", "upload", "sessionID",
+  "sessionItems", "providerapikey", "allExuluTools", "currentTools",
+  "exuluConfig", "toolVariablesConfig", "oauth",
+]);
+
 // Builds the zod shape for one context + mode and the list of input keys that
 // map onto item columns. Update's id/external_id are lookup keys, NOT content:
 // external_id must never be written back on update.
@@ -50,6 +60,8 @@ const buildWriteSchema = (
   for (const field of context.fields ?? []) {
     if (field.type === "file" || field.type === "uuid") continue;
     if (field.calculated === true || field.editable === false) continue;
+    if (field.hidden === true) continue;
+    if (RESERVED_INPUT_KEYS.has(field.name)) continue;
 
     let schema: ZodSchema;
     switch (field.type) {
@@ -146,18 +158,19 @@ export const createContextWriteTools = (
         needsApproval: !skipApproval,
         execute: async (params: any) => {
           const { user, exuluConfig } = params;
+          if (!user?.id) {
+            return { result: "Knowledge base writes require an authenticated user." };
+          }
           try {
             const enumError = canonicalizeEnumFields(context, params);
             if (enumError) {
               return { result: enumError };
             }
             const item = pickContent(params, contentKeys);
-            if (user?.id != null) {
-              // createItem does not stamp the creator itself; created_by is a
-              // text column. rights_mode is left unset so the context's
-              // defaultRightsMode column default applies.
-              item.created_by = String(user.id);
-            }
+            // createItem does not stamp the creator itself; created_by is a
+            // text column. rights_mode is left unset so the context's
+            // defaultRightsMode column default applies.
+            item.created_by = String(user.id);
             const { item: created, job } = await context.createItem(
               item,
               exuluConfig,
@@ -203,6 +216,9 @@ export const createContextWriteTools = (
         needsApproval: !skipApproval,
         execute: async (params: any) => {
           const { user, exuluConfig } = params;
+          if (!user?.id) {
+            return { result: "Knowledge base writes require an authenticated user." };
+          }
           try {
             if (!params.id && !params.external_id) {
               return { result: "Provide the id or external_id of the item to update." };
