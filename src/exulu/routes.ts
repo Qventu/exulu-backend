@@ -106,6 +106,7 @@ import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./auth/callback-handler.ts";
+import { handleCredentialSubmit } from "./auth/submit-handler.ts";
 import { OAUTH_CALLBACK_PATH } from "./auth/flow.ts";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
@@ -411,6 +412,10 @@ export const createExpressRoutes = async (
   // design: the user lands here from the provider's redirect, and their
   // identity comes from the encrypted state parameter.
   app.get(OAUTH_CALLBACK_PATH, handleOauthCallback);
+
+  // Submits user_credentials for a user_credentials-enabled ExuluTool. Unauthenticated
+  // by design: the user's identity comes from the encrypted nonce.
+  app.post("/credentials/submit", handleCredentialSubmit);
 
   app.post("/test", async (req: Request, res: Response) => {
     const { item_name, context_id } = req.body;
