@@ -121,6 +121,7 @@ import {
   deriveFilename,
   contentHeadersFor,
 } from "./shared-artifacts.ts";
+import { publicAgentView } from "./public-agents.ts";
 import {
   resolveSkillByName,
   canAccessSkill,
@@ -5158,6 +5159,116 @@ Mood: friendly and intelligent.
     if (headers.disposition) res.setHeader("Content-Disposition", headers.disposition);
     res.send(bytes);
   });
+
+  // ---- Public agents (spec 2026-07-16-public-agents §3.3) ----------------
+  // Unauthenticated by design: only whitelisted fields ever leave here, and
+  // every handler re-checks guest_access so unpublishing is immediate.
+
+  const resolvePublicAgentSlug = async (
+    agentModel: string | null | undefined,
+  ): Promise<string> => {
+    // Mirrors the computed agent.slug in
+    // graphql/utilities/sanitize-and-hydrate-fields.ts (~line 125).
+    if (isLiteLLMEnabled()) return "/agents/litellm/run";
+    if (!agentModel) return "";
+    const { db } = await postgresClient();
+    const modelRow = await db.from("models").where({ id: agentModel }).first();
+    const provider = modelRow?.provider
+      ? providers.find((a) => a.id === modelRow.provider)
+      : undefined;
+    return (provider?.slug as string) || "";
+  };
+
+  const getGuestAgentById = async (id: string) => {
+    const { db } = await postgresClient();
+    return db
+      .from("agents")
+      .where({ id, guest_access: true, active: true })
+      .first();
+  };
+
+  app.get("/public-agents", async (_req: Request, res: Response) => {
+    const { db } = await postgresClient();
+    const rows = await db
+      .from("agents")
+      .where({ guest_access: true, active: true })
+      .select(
+        "id",
+        "name",
+        "description",
+        "image",
+        "welcomemessage",
+        "model",
+        "guest_auth_mode",
+        "guest_cover_image",
+      );
+    const views = await Promise.all(
+      rows.map(async (row) =>
+        publicAgentView(row, await resolvePublicAgentSlug(row.model)),
+      ),
+    );
+    res.json(views);
+  });
+
+  app.get("/public-agents/:id/meta", async (req: Request, res: Response) => {
+    const row = await getGuestAgentById(req.params.id ?? "");
+    if (!row) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    res.json(publicAgentView(row, await resolvePublicAgentSlug(row.model)));
+  });
+
+  app.get("/public-agents/:id/cover", async (req: Request, res: Response) => {
+    const row = await getGuestAgentById(req.params.id ?? "");
+    if (!row?.guest_cover_image) {
+      res.status(404).json({ detail: "Not found." });
+      return;
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await getS3ObjectBytes(row.guest_cover_image, config);
+    } catch (e: any) {
+      if (
+        e?.name === "NoSuchKey" ||
+        e?.name === "NotFound" ||
+        e?.$metadata?.httpStatusCode === 404
+      ) {
+        res.status(404).json({ detail: "Cover not found." });
+        return;
+      }
+      console.error("[EXULU] public-agent cover read failed", e);
+      res.status(500).json({ detail: "Failed to read cover." });
+      return;
+    }
+    const ext = row.guest_cover_image.split(".").pop()?.toLowerCase();
+    const contentType =
+      ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.send(bytes);
+  });
+
+  app.post(
+    "/public-agents/:id/verify-password",
+    async (req: Request, res: Response) => {
+      const row = await getGuestAgentById(req.params.id ?? "");
+      if (!row || row.guest_auth_mode !== "password") {
+        res.status(404).json({ detail: "Not found." });
+        return;
+      }
+      const password = typeof req.body?.password === "string" ? req.body.password : "";
+      if (
+        !row.guest_password_hash ||
+        !(await verifySharePassword(password, row.guest_password_hash))
+      ) {
+        res.status(401).json({ detail: "Incorrect password." });
+        return;
+      }
+      res.status(204).end();
+    },
+  );
 
   app.use(express.static("public"));
 
