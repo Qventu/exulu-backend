@@ -107,6 +107,14 @@ export const sanitizeRequestedFields = (
 ): string[] => {
   if (table.name.singular === "agent") {
     requestedFields = removeProviderFields(requestedFields);
+    // guest_has_password is computed from the hash column: swap the computed
+    // name for the real column in the SQL selection.
+    if (requestedFields.includes("guest_has_password")) {
+      requestedFields = requestedFields.filter(
+        (field) => field !== "guest_has_password",
+      );
+      requestedFields.push("guest_password_hash");
+    }
   }
   // `budget` is computed from LiteLLM in finalizeRequestedFields, not a DB
   // column — keep it out of the SQL selection.

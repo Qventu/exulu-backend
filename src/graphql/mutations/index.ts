@@ -22,6 +22,7 @@ import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
+import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 
 const postprocessDeletion = async ({
   table,
@@ -395,6 +396,14 @@ export function createMutations(
         item.rights_mode = "private";
       }
 
+      // Never auto-publish a copy: force guest_access off so the copy is not
+      // instantly reachable as a public agent even if the source was published.
+      // Other guest fields (auth_mode, welcome message, etc.) are left as-is
+      // so the owner can re-enable guest access intentionally.
+      if (tableNamePlural === "agents" && "guest_access" in item) {
+        item.guest_access = false;
+      }
+
       if (item.created_at) {
         item.created_at = new Date();
       }
@@ -483,6 +492,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if
@@ -576,6 +589,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if
@@ -691,6 +708,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if

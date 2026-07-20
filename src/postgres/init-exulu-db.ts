@@ -402,6 +402,17 @@ export const execute = async ({ contexts }: { contexts: ExuluContext[] }) => {
       .returning("id");
   }
 
+  const existingExternalRole = await db
+    .from("roles")
+    .where({ name: "external" })
+    .first();
+  if (!existingExternalRole) {
+    console.log("[EXULU] Creating external role.");
+    // All permission areas null: external (self-registered) users can chat
+    // with guest-enabled agents but hold no platform rights.
+    await db.from("roles").insert({ name: "external" }).returning("id");
+  }
+
   const existingUser = await db.from("users").where({ email: "admin@exulu.com" }).first();
   if (!existingUser) {
     const password = await encryptString("admin");
