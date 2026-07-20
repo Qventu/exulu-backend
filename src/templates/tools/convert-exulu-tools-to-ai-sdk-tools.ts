@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
+import { collectKbWriteTools } from "./context-write-tools";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
@@ -264,6 +265,15 @@ export const convertExuluToolsToAiSdkTools = async (
         currentTools = [];
       }
       currentTools.push(createNewMemoryTool);
+    }
+  }
+
+  // Per-context knowledge-base write tools (create_<ctx>_item / update_<ctx>_item),
+  // expanded from the agent's knowledge_base_editor config entry. Explicit
+  // opt-in per context; vanished contexts are skipped inside the collector.
+  for (const kbWriteTool of collectKbWriteTools(agent, contexts)) {
+    if (!disabled.has(kbWriteTool.id)) {
+      currentTools.push(kbWriteTool);
     }
   }
 
