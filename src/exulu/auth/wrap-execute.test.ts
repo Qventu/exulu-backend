@@ -1,4 +1,4 @@
-import type { ExuluAuthConfig, ExuluOauthConfig } from "./types";
+import type { ExuluAuthConfig, ExuluOauthConfig, ExuluUserCredentialsConfig } from "./types";
 
 const mockGetValidAccessToken = jest.fn();
 const mockBuildAuthorizationUrl = jest.fn();
@@ -8,7 +8,25 @@ jest.mock("./flow", () => ({
   buildAuthorizationUrl: (...args: any[]) => mockBuildAuthorizationUrl(...args),
 }));
 
+const mockGetValidUserCredentials = jest.fn();
+jest.mock("./state", () => ({
+  getValidUserCredentials: (...args: any[]) => mockGetValidUserCredentials(...args),
+}));
+
+const mockCredentialStoreDelete = jest.fn();
+jest.mock("./credential-store", () => ({
+  credentialStore: {
+    get: jest.fn(),
+    upsert: jest.fn(),
+    delete: (...args: any[]) => mockCredentialStoreDelete(...args),
+  },
+  // encrypt/decrypt are used by credentials-request — provide no-op stubs
+  encrypt: (v: string) => `enc:${v}`,
+  decrypt: (v: string) => v.replace(/^enc:/, ""),
+}));
+
 import { wrapExecuteWithAuth } from "./wrap-execute";
+import { CredentialInvalidError } from "./errors";
 
 const config: ExuluOauthConfig = {
   authType: "oauth",
@@ -117,12 +135,58 @@ describe("wrapExecuteWithAuth", () => {
     );
   });
 
-  it("throws on user_credentials authType (Phase 2 placeholder)", () => {
-    const cfg: ExuluAuthConfig = {
-      authType: "user_credentials",
-      provider: "test-p",
-      fields: [{ name: "k", label: "K", type: "password" }],
-    };
-    expect(() => wrapExecuteWithAuth("t", cfg, async () => "ok")).toThrow(/not yet supported/);
+});
+
+const credentialsCfg: ExuluUserCredentialsConfig = {
+  authType: "user_credentials",
+  provider: "wrap-test",
+  fields: [{ name: "k", label: "K", type: "password" }],
+};
+
+describe("wrapExecuteWithAuth — user_credentials branch", () => {
+  beforeAll(() => {
+    process.env.BACKEND = "http://x";
+  });
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it("returns a friendly result when no signed-in user", async () => {
+    const inner = jest.fn(async () => "ok");
+    const wrapped = wrapExecuteWithAuth("t", credentialsCfg, inner);
+    const out = await wrapped({}, undefined);
+    expect(out.result).toMatch(/signed-in user/i);
+    expect(inner).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits with credentialRequest when no credentials stored", async () => {
+    mockGetValidUserCredentials.mockResolvedValue(null);
+    const inner = jest.fn(async () => "should-not-run");
+    const wrapped = wrapExecuteWithAuth("t", credentialsCfg, inner);
+    const out = await wrapped({ user: { id: 1 } }, undefined);
+    expect(inner).not.toHaveBeenCalled();
+    expect(out).toHaveProperty("credentialRequest.provider", "wrap-test");
+  });
+
+  it("injects credentials into inputs on cache hit", async () => {
+    mockGetValidUserCredentials.mockResolvedValue({ k: "v" });
+    let seenInputs: any;
+    const inner = jest.fn(async (inputs: any) => { seenInputs = inputs; return "ok"; });
+    const wrapped = wrapExecuteWithAuth("t", credentialsCfg, inner);
+    const out = await wrapped({ user: { id: 1 }, extra: "x" }, undefined);
+    expect(out).toBe("ok");
+    expect(seenInputs.credentials).toEqual({ k: "v" });
+    expect(seenInputs.extra).toBe("x");
+  });
+
+  it("re-prompts and deletes stored row on CredentialInvalidError for same provider", async () => {
+    mockGetValidUserCredentials.mockResolvedValue({ k: "old" });
+    mockCredentialStoreDelete.mockResolvedValue(undefined);
+    const inner = jest.fn(async () => { throw new CredentialInvalidError("wrap-test", "401"); });
+    const wrapped = wrapExecuteWithAuth("t", credentialsCfg, inner);
+    const out = await wrapped({ user: { id: 1 } }, undefined);
+    expect(out).toHaveProperty("credentialRequest.provider", "wrap-test");
+    expect(mockCredentialStoreDelete).toHaveBeenCalledWith("wrap-test", 1);
   });
 });
