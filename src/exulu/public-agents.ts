@@ -62,9 +62,10 @@ export const evaluateGuestChatAccess = async (
   userId: string | number | undefined,
   guestPassword: string | undefined,
 ): Promise<GuestGate> => {
-  if (userId == null && agent.rights_mode === "public") {
-    return { allowed: true, via: "rbac-public" };
-  }
+  // When the admin explicitly published the agent (guest_access), the guest
+  // mode GOVERNS anonymous access — even for internally-public agents.
+  // Otherwise a guest password/login gate would be silently bypassed by the
+  // legacy rights_mode=public anonymous path below.
   if (agent.guest_access) {
     if (userId != null) return { allowed: true, via: "guest" };
     const mode = (agent.guest_auth_mode as GuestAuthMode) || "regular";
@@ -78,6 +79,11 @@ export const evaluateGuestChatAccess = async (
       return { allowed: false, status: 401, message: "Password required." };
     }
     return { allowed: false, status: 401, message: "Authentication required." };
+  }
+  // Legacy: internally-public agents stay anonymously reachable when the
+  // agent is NOT guest-published (pre-existing rights_mode=public behavior).
+  if (userId == null && agent.rights_mode === "public") {
+    return { allowed: true, via: "rbac-public" };
   }
   return { allowed: false, status: 401, message: "Authentication required." };
 };
