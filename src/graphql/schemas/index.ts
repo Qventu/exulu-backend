@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
+import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
@@ -2404,6 +2405,10 @@ type LiteLLMModel {
       if (agenticRetrievalTool) {
         allTools.push(agenticRetrievalTool);
       }
+      // Picker entry for per-agent knowledge-base write access. Display-only:
+      // getEnabledTools skips this id and the runtime expands the stored entry
+      // into per-context create/update tools.
+      allTools.push(createKbEditorPickerTool());
     }
 
     // Apply search filter

@@ -5,7 +5,7 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { z, type ZodSchema } from "zod";
 import { sanitizeName } from "@SRC/utils/sanitize-name";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
-import { parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
+import { KB_EDITOR_TOOL_ID, parseKbEditorConfig, type KbWritePermissions } from "./kb-editor-config";
 
 // Tool ids must match ^[a-z_][a-z0-9_]{4,79}: "create_" (7) + segment + "_item" (5)
 // caps the sanitized context-id segment at 68 chars.
@@ -275,6 +275,39 @@ export const createContextWriteTools = (
 // Expands an agent's knowledge_base_editor entry into concrete per-context
 // write tools. Contexts that no longer exist in code are skipped silently —
 // they can disappear between deploys.
+// Display-only entry for the agent editor's tool picker (Query.tools). Never
+// executable in a chat: getEnabledTools skips this id, and the runtime expands
+// the stored entry into per-context write tools instead.
+export const createKbEditorPickerTool = (): ExuluTool =>
+  new ExuluTool({
+    id: KB_EDITOR_TOOL_ID,
+    name: "Knowledge base editor",
+    category: "default",
+    description:
+      "Let this agent create or update items in selected knowledge bases during chat. " +
+      "Configure per knowledge base whether the agent may create and/or update items.",
+    type: "function",
+    inputSchema: z.object({}),
+    config: [
+      {
+        name: "knowledge_bases",
+        description:
+          "JSON record of context id to { create: boolean, update: boolean }. Contexts absent here get no write access.",
+        type: "json",
+      },
+      {
+        name: "skip_approval",
+        description: "Run knowledge base writes without asking for approval in the chat.",
+        type: "boolean",
+        default: false,
+      },
+    ],
+    execute: async () => ({
+      result:
+        "This entry is configuration-only; Exulu expands it into per-context create/update tools at runtime.",
+    }),
+  });
+
 export const collectKbWriteTools = (
   agent: ExuluAgent | undefined,
   contexts: ExuluContext[] | undefined,

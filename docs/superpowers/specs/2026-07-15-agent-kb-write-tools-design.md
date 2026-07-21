@@ -6,7 +6,7 @@
 
 ## Summary
 
-Let Exulu agents create and update items in knowledge bases (ExuluContexts) during chat, via dynamically-injected per-context tool pairs (`create_<ctx>_item`, `update_<ctx>_item`). Which contexts an agent may write to — and whether it may create, update, or both per context — is configured per agent instance in the agent editor's Knowledge section. Writes are gated twice: the agent's config must allow the context, and the invoking user must have row-level write access. Every write requires chat approval by default, with a per-agent skip toggle.
+Let Exulu agents create and update items in knowledge bases (ExuluContexts) during chat, via dynamically-injected per-context tool pairs (`create_<ctx>_item`, `update_<ctx>_item`). Which contexts an agent may write to — and whether it may create, update, or both per context — is configured per agent instance in the agent editor's Tools section (default category). Writes are gated twice: the agent's config must allow the context, and the invoking user must have row-level write access. Every write requires chat approval by default, with a per-agent skip toggle.
 
 ## Decisions (all confirmed with Daniel)
 
@@ -15,7 +15,7 @@ Let Exulu agents create and update items in knowledge bases (ExuluContexts) duri
 | Tool shape | One create + one update tool **per writable context** (memory-tool pattern) | Exact zod schemas from `context.fields` give the model precise field names/types/enums; a non-writable context's tools simply don't exist. Cost: 2 tools per writable context. |
 | Permissions | **Agent config AND invoking user's row-level rights** | Agent config grants capability; `checkRecordAccess(record, 'write', user)` still governs updates to existing rows. An agent never lets a user do more than the UI would. |
 | Config storage | **`knowledge_base_editor` tool entry in `agents.tools` JSON** (Approach A) | Follows the `agentic_context_search` precedent. No schema/GraphQL changes; `tools` already round-trips through the editor; approval/disable machinery works on tool entries. |
-| UI placement | **Knowledge section** of the agent editor | Contexts stay in one mental model: "what this agent knows & may change". Retrieval config already lives there, not in Tools. |
+| UI placement | **Tools section, default category** (revised 2026-07-21; originally Knowledge section) | The KB editor behaves like any other toggleable tool: a synthetic picker entry from `Query.tools` (same pattern as the injected agentic retrieval entry) with a custom config sheet. Daniel preferred consolidating it with the regular tools over a separate Knowledge block. |
 | Approval | **`needsApproval: true` by default, per-agent `skip_approval` override** | Writes overwrite in place with no version history; safe default with an escape hatch for trusted automation agents. |
 
 Rejected storage alternatives: a new `agents` column (coordinated frontend fragment/mutation changes are fragile — a mismatch hard-breaks the editor; code-defined agents never get DB columns) and a `writable` flag on the EE retrieval `kbProfile` (couples a core capability to the EE license and breaks the wizard's exactly-13-entry serialization contract).
@@ -104,12 +104,13 @@ Next to the memory-tool injection (the tools need the agent/context factory clos
 
 ## Frontend (agent editor, `app/(application)/agents/edit/[id]`)
 
-### Knowledge section (`sections/knowledge.tsx`)
+### Tools section (`sections/tools.tsx`) — revised 2026-07-21
 
-New "Knowledge base editing" block under the retrieval wizard and memory picker:
+The KB editor appears as a normal tool in the Tools section's **default** category, backed by a display-only picker entry that `Query.tools` injects (`createKbEditorPickerTool` in `src/templates/tools/context-write-tools.ts` — same pattern as the injected agentic retrieval entry; `getEnabledTools` skips the id, so it is never executable). The section's existing toggle machinery stages/removes the `knowledge_base_editor` entry and auto-opens the config sheet on enable.
+
+The config sheet special-cases the tool id to render `components/kb-editing/kb-editing-config-panel.tsx` instead of the generic config fields:
 
 ```
-Knowledge base editing              [master switch]
 ┌──────────────────────────────────────────┐
 │ ☑ Products KB       ☑ create  ☑ update   │
 │ ☑ FAQ KB            ☑ create  ☐ update   │
@@ -118,13 +119,14 @@ Knowledge base editing              [master switch]
 Skip chat approval for writes       [toggle]
 ```
 
-- Master switch adds/removes the `knowledge_base_editor` entry in the staged `editor.tools` state (`hooks.ts` `useAgentEditor`); context list comes from the already-fetched `refs.contexts` (`useEditorReferenceData` / `GET_CONTEXTS_EDITOR`).
-- Card layout reuses the `components/knowledge-search/steps/knowledge-bases-step.tsx` checkbox-card pattern, with per-context **create** / **update** checkboxes. Checking a context defaults to create=true, update=false (opt into overwrite explicitly).
-- "Skip approval" toggle maps to the `skip_approval` config entry.
+- Context list comes from the already-fetched `refs.contexts`; checking a context defaults to create=true, update=false (opt into overwrite explicitly).
+- Each panel handler writes exactly ONE config entry through the sheet's `update(value, name)` path (two updates in one handler would drop the first — the update closure maps over stale staged tools).
+- "Skip approval" switch maps to the `skip_approval` config entry.
+- (Originally shipped as a dedicated Knowledge-section block; relocated per Daniel's request.)
 
-### Parse/serialize layer: `components/kb-editing/config-schema.ts`
+### Parse layer: `components/kb-editing/config-schema.ts`
 
-Never-throw zod layer over the entry's `config` rows, copied from the retrieval wizard's `config-schema.ts` pattern — its own 2-entry contract (`knowledge_bases` json + `skip_approval` boolean), independent of the wizard's 13-entry contract.
+Never-throw zod parse layer over the entry's `config` rows — the 2-entry contract (`knowledge_bases` json + `skip_approval` boolean) is defined by the backend picker tool's declared config; writes go through the Tools section's per-entry update path.
 
 ### No GraphQL changes
 
