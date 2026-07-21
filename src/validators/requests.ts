@@ -19,8 +19,19 @@ export const requestValidators = {
 
     let authtoken: any = null;
     if (!apikey) {
-      // default to next auth tokens to authenticate
-      authtoken = await getToken((req.headers["authorization"] || req.headers["x-api-key"]) ?? "");
+      // default to next auth tokens to authenticate. getToken throws on a
+      // missing/invalid token, but anonymous requests are legitimate for
+      // public and guest-enabled endpoints — this validator's contract is
+      // to RETURN an error-shaped result and let the caller decide, so a
+      // failed token read resolves to "no user" (authentication() then
+      // returns its 401-shaped result for credential-less requests).
+      try {
+        authtoken = await getToken(
+          (req.headers["authorization"] || req.headers["x-api-key"]) ?? "",
+        );
+      } catch {
+        authtoken = null;
+      }
     }
     return await authentication({
       authtoken,
