@@ -2,6 +2,15 @@ import type { ExuluContext } from "@SRC/exulu/context";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { Item } from "@EXULU_TYPES/models/item";
 
+// GraphQL composite/meta selections that are NOT database columns and must
+// never reach the SQL SELECT. `__`-prefixed names are graphql-js meta-fields
+// (__typename, __schema, __type) — an Apollo client with addTypename:true
+// injects __typename into every selection set; graphql-js still resolves it
+// in the response from the schema type, so stripping it here is safe.
+const NON_COLUMN_SELECTIONS = new Set(["pageInfo", "items", "RBAC"]);
+const isSelectableColumn = (field: string): boolean =>
+  !NON_COLUMN_SELECTIONS.has(field) && !field.startsWith("__");
+
 export const getRequestedFields = (info: any): string[] => {
   const selections = info.operation.selectionSet.selections[0].selectionSet.selections;
   const itemSelection = selections.find((s) => s.name.value === "item");
@@ -15,7 +24,7 @@ export const getRequestedFields = (info: any): string[] => {
       }, {}),
     );
 
-    return fields.filter((field) => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+    return fields.filter(isSelectableColumn);
   }
   if (itemsSelection) {
     fields = Object.keys(
@@ -25,7 +34,7 @@ export const getRequestedFields = (info: any): string[] => {
       }, {}),
     );
 
-    return fields.filter((field) => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+    return fields.filter(isSelectableColumn);
   }
 
   fields = Object.keys(
@@ -35,7 +44,7 @@ export const getRequestedFields = (info: any): string[] => {
     }, {}),
   );
 
-  return fields.filter((field) => field !== "pageInfo" && field !== "items" && field !== "RBAC");
+  return fields.filter(isSelectableColumn);
 
   // remove pageInfo and items
 };
