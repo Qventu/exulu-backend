@@ -32,6 +32,7 @@ jest.mock("@SRC/postgres/client", () => ({
 const mockUpsert = jest.fn();
 const mockVerifyCredentialNonce = jest.fn();
 const mockValidate = jest.fn();
+const mockAuthenticate = jest.fn();
 
 jest.mock("./credential-store", () => ({
   credentialStore: {
@@ -41,6 +42,12 @@ jest.mock("./credential-store", () => ({
 
 jest.mock("./credentials-request", () => ({
   verifyCredentialNonce: (...args: any[]) => mockVerifyCredentialNonce(...args),
+}));
+
+jest.mock("../../validators/requests", () => ({
+  requestValidators: {
+    authenticate: (...args: any[]) => mockAuthenticate(...args),
+  },
 }));
 
 import { handleCredentialSubmit } from "./submit-handler";
@@ -83,9 +90,45 @@ beforeEach(() => {
   rows.length = 0;
   __resetAuthRegistryForTests();
   authRegistry.register("my_tool", config);
+  // Default: authenticated as user 42
+  mockAuthenticate.mockResolvedValue({ user: { id: 42 } });
 });
 
 describe("handleCredentialSubmit", () => {
+  it("returns 401 when request is unauthenticated (no session user)", async () => {
+    mockAuthenticate.mockResolvedValue({ user: undefined, code: 401, message: "Unauthorized" });
+
+    const req = mockReq({ nonce: "some-nonce", values: { username: "alice", password: "secret" } });
+    const res = mockRes();
+
+    await handleCredentialSubmit(req, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("authentication required");
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when session userId does not match nonce userId", async () => {
+    // Session user is 99, nonce claims userId 42 — attacker replaying a victim's nonce
+    mockAuthenticate.mockResolvedValue({ user: { id: 99 } });
+    mockVerifyCredentialNonce.mockReturnValue({
+      provider: "test_provider",
+      userId: "42",
+      expiresAt: 9999999999,
+    });
+
+    const req = mockReq({ nonce: "victim-nonce", values: { username: "alice", password: "secret" } });
+    const res = mockRes();
+
+    await handleCredentialSubmit(req, res);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body?.ok).toBe(false);
+    expect(res.body?.error).toBe("userId mismatch");
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for invalid request body (missing nonce)", async () => {
     const req = mockReq({ values: { username: "alice", password: "secret" } });
     const res = mockRes();
@@ -184,9 +227,10 @@ describe("handleCredentialSubmit", () => {
 
     await handleCredentialSubmit(req, res);
 
-    expect(res.statusCode).toBe(401);
+    // NaN !== 42 (session userId), so this hits the userId mismatch check (403)
+    // before it can reach the NaN guard that was previously in effect.
+    expect(res.statusCode).toBe(403);
     expect(res.body?.ok).toBe(false);
-    expect(res.body?.error).toBe("nonce invalid");
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 

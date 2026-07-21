@@ -413,8 +413,8 @@ export const createExpressRoutes = async (
   // identity comes from the encrypted state parameter.
   app.get(OAUTH_CALLBACK_PATH, handleOauthCallback);
 
-  // Submits user_credentials for a user_credentials-enabled ExuluTool. Unauthenticated
-  // by design: the user's identity comes from the encrypted nonce.
+  // Submits user_credentials for a user_credentials-enabled ExuluTool. Requires
+  // an authenticated session; the handler cross-checks session userId vs nonce userId.
   app.post("/credentials/submit", handleCredentialSubmit);
 
   app.post("/test", async (req: Request, res: Response) => {
