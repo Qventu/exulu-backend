@@ -1,4 +1,4 @@
-import { createContextWriteTools, collectKbWriteTools } from "./context-write-tools";
+import { createContextWriteTools, collectKbWriteTools, createKbEditorPickerTool } from "./context-write-tools";
 import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { KB_EDITOR_TOOL_ID } from "./kb-editor-config";
 import { z } from "zod";
@@ -249,5 +249,16 @@ describe("collectKbWriteTools", () => {
   it("propagates skip_approval to the generated tools", () => {
     const [tool] = collectKbWriteTools(agentWith({ products: { create: true, update: false } }, true), [makeContext()]);
     expect(tool.needsApproval).toBe(false);
+  });
+});
+
+describe("createKbEditorPickerTool", () => {
+  it("builds the display-only picker entry with the stored-config contract", () => {
+    const picker = createKbEditorPickerTool();
+    expect(picker.id).toBe(KB_EDITOR_TOOL_ID);
+    expect(picker.category).toBe("default");
+    expect(picker.type).toBe("function");
+    expect(picker.config.map((c) => c.name)).toEqual(["knowledge_bases", "skip_approval"]);
+    expect(picker.config.map((c) => c.type)).toEqual(["json", "boolean"]);
   });
 });
