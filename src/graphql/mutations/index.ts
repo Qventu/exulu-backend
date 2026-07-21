@@ -24,6 +24,10 @@ import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 
+// Same allow-list as utils/check-item-write-access.ts — the modes a client
+// may explicitly set on create.
+const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
+
 const postprocessDeletion = async ({
   table,
   requestedFields,
@@ -519,13 +523,22 @@ export function createMutations(
         }
       }
 
+      // Honor an explicitly provided rights_mode (bulk import batch access);
+      // absent still means "private". Invalid values are rejected rather than
+      // silently downgraded. CopyOneById intentionally keeps forcing private.
+      if (table.RBAC && input.rights_mode != null && !VALID_RIGHTS_MODES.includes(input.rights_mode)) {
+        throw new Error(
+          `Invalid rights_mode "${input.rights_mode}" — expected one of: ${VALID_RIGHTS_MODES.join(", ")}`,
+        );
+      }
+
       // We need to retrieve all the columns for potential post processing
       // operations that might need to be performed on the fields.
       const columns = await db(tableNamePlural).columnInfo();
       const insert = db(tableNamePlural)
         .insert({
           ...input,
-          ...(table.RBAC ? { rights_mode: "private" } : {}),
+          ...(table.RBAC ? { rights_mode: input.rights_mode ?? "private" } : {}),
         })
         .returning(Object.keys(columns));
 
