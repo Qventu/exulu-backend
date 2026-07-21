@@ -149,3 +149,32 @@ describe("evaluateGuestChatAccess — anonymous password-mode edge case", () => 
     expect(gate).toEqual({ allowed: false, status: 401, message: "Password required." });
   });
 });
+
+describe("evaluateGuestChatAccess — guest config governs anonymous access (footgun fix)", () => {
+  test("guest password mode overrides legacy rights_mode=public: wrong/missing password rejected", async () => {
+    const hash = await hashSharePassword("hunter2");
+    const agent = {
+      rights_mode: "public",
+      guest_access: true,
+      guest_auth_mode: "password",
+      guest_password_hash: hash,
+    } as any;
+    const missing = await evaluateGuestChatAccess(agent, undefined, undefined);
+    expect(missing.allowed).toBe(false);
+    const wrong = await evaluateGuestChatAccess(agent, undefined, "nope");
+    expect(wrong.allowed).toBe(false);
+    expect(await evaluateGuestChatAccess(agent, undefined, "hunter2")).toEqual({
+      allowed: true,
+      via: "guest",
+    });
+  });
+
+  test("guest regular (login) mode overrides legacy rights_mode=public for anonymous", async () => {
+    const gate = await evaluateGuestChatAccess(
+      { rights_mode: "public", guest_access: true, guest_auth_mode: "regular" } as any,
+      undefined,
+      undefined,
+    );
+    expect(gate.allowed).toBe(false);
+  });
+});
