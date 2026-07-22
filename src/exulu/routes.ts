@@ -90,6 +90,7 @@ import {
   invalidateBudgetCaches,
   type BudgetSettings,
 } from "./litellm/budget-service.ts";
+import { getMyUsageView, resolveUsageWindow } from "./litellm/usage-view.ts";
 import multer from "multer";
 import Busboy from "busboy";
 import { queues as ExuluQueues } from "@EE/queues/queues";
@@ -2698,6 +2699,44 @@ Mood: friendly and intelligent.
       return;
     }
     res.status(200).json({ budget: await getUserBudgetView(authResult.user.id) });
+  });
+
+  /**
+   * The caller's own usage detail (daily + per-model) for the /settings Usage
+   * section. Same visibility gate as /me/budget: `usage: null` when the
+   * "show budget status in chat" setting is off. Spec:
+   * frontend/docs/superpowers/specs/2026-07-16-personal-usage-details-design.md
+   */
+  app.get("/me/usage", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+
+    const window = resolveUsageWindow(req.query.start_date, req.query.end_date);
+    if (!window) {
+      res.status(400).json({
+        detail:
+          "start_date and end_date must be YYYY-MM-DD or ISO datetimes, with start_date <= end_date.",
+      });
+      return;
+    }
+
+    try {
+      res
+        .status(200)
+        .json({ usage: await getMyUsageView(authResult.user.id, window) });
+    } catch (err) {
+      if (err instanceof LiteLLMAdminError) {
+        res.status(502).json({ detail: err.message });
+        return;
+      }
+      console.error("[EXULU] /me/usage failed", err);
+      res.status(500).json({
+        detail: err instanceof Error ? err.message : "Usage query failed.",
+      });
+    }
   });
 
   // Bulk upsert (registered before /:entityType/:entityId so "bulk" isn't an id).
