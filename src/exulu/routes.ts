@@ -654,8 +654,9 @@ Mood: friendly and intelligent.
       return;
     }
 
-    // ACK first; process in the background. The handler is idempotent and every
-    // Recall id is persisted, so a crash mid-processing is recoverable.
+    // ACK first; process in the background. Recall never redelivers an ACKed
+    // event, so a crash mid-processing loses it — the reconcile loop
+    // (recallService.reconcileOnce) re-drives stuck jobs from Recall's state.
     const event = req.body;
     res.status(200).json({ ok: true });
     void recallService.handleWebhookEvent(event).catch((err) => {

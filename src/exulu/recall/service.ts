@@ -35,6 +35,27 @@ import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
 const TABLE = "transcription_jobs";
 const DEFAULT_BOT_NAME = "Company Notetaker";
 
+// Reconciliation sweep tuning. The webhook route ACKs with 2xx before
+// processing, and Recall never redelivers an ACKed event — so a crash,
+// restart, or unhandled error mid-processing would otherwise strand the job
+// forever. The sweep re-drives stuck rows from Recall's own state.
+const RECONCILE_STALE_MS = 10 * 60 * 1000;
+// A queued bot with no terminal bot_status may just be a long quiet meeting;
+// probe it via the API at most once per quiet period.
+const RECONCILE_PROBE_QUIET_MS = 60 * 60 * 1000;
+// Hard cap: a meeting whose transcript never materializes fails visibly
+// instead of sitting in "Processing" forever.
+const RECONCILE_GIVE_UP_MS = 24 * 60 * 60 * 1000;
+// Re-run post-processing whose fire-and-forget run was lost (process restart
+// mid-LLM-call). Long enough that a live run is almost certainly finished.
+const POST_PROCESSING_REDO_STALE_MS = 30 * 60 * 1000;
+// Hard bound per prompt LLM call; without it a hung provider connection pends
+// the whole post-processing chain forever.
+const POST_PROCESSING_PROMPT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/** bot_status values that mean the meeting itself is over. */
+const BOT_ENDED_STATUSES = ["done", "call_ended"];
+
 const log = (msg: string) => console.log(`[EXULU-RECALL] ${msg}`);
 
 export type PostProcessingPrompt = { prompt_id: string; agent_id: string };
@@ -185,7 +206,9 @@ export const recallService = {
         target_rbac_roles: input.target_rbac_roles
           ? JSON.stringify(input.target_rbac_roles)
           : null,
-        post_processing_prompts: input.post_processing_prompts
+        // Normalized to NULL when empty so the reconcile sweep's redo select
+        // ("prompts configured but never ran") can never match a no-prompt row.
+        post_processing_prompts: input.post_processing_prompts?.length
           ? JSON.stringify(input.post_processing_prompts)
           : null,
         rights_mode: "private",
@@ -276,7 +299,13 @@ export const recallService = {
     // so createAsyncTranscript runs at most once.
     const claimed = await db(TABLE)
       .where({ id: jobId })
-      .whereNotIn("status", ["transcribing", "awaiting_review", "saved", "failed"])
+      .whereNotIn("status", [
+        "transcribing",
+        "awaiting_review",
+        "saved",
+        "failed",
+        "cancelled",
+      ])
       .update({
         recall_recording_id: recordingId,
         status: "transcribing",
@@ -398,14 +427,76 @@ export const recallService = {
       return [];
     }
 
+    // Claim the run atomically ("[]" = in flight). A fresh row claims via the
+    // NULL branch; a run that died mid-flight leaves "[]" behind and becomes
+    // re-claimable once stale — so concurrent callers (webhook vs reconcile
+    // sweep, or two app instances) can never double-spend the LLM calls.
+    const claimed = await db(TABLE)
+      .where({ id: jobId })
+      .whereRaw(
+        `(post_processing_outputs IS NULL OR ` +
+          `(post_processing_outputs::text = '[]' AND "updatedAt" < ?))`,
+        [new Date(Date.now() - POST_PROCESSING_REDO_STALE_MS)],
+      )
+      .update({ post_processing_outputs: "[]", updatedAt: new Date() });
+    if (!claimed) {
+      log(`post-processing for job ${jobId} already in flight; skipping.`);
+      return [];
+    }
+
     const outputs: PostProcessingOutput[] = [];
     for (const p of prompts) {
       outputs.push(await this._runOnePrompt(job, p.prompt_id, p.agent_id));
+      // Heartbeat: keep the "[]" claim fresh so a long multi-prompt batch is
+      // never stale-stolen by the sweep while it is legitimately running.
+      await this._update(jobId, {});
     }
-    await this._update(jobId, {
-      post_processing_outputs: JSON.stringify(outputs),
-    });
-    return outputs;
+    return this._mergeOutputs(jobId, outputs);
+  },
+
+  /**
+   * Upsert entries into post_processing_outputs without clobbering concurrent
+   * writers: optimistic-concurrency loop — read, merge by {prompt_id,
+   * agent_id}, write only while the column still matches the snapshot.
+   */
+  async _mergeOutputs(
+    jobId: string,
+    entries: PostProcessingOutput[],
+  ): Promise<PostProcessingOutput[]> {
+    const { db } = await postgresClient();
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const row = await db(TABLE).where({ id: jobId }).first();
+      if (!row) return entries;
+      const raw = row.post_processing_outputs ?? null;
+      const snapshot =
+        raw == null ? null : typeof raw === "string" ? raw : JSON.stringify(raw);
+      const current = parseJson<PostProcessingOutput[]>(raw) ?? [];
+      const merged = [
+        ...current.filter(
+          (o) =>
+            !entries.some(
+              (e) => e.prompt_id === o.prompt_id && e.agent_id === o.agent_id,
+            ),
+        ),
+        ...entries,
+      ];
+      const updated = await db(TABLE)
+        .where({ id: jobId })
+        .whereRaw(
+          "post_processing_outputs::jsonb IS NOT DISTINCT FROM ?::jsonb",
+          [snapshot],
+        )
+        .update({
+          post_processing_outputs: JSON.stringify(merged),
+          updatedAt: new Date(),
+        });
+      if (updated) return merged;
+    }
+    log(
+      `post-processing outputs for job ${jobId} kept changing under the merge; ` +
+        `leaving the concurrent writer's data in place.`,
+    );
+    return entries;
   },
 
   /**
@@ -422,14 +513,23 @@ export const recallService = {
     if (!dbRow) throw new Error(`transcription_job ${jobId} not found`);
     const job = this._row(dbRow);
 
-    const result = await this._runOnePrompt(job, promptId, agentId);
+    // Refuse while the batch's "[]" claim is fresh: the auto-run is still
+    // executing (it heartbeats updatedAt per prompt) and a manual run now
+    // would double-spend. A stale claim means the run died — take over.
+    const claimInFlight =
+      dbRow.post_processing_outputs != null &&
+      (job.post_processing_outputs?.length ?? 0) === 0 &&
+      Date.now() - new Date(job.updatedAt).getTime() <
+        POST_PROCESSING_REDO_STALE_MS;
+    if (claimInFlight) {
+      throw new Error(
+        "POST_PROCESSING_IN_FLIGHT: the automatic post-processing run is " +
+          "still in progress; its results will appear shortly.",
+      );
+    }
 
-    const existing = job.post_processing_outputs ?? [];
-    const next = existing.filter(
-      (o) => !(o.prompt_id === promptId && o.agent_id === agentId),
-    );
-    next.push(result);
-    await this._update(jobId, { post_processing_outputs: JSON.stringify(next) });
+    const result = await this._runOnePrompt(job, promptId, agentId);
+    await this._mergeOutputs(jobId, [result]);
     return result;
   },
 
@@ -469,6 +569,7 @@ export const recallService = {
         system: agent.instructions || undefined,
         prompt: `${prompt.content}\n\n---\nMeeting transcript:\n\n${transcriptText}`,
         maxRetries: 3,
+        abortSignal: AbortSignal.timeout(POST_PROCESSING_PROMPT_TIMEOUT_MS),
       });
 
       return {
@@ -492,6 +593,279 @@ export const recallService = {
         ran_at: ranAt,
       };
     }
+  },
+
+  /**
+   * Reconciliation sweep: re-drive recall jobs whose webhook event was lost
+   * (ACK-first delivery + crash/restart = no redelivery). Called periodically
+   * from the reconcile loop. Returns the number of jobs it acted on.
+   *
+   * Idempotent by construction: every recovery path funnels into the same
+   * guarded transitions the webhook handlers use (_onRecordingDone's atomic
+   * claim, _onTranscriptDone's already-processed check, runPostProcessing's
+   * skip-if-outputs-exist), so a webhook racing the sweep is harmless.
+   */
+  async reconcileOnce(limit = 10): Promise<number> {
+    if (!recallEnabled()) return 0;
+    const { db } = await postgresClient();
+    const now = Date.now();
+
+    const stuck = await db(TABLE)
+      .where({ source: "recall" })
+      .whereIn("status", ["queued", "transcribing"])
+      // A meeting that hasn't started (or barely started) can't be stuck, and
+      // probing it would only burn API calls and sweep-window slots.
+      .whereRaw(`("join_at" IS NULL OR "join_at" < ?)`, [
+        new Date(now - RECONCILE_STALE_MS),
+      ])
+      .where("updatedAt", "<", new Date(now - RECONCILE_STALE_MS))
+      .orderBy("updatedAt", "asc")
+      .limit(limit);
+
+    // awaiting_review rows whose configured prompts never produced outputs:
+    // the fire-and-forget runPostProcessing died mid-run (or never started).
+    // Rows runPostProcessing would only skip (no prompts, no transcript) are
+    // excluded here — otherwise they'd re-match every tick and starve the
+    // sweep window.
+    const redo = await db(TABLE)
+      .where({ source: "recall", status: "awaiting_review" })
+      .whereNotNull("post_processing_prompts")
+      .whereRaw("post_processing_prompts::text <> '[]'")
+      .whereRaw("(raw_segments IS NOT NULL AND raw_segments::text <> '[]')")
+      .whereRaw(
+        "(post_processing_outputs IS NULL OR post_processing_outputs::text = '[]')",
+      )
+      .where("updatedAt", "<", new Date(now - POST_PROCESSING_REDO_STALE_MS))
+      .orderBy("updatedAt", "asc")
+      .limit(limit);
+
+    let acted = 0;
+    for (const dbRow of stuck) {
+      const job = this._row(dbRow);
+      try {
+        if (await this._reconcileStuckJob(job)) acted++;
+      } catch (err) {
+        if (await this._reconcileError(job, err)) acted++;
+      }
+    }
+    for (const dbRow of redo) {
+      try {
+        log(`reconcile: re-running lost post-processing for job ${dbRow.id}`);
+        const outputs = await this.runPostProcessing(dbRow.id);
+        if (outputs.length > 0) acted++;
+      } catch (err) {
+        log(
+          `post-processing redo failed for job ${dbRow.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return acted;
+  },
+
+  async _reconcileStuckJob(job: JobRow): Promise<boolean> {
+    if (!job.recall_bot_id) {
+      // Crash between the row insert and the recall_bot_id write: no webhook
+      // can ever match this row, so it can never progress.
+      await this._fail(job.id, "bot was never launched (lost during creation)");
+      return true;
+    }
+    if (job.status === "queued") return this._reconcileQueued(job);
+    if (job.status === "transcribing") return this._reconcileTranscribing(job);
+    return false;
+  },
+
+  /**
+   * A recovery step threw. 404 means the Recall object is gone — terminal.
+   * Otherwise apply the 24h give-up (API errors must not defer it forever),
+   * and touch the row so it rotates to the back of the sweep window.
+   */
+  async _reconcileError(job: JobRow, err: unknown): Promise<boolean> {
+    const message = (err as Error).message ?? String(err);
+    if ((err as { status?: number }).status === 404) {
+      await this._fail(
+        job.id,
+        `Recall no longer knows this recording: ${message}`,
+      );
+      return true;
+    }
+    if (this._pastGiveUp(job)) {
+      await this._fail(
+        job.id,
+        `still stuck 24 hours after the meeting start (last error: ${message})`,
+      );
+      return true;
+    }
+    log(`reconcile failed for job ${job.id}: ${message}`);
+    await this._update(job.id, {});
+    return false;
+  },
+
+  /** A queued row: the recording.done event (or the whole bot lifecycle) was lost. */
+  async _reconcileQueued(job: JobRow): Promise<boolean> {
+    // While the meeting looks alive, only probe after a long quiet period so
+    // the sweep doesn't hammer the Recall API for every in-progress meeting.
+    const ended = !!job.bot_status && BOT_ENDED_STATUSES.includes(job.bot_status);
+    const quietMs = Date.now() - new Date(job.updatedAt).getTime();
+    if (!ended && quietMs < RECONCILE_PROBE_QUIET_MS) return false;
+
+    const bot = await recallClient.retrieveBot(job.recall_bot_id as string);
+    const code = bot?.status_changes?.at(-1)?.code ?? null;
+
+    if (code === "fatal") {
+      await this._fail(job.id, "bot fatal (recovered by reconciliation)");
+      return true;
+    }
+
+    const recording = bot?.recordings?.[0] ?? null;
+    if (recording?.id) {
+      // Only a COMPLETED recording may be driven to transcription: a long
+      // live meeting has an in-progress recording here, and transcribing it
+      // now would permanently fail the job.
+      const readiness = await this._recordingReadiness(recording);
+      if (readiness === "failed") {
+        await this._fail(job.id, "recording failed (found by reconciliation)");
+        return true;
+      }
+      if (readiness === "done") {
+        log(`reconcile: driving lost recording.done for job ${job.id}`);
+        await this._onRecordingDone(job.id, recording.id);
+        return true;
+      }
+      // Still processing: fall through to the touch/wait branch.
+    } else if (code === "done") {
+      // Terminal bot state, nothing recorded: e.g. nobody admitted the bot.
+      await this._fail(job.id, "bot finished without a recording");
+      return true;
+    }
+    if (this._pastGiveUp(job)) {
+      await this._fail(
+        job.id,
+        "no recording within 24 hours of the meeting start",
+      );
+      return true;
+    }
+    // Meeting still running (or Recall still uploading): sync the bot status
+    // and bump updatedAt so the next probe waits another quiet period.
+    await this._update(
+      job.id,
+      code && code !== job.bot_status ? { bot_status: code } : {},
+    );
+    return false;
+  },
+
+  /** Whether a recording is safe to transcribe, checking the full recording
+   *  object when the bot payload carries no status. */
+  async _recordingReadiness(recording: {
+    id: string;
+    status?: { code?: string | null } | null;
+    completed_at?: string | null;
+  }): Promise<"done" | "failed" | "processing"> {
+    const codeOf = (c: string | null | undefined) =>
+      c === "done" ? "done" : c === "failed" ? "failed" : c ? "processing" : null;
+    const fromBot = codeOf(recording.status?.code);
+    if (fromBot) return fromBot;
+    if (recording.completed_at) return "done";
+    const full = await recallClient.retrieveRecording(recording.id);
+    const fromFull = codeOf(full?.status?.code);
+    if (fromFull) return fromFull;
+    return full?.completed_at || recordingDurationSeconds(full) != null
+      ? "done"
+      : "processing";
+  },
+
+  /**
+   * A transcribing row: transcript.done was lost, or the original
+   * recording.done handling crashed between the status claim and
+   * createAsyncTranscript (in which case Recall was never asked to
+   * transcribe and no transcript.* event will ever arrive).
+   */
+  async _reconcileTranscribing(job: JobRow): Promise<boolean> {
+    // Recover the recording id if its write was lost mid-flight. Not
+    // persisted here — it rides along on the reissue claim below, so the
+    // row's updatedAt stays stale until the claim itself.
+    let recordingId = job.recall_recording_id;
+    if (!recordingId && !job.recall_transcript_id) {
+      const bot = await recallClient.retrieveBot(job.recall_bot_id as string);
+      recordingId = bot?.recordings?.[0]?.id ?? null;
+    }
+
+    // Recover the transcript id: from the recording's media shortcuts when
+    // createAsyncTranscript succeeded but its id write was lost, or by issuing
+    // the createAsyncTranscript a crash skipped.
+    let transcriptId = job.recall_transcript_id;
+    if (!transcriptId) {
+      if (!recordingId) return this._transcribingNotReady(job);
+      const rec = await recallClient.retrieveRecording(recordingId);
+      const shortcut = rec?.media_shortcuts?.transcript;
+      if (shortcut?.id) {
+        transcriptId = shortcut.id;
+        await this._update(job.id, {
+          recall_recording_id: recordingId,
+          recall_transcript_id: transcriptId,
+        });
+      } else {
+        // Claim the reissue atomically: another app instance sweeping the
+        // same row bumps updatedAt first, so only one createAsyncTranscript
+        // (a paid operation) is ever sent.
+        const { db } = await postgresClient();
+        const claimed = await db(TABLE)
+          .where({ id: job.id, status: "transcribing" })
+          .whereNull("recall_transcript_id")
+          .where("updatedAt", "<", new Date(Date.now() - RECONCILE_STALE_MS))
+          .update({ recall_recording_id: recordingId, updatedAt: new Date() });
+        if (!claimed) return false;
+        log(
+          `reconcile: re-requesting transcript for job ${job.id} ` +
+            `(lost before createAsyncTranscript)`,
+        );
+        const transcript = await recallClient.createAsyncTranscript(
+          recordingId,
+          job.language || "auto",
+        );
+        await this._update(job.id, {
+          recall_transcript_id: transcript.id ?? null,
+        });
+        return true;
+      }
+    }
+
+    // Transcript known: complete the lost transcript.done once it's ready,
+    // or fail fast when Recall reports the transcript itself failed.
+    const transcript = await recallClient.retrieveTranscript(transcriptId);
+    const transcriptCode = transcript?.status?.code ?? null;
+    if (transcriptCode === "error" || transcriptCode === "failed") {
+      await this._fail(
+        job.id,
+        `transcript failed at Recall: ${transcript?.status?.sub_code || transcriptCode}`,
+      );
+      return true;
+    }
+    if (transcript?.data?.download_url) {
+      log(`reconcile: driving lost transcript.done for job ${job.id}`);
+      await this._onTranscriptDone(job.id, transcriptId, recordingId);
+      return true;
+    }
+    return this._transcribingNotReady(job);
+  },
+
+  /** Transcript not ready yet: wait (touch) or give up after the hard cap. */
+  async _transcribingNotReady(job: JobRow): Promise<boolean> {
+    if (this._pastGiveUp(job)) {
+      await this._fail(
+        job.id,
+        "transcript was not ready within 24 hours of the meeting start",
+      );
+      return true;
+    }
+    await this._update(job.id, {});
+    return false;
+  },
+
+  _pastGiveUp(job: JobRow): boolean {
+    const startedAt = new Date(job.join_at ?? job.createdAt).getTime();
+    return (
+      Number.isFinite(startedAt) && Date.now() - startedAt > RECONCILE_GIVE_UP_MS
+    );
   },
 
   async _findJob(
@@ -542,9 +916,13 @@ type JobRow = {
   recall_recording_id: string | null;
   recall_transcript_id: string | null;
   bot_status: string | null;
+  language: string | null;
   raw_segments: RawSegment[] | null;
   speakers: SpeakerMap | null;
   post_processing_prompts: PostProcessingPrompt[] | null;
   post_processing_outputs: PostProcessingOutput[] | null;
   created_by: number;
+  join_at: Date | string | null;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 };
