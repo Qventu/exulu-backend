@@ -62,7 +62,8 @@ import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { builtInContexts } from "@SRC/templates/contexts";
 import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
-import { logRecallStartup } from "@SRC/exulu/recall/env.ts";
+import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
+import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -470,6 +471,11 @@ export class ExuluApp {
       // Recall.ai meeting bots: always print the region + enabled/disabled
       // summary on startup (RECALL-AI.AGENT.md §"Human-required setup").
       logRecallStartup();
+      if (recallEnabled()) {
+        // Webhook delivery is ACK-first, so lost events must be reconciled
+        // from Recall's own state or jobs strand in queued/transcribing.
+        startRecallReconcileLoop();
+      }
 
       return this._expressApp;
     },

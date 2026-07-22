@@ -33,18 +33,48 @@ export class RecallApiError extends Error {
 
 const jitterMs = () => 1000 * Math.ceil(Math.random() * 5);
 
+// Per-attempt fetch budgets: a hung connection must not strand the recall
+// state machine (a stalled transcript download used to freeze a job in
+// "transcribing" forever). API JSON calls are small; the transcript download
+// from S3 can be many MB.
+export const API_TIMEOUT_MS = 60_000;
+export const DOWNLOAD_TIMEOUT_MS = 300_000;
+
 /**
  * fetch with retry on Recall's transient status codes. Mirrors the reference
- * implementation in RECALL-AI.AGENT.md.
+ * implementation in RECALL-AI.AGENT.md. Transport-level failures (network
+ * errors, per-attempt timeouts) retry ONLY when the caller opts in: a
+ * timed-out non-idempotent POST may have been processed server-side, and
+ * re-sending it would create a duplicate bot / duplicate paid transcript.
  */
 export async function fetch_with_retry(args: {
   url: string;
   options: RequestInit;
   max_attempts?: number;
+  /** Per-attempt timeout; every attempt gets a fresh abort budget. */
+  timeout_ms?: number;
+  /** Retry rejected fetches too — safe for idempotent requests only. */
+  retry_on_reject?: boolean;
 }): Promise<Response> {
-  const { url, options, max_attempts = 6 } = args;
+  const { url, options, max_attempts = 6, timeout_ms, retry_on_reject } = args;
   for (let attempt = 1; attempt <= max_attempts; attempt++) {
-    const response = await fetch(url, options);
+    let response: Response;
+    try {
+      response = await fetch(
+        url,
+        timeout_ms
+          ? { ...options, signal: AbortSignal.timeout(timeout_ms) }
+          : options,
+      );
+    } catch (err) {
+      if (!retry_on_reject || attempt === max_attempts) throw err;
+      console.log(
+        `[EXULU-RECALL] fetch error from ${url} (${(err as Error).message}); ` +
+          `retrying in ~5s (attempt ${attempt}/${max_attempts})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5000 + jitterMs()));
+      continue;
+    }
     let wait_for: number | null = null;
     switch (response.status) {
       case 429:
@@ -91,6 +121,8 @@ const request = async <T>(
         ...(init.headers ?? {}),
       },
     },
+    timeout_ms: API_TIMEOUT_MS,
+    retry_on_reject: (init.method ?? "GET").toUpperCase() === "GET",
   });
   if (!response.ok) {
     const body = await response.text();
@@ -119,6 +151,9 @@ export type RecallBot = {
   status_changes?: { code: string }[];
   recordings?: {
     id: string;
+    /** Recording lifecycle: "processing" | "done" | "failed". */
+    status?: { code?: string | null } | null;
+    completed_at?: string | null;
     media_shortcuts?: {
       transcript?: { id: string; data?: { download_url?: string } };
     };
@@ -127,12 +162,16 @@ export type RecallBot = {
 
 export type RecallTranscript = {
   id: string;
+  /** Transcript lifecycle: "processing" | "done" | "error". */
+  status?: { code?: string | null; sub_code?: string | null } | null;
   data?: { download_url?: string };
   metadata?: Record<string, unknown>;
 };
 
 export type RecallRecording = {
   id: string;
+  /** Recording lifecycle: "processing" | "done" | "failed". */
+  status?: { code?: string | null } | null;
   /** ISO8601 timestamps bounding the recording (authoritative duration source). */
   started_at?: string | null;
   completed_at?: string | null;
@@ -228,6 +267,8 @@ export const recallClient = {
     const response = await fetch_with_retry({
       url: downloadUrl,
       options: { method: "GET" },
+      timeout_ms: DOWNLOAD_TIMEOUT_MS,
+      retry_on_reject: true,
     });
     if (!response.ok) {
       const body = await response.text();
