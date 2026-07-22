@@ -8,8 +8,8 @@ describe("userCredentialsSchema", () => {
     it("has auth_type column with check constraint", () => {
         expect(sql).toMatch(/auth_type\s+text[^,]+CHECK\s*\(\s*auth_type\s+IN\s*\(\s*'oauth'\s*,\s*'user_credentials'\s*\)\s*\)/i);
     });
-    it("has jsonb data column", () => {
-        expect(sql).toMatch(/data\s+jsonb\s+NOT NULL/i);
+    it("has text data column (opaque AES ciphertext — jsonb rejected it, spec 2026-07-22 §1.1)", () => {
+        expect(sql).toMatch(/data\s+text\s+NOT NULL/i);
     });
     it("has unique index on (provider, user_id)", () => {
         expect(sql).toMatch(/UNIQUE.*\(\s*provider\s*,\s*user_id\s*\)/i);
