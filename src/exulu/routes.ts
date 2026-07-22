@@ -107,6 +107,7 @@ import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
 import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
+import { handleCredentialList, handleCredentialDelete } from "./auth/manage-handlers.ts";
 import { OAUTH_CALLBACK_PATH } from "./auth/flow.ts";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
@@ -416,6 +417,14 @@ export const createExpressRoutes = async (
   // Submits user_credentials for a user_credentials-enabled ExuluTool. Requires
   // an authenticated session; the handler cross-checks session userId vs nonce userId.
   app.post("/credentials/submit", handleCredentialSubmit);
+
+  // Lists the caller's stored tool credentials — metadata only, values are
+  // never returned. Backs the /settings Connections section.
+  app.get("/credentials", handleCredentialList);
+
+  // Revokes the caller's stored credentials for one provider. Idempotent;
+  // the next tool use re-prompts the credential form in chat.
+  app.delete("/credentials/:provider", handleCredentialDelete);
 
   app.post("/test", async (req: Request, res: Response) => {
     const { item_name, context_id } = req.body;
