@@ -46,6 +46,7 @@ import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOc
 import { guardExtractedFileText } from "./tool-output-offload";
 import { isRunSessionMetadata } from "./routines/run-session";
 import { sanitizeAuthPayloadsInUiMessages } from "./auth/sanitize-ui-messages";
+import { credentialGuardrailBlock } from "./auth/guardrail";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -567,6 +568,11 @@ export class ExuluProvider {
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
+
+    const credentialGuardrail = credentialGuardrailBlock(currentTools);
+    if (credentialGuardrail) {
+      system += "\n\n" + credentialGuardrail;
+    }
 
     if (prompt) {
       let result: { object?: any; text?: string } = { object: null, text: "" };
@@ -1103,6 +1109,11 @@ ${skillsList}
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
+
+    const credentialGuardrail = credentialGuardrailBlock(currentTools);
+    if (credentialGuardrail) {
+      system += "\n\n" + credentialGuardrail;
+    }
 
     console.log("[EXULU] Tools", currentTools?.map(x => x.name));
     console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
