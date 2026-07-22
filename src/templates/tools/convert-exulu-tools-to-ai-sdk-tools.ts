@@ -28,6 +28,7 @@ import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
+import { buildAuthToolModelOutput } from "./auth-tool-model-output";
 import { createSessionFileReadTool } from "./session-file-read-tool";
 import { createParseDocumentTool } from "./parse-document-tool";
 import { createViewDocumentPageTool } from "./view-document-page-tool";
@@ -463,6 +464,10 @@ export const convertExuluToolsToAiSdkTools = async (
           // The approvedTools array uses the tool.name lookup as the frontend
           // Vercel AI SDK uses the sanitized tool name as the key, so this matches.
           needsApproval: (approvedTools?.includes("tool-" + cur.name) || !cur.needsApproval) ? false : true, // todo make configurable
+          // Auth-wrapped tools: the model sees scrub text instead of the
+          // credentialRequest/oauth payload; the UI stream keeps the raw
+          // output (spec 2026-07-22 §1.2).
+          ...(cur.authentication ? { toModelOutput: buildAuthToolModelOutput(cur) } : {}),
           async *execute(inputs: any, options: any) {
             // generator function allows to use yield to stream tool call results
             console.log(
