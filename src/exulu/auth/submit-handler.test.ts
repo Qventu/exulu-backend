@@ -234,6 +234,28 @@ describe("handleCredentialSubmit", () => {
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 
+  it("returns 401 'session invalid' when the session userId is not a positive integer", async () => {
+    mockAuthenticate.mockResolvedValue({ user: { id: 2.5 } });
+    mockVerifyCredentialNonce.mockReturnValue({
+      provider: "test_provider",
+      userId: "2.5",
+      expiresAt: 9999999999,
+    });
+    mockValidate.mockResolvedValue(undefined);
+
+    const req = mockReq({
+      nonce: "valid-nonce",
+      values: { username: "alice", password: "secret" },
+    });
+    const res = mockRes();
+
+    await handleCredentialSubmit(req, res);
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ ok: false, error: "session invalid" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
   it("successfully submits credentials when all checks pass", async () => {
     mockVerifyCredentialNonce.mockReturnValue({
       provider: "test_provider",

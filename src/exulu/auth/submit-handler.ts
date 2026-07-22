@@ -91,7 +91,7 @@ export async function handleCredentialSubmit(req: Request, res: Response): Promi
 
   // Validate the session userId (redundant given auth check above, but defensive)
   if (!Number.isInteger(sessionUserId) || sessionUserId <= 0) {
-    res.status(401).json({ ok: false, error: "nonce invalid" });
+    res.status(401).json({ ok: false, error: "session invalid" });
     return;
   }
 
