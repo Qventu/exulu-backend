@@ -1,8 +1,48 @@
 import CryptoJS from "crypto-js";
 import { createHash, randomBytes } from "node:crypto";
 import type { ExuluOauthConfig } from "./types";
-import { oauthTokenStore, type OauthTokenRecord } from "./token-store";
+import { credentialStore } from "./credential-store";
 import { providerKeyFor } from "./provider-key";
+
+export type OauthTokenRecord = {
+  accessToken: string;
+  refreshToken?: string | null;
+  tokenType?: string | null;
+  /** Space-joined scopes as reported by the provider. */
+  scopes?: string | null;
+  /** null = the provider reported no expiry; treated as non-expiring. */
+  expiresAt?: Date | null;
+};
+
+/** The shape stored as the JSON blob in user_credentials.data for oauth rows. */
+interface OauthBlob {
+  accessToken: string;
+  refreshToken: string | null;
+  tokenType: string | null;
+  scopes: string | null;
+  /** ISO-8601 string or null — Date objects don't round-trip through JSON. */
+  expiresAt: string | null;
+}
+
+function oauthRecordToBlob(r: OauthTokenRecord): OauthBlob {
+  return {
+    accessToken: r.accessToken,
+    refreshToken: r.refreshToken ?? null,
+    tokenType: r.tokenType ?? null,
+    scopes: r.scopes ?? null,
+    expiresAt: r.expiresAt ? r.expiresAt.toISOString() : null,
+  };
+}
+
+function oauthBlobToRecord(b: OauthBlob): OauthTokenRecord {
+  return {
+    accessToken: b.accessToken,
+    refreshToken: b.refreshToken,
+    tokenType: b.tokenType,
+    scopes: b.scopes,
+    expiresAt: b.expiresAt ? new Date(b.expiresAt) : null,
+  };
+}
 
 export const OAUTH_CALLBACK_PATH = "/oauth/callback";
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -213,7 +253,8 @@ export const getValidAccessToken = async ({
   toolId: string;
   config: ExuluOauthConfig;
 }): Promise<OauthTokenRecord | null> => {
-  const stored = await oauthTokenStore.get(providerKey, userId);
+  const credRow = await credentialStore.get(providerKey, userId);
+  const stored = credRow ? oauthBlobToRecord(credRow.data as OauthBlob) : null;
   if (!stored) {
     return null;
   }
@@ -224,22 +265,29 @@ export const getValidAccessToken = async ({
     return stored;
   }
   if (!stored.refreshToken) {
-    await oauthTokenStore.delete(providerKey, userId);
+    await credentialStore.delete(providerKey, userId);
     return null;
   }
   try {
     const refreshed = await refreshAccessToken({ config, refreshToken: stored.refreshToken });
+    // Providers like Google only send a refresh_token on first consent;
+    // preserve the stored one if the refresh response omits it.
     if (!refreshed.refreshToken) {
       refreshed.refreshToken = stored.refreshToken;
     }
-    await oauthTokenStore.upsert(providerKey, userId, toolId, refreshed);
+    await credentialStore.upsert({
+      provider: providerKey,
+      userId,
+      authType: "oauth",
+      data: oauthRecordToBlob(refreshed),
+    });
     return refreshed;
   } catch (error) {
     console.error(
       `[EXULU] OAuth token refresh failed for provider "${providerKey}" tool "${toolId}" user ${userId}:`,
       error,
     );
-    await oauthTokenStore.delete(providerKey, userId);
+    await credentialStore.delete(providerKey, userId);
     return null;
   }
 };
