@@ -16,10 +16,19 @@ const mockDb = {
         const index = rows.findIndex((row) => matches(row, criteria));
         if (index >= 0) rows.splice(index, 1);
       },
+      orderBy: async (_col: string) => rows.filter((row) => matches(row, criteria)),
     }),
-    insert: async (values: Row) => {
-      rows.push({ ...values });
-    },
+    insert: (values: Row) => ({
+      onConflict: (_cols: string[]) => ({
+        merge: async (mergeValues: Row) => {
+          const existing = rows.find(
+            (r) => r.provider === values.provider && r.user_id === values.user_id,
+          );
+          if (existing) Object.assign(existing, mergeValues);
+          else rows.push({ ...values });
+        },
+      }),
+    }),
   }),
 };
 

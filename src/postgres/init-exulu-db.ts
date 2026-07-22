@@ -67,6 +67,28 @@ const addMissingFields = async (
   }
 };
 
+/**
+ * user_credentials.data held CryptoJS-AES ciphertext (an opaque base64
+ * string) in a jsonb column — Postgres rejects it, so no credential was
+ * ever stored (spec 2026-07-22-tool-credentials-chat-ui §1.1). Column
+ * becomes text. Idempotent: gated on information_schema reporting jsonb
+ * (knex.schema.hasColumn cannot check types). The table is empty in every
+ * environment (the bug made writes impossible), so USING data::text is
+ * trivially safe.
+ */
+export const migrateUserCredentialsDataColumn = async (knex: Knex): Promise<void> => {
+  const dataType = await knex.raw(
+    `SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'user_credentials' AND column_name = 'data'`,
+  );
+  if (dataType.rows?.[0]?.data_type === "jsonb") {
+    console.log("[EXULU] Migrating user_credentials.data jsonb -> text.");
+    await knex.raw(
+      "ALTER TABLE user_credentials ALTER COLUMN data TYPE text USING data::text",
+    );
+  }
+};
+
 const up = async function (knex: Knex) {
   console.log("[EXULU] Database up.");
 
@@ -130,6 +152,7 @@ const up = async function (knex: Knex) {
   // dev installs that had the earlier oauth_tokens table.
   await knex.raw("DROP TABLE IF EXISTS oauth_tokens CASCADE;");
   await knex.raw(userCredentialsSchema());
+  await migrateUserCredentialsDataColumn(knex);
 
   // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
   // DB-backed so webhook retries, intake-job retries, and Redis restarts can

@@ -709,7 +709,7 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     provider text NOT NULL,
     user_id text NOT NULL,
     auth_type text NOT NULL CHECK (auth_type IN ('oauth', 'user_credentials')),
-    data jsonb NOT NULL,
+    data text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (provider, user_id)
