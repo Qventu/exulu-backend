@@ -1,6 +1,5 @@
-import { generateText, Output } from "ai";
 import { z } from "zod";
-import { withRetry } from "@SRC/utils/with-retry";
+import { microCall } from "./micro-call";
 import { fuzzyPrefilter } from "./prefilter";
 import { normalizeFileName } from "./text-utils";
 import type { RoutingRule } from "./config";
@@ -103,25 +102,17 @@ export async function runRoutingPhase(opts: {
   const [docPageRaw, explicitKBRaw] = await Promise.all([
     (async () => {
       try {
-        return await withRetry(
-          () =>
-            generateText({
-              model,
-              temperature: 0,
-              system: buildDocPagePrompt(knownIdentifiers),
-              messages: [{ role: "user", content: question }],
-              output: Output.object({
-                schema: z.object({
-                  hasFilenameHint: z.boolean(),
-                  filenameHints: z.array(z.string()).optional(),
-                  hasPageHint: z.boolean(),
-                  pageNumber: z.number().int().nullable().optional(),
-                }),
-              }),
-              maxOutputTokens: 300,
-            }),
-          3,
-        );
+        return await microCall({
+          model,
+          system: buildDocPagePrompt(knownIdentifiers),
+          messages: [{ role: "user", content: question }],
+          schema: z.object({
+            hasFilenameHint: z.boolean(),
+            filenameHints: z.array(z.string()).optional(),
+            hasPageHint: z.boolean(),
+            pageNumber: z.number().int().nullable().optional(),
+          }),
+        });
       } catch (err) {
         steps.push({ text: "Doc/page detection failed — skipping filename and page hints." });
         return {
@@ -136,24 +127,16 @@ export async function runRoutingPhase(opts: {
     })(),
     (async () => {
       try {
-        return await withRetry(
-          () =>
-            generateText({
-              model,
-              temperature: 0,
-              system: kbSystemPrompt,
-              output: Output.object({
-                schema: z.object({
-                  explicitlyRequestedKnowledgeBases: z.array(
-                    z.enum(enabledContexts.map((c) => c.id) as [string, ...string[]]),
-                  ),
-                }),
-              }),
-              messages: [{ role: "user", content: question }],
-              maxOutputTokens: 200,
-            }),
-          3,
-        );
+        return await microCall({
+          model,
+          system: kbSystemPrompt,
+          schema: z.object({
+            explicitlyRequestedKnowledgeBases: z.array(
+              z.enum(enabledContexts.map((c) => c.id) as [string, ...string[]]),
+            ),
+          }),
+          messages: [{ role: "user", content: question }],
+        });
       } catch (err) {
         return { output: { explicitlyRequestedKnowledgeBases: [] as string[] } };
       }
@@ -267,23 +250,15 @@ export async function runRoutingPhase(opts: {
     }
 
     try {
-      const { output: classified } = await withRetry(
-        () =>
-          generateText({
-            model,
-            temperature: 0,
-            system: classifyPrompt,
-            messages: [{ role: "user", content: question }],
-            output: Output.object({
-              schema: z.object({
-                ruleId: z.enum(ruleIds as [string, ...string[]]),
-                reason: z.string(),
-              }),
-            }),
-            maxOutputTokens: 200,
-          }),
-        3,
-      );
+      const { output: classified } = await microCall({
+        model,
+        system: classifyPrompt,
+        messages: [{ role: "user", content: question }],
+        schema: z.object({
+          ruleId: z.enum(ruleIds as [string, ...string[]]),
+          reason: z.string(),
+        }),
+      });
 
       const matchedRule = routingRules.find((r) => r.id === classified.ruleId);
       if (matchedRule) {

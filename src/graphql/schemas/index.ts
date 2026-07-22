@@ -25,6 +25,7 @@ import { v4 as uuidv4 } from "uuid";
 import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
+import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
@@ -64,7 +65,7 @@ Auto generate schemas based on Exulu Table definitions in core-schema.ts
 and the fields provided by the implementation at the customer through 
 ExuluContext.
 */
-function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
+export function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Generate enum definitions for enum fields
   const enumDefs: string = table.fields
     .filter((field) => field.type === "enum" && field.enumValues)
@@ -90,7 +91,11 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     .filter((enumDef) => enumDef !== null)
     .join("\n");
 
-  let fields = table.fields.map((field) => {
+  // Hidden fields (hidden: true) are write-only secrets: excluded from the
+  // GraphQL object type so they can never be read via any query or mutation
+  // return payload.
+  const graphqlFields = table.fields.filter((field) => field.hidden !== true);
+  let fields = graphqlFields.map((field) => {
     let type: string;
     type = mapExuluFieldTypesToGraphqlTypes(field);
     const required = field.required ? "!" : "";
@@ -113,6 +118,7 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
     fields.push("  systemInstructions: String");
     fields.push("  workflows: AgentWorkflows");
     fields.push("  slug: String");
+    fields.push("  guest_has_password: Boolean");
   }
 
   if (table.name.singular === "workflow_template") {
@@ -142,9 +148,19 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   // Add RBAC input field if enabled
   const rbacInputField = table.RBAC ? "  RBAC: RBACInput" : "";
 
+  // Input type includes hidden secret fields (password, apikey, anthropic_token,
+  // temporary_token) because the mutation layer reads and hashes/stores them —
+  // they must remain writable via input even though they are excluded from read
+  // payloads (graphqlFields above). The sole name-based exclusion here is
+  // guest_password_hash: clients must never set it directly; they use the
+  // guest_password input field instead (the resolver derives the hash).
+  const inputFields = table.fields.filter((f) => f.name !== "guest_password_hash");
+  const inputExtra =
+    table.name.singular === "agent" ? "  guest_password: String" : "";
   const inputDef = `
   input ${table.name.singular}Input {
-  ${table.fields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
+  ${inputFields.map((f) => `  ${f.name}: ${mapExuluFieldTypesToGraphqlTypes(f)}`).join("\n")}
+  ${inputExtra}
   ${rbacInputField}
   }
   `;
@@ -152,8 +168,12 @@ function createExuluContextsTypeDefs(table: ExuluTableDefinition): string {
   return enumDefs + typeDef + inputDef;
 }
 
-function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
-  const fieldFilters = table.fields.map((field) => {
+export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string {
+  // Hidden fields (hidden: true) are write-only secrets: excluded from all
+  // Filter input types so clients cannot use boolean / timing oracles to
+  // enumerate or probe secret values (bcrypt hashes, tokens, API keys, etc.).
+  const filterFields = table.fields.filter((field) => field.hidden !== true);
+  const fieldFilters = filterFields.map((field) => {
     let type: string;
     if (field.type === "enum" && field.enumValues) {
       type = `${field.name}Enum`;
@@ -170,7 +190,7 @@ function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): string 
     table.name.singular.charAt(0).toUpperCase() + table.name.singular.slice(1);
 
   // Create enum-specific filter operators
-  enumFilterOperators = table.fields
+  enumFilterOperators = filterFields
     .filter((field) => field.type === "enum" && field.enumValues)
     .map((field) => {
       const enumTypeName = `${field.name}Enum`;
@@ -2385,6 +2405,10 @@ type LiteLLMModel {
       if (agenticRetrievalTool) {
         allTools.push(agenticRetrievalTool);
       }
+      // Picker entry for per-agent knowledge-base write access. Display-only:
+      // getEnabledTools skips this id and the runtime expands the stored entry
+      // into per-context create/update tools.
+      allTools.push(createKbEditorPickerTool());
     }
 
     // Apply search filter

@@ -1,4 +1,4 @@
-import { generateText } from "ai";
+import { microCall } from "./micro-call";
 import { extractIdentifierTokens } from "./text-utils";
 
 // Per-question memoization of the HyDE passage. A single search invokes
@@ -122,11 +122,14 @@ IMPORTANT:
 Question: "${originalQuestion}"
 Relevant keywords: ${relevantKeywords.join(", ")}`;
 
-  const { text } = await generateText({
+  // Single attempt on purpose: HyDE is an optional search anchor with a null
+  // fallback and per-question cache eviction on failure — retry backoff here
+  // would delay every search phase behind it.
+  const { text } = await microCall({
     model,
     prompt,
     temperature: 0.3,
-    maxOutputTokens: 500,
+    maxAttempts: 1,
   });
   const passage = (text || "").trim();
   return passage.length > 0 ? passage : null;

@@ -1,7 +1,11 @@
 // ee/agentic-retrieval/pipeline/memory.test.ts
 import { runMemoryPhase, clearMemoryItemCache } from "./memory";
 
-jest.mock("ai", () => ({ generateText: jest.fn(), Output: { object: (x: any) => x } }));
+jest.mock("ai", () => ({
+  ...jest.requireActual("ai"),
+  generateText: jest.fn(),
+  Output: { object: (x: any) => x },
+}));
 jest.mock("./multi-query", () => ({ singleSearch: jest.fn(async () => []) }));
 jest.mock("./prefilter", () => ({ fuzzyPrefilter: jest.fn(async () => []) }));
 import { generateText } from "ai";

@@ -12,71 +12,7 @@ import {
   findLiteLLMModel,
   type LiteLLMCatalogEntry,
 } from "@SRC/exulu/litellm/catalog";
-import { budgetTagFor, type BudgetEntityType } from "@SRC/exulu/tags";
-import { getTagBudgetMap } from "@SRC/exulu/litellm/budget-service";
-
-const BUDGET_ENTITY_SINGULARS = new Set<string>([
-  "user",
-  "role",
-  "team",
-  "project",
-  "agent",
-  // `workflow_template` is the GraphQL table singular; budgets attach to it
-  // under the user-facing BudgetEntityType "routine" (see tags.ts). The mapping
-  // happens in BUDGET_ENTITY_TYPE_BY_SINGULAR below so budgetTagFor() emits the
-  // correct `routine_id_<uuid>` tag.
-  "workflow_template",
-]);
-
-/**
- * Some GraphQL table singulars don't match their BudgetEntityType verbatim
- * (e.g. workflow_template → routine). Map here so addBudgetField builds the
- * correct LiteLLM tag (`routine_id_<uuid>`) that matches what buildTags() emits
- * from the workflow job runner.
- */
-const BUDGET_ENTITY_TYPE_BY_SINGULAR: Record<string, BudgetEntityType> = {
-  user: "user",
-  role: "role",
-  team: "team",
-  project: "project",
-  agent: "agent",
-  workflow_template: "routine",
-};
-
-/**
- * Resolve the computed `budget` field for an entity row. The budget lives in
- * LiteLLM (keyed by the entity's *_id_* tag); getTagBudgetMap is cached ~30s so
- * resolving a full page of rows is a single LiteLLM call + cheap map lookups.
- * Gated to super_admin / budget_management so non-privileged users querying the
- * field just get null.
- */
-const addBudgetField = async (
-  requestedFields: string[],
-  result: any,
-  tableSingular: string,
-  user: User | undefined,
-): Promise<any> => {
-  if (!requestedFields.includes("budget")) return result;
-
-  const scope = (user as any)?.role?.budget_management;
-  const canRead = !!user?.super_admin || scope === "read" || scope === "write";
-  if (!canRead || result?.id == null) {
-    result.budget = null;
-    return result;
-  }
-
-  // Translate GraphQL table singular → BudgetEntityType (e.g. workflow_template → routine).
-  const entityType = BUDGET_ENTITY_TYPE_BY_SINGULAR[tableSingular];
-  if (!entityType) {
-    result.budget = null;
-    return result;
-  }
-
-  const map = await getTagBudgetMap();
-  const tag = budgetTagFor(entityType, result.id);
-  result.budget = tag ? (map[tag] ?? null) : null;
-  return result;
-};
+import { addBudgetField, BUDGET_ENTITY_SINGULARS } from "./budget-field";
 
 const addProviderFields = async (
   args: Record<string, any>,
@@ -429,6 +365,21 @@ export const finalizeRequestedFields = async ({
       );
       if (!requestedFields.includes("provider")) {
         delete result.provider;
+      }
+      if (requestedFields.includes("guest_has_password")) {
+        // Derive the computed boolean BEFORE the generic hidden-field sweep
+        // below removes guest_password_hash from the result object.
+        result.guest_has_password = !!result.guest_password_hash;
+      }
+    }
+    // Generic sweep: remove every hidden (write-only secret) field from the
+    // result for ALL tables, regardless of whether it was requested. This
+    // covers users (password, apikey, anthropic_token, temporary_token),
+    // agents (guest_password_hash), and shared_artifacts (password_hash).
+    // Runs AFTER the agent branch above so guest_has_password is already set.
+    for (const field of table.fields) {
+      if (field.hidden === true) {
+        delete result[field.name];
       }
     }
     if (BUDGET_ENTITY_SINGULARS.has(table.name.singular)) {

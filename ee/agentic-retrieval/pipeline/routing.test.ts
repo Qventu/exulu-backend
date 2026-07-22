@@ -1,7 +1,10 @@
 // ee/agentic-retrieval/pipeline/routing.test.ts
 import { runRoutingPhase } from "./routing";
 
-jest.mock("ai", () => ({ generateText: jest.fn(), Output: { object: (x: any) => x } }));
+jest.mock("ai", () => {
+  const actual = jest.requireActual("ai");
+  return { ...actual, generateText: jest.fn(), Output: { object: (x: any) => x } };
+});
 jest.mock("./prefilter", () => ({ fuzzyPrefilter: jest.fn(async () => []) }));
 import { generateText } from "ai";
 import { fuzzyPrefilter } from "./prefilter";
@@ -141,4 +144,44 @@ describe("runRoutingPhase", () => {
     });
     expect(r.mainContexts).toEqual(["docs", "tickets"]);
   }, 30000); // withRetry backs off 2s+4s before exhausting
+
+  it("sends thinking-disable provider options and the raised token cap on every micro-call (gemini)", async () => {
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce(noHints)
+      .mockResolvedValueOnce(noExplicit)
+      .mockResolvedValueOnce({ output: { ruleId: "t", reason: "r" } });
+    await runRoutingPhase({
+      question: "how do I fix the door?", enabledContexts: enabled, documentContexts: [],
+      routingRules: [{ id: "t", label: "T", description: "d", main: ["docs"], fallback: ["tickets"] }],
+      preselectedItems: new Map(), model: { modelId: "vertex-gemini-3.5-flash" },
+    });
+    const calls = (generateText as jest.Mock).mock.calls;
+    expect(calls.length).toBe(3);
+    for (const [args] of calls) {
+      expect(args.maxOutputTokens).toBe(2000);
+      expect(args.maxRetries).toBe(0);
+      expect(args.providerOptions).toEqual({ litellm: { reasoningEffort: "disable" } });
+    }
+  });
+
+  it("degrades only the doc/page step when the model returns empty output (thinking-starvation regression)", async () => {
+    const { NoOutputGeneratedError } = jest.requireActual("ai");
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({
+        text: "",
+        get output(): any {
+          throw new NoOutputGeneratedError({ message: "No output generated." });
+        },
+      })
+      .mockResolvedValueOnce(noExplicit);
+    const r = await runRoutingPhase({
+      question: "q", enabledContexts: enabled, documentContexts: [], routingRules: [],
+      preselectedItems: new Map(), model: {},
+    });
+    // Empty output is deterministic: no blind retry, and only the one step degrades.
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(r.steps.some((s) => s.text.includes("Doc/page detection failed"))).toBe(true);
+    expect(r.steps.some((s) => s.text.includes("Routing failed"))).toBe(false);
+    expect(r.mainContexts).toEqual(["docs", "tickets"]);
+  });
 });

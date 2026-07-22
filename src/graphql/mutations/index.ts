@@ -22,6 +22,11 @@ import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import type { ExuluProvider } from "@SRC/exulu/provider.ts";
+import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
+
+// Same allow-list as utils/check-item-write-access.ts — the modes a client
+// may explicitly set on create.
+const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
 
 const postprocessDeletion = async ({
   table,
@@ -335,7 +340,9 @@ export function createMutations(
             entity: table.name.singular,
             target_resource_id: id,
             access_type: "Role",
-            role_id: user.role,
+            // auth.ts hydrates user.role into the full roles row when it
+            // exists; unhydrated it is still the uuid string.
+            role_id: user.role?.id ?? user.role,
             rights: "write",
           })
           .first();
@@ -354,7 +361,8 @@ export function createMutations(
             entity: table.name.singular,
             target_resource_id: id,
             access_type: "Team",
-            team_id: user.team,
+            // Same best-effort hydration as user.role above.
+            team_id: user.team?.id ?? user.team,
             rights: "write",
           })
           .first();
@@ -393,6 +401,14 @@ export function createMutations(
       // the current user.
       if (item.rights_mode) {
         item.rights_mode = "private";
+      }
+
+      // Never auto-publish a copy: force guest_access off so the copy is not
+      // instantly reachable as a public agent even if the source was published.
+      // Other guest fields (auth_mode, welcome message, etc.) are left as-is
+      // so the owner can re-enable guest access intentionally.
+      if (tableNamePlural === "agents" && "guest_access" in item) {
+        item.guest_access = false;
       }
 
       if (item.created_at) {
@@ -485,6 +501,10 @@ export function createMutations(
         console.log("[EXULU] Hashed password", input.password);
       }
 
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
+      }
+
       // Check for each field if it is a json field, and if
       // so, check if it is an object or array and convert
       // it to a string.
@@ -503,13 +523,22 @@ export function createMutations(
         }
       }
 
+      // Honor an explicitly provided rights_mode (bulk import batch access);
+      // absent still means "private". Invalid values are rejected rather than
+      // silently downgraded. CopyOneById intentionally keeps forcing private.
+      if (table.RBAC && input.rights_mode != null && !VALID_RIGHTS_MODES.includes(input.rights_mode)) {
+        throw new Error(
+          `Invalid rights_mode "${input.rights_mode}" — expected one of: ${VALID_RIGHTS_MODES.join(", ")}`,
+        );
+      }
+
       // We need to retrieve all the columns for potential post processing
       // operations that might need to be performed on the fields.
       const columns = await db(tableNamePlural).columnInfo();
       const insert = db(tableNamePlural)
         .insert({
           ...input,
-          ...(table.RBAC ? { rights_mode: "private" } : {}),
+          ...(table.RBAC ? { rights_mode: input.rights_mode ?? "private" } : {}),
         })
         .returning(Object.keys(columns));
 
@@ -576,6 +605,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if
@@ -691,6 +724,10 @@ export function createMutations(
         console.log("[EXULU] Hashing password", input.password);
         input.password = await bcrypt.hash(input.password, SALT_ROUNDS);
         console.log("[EXULU] Hashed password", input.password);
+      }
+
+      if (table.name.singular === "agent") {
+        input = await applyAgentGuestFieldTransforms(input);
       }
 
       // Check for each field if it is a json field, and if

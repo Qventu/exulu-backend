@@ -21,12 +21,14 @@ import { randomUUID } from "node:crypto";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { Request } from "express";
 import { createNewMemoryItemTool } from "./memory-tool";
+import { collectKbWriteTools } from "./context-write-tools";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { createSessionSandbox } from "@EE/invoke-skills/create-sandbox";
 import { getPresignedUrl } from "@SRC/uppy";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
+import { buildAuthToolModelOutput } from "./auth-tool-model-output";
 import { createSessionFileReadTool } from "./session-file-read-tool";
 import { createParseDocumentTool } from "./parse-document-tool";
 import { createViewDocumentPageTool } from "./view-document-page-tool";
@@ -267,6 +269,15 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
+  // Per-context knowledge-base write tools (create_<ctx>_item / update_<ctx>_item),
+  // expanded from the agent's knowledge_base_editor config entry. Explicit
+  // opt-in per context; vanished contexts are skipped inside the collector.
+  for (const kbWriteTool of collectKbWriteTools(agent, contexts)) {
+    if (!disabled.has(kbWriteTool.id)) {
+      currentTools.push(kbWriteTool);
+    }
+  }
+
   console.log("[EXULU] Convert tools array to object, session items", sessionItems);
   if (sessionItems) {
     const sessionItemsRetrievalTool = await createSessionItemsRetrievalTool({
@@ -453,6 +464,10 @@ export const convertExuluToolsToAiSdkTools = async (
           // The approvedTools array uses the tool.name lookup as the frontend
           // Vercel AI SDK uses the sanitized tool name as the key, so this matches.
           needsApproval: (approvedTools?.includes("tool-" + cur.name) || !cur.needsApproval) ? false : true, // todo make configurable
+          // Auth-wrapped tools: the model sees scrub text instead of the
+          // credentialRequest/oauth payload; the UI stream keeps the raw
+          // output (spec 2026-07-22 §1.2).
+          ...(cur.authentication ? { toModelOutput: buildAuthToolModelOutput(cur) } : {}),
           async *execute(inputs: any, options: any) {
             // generator function allows to use yield to stream tool call results
             console.log(
