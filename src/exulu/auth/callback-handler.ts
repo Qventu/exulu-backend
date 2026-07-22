@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
-import { oauthRegistry } from "./registry";
-import { decryptOauthState, exchangeCodeForTokens } from "./flow";
-import { oauthTokenStore } from "./token-store";
+import { authRegistry } from "./registry";
+import { decryptOauthState, exchangeCodeForTokens, type OauthTokenRecord } from "./flow";
+import { credentialStore } from "./credential-store";
 
 const escapeHtml = (s: string): string =>
   s
@@ -77,7 +77,7 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
     );
   }
 
-  const config = oauthRegistry.getByProvider(parsed.provider);
+  const config = authRegistry.getByProvider(parsed.provider);
   if (!config) {
     return send(
       404,
@@ -85,14 +85,32 @@ export const handleOauthCallback = async (req: Request, res: Response) => {
       `No OAuth configuration is registered for provider "${parsed.provider}".`,
     );
   }
+  if (config.authType !== "oauth") {
+    return send(
+      500,
+      false,
+      `Provider "${parsed.provider}" is not configured for OAuth. This callback only handles OAuth flows.`,
+    );
+  }
 
   try {
-    const record = await exchangeCodeForTokens({
+    const record: OauthTokenRecord = await exchangeCodeForTokens({
       config,
       code,
       codeVerifier: parsed.codeVerifier,
     });
-    await oauthTokenStore.upsert(parsed.provider, parsed.userId, parsed.toolId, record);
+    await credentialStore.upsert({
+      provider: parsed.provider,
+      userId: parsed.userId,
+      authType: "oauth",
+      data: {
+        accessToken: record.accessToken,
+        refreshToken: record.refreshToken ?? null,
+        tokenType: record.tokenType ?? null,
+        scopes: record.scopes ?? null,
+        expiresAt: record.expiresAt ? record.expiresAt.toISOString() : null,
+      },
+    });
   } catch (caught) {
     console.error("[EXULU] OAuth code exchange failed:", caught);
     return send(

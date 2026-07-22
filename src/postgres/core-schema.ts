@@ -702,26 +702,20 @@ const imageGenerationsSchema: ExuluTableDefinition = {
   ],
 };
 
-const oauthTokensSchema: ExuluTableDefinition = {
-  type: "oauth_tokens",
-  name: {
-    plural: "oauth_tokens",
-    singular: "oauth_token",
-  },
-  // Rows are only ever read/written by the oauth token store for the owning
-  // (provider, user_id) pair — never exposed via GraphQL — so no RBAC fields.
-  RBAC: false,
-  fields: [
-    { name: "provider", type: "text", required: false, index: true },
-    { name: "tool_id", type: "text", required: true, index: true },
-    { name: "user_id", type: "number", required: true, index: true },
-    { name: "access_token", type: "longText", required: true }, // AES-encrypted
-    { name: "refresh_token", type: "longText", required: false }, // AES-encrypted
-    { name: "token_type", type: "text", required: false },
-    { name: "scopes", type: "text", required: false },
-    { name: "expires_at", type: "date", required: false }, // null = non-expiring
-  ],
-};
+export function userCredentialsSchema(): string {
+    return `
+CREATE TABLE IF NOT EXISTS user_credentials (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider text NOT NULL,
+    user_id text NOT NULL,
+    auth_type text NOT NULL CHECK (auth_type IN ('oauth', 'user_credentials')),
+    data jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (provider, user_id)
+);
+`;
+}
 
 const sharedArtifactsSchema: ExuluTableDefinition = {
   type: "shared_artifacts",
@@ -838,7 +832,6 @@ export const coreSchemas = {
       entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
-      oauthTokensSchema: (): ExuluTableDefinition => addCoreFields(oauthTokensSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),

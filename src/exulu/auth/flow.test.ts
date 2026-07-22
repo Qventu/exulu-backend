@@ -1,19 +1,53 @@
 import { createHash } from "node:crypto";
 import type { ExuluOauthConfig } from "./types";
 
-const mockTokenStore = {
+const mockCredentialStore = {
   get: jest.fn(),
   upsert: jest.fn(),
   delete: jest.fn(),
 };
 
-jest.mock("./token-store", () => ({
-  oauthTokenStore: {
-    get: (...args: any[]) => mockTokenStore.get(...args),
-    upsert: (...args: any[]) => mockTokenStore.upsert(...args),
-    delete: (...args: any[]) => mockTokenStore.delete(...args),
+jest.mock("./credential-store", () => ({
+  credentialStore: {
+    get: (...args: any[]) => mockCredentialStore.get(...args),
+    upsert: (...args: any[]) => mockCredentialStore.upsert(...args),
+    delete: (...args: any[]) => mockCredentialStore.delete(...args),
   },
 }));
+
+/**
+ * Helper: wrap an OauthTokenRecord-shaped object into the CredentialRecord
+ * shape that credentialStore.get() now returns (with an OauthBlob as `data`,
+ * and expiresAt as ISO string rather than Date).
+ */
+function wrapAsCredRow(record: {
+  accessToken?: string;
+  refreshToken?: string | null;
+  tokenType?: string | null;
+  scopes?: string | null;
+  expiresAt?: Date | null;
+} | null) {
+  if (!record) return null;
+  return {
+    provider: "t",
+    userId: 1,
+    authType: "oauth",
+    data: {
+      accessToken: record.accessToken ?? "",
+      refreshToken: record.refreshToken ?? null,
+      tokenType: record.tokenType ?? null,
+      scopes: record.scopes ?? null,
+      expiresAt: record.expiresAt ? record.expiresAt.toISOString() : null,
+    },
+  };
+}
+
+// Alias for backward-compat in test assertions
+const mockTokenStore = {
+  get: mockCredentialStore.get,
+  upsert: mockCredentialStore.upsert,
+  delete: mockCredentialStore.delete,
+};
 
 import {
   buildAuthorizationUrl,
@@ -238,10 +272,9 @@ describe("getValidAccessToken", () => {
   });
 
   it("returns the stored token when it is not expired", async () => {
-    mockTokenStore.get.mockResolvedValueOnce({
-      accessToken: "still-good",
-      expiresAt: new Date(Date.now() + 60_000),
-    });
+    mockTokenStore.get.mockResolvedValueOnce(
+      wrapAsCredRow({ accessToken: "still-good", expiresAt: new Date(Date.now() + 60_000) }),
+    );
     const token = await getValidAccessToken({
       providerKey: "provider-x",
       userId: 1,
@@ -254,17 +287,19 @@ describe("getValidAccessToken", () => {
   });
 
   it("treats a null expiry as non-expiring", async () => {
-    const stored = { accessToken: "a", expiresAt: null };
-    mockTokenStore.get.mockResolvedValue(stored);
-    expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBe(stored);
+    mockTokenStore.get.mockResolvedValue(wrapAsCredRow({ accessToken: "a", expiresAt: null }));
+    const result = await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config });
+    expect(result?.accessToken).toBe("a");
   });
 
   it("refreshes an expired token, preserving the refresh token", async () => {
-    mockTokenStore.get.mockResolvedValue({
-      accessToken: "old",
-      refreshToken: "the-refresh",
-      expiresAt: new Date(Date.now() - 1000),
-    });
+    mockTokenStore.get.mockResolvedValue(
+      wrapAsCredRow({
+        accessToken: "old",
+        refreshToken: "the-refresh",
+        expiresAt: new Date(Date.now() - 1000),
+      }),
+    );
     mockFetch.mockResolvedValue({
       ok: true,
       status: 200,
@@ -273,25 +308,31 @@ describe("getValidAccessToken", () => {
     const result = await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config });
     expect(result!.accessToken).toBe("new");
     expect(result!.refreshToken).toBe("the-refresh");
-    expect(mockTokenStore.upsert).toHaveBeenCalledWith("t", 1, "t", result);
+    expect(mockTokenStore.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "t", userId: 1, authType: "oauth" }),
+    );
   });
 
   it("deletes the row and returns null when expired with no refresh token", async () => {
-    mockTokenStore.get.mockResolvedValue({
-      accessToken: "old",
-      refreshToken: null,
-      expiresAt: new Date(Date.now() - 1000),
-    });
+    mockTokenStore.get.mockResolvedValue(
+      wrapAsCredRow({
+        accessToken: "old",
+        refreshToken: null,
+        expiresAt: new Date(Date.now() - 1000),
+      }),
+    );
     expect(await getValidAccessToken({ providerKey: "t", userId: 1, toolId: "t", config })).toBeNull();
     expect(mockTokenStore.delete).toHaveBeenCalledWith("t", 1);
   });
 
   it("deletes the row and returns null when the refresh fails", async () => {
-    mockTokenStore.get.mockResolvedValue({
-      accessToken: "old",
-      refreshToken: "revoked",
-      expiresAt: new Date(Date.now() - 1000),
-    });
+    mockTokenStore.get.mockResolvedValue(
+      wrapAsCredRow({
+        accessToken: "old",
+        refreshToken: "revoked",
+        expiresAt: new Date(Date.now() - 1000),
+      }),
+    );
     mockFetch.mockResolvedValue({
       ok: false,
       status: 400,

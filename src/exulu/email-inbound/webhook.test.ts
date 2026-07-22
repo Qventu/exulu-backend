@@ -3,7 +3,7 @@ process.env.NEXTAUTH_SECRET = "test-secret-for-email-inbound";
 import { createHmac } from "node:crypto";
 import { Readable } from "node:stream";
 import Busboy from "busboy";
-import { encrypt } from "@SRC/exulu/oauth/token-store";
+import { encrypt } from "@SRC/exulu/auth/credential-store";
 import { createEmailWebhookHandler, type EmailWebhookDeps } from "./webhook";
 import { createEmailMultipartParser } from "@SRC/exulu/routes";
 
