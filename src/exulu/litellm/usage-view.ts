@@ -190,3 +190,43 @@ export function projectMyUsage(raw: any): {
 
   return { totals, daily, byModel };
 }
+
+/**
+ * The caller's own usage view, or null when the admin keeps spend data
+ * hidden from users (same gate as getUserBudgetView). Per the existing
+ * product decision, "percent" display mode is UI-only — the payload always
+ * carries spend; callers decide what to render.
+ */
+export async function getMyUsageView(
+  userId: number | string,
+  window: UsageWindow,
+): Promise<MyUsageView | null> {
+  const settings = await getBudgetSettings();
+  if (!settings.show_user_budget_in_chat) return null;
+
+  const tag = budgetTagFor("user", userId);
+  if (!tag) return null;
+
+  // One tag → one row per day; +100 headroom mirrors the tag-activity route.
+  const daysInRange =
+    Math.round(
+      (Date.parse(window.end_date) - Date.parse(window.start_date)) / DAY_MS,
+    ) + 1;
+
+  const raw = await getTagDailyActivity({
+    startDate: window.start_date,
+    endDate: window.end_date,
+    tags: [tag],
+    page: 1,
+    pageSize: Math.min(daysInRange + 100, 10_000),
+  });
+
+  const { totals, daily, byModel } = projectMyUsage(raw);
+  return {
+    window,
+    display: settings.user_budget_display,
+    totals,
+    daily,
+    byModel,
+  };
+}

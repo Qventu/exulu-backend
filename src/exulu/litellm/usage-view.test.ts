@@ -5,11 +5,26 @@
  * pattern).
  */
 
+jest.mock("./budget-service.ts", () => ({
+  getBudgetSettings: jest.fn(),
+}));
+jest.mock("./activity-client.ts", () => ({
+  getTagDailyActivity: jest.fn(),
+}));
+
+import { getTagDailyActivity } from "./activity-client.ts";
+import { getBudgetSettings } from "./budget-service.ts";
 import {
   MAX_WINDOW_DAYS,
+  getMyUsageView,
   projectMyUsage,
   resolveUsageWindow,
 } from "./usage-view.ts";
+
+const mockSettings = getBudgetSettings as jest.Mock;
+const mockActivity = getTagDailyActivity as jest.Mock;
+
+afterEach(() => jest.clearAllMocks());
 
 const NOW = new Date("2026-07-20T10:00:00.000Z");
 
@@ -156,5 +171,83 @@ describe("projectMyUsage", () => {
       expect(daily).toEqual([]);
       expect(byModel).toEqual([]);
     }
+  });
+});
+
+describe("getMyUsageView", () => {
+  const WINDOW = { start_date: "2026-06-21", end_date: "2026-07-20" };
+
+  it("returns null without calling LiteLLM when show_user_budget_in_chat is off", async () => {
+    mockSettings.mockResolvedValue({
+      show_user_budget_in_chat: false,
+      user_budget_display: "amount",
+      global_user_budget: {
+        enabled: false,
+        max_budget: 0,
+        budget_duration: "30d",
+      },
+    });
+
+    await expect(getMyUsageView(7, WINDOW)).resolves.toBeNull();
+    expect(mockActivity).not.toHaveBeenCalled();
+  });
+
+  it("fetches the caller's own tag and returns the projected view with display", async () => {
+    mockSettings.mockResolvedValue({
+      show_user_budget_in_chat: true,
+      user_budget_display: "percent",
+      global_user_budget: {
+        enabled: true,
+        max_budget: 10,
+        budget_duration: "30d",
+      },
+    });
+    mockActivity.mockResolvedValue({
+      results: [
+        {
+          date: "2026-07-01",
+          metrics: {
+            spend: 2,
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            successful_requests: 1,
+            failed_requests: 0,
+            api_requests: 1,
+          },
+          breakdown: { models: { "gpt-5": { metrics: { spend: 2 } } } },
+        },
+      ],
+    });
+
+    const view = await getMyUsageView(7, WINDOW);
+
+    expect(mockActivity).toHaveBeenCalledWith({
+      startDate: "2026-06-21",
+      endDate: "2026-07-20",
+      tags: ["user_id_7"],
+      page: 1,
+      pageSize: expect.any(Number),
+    });
+    expect(view).not.toBeNull();
+    expect(view?.display).toBe("percent");
+    expect(view?.window).toEqual(WINDOW);
+    expect(view?.totals.spend).toBe(2);
+    expect(view?.byModel[0]?.model).toBe("gpt-5");
+  });
+
+  it("propagates LiteLLM client errors (route maps them to 502)", async () => {
+    mockSettings.mockResolvedValue({
+      show_user_budget_in_chat: true,
+      user_budget_display: "amount",
+      global_user_budget: {
+        enabled: true,
+        max_budget: 10,
+        budget_duration: "30d",
+      },
+    });
+    mockActivity.mockRejectedValue(new Error("boom"));
+
+    await expect(getMyUsageView(7, WINDOW)).rejects.toThrow("boom");
   });
 });
