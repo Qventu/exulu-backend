@@ -45,6 +45,7 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill.ts";
 import { sliceHistoryAtCheckpoint, getCompaction, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
 import { guardExtractedFileText } from "./tool-output-offload";
 import { isRunSessionMetadata } from "./routines/run-session";
+import { sanitizeAuthPayloadsInUiMessages } from "./auth/sanitize-ui-messages";
 
 export type ExuluProviderWorkflowConfig = {
   enabled: boolean;
@@ -649,8 +650,12 @@ export class ExuluProvider {
         temperature: 0, // TODO Make this configurable
         model: model, // Should be a LanguageModelV1
         system,
-        messages: await convertToModelMessages(messages, {
+        // tools: applies each tool's toModelOutput to historical tool results;
+        // sanitize: guarantees auth payloads never reach the model regardless
+        // of part encoding (spec 2026-07-22 §1.2).
+        messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
           ignoreIncompleteToolCalls: true,
+          tools,
         }),
         maxRetries: 2,
         tools: tools,
@@ -1193,8 +1198,12 @@ ${skillsList}
     const result = streamText({
       temperature: 0, // TODO Make this configurable
       model: model, // Should be a LanguageModelV1
-      messages: await convertToModelMessages(messages, {
+      // tools: applies each tool's toModelOutput to historical tool results;
+      // sanitize: guarantees auth payloads never reach the model regardless
+      // of part encoding (spec 2026-07-22 §1.2).
+      messages: await convertToModelMessages(sanitizeAuthPayloadsInUiMessages(messages), {
         ignoreIncompleteToolCalls: true,
+        tools,
       }),
       // PrepareStep could be used here to set the model
       // for the first step or change other parameters.
