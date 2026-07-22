@@ -8,20 +8,28 @@ const matches = (row: Row, criteria: Row) =>
 
 const mockDb = {
   from: (_table: string) => ({
-    where: (criteria: Row) => ({
-      first: async () => rows.find((row) => matches(row, criteria)),
-      update: async (values: Row) => {
-        const row = rows.find((r) => matches(r, criteria));
-        if (row) Object.assign(row, values);
-      },
-      del: async () => {
-        const index = rows.findIndex((row) => matches(row, criteria));
-        if (index >= 0) rows.splice(index, 1);
-      },
-    }),
-    insert: async (values: Row) => {
-      rows.push({ ...values });
+    where: (criteria: Row) => {
+      const filtered = () => rows.filter((row) => matches(row, criteria));
+      return {
+        first: async () => filtered()[0],
+        del: async () => {
+          const index = rows.findIndex((row) => matches(row, criteria));
+          if (index >= 0) rows.splice(index, 1);
+        },
+        orderBy: async (_col: string) => filtered(),
+      };
     },
+    insert: (values: Row) => ({
+      onConflict: (_cols: string[]) => ({
+        merge: async (mergeValues: Row) => {
+          const existing = rows.find(
+            (r) => r.provider === values.provider && r.user_id === values.user_id,
+          );
+          if (existing) Object.assign(existing, mergeValues);
+          else rows.push({ ...values });
+        },
+      }),
+    }),
   }),
 };
 
@@ -121,5 +129,34 @@ describe("credentialStore", () => {
     await credentialStore.upsert({ provider: "test-p", userId: 7, authType: "oauth", data: { v: 1 } });
     await credentialStore.delete("test-p", 7);
     expect(await credentialStore.get("test-p", 7)).toBeNull();
+  });
+
+  it("stores user_id as a string at the store boundary", async () => {
+    await credentialStore.upsert({ provider: "test-p", userId: 42, authType: "oauth", data: { v: 1 } });
+    expect(rows[0].user_id).toBe("42");
+    // get/delete query with the string form too.
+    expect(await credentialStore.get("test-p", 42)).not.toBeNull();
+    await credentialStore.delete("test-p", 42);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("listByUser returns metadata only, never data", async () => {
+    const created = new Date("2026-07-22T10:00:00Z");
+    await credentialStore.upsert({
+      provider: "moco",
+      userId: 8,
+      authType: "user_credentials",
+      data: { apiKey: "secret" },
+    });
+    rows[0].created_at = created;
+    const list = await credentialStore.listByUser(8);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toEqual({
+      provider: "moco",
+      authType: "user_credentials",
+      createdAt: created,
+      updatedAt: rows[0].updated_at,
+    });
+    expect("data" in (list[0] as object)).toBe(false);
   });
 });

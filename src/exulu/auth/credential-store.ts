@@ -22,7 +22,10 @@ export interface CredentialRecord {
 
 async function get(provider: string, userId: number): Promise<CredentialRecord | null> {
   const { db } = await postgresClient();
-  const row = await db.from(TABLE).where({ provider, user_id: userId }).first();
+  const row = await db
+    .from(TABLE)
+    .where({ provider, user_id: String(userId) })
+    .first();
   if (!row) {
     return null;
   }
@@ -37,23 +40,41 @@ async function get(provider: string, userId: number): Promise<CredentialRecord |
 async function upsert(record: CredentialRecord): Promise<void> {
   const { db } = await postgresClient();
   const encrypted = encrypt(JSON.stringify(record.data));
-  const existing = await db.from(TABLE).where({ provider: record.provider, user_id: record.userId }).first();
-  const values = {
-    provider: record.provider,
-    auth_type: record.authType,
-    data: encrypted,
-    updated_at: new Date(),
-  };
-  if (existing) {
-    await db.from(TABLE).where({ provider: record.provider, user_id: record.userId }).update(values);
-  } else {
-    await db.from(TABLE).insert({ user_id: record.userId, ...values });
-  }
+  // Atomic — the previous read-then-insert raced concurrent first-time
+  // submits into unique-constraint 500s (spec §1.1).
+  await db
+    .from(TABLE)
+    .insert({
+      provider: record.provider,
+      user_id: String(record.userId),
+      auth_type: record.authType,
+      data: encrypted,
+      updated_at: new Date(),
+    })
+    .onConflict(["provider", "user_id"])
+    .merge({ auth_type: record.authType, data: encrypted, updated_at: new Date() });
+}
+
+/** Metadata only — values never leave the store through this path. */
+async function listByUser(
+  userId: number,
+): Promise<{ provider: string; authType: AuthType; createdAt: Date; updatedAt: Date }[]> {
+  const { db } = await postgresClient();
+  const list = await db
+    .from(TABLE)
+    .where({ user_id: String(userId) })
+    .orderBy("provider");
+  return list.map((row: any) => ({
+    provider: row.provider,
+    authType: row.auth_type as AuthType,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
 }
 
 async function del(provider: string, userId: number): Promise<void> {
   const { db } = await postgresClient();
-  await db.from(TABLE).where({ provider, user_id: userId }).del();
+  await db.from(TABLE).where({ provider, user_id: String(userId) }).del();
 }
 
-export const credentialStore = { get, upsert, delete: del };
+export const credentialStore = { get, upsert, listByUser, delete: del };
