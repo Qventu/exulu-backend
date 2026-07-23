@@ -139,6 +139,7 @@
           "developers/tutorials/queues-and-workers",
           "developers/tutorials/custom-tools",
           "developers/tutorials/oauth-tools",
+          "developers/tutorials/user-credential-tools",
           "developers/tutorials/running-evals",
           "developers/tutorials/mcp"
         ] },
