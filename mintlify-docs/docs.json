@@ -77,6 +77,7 @@
         ] },
         { "group": "Routines", "pages": [
           "building/routines/overview",
+          "building/routines/email-triggers",
           "building/routines/runs-and-schedules"
         ] },
         { "group": "Evals", "pages": [
