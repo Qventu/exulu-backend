@@ -227,24 +227,66 @@ The shape returned by `ExuluContext.search()`, `ExuluReadApi.authorizedRead()`, 
 
 ---
 
+### ExuluAuthConfig
+
+```typescript
+type ExuluAuthConfig = ExuluOauthConfig | ExuluUserCredentialsConfig;
+```
+
+The discriminated union accepted by the `authentication` field of an `ExuluTool`. The active arm is selected by `authType`: `"oauth"` for the 3-legged OAuth 2.0 flow and `"user_credentials"` for the form-based credential prompt flow. See [ExuluTool — configuration](/developers/core/exulu-tool/configuration) for the full `authentication` option guide.
+
+---
+
 ### ExuluOauthConfig
 
 ```typescript
-type ExuluOauthConfig = {
-  provider?: string;
+interface ExuluOauthConfig {
+  authType: "oauth";
+  provider: string;
   authorizationUrl: string;
   tokenUrl: string;
   clientId: string;
   clientSecret: string;
-  scopes: string[];
+  scopes: readonly string[];
   pkce?: boolean;
   extraAuthParams?: Record<string, string>;
-};
+}
 ```
 
-OAuth 2.0 configuration for an `ExuluTool`. When a tool is constructed with an `oauth` property, IMP wraps its `execute` to require a valid access token. `provider` lets multiple tools share the same token under one consent grant; when omitted each tool uses its own `id` as the provider key.
+OAuth 2.0 configuration for an `ExuluTool`. When a tool is constructed with an `authentication` property set to this type, IMP wraps its `execute` to require a valid access token. `provider` lets multiple tools share the same token under one consent grant — tools with the same `provider` string share a single OAuth connection per user, rather than each requiring its own consent screen. All values are declared in code; none are exposed as admin-configurable tool config. `pkce` defaults to `true` (S256); set it to `false` for providers that reject PKCE.
 
 See [ExuluTool — introduction](/developers/core/exulu-tool/introduction) for the full OAuth integration guide.
+
+---
+
+### ExuluUserCredentialsConfig
+
+```typescript
+interface ExuluUserCredentialsConfig {
+  authType: "user_credentials";
+  provider: string;
+  fields: CredentialField[];
+  validate?: (values: Record<string, string>) => Promise<void>;
+}
+```
+
+User-credentials configuration for an `ExuluTool`. When a tool is constructed with an `authentication` property set to this type, IMP presents the user with a form before the first tool call, stores the submitted values encrypted, and injects them into `execute` as `inputs.credentials`. `provider` namespaces the stored credentials — tools sharing the same `provider` share a single stored credential set per user. `validate` is an optional async function called after the user submits; throw any `Error` to reject the submission with the error message.
+
+---
+
+### CredentialField
+
+```typescript
+interface CredentialField {
+  name: string;
+  label: string;
+  type: "text" | "password";
+  placeholder?: string;
+  help?: string;
+}
+```
+
+One field in the credential-collection form rendered when `ExuluUserCredentialsConfig` is active. `name` is the key used in the `credentials` record injected into `execute`. `type: "password"` masks the input and is appropriate for API keys and secrets. `placeholder` and `help` are optional UI hints shown beneath the field.
 
 ---
 
@@ -258,7 +300,35 @@ type ExuluOauthToolContext = {
 };
 ```
 
-The OAuth context injected into an OAuth-enabled tool's `execute` inputs as `inputs._oauth`. `expiresAt` is `null` when the provider did not report an expiry. `scopes` is the space-joined granted scope string when reported.
+The OAuth context injected into an OAuth-enabled tool's `execute` inputs as `inputs.oauth`. `expiresAt` is `null` when the provider did not report an expiry. `scopes` is the space-joined granted scope string when reported.
+
+---
+
+### ExuluCredentialsToolContext
+
+```typescript
+interface ExuluCredentialsToolContext {
+  userId: string;
+  provider: string;
+  credentials: Record<string, string>;
+}
+```
+
+The credentials context injected into a user-credentials-enabled tool's `execute` inputs as `inputs.credentials`. `credentials` is a `Record<string, string>` keyed by the `name` values declared in `ExuluUserCredentialsConfig.fields`. `userId` and `provider` identify the owner of the stored credential set.
+
+---
+
+### CredentialInvalidError
+
+```typescript
+class CredentialInvalidError extends Error {
+  readonly provider: string;
+  readonly reason?: string;
+  constructor(provider: string, reason?: string);
+}
+```
+
+Thrown from a tool's `execute` function to signal that a stored credential is no longer valid (e.g. a 401 from the upstream API). When IMP's `wrapExecuteWithAuth` catches a `CredentialInvalidError` whose `provider` matches the tool's configured provider, it deletes the stored credential and immediately re-prompts the user with a fresh form. Errors from a different provider are re-thrown unchanged. Construct with the tool's `authentication.provider` and an optional human-readable `reason` string.
 
 ---
 
