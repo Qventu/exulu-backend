@@ -66,6 +66,7 @@ type ExuluContextFieldDefinition = {
   index?: boolean;
   enumValues?: string[];
   allowedFileTypes?: allFileTypes[];
+  hidden?: boolean;
 };
 ```
 
@@ -107,6 +108,10 @@ type ExuluContextFieldDefinition = {
 
 <ParamField path="fields[].allowedFileTypes" type="allFileTypes[]">
   For `file` fields: the accepted file types (for example `["pdf", "docx"]`).
+</ParamField>
+
+<ParamField path="fields[].hidden" type="boolean">
+  Marks the field as a write-only secret. Hidden fields are excluded from the generated GraphQL object type (unreadable via any query or mutation response), the generated Filter input type (prevents boolean/timing oracle attacks on secret values), the SQL SELECT list, and all read payloads. They are also excluded from `groupBy` and `sort` — the allow-list checked before any user-supplied column name reaches SQL rejects hidden field names. Writes via the mutation Input type are still accepted, so the mutation layer can hash and store passwords, API keys, and tokens. Use `hidden: true` for any column that must never appear in read responses.
 </ParamField>
 
 ```typescript
