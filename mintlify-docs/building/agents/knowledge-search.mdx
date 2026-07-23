@@ -1,0 +1,111 @@
+---
+title: "Knowledge search"
+description: "Configure the agentic retrieval pipeline: what it does, every available option, and when to change each one."
+icon: "magnifying-glass"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+import { EditionBadge } from "/snippets/edition-badge.mdx";
+
+<RightsCallout right="agents (write)" />
+
+<Info>
+  Agentic retrieval is an <EditionBadge edition="ee" /> feature — it requires the `agentic-retrieval` license entitlement. When the entitlement is absent, the tool does not appear in the agent editor. See [Editions](/get-started/editions) for activation details.
+</Info>
+
+## What the pipeline does
+
+When you enable the knowledge search tool on an agent, each user question triggers a multi-phase retrieval pipeline before the model writes its answer.
+
+**Phase 1 — routing and memory (parallel)**
+
+A classification step reads the question and decides which knowledge bases to search first and which to hold as fallback sources. Routing rules (configured in the wizard's Routing step) describe categories of questions in plain language and map them to specific sources; without rules, every enabled knowledge base is searched. At the same time, the pipeline checks the memory context (if one is configured) for relevant prior conversation summaries and curated notes.
+
+**Identifier pins**
+
+If vocabulary identifier sets are configured, the pipeline detects product names, standards codes, or other typed identifiers in the question and pins the files that match them. Fuzzy identifier sets use approximate name matching; exact sets require an exact match. Pinned files are boosted in reranking.
+
+**Phase 2 — search (main and speculative fallback, parallel)**
+
+For each enabled knowledge base, the pipeline generates query variations and searches. Documents and manuals use Hypothetical Document Embedding (HyDE) — the model drafts a passage that a relevant document might contain, then searches for real passages close to that draft — plus multi-query expansion with Reciprocal Rank Fusion (RRF) to combine results. Conversations and records use keyword-focused search without HyDE.
+
+Fallback sources are searched in parallel with main sources and incorporated only when the main results fall below the fallback threshold.
+
+**Phase 3 — rerank and return**
+
+Results from all sources are merged, boosted (for pinned items and identifier matches), and re-scored by the configured reranker. The top-K passages are returned to the model.
+
+---
+
+## Enabling and configuring the tool
+
+Open the agent in the [workbench](/building/agents/workbench) and scroll to the **Knowledge & memory** section. Flip the **Knowledge search** switch to enable the tool. A six-step configuration wizard opens automatically:
+
+| Step | What you configure |
+|---|---|
+| **Sources** | Which knowledge bases to include; the content kind for each (documents, conversations, or records); per-source retrieval instructions |
+| **Routing** | Plain-language rules that route specific question types to the right sources |
+| **Vocabulary** | Glossary terms, identifier sets (product names, codes, standards), query-rewrite rules, and a document style hint |
+| **Memory** | How memory entries from the memory knowledge base shape retrieval |
+| **Behavior** | Reranker, result count, fallback threshold, project search, extra instructions, and advanced tuning |
+| **Review** | Summary of all settings before applying |
+
+Click **Finish** in the wizard and then **Save** the agent.
+
+---
+
+## Configuration options
+
+All thirteen options are optional. Omitted options fall back to the defaults shown below.
+
+| UI label | Config key | Default | What it does | When to change it |
+|---|---|---|---|---|
+| Extra instructions (optional) | `instructions` | _(empty)_ | Free-text guidance prepended to the tool description shown to the model; useful for "check this source first" or scope hints. | When the model misuses the tool or needs context about when to call it. |
+| Reranker | `reranker` | `"none"` | Reranker backend used to re-score results after retrieval. `"none"` disables reranking. | Strongly recommended — set a reranker whenever one is available on your deployment; it materially improves result quality. |
+| Managed context | `managed_context` | off | When on, users must preselect items before the tool will search. The tool returns an instruction to the model asking the user to preselect if no items are pinned. | Use when you want strict user control over what is searched. |
+| Require chosen knowledge bases | `require_preselected_contexts` | off | When on, users must explicitly confirm which knowledge bases to search before the tool runs. The model prompts the user to choose. | Use when your agent serves multiple completely separate domains and ambiguous routing is unacceptable. |
+| Debug logging | `logging` | off | Logs verbose per-phase traces to the server console. Has no effect on responses. | Enable temporarily when diagnosing unexpected retrieval results; disable in production. |
+| Utility model (optional) | `utility_model` | _(empty, uses agent model)_ | LiteLLM model ID used for the pipeline's internal micro-calls (routing classification, HyDE query generation, identifier detection). When empty, the agent's own model is used. | Set to a faster or cheaper model when the agent's primary model is large and expensive, and pipeline micro-calls don't need its full capability. |
+| Max knowledge searches per message | `max_steps` | `0` (no search-specific cap) | Caps the number of times the knowledge search tool may be called within a single agent turn. Once spent, the tool is disabled for the rest of that turn; the agent's overall tool-step budget still applies. | Raise when complex questions legitimately need multiple searches. Lower to limit token spend on retrieval-heavy agents. |
+| Search attached project items | `project_search` | on | When a chat belongs to a project, knowledge items pinned to that project are automatically included as an additional source. | Turn off when project items are not relevant to this agent's domain. |
+| Knowledge bases (per-source profiles) | `knowledge_bases` | `{}` (all enabled, defaults by kind) | JSON map of context ID to a profile with `enabled` (boolean), `kind` (`documents` \| `conversations` \| `records`), `instructions` (string), and `overrides` (`limit`, `expand`, `multiQuery`, `hyde`). | Configure via the wizard's Sources step — direct JSON editing is for advanced cases only. |
+| Routing rules | `routing` | `{ "rules": [] }` (search all) | Array of routing rules, each with a `label`, plain-text `description`, and lists of `main` and `fallback` context IDs. Empty means every enabled knowledge base is searched for every question. | Add rules when you have clearly distinct question categories that should hit different sources; omit for general-purpose agents. |
+| Vocabulary | `vocabulary` | `{ "glossary": [], "identifiers": [], "rewrites": [], "styleHint": "" }` | Domain vocabulary: glossary term/meaning pairs, identifier sets (name, description, examples, fuzzy or exact strategy, applies-to contexts), query-rewrite rules (find → replace), and a style hint describing the documents (feeds HyDE query generation). | Add a glossary when users use abbreviations your documents don't. Add identifier sets when users mention product names or codes that map to specific files. |
+| Memory features | `memory` | `{ "enabled": true, "override": false, "filePrioritization": false, "queryAugmentation": true }` | Controls four memory behaviours: `enabled` (retrieve relevant memory entries alongside documents), `override` (let verified memory entries lead over documents), `filePrioritization` (pin files referenced in memory notes), `queryAugmentation` (expand queries with memory and glossary). Requires a memory context set on the agent. | Adjust when memory entries are too dominant or not influential enough. |
+| Advanced tuning | `tuning` | `{ "topK": 5, "fallbackThreshold": 0.95, "pinBoost": 0.15, "identifierBoost": 0.15, "pageWindow": 1, "maxQueriesPerContext": 5 }` | Six retrieval knobs: `topK` — passages handed to the model (1–50); `fallbackThreshold` — similarity score below which backup sources are also searched (0–1, higher = backups used more often); `pinBoost` — reranking score added to pinned items (0–1); `identifierBoost` — score added to identifier-matched items (0–1); `pageWindow` — neighboring sections fetched around a result (0 = none); `maxQueriesPerContext` — query variations per source (1–10). | Default values work well in most deployments. Raise `topK` for broader answers; lower `fallbackThreshold` to reduce fallback noise; increase `pageWindow` for documents where context continuity matters (e.g. manuals). |
+
+---
+
+## Step budgets
+
+`max_steps` bounds **knowledge-search calls only**, not the agent's overall step budget.
+
+| Setting | Scope | Default |
+|---|---|---|
+| `max_steps` (knowledge search option) | How many times `agentic_context_search` may be called per message | `0` = no search-specific cap |
+| Agent-level tool-step budget | Total tool steps (all tools) per message | Platform default: 10 |
+
+When `max_steps` is `0` or unset, the search tool is not separately capped — the only limit is the agent's overall tool-step budget. Once the `max_steps` budget is spent the search tool is removed from the active tool list for the rest of that turn; the model can still call other tools and will produce a final text answer.
+
+The agent-level budget (configured on the agent form, not in the knowledge-search wizard) governs all tool calls across all tools for one message.
+
+---
+
+## Editions
+
+Agentic retrieval requires the <EditionBadge edition="ee" /> `agentic-retrieval` entitlement. The tool does not appear in the agent editor and returns `undefined` at the SDK level when the entitlement is absent. See [Editions](/get-started/editions) for how to activate Enterprise Edition.
+
+For the SDK factory (`ExuluDefaultTools.agentic.retrieval.create.pipeline`) and the full Zod schema for each JSON-typed option, see the [ExuluDefaultTools reference](/developers/reference/exulu-default-tools).
+
+---
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Workbench" icon="settings" href="/building/agents/workbench">
+    All nine sections of the agent editor.
+  </Card>
+  <Card title="ExuluDefaultTools reference" icon="code" href="/developers/reference/exulu-default-tools">
+    SDK factory, option types, and JSON schema details.
+  </Card>
+</Columns>
