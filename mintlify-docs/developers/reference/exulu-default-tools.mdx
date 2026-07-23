@@ -100,15 +100,15 @@ When a session is configured with an `agentic_context_search` tool, the followin
 |---|---|---|---|
 | `instructions` | `string` | `""` | Extra instructions prepended to the tool description shown to the model. |
 | `reranker` | `string` | `"none"` | Reranker backend to apply after retrieval (`"none"` disables reranking). |
-| `managed_context` | `boolean` | `false` | When `true`, the pipeline manages the context window, pruning stale chunks automatically. |
-| `require_preselected_contexts` | `boolean` | `false` | When `true`, only contexts explicitly listed in `preselected` are searched. |
+| `managed_context` | `boolean` | `false` | When `true`, users must preselect items before the tool will search. If no items are preselected the tool returns an instruction asking the user to pin items first. |
+| `require_preselected_contexts` | `boolean` | `false` | When `true`, users must explicitly confirm which knowledge bases to search before the tool runs; the model prompts the user to choose from the available contexts. |
 | `logging` | `boolean` | `false` | Enables verbose pipeline trace logging. |
 | `project_search` | `boolean` | `true` | Includes knowledge items attached to the chat's project as an additional source. |
 | `utility_model` | `string` | `""` | LiteLLM model name used by routing and query-expansion phases; falls back to the session model when empty. |
 | `knowledge_bases` | `object (JSON)` | `{}` | Per-context KB profiles — a JSON map of context ID to a `KbProfile` object with `enabled`, `kind`, `instructions`, and `overrides`. |
 | `routing` | `object (JSON)` | `{ rules: [] }` | Routing rules that direct queries to different context subsets based on content. |
 | `vocabulary` | `object (JSON)` | `{ glossary: [], identifiers: [], rewrites: [], styleHint: "" }` | Domain vocabulary: glossary terms, identifier sets, text rewrites, and a style hint for query expansion. |
-| `memory` | `object (JSON)` | `{}` | Memory behaviour: `enabled`, `override`, `filePrioritization`, `queryAugmentation`. |
+| `memory` | `object (JSON)` | `{}` (parsed to full defaults at read time) | Memory behaviour: `enabled`, `override`, `filePrioritization`, `queryAugmentation`. |
 | `tuning` | `object (JSON)` | `{}` | Retrieval tuning knobs: `topK`, `fallbackThreshold`, `pinBoost`, `identifierBoost`, `pageWindow`, `maxQueriesPerContext`. |
 
 JSON-typed options (`knowledge_bases`, `routing`, `vocabulary`, `memory`, `tuning`) accept either a pre-parsed object or a JSON string; invalid JSON or schema failures silently fall back to defaults.
