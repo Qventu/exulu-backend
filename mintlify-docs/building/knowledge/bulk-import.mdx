@@ -1,0 +1,148 @@
+---
+title: "Bulk import"
+description: "Add or update many items at once from files or a CSV."
+icon: "upload"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+## Opening the wizard
+
+The **Import** button appears in two places inside a context workspace:
+
+- **Workspace header** — the **Import** button in the top-right toolbar, next to **New item**.
+- **Empty items table** — when the Active view has no items yet, a secondary **Import** button appears below the "Add your first item" prompt.
+
+Clicking either button opens the **Import items** dialog. The title bar shows the current step — **Add data**, **Map columns**, or **Review & import** — so you can orient yourself as you move through the flow.
+
+## Flow A: import files
+
+Use this flow to create one new item per file.
+
+1. Drop one or more files onto the **Import files** drop zone, or click the zone to browse. Each file becomes a separate item.
+2. The zone lists accepted files with a count — "3 files ready to import". Use **Remove all** to clear the list, or the × button next to a file to remove it individually.
+3. If the context has more than one file field, a **Put dropped files into** selector appears below the file list. Choose which field should receive the uploaded content.
+4. Click **Continue**. The wizard skips the Map columns step and goes straight to Review.
+
+## Flow B: import via CSV
+
+Use this flow when items already exist in storage or when you want to create or update many items with structured fields.
+
+### Download the template
+
+Click **Download CSV template** in the **Import via CSV** panel. The downloaded file has:
+
+- A header row with the context's field labels.
+- One example row showing the expected format for each column — dates as `YYYY-MM-DD`, numbers with a dot decimal, booleans as `true` or `false`, and so on.
+
+Edit the template in any spreadsheet tool, then save it as CSV.
+
+### File columns reference storage keys
+
+For any field of type File, the CSV cell must contain a **storage key** or the full storage URL for an object already in the instance's storage — not a local filename. The wizard cannot upload files referenced in a CSV; those files must be in storage before the import runs.
+
+The column mapping step shows a note — "Values must be this instance's storage URLs or keys" — for any column mapped to a file field.
+
+### Drop the CSV and map columns
+
+Drop the edited CSV onto the **Import via CSV** drop zone, or click to browse. The panel shows a chip with the filename and row count. Click **Continue**.
+
+The **Map columns** step shows a table with three columns:
+
+| Column | What it shows |
+| --- | --- |
+| **CSV column** | The header from your file. |
+| **Sample values** | Up to two non-empty values from the first rows, so you can verify the mapping. |
+| **Import as** | A dropdown to map this column to a context field, or **Ignore** to skip it. |
+
+Columns with names that closely match field labels are mapped automatically. Adjust any mapping before proceeding, then click **Continue** to enter Review.
+
+## The two zones are exclusive
+
+The file zone and the CSV zone cannot be active at the same time:
+
+- If you have dropped files, the CSV zone is hidden. A message below the file list reads "Clear the files to import via CSV instead".
+- If you have dropped a CSV, the file zone is hidden. A message in the CSV panel reads "Remove the CSV to import files instead".
+
+Clear your current selection to switch flows.
+
+## Review step
+
+The **Review & import** step shows an editable grid with one row per item and one column per field.
+
+### Status and action columns
+
+The first column shows each row's **action**:
+
+| Badge | Meaning |
+| --- | --- |
+| **Create** | A new item will be created (no matching id or external\_id found). |
+| **Update** | An existing item matched by id or external\_id will be updated. |
+| **Error** | A row-level validation error prevents this row from importing. |
+
+The wizard checks your id and external\_id values against the server on entry to the review step and again whenever you finish editing a key cell — so the Create / Update label stays accurate as you make corrections.
+
+### Inline cell errors
+
+Cells with invalid values show a red border and an error message below the input. Examples:
+
+- "Not found in storage" — a file column's key does not match any object in storage.
+- "Use the YYYY-MM-DD format" — a date cell is not formatted correctly.
+- "Duplicate Name in this import" — two rows share the same value for a field that must be unique within the import.
+
+You can edit cells directly in the grid. Key cells (`id` and `external_id`) re-trigger the server verification pass when you leave them; file cells trigger a storage existence check on blur.
+
+### Storage-existence verification
+
+When the review step opens (and again after each key-cell edit), the wizard checks every file-column storage key against the instance's storage. Keys that do not resolve to an existing object receive a "Not found in storage" error. Correcting the value and moving focus away retries the check.
+
+### Blank-clears warning
+
+When the grid contains any **Update** rows and any mapped column has a blank cell, a notice appears above the grid:
+
+> Blank cells in mapped columns will clear those fields on updated items.
+
+This is a warning, not a blocker. If you intend to clear a field, leave the cell blank. If not, fill it in before importing.
+
+## Batch access
+
+Before starting the import, use the **Access** button in the footer to set the access mode that will be applied to every **newly created** item in this batch. The button shows the current setting — for example "Access: Private". Clicking it opens the same access control panel as the item detail.
+
+The review grid includes a read-only **Access** column that echoes the chosen mode on each Create row. Update rows show a dash — existing access is kept and is not changed by the import.
+
+The batch access setting is sent as `rights_mode` on the GraphQL create mutation for each new item. See [GraphQL conventions](/api-reference/graphql/conventions) for how rights modes map to retrieval visibility.
+
+## Running the import and the progress bar
+
+Click **Import N items** (when all rows are valid) or **Import N valid rows** (when some have errors) to start the run. The footer switches to a progress bar showing "Imported X of Y…".
+
+Row states update live:
+
+| State | Meaning |
+| --- | --- |
+| **Pending** | Queued, not yet started. |
+| **Uploading** | File cells are being uploaded to storage (file-drop flow). |
+| **Saving** | The create or update mutation is in flight. |
+| **Done** | Completed successfully. |
+| **Failed** | The mutation returned an error (shown in a tooltip). |
+
+Invalid rows are not included in the run total, so the bar reaches 100% even if some rows were skipped. When all queued rows finish, the bar shows the final summary — "N created, N updated, N failed" — with a skipped count appended when any rows were excluded.
+
+### After the run
+
+- **Download error report** — appears when any rows failed. Downloads a CSV with the original values and a trailing `error` column per failed row. You can correct the file and re-import.
+- **Retry failed rows** — re-runs only the rows whose state is Failed (Done rows are skipped automatically).
+- **Close** — dismisses the dialog. Done rows are preserved in the items table.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Items" icon="list" href="/building/knowledge/items">
+    Manage individual items: create, search, filter, and run pipeline actions.
+  </Card>
+  <Card title="Knowledge overview" icon="brain" href="/building/knowledge/overview">
+    How contexts, items, chunks, and embeddings fit together.
+  </Card>
+</Columns>
