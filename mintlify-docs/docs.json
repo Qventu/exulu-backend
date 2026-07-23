@@ -60,7 +60,8 @@
           "building/agents/workbench",
           "building/agents/tools-and-skills",
           "building/agents/access-and-safety",
-          "building/agents/guest-access"
+          "building/agents/guest-access",
+          "building/agents/knowledge-search"
         ] },
         { "group": "Knowledge", "pages": [
           "building/knowledge/overview",
