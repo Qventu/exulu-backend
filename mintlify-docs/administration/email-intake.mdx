@@ -24,9 +24,9 @@ The page has three sections:
 | **Inbound domain** | The Mailgun domain that will receive emails (e.g. `mail.your-company.com`). This becomes the `@` part of every routine's generated address. |
 | **Webhook signing key** | The domain's HTTP webhook signing key from Mailgun. Write-only: the API never returns the stored value — the placeholder reads "A signing key is stored" once one has been saved. Submitting a new value replaces the stored key (key rotation). |
 
-Click **Save settings** to apply changes. The webhook URL section becomes active after the first save.
+Click **Save settings** to apply changes.
 
-**Webhook URL** — a read-only copy field showing the URL to paste into the Mailgun route. The URL is derived from the platform's public base URL (`{BACKEND}/webhooks/email/mime`). If the environment variable is not set the field shows a pending message; contact your infrastructure team.
+**Webhook URL** — a read-only copy field showing the URL to paste into the Mailgun route. The webhook URL is shown as soon as the platform's `BACKEND` environment variable is set — if the field shows a pending message instead of a URL, the backend's public URL is not configured; contact whoever operates your deployment.
 
 **Last webhook received** — a timestamp updated on every verified delivery. Use this to confirm Mailgun is successfully reaching the endpoint: if the timestamp updates within seconds of a test email, the pipe is working.
 
