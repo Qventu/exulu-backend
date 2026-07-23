@@ -70,7 +70,9 @@
     { "name": "Skills", "description": "Skills are versioned bundles of files (markdown, scripts, assets) mounted into the agent sandbox. These endpoints manage the skill registry and individual skill files." },
     { "name": "Uploads", "description": "Uppy-compatible S3 companion routes for single-part and multipart file uploads. Accept the standard API key. The `internal-key` header (set to `INTERNAL_SECRET`) is accepted only on `/s3/delete`, `/s3/download`, `/s3/list`, and `/s3/object` — it does **not** work on `/s3/sign` or the `/s3/multipart` routes." },
     { "name": "Compliance", "description": "GDPR / DSGVO operator endpoints for data-subject access (export) and erasure. Both require `super_admin`." },
-    { "name": "Artifacts", "description": "Shareable artifact links — create, list, and revoke share links for files stored in S3." }
+    { "name": "Artifacts", "description": "Shareable artifact links — create, list, and revoke share links for files stored in S3." },
+    { "name": "Credentials", "description": "Tool-credential management — submit, list, and revoke per-user credentials for oauth and user_credentials-enabled tools. Values are stored encrypted and never returned through these endpoints." },
+    { "name": "Public Agents", "description": "Unauthenticated endpoints for guest-published agent discovery. Only whitelisted metadata fields are ever returned; no instructions, tools, or model details are exposed." }
   ],
   "paths": {
     "/ping": {
@@ -206,7 +208,7 @@
       "post": {
         "operationId": "runAgent",
         "summary": "Run an agent",
-        "description": "Sends a message to an agent instance and returns the response. When the `stream` header is `true`, the response is an AI SDK UIMessage stream over SSE (text/event-stream); otherwise a sync JSON response is returned. The agent's `rights_mode` controls whether an API key or session JWT is required — public agents allow unauthenticated calls. An agent-scoped API key is only valid for its bound agent instance. Supply the `session` header to persist messages to a session.",
+        "description": "Sends a message to an agent instance and returns the response. When the `stream` header is `true`, the response is an AI SDK UIMessage stream over SSE (text/event-stream); otherwise a sync JSON response is returned. Anonymous (unauthenticated) access is governed by the agent's **guest mode**: an agent must have `guest_access: true` set by an admin, and the `guest_auth_mode` must be `public` (no gate) or `password` (supply the password in the `x-guest-password` header). Agents not published for guest access always require an API key or session JWT. An agent-scoped API key is only valid for its bound agent instance. Supply the `session` header to persist messages to a session.",
         "tags": ["Agents"],
         "parameters": [
           {
@@ -2396,7 +2398,7 @@
                       "name": { "type": "string" },
                       "auth_mode": { "type": "string", "enum": ["public", "password", "regular"] },
                       "expires_at": { "type": ["string", "null"], "format": "date-time" },
-                      "rights_mode": { "type": ["string", "null"] }
+                      "rights_mode": { "type": ["string", "null"], "description": "Access control mode for `regular` shares. Evaluated by `checkRecordAccess`: `public` (any authenticated user), `users` (per-user RBAC), `roles` (per-role RBAC), `teams` (per-team RBAC). `null` for non-regular shares." }
                     }
                   }
                 }
@@ -2426,7 +2428,7 @@
                   "password": { "type": "string", "description": "Required when `auth_mode` is `password`." },
                   "expires_at": { "type": "string", "format": "date-time", "description": "Optional expiry ISO datetime." },
                   "content_type": { "type": "string" },
-                  "rights_mode": { "type": "string", "description": "For `regular` shares: `private`, `organization`, etc." },
+                  "rights_mode": { "type": "string", "description": "For `regular` shares: controls how `checkRecordAccess` evaluates the share. Values: `public` (any authenticated user), `users` (per-user RBAC entries), `roles` (per-role RBAC entries), `teams` (per-team RBAC entries)." },
                   "rbac": { "type": "object", "additionalProperties": true, "description": "RBAC config for `regular` shares." }
                 }
               }
@@ -2511,6 +2513,571 @@
           "403": { "description": "RBAC check failed for `regular` share.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "404": { "description": "Share or file not found.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "410": { "description": "Link has expired.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+
+    "/credentials/submit": {
+      "post": {
+        "operationId": "submitCredentials",
+        "summary": "Submit tool credentials",
+        "description": "Stores encrypted credentials for a `user_credentials`-enabled tool. Requires an authenticated session. The request body must include the one-time `nonce` emitted by the tool's credential request (encrypted, short-lived), plus a map of field names to values. The backend cross-checks the nonce's `userId` against the session user to prevent nonce-replay attacks. An optional `validate` hook on the tool config is called before persisting. On success the credentials are upserted and the tool can proceed on its next invocation.",
+        "tags": ["Credentials"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["nonce", "values"],
+                "properties": {
+                  "nonce": {
+                    "type": "string",
+                    "description": "One-time encrypted nonce from the tool's `credentialRequest` payload. Short-lived; re-prompt on expiry."
+                  },
+                  "values": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Map of field name to user-supplied value. Must exactly match the field set declared by the tool config."
+                  }
+                }
+              },
+              "example": {
+                "nonce": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0...",
+                "values": { "api_key": "sk-...", "workspace_id": "ws_abc123" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credentials stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": true } },
+                  "required": ["ok"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, field-set mismatch, unknown provider, or validation hook failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } },
+                  "required": ["ok"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated or nonce expired / invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } },
+                  "required": ["ok"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Nonce `userId` does not match the session user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } },
+                  "required": ["ok"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/credentials": {
+      "get": {
+        "operationId": "listCredentials",
+        "summary": "List stored tool credentials",
+        "description": "Returns metadata about the calling user's stored tool credentials. Values (tokens, passwords, API keys) are **never** returned through this endpoint — only provider names and auth-type metadata are included. Backs the Settings → Connections UI section.",
+        "tags": ["Credentials"],
+        "responses": {
+          "200": {
+            "description": "Credential metadata list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "credentials"],
+                  "properties": {
+                    "ok": { "type": "boolean", "example": true },
+                    "credentials": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "provider": { "type": "string", "description": "Tool provider identifier." },
+                          "auth_type": { "type": "string", "enum": ["oauth", "user_credentials"], "description": "Auth flow used to store the credential." },
+                          "created_at": { "type": "string", "format": "date-time" },
+                          "updated_at": { "type": "string", "format": "date-time" }
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "credentials": [
+                    { "provider": "google-calendar", "auth_type": "oauth", "created_at": "2026-07-22T10:00:00Z", "updated_at": "2026-07-22T10:00:00Z" }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/credentials/{provider}": {
+      "delete": {
+        "operationId": "deleteCredential",
+        "summary": "Revoke a stored tool credential",
+        "description": "Deletes the calling user's stored credentials for the named provider. Idempotent: deleting a credential that does not exist returns `{ ok: true }` without error. After deletion the tool will re-prompt the credential form on its next invocation.",
+        "tags": ["Credentials"],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "description": "Tool provider identifier (e.g. `google-calendar`).",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credential revoked (or was already absent).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": true } },
+                  "required": ["ok"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `provider` path parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "ok": { "type": "boolean", "example": false }, "error": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/oauth/callback": {
+      "get": {
+        "operationId": "oauthCallback",
+        "summary": "Handle OAuth provider callback",
+        "description": "Browser-facing redirect target for OAuth 2.0 authorization code flows. The provider redirects here with `code` and `state` after the user grants permission. The `state` is an encrypted blob containing the provider identifier, user ID, and PKCE code verifier; the backend exchanges the code for tokens and stores them as the user's credential. Returns an HTML result page (success or error) — not a JSON API. **This endpoint is intentionally unauthenticated**: the user's identity comes from the encrypted `state` parameter, not from a session or API key.",
+        "tags": ["Credentials"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "description": "Authorization code returned by the OAuth provider.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Encrypted state blob generated when the OAuth flow was initiated.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "description": "OAuth error code returned by the provider on denial.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "required": false,
+            "description": "Human-readable error description from the OAuth provider.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML result page. The page is shown to the user in the browser tab — it is not machine-readable. A success page includes the text \"Connected\" and instructs the user to close the tab.",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "400": {
+            "description": "HTML error page. Rendered when `code` or `state` are missing, the state is invalid or expired, or the provider rejected the authorization.",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "404": {
+            "description": "HTML error page. No OAuth configuration registered for the provider extracted from `state`.",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "502": {
+            "description": "HTML error page. Token exchange with the OAuth provider failed.",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+
+    "/me/usage": {
+      "get": {
+        "operationId": "getMyUsage",
+        "summary": "Get my usage details",
+        "description": "Returns the calling user's LiteLLM spend and token usage for the requested date window — totals, per-day breakdown, and per-model breakdown. The window defaults to the last 30 days ending today (UTC) and is capped at 92 days. **Gated by the admin `show_user_budget_in_chat` setting**: when the setting is off, `usage` is `null` and no spend data is surfaced. Requires authentication; returns 401 for unauthenticated callers. Returns 502 when LiteLLM is unreachable.",
+        "tags": ["Budgets"],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start of the window. Accepts `YYYY-MM-DD` or an ISO datetime string. Defaults to 30 days before `end_date`.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End of the window. Accepts `YYYY-MM-DD` or an ISO datetime string. Defaults to today (UTC).",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage view for the requested window, or `null` when spend data is hidden by the admin.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["usage"],
+                  "properties": {
+                    "usage": {
+                      "nullable": true,
+                      "description": "`null` when `show_user_budget_in_chat` is disabled or the user has no LiteLLM budget tag.",
+                      "type": "object",
+                      "properties": {
+                        "window": {
+                          "type": "object",
+                          "properties": {
+                            "start_date": { "type": "string", "format": "date" },
+                            "end_date": { "type": "string", "format": "date" }
+                          },
+                          "required": ["start_date", "end_date"]
+                        },
+                        "display": {
+                          "type": "string",
+                          "enum": ["percent", "amount"],
+                          "description": "UI display preference set by the admin — callers decide what to render."
+                        },
+                        "totals": {
+                          "type": "object",
+                          "properties": {
+                            "spend": { "type": "number" },
+                            "prompt_tokens": { "type": "integer" },
+                            "completion_tokens": { "type": "integer" },
+                            "total_tokens": { "type": "integer" },
+                            "successful_requests": { "type": "integer" },
+                            "failed_requests": { "type": "integer" },
+                            "api_requests": { "type": "integer" }
+                          }
+                        },
+                        "daily": {
+                          "type": "array",
+                          "description": "Per-day metrics, sorted ascending by date.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "date": { "type": "string", "format": "date" },
+                              "spend": { "type": "number" },
+                              "prompt_tokens": { "type": "integer" },
+                              "completion_tokens": { "type": "integer" },
+                              "total_tokens": { "type": "integer" },
+                              "successful_requests": { "type": "integer" },
+                              "failed_requests": { "type": "integer" },
+                              "api_requests": { "type": "integer" }
+                            }
+                          }
+                        },
+                        "byModel": {
+                          "type": "array",
+                          "description": "Per-model aggregates, sorted by spend descending.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "model": { "type": "string" },
+                              "spend": { "type": "number" },
+                              "prompt_tokens": { "type": "integer" },
+                              "completion_tokens": { "type": "integer" },
+                              "total_tokens": { "type": "integer" },
+                              "successful_requests": { "type": "integer" },
+                              "failed_requests": { "type": "integer" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "examples": {
+                  "visible": {
+                    "summary": "Usage visible",
+                    "value": {
+                      "usage": {
+                        "window": { "start_date": "2026-06-24", "end_date": "2026-07-23" },
+                        "display": "amount",
+                        "totals": { "spend": 0.42, "prompt_tokens": 18000, "completion_tokens": 3200, "total_tokens": 21200, "successful_requests": 14, "failed_requests": 0, "api_requests": 14 },
+                        "daily": [{ "date": "2026-07-22", "spend": 0.42, "prompt_tokens": 18000, "completion_tokens": 3200, "total_tokens": 21200, "successful_requests": 14, "failed_requests": 0, "api_requests": 14 }],
+                        "byModel": [{ "model": "gpt-4o", "spend": 0.42, "prompt_tokens": 18000, "completion_tokens": 3200, "total_tokens": 21200, "successful_requests": 14, "failed_requests": 0 }]
+                      }
+                    }
+                  },
+                  "hidden": {
+                    "summary": "Usage hidden by admin",
+                    "value": { "usage": null }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid `start_date` or `end_date` format, or `start_date` is after `end_date`.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": {
+            "description": "Not authenticated.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "502": {
+            "description": "LiteLLM upstream error.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+
+    "/public-agents": {
+      "get": {
+        "operationId": "listPublicAgents",
+        "summary": "List guest-published agents",
+        "description": "Returns the whitelisted metadata view for all agents that have `guest_access: true` and `active: true`. No authentication is required. The response never includes instructions, system prompts, tool configurations, or model details.",
+        "tags": ["Public Agents"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Array of public agent metadata views.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["id", "name", "description", "welcomemessage", "slug", "guest_auth_mode", "guest_has_cover"],
+                    "properties": {
+                      "id": { "type": "string", "format": "uuid" },
+                      "name": { "type": "string" },
+                      "description": { "type": "string" },
+                      "image": { "type": ["string", "null"], "description": "Agent avatar image URL, or null." },
+                      "welcomemessage": { "type": "string" },
+                      "slug": { "type": "string", "description": "Run-route path for this agent (e.g. `/agents/litellm/run`)." },
+                      "guest_auth_mode": { "type": "string", "enum": ["public", "password", "regular"], "description": "`public` = no gate; `password` = password required in `x-guest-password`; `regular` = authenticated users only." },
+                      "guest_has_cover": { "type": "boolean", "description": "Whether the agent has a cover image (fetch via `/public-agents/{id}/cover`)." }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/public-agents/{id}/meta": {
+      "get": {
+        "operationId": "getPublicAgentMeta",
+        "summary": "Get a guest-published agent's metadata",
+        "description": "Returns the whitelisted 8-field metadata view for a single guest-published agent. Returns 404 for non-UUID `id` values, unpublished agents, and inactive agents — the backend rejects non-UUID strings before any DB query to prevent SQL cast errors. No authentication is required.",
+        "tags": ["Public Agents"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Agent UUID. Non-UUID strings return 404 immediately.",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public agent metadata view.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["id", "name", "description", "welcomemessage", "slug", "guest_auth_mode", "guest_has_cover"],
+                  "properties": {
+                    "id": { "type": "string", "format": "uuid" },
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
+                    "image": { "type": ["string", "null"] },
+                    "welcomemessage": { "type": "string" },
+                    "slug": { "type": "string" },
+                    "guest_auth_mode": { "type": "string", "enum": ["public", "password", "regular"] },
+                    "guest_has_cover": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Agent not found, not guest-published, inactive, or `id` is not a valid UUID.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+
+    "/public-agents/{id}/cover": {
+      "get": {
+        "operationId": "getPublicAgentCover",
+        "summary": "Get a guest-published agent's cover image",
+        "description": "Returns the raw cover image bytes for a guest-published agent. The `Content-Type` is inferred from the file extension (`.png` → `image/png`, `.webp` → `image/webp`, otherwise `image/jpeg`). Cached for 5 minutes (`Cache-Control: public, max-age=300`). Returns 404 when the agent is not found, not guest-published, has no cover image, or the cover file is missing from S3. No authentication is required.",
+        "tags": ["Public Agents"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Agent UUID.",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cover image bytes.",
+            "headers": {
+              "Content-Type": { "schema": { "type": "string", "example": "image/jpeg" } },
+              "Cache-Control": { "schema": { "type": "string", "example": "public, max-age=300" } }
+            },
+            "content": {
+              "image/*": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "404": {
+            "description": "Agent not found, not guest-published, no cover image set, or S3 object missing.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "S3 read failed for a reason other than missing key.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+
+    "/public-agents/{id}/verify-password": {
+      "post": {
+        "operationId": "verifyPublicAgentPassword",
+        "summary": "Verify guest agent password",
+        "description": "Verifies the supplied password against the agent's bcrypt hash for `password`-gated guest agents. Rate-limited per client IP (shared with the run endpoint) — every call (including failures) consumes the limiter budget to prevent bcrypt oracle attacks. On success returns 204 with no body; the client should then pass the verified password in `x-guest-password` on run calls. Returns 404 when the agent is not found, not guest-published, or not in `password` auth mode. No authentication is required.",
+        "tags": ["Public Agents"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Agent UUID.",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["password"],
+                "properties": {
+                  "password": { "type": "string", "description": "Plaintext password to verify against the agent's bcrypt hash." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Password correct. Pass this password in `x-guest-password` on subsequent run calls."
+          },
+          "401": {
+            "description": "Password incorrect.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "404": {
+            "description": "Agent not found, not guest-published, or not in `password` auth mode.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "429": {
+            "description": "Rate limit exceeded. Too many requests from this IP.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
         }
       }
     }
