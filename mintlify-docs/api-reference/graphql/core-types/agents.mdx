@@ -27,6 +27,9 @@ type agent {
   animation_responding: String
   sandbox_enabled: Boolean
   max_tool_steps: Float
+  guest_access: Boolean
+  guest_auth_mode: String
+  guest_cover_image: String
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -42,6 +45,7 @@ type agent {
   systemInstructions: String
   workflows: AgentWorkflows
   slug: String
+  guest_has_password: Boolean
   budget: JSON
   id: ID!
   RBAC: RBACData
@@ -59,6 +63,11 @@ type agent {
 | `modelName` | Computed: the human-readable model name (e.g. `"claude-sonnet-4-5"`). Read-only. |
 | `systemInstructions` | Computed: final resolved system prompt after merging `instructions` and `memory`. Read-only. |
 | `capabilities` | Computed: the content types this agent accepts, derived from the underlying model's capabilities. |
+| `sandbox_enabled` | When `true`, the agent opts into the file-system sandbox for tool execution. Sandboxed runs operate in an isolated environment; default is `false`. |
+| `guest_access` | When `true`, the agent is accessible without authentication via a public guest link. |
+| `guest_auth_mode` | Controls how unauthenticated guest visitors authenticate: `"none"` (open), `"password"` (shared password required), or `"sso"` (IdP-backed). |
+| `guest_cover_image` | URL of the cover image shown on the guest landing page for this agent. |
+| `guest_has_password` | Computed: `true` when a guest password has been set on this agent. The password itself (`guest_password`) is input-only — it is hashed server-side and never returned in queries or filters. |
 | `budget` | JSON budget envelope attached to this agent; shape matches the LiteLLM budget object. |
 | `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
 | `embeddings_updated_at` | Timestamp when the vector embeddings for this record were last regenerated. |
