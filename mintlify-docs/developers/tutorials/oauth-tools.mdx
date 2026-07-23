@@ -4,7 +4,11 @@ description: "Wrap a tool in an authorization-code + PKCE flow using ExuluOauthC
 icon: "lock"
 ---
 
-When a tool needs to act on behalf of the signed-in user — reading their calendar, sending email from their account, or accessing a SaaS workspace — declare an `oauth` config on the tool. IMP handles the authorization-code flow including PKCE, token storage per user, and automatic retry after the user consents. Your `execute` function receives the access token as `inputs.oauth.accessToken`.
+<Note>
+**Breaking (July 2026):** the `oauth` constructor option was renamed `authentication` and requires an explicit `authType: "oauth"` tag. See [ExuluTool — configuration](/developers/core/exulu-tool/configuration) for the full reference.
+</Note>
+
+When a tool needs to act on behalf of the signed-in user — reading their calendar, sending email from their account, or accessing a SaaS workspace — declare an `authentication` config with `authType: "oauth"` on the tool. IMP handles the authorization-code flow including PKCE, token storage per user, and automatic retry after the user consents. Your `execute` function receives the access token as `inputs.oauth.accessToken`.
 
 ## Prerequisites
 
@@ -13,15 +17,15 @@ When a tool needs to act on behalf of the signed-in user — reading their calen
 
 ## What IMP handles for you
 
-When `oauth` is declared on a tool:
+When `authentication` is declared on a tool:
 
 1. **Authorization URL construction** — IMP builds the authorization URL from `authorizationUrl`, `clientId`, `scopes`, and `extraAuthParams`, adding PKCE challenge parameters (`code_challenge`, `code_challenge_method`) when `pkce: true`.
 2. **Token exchange** — After the user completes the consent screen, the platform's `/oauth/callback` route receives the code and exchanges it for an access and refresh token using `tokenUrl`, `clientId`, and `clientSecret` — server-side only.
 3. **Token storage** — Tokens are stored per `(provider, userId)` pair. Tools that share a `provider` key share the same token — one consent screen per provider per user.
 4. **Injection** — On every authenticated tool call where a valid token exists, IMP injects `oauth` into `inputs` before calling `execute`.
-5. **Authorization URL fallback** — When no valid token exists for the calling user, IMP short-circuits `execute` and returns an authorization URL. The agent surfaces this URL to the user ("Click here to connect your calendar"). After the user consents, IMP retries the original tool call with the fresh token.
+5. **Authorization URL fallback** — When no valid token exists for the calling user, IMP short-circuits `execute` and returns an authorization URL. The agent surfaces this URL to the user ("Click here to connect your calendar"). After the user consents, IMP retries the original tool call with the fresh token. Internally the short-circuit result carries `oauth: { authorizationUrl }`, which the chat interface renders as a **Connect** button.
 
-Your code only needs to declare the OAuth config and use `inputs.oauth.accessToken`.
+Your code only needs to declare the authentication config and use `inputs.oauth.accessToken`.
 
 ## What you will build
 
@@ -82,7 +86,8 @@ export const calendarEventsTool = new ExuluTool({
 
   needsApproval: false,
 
-  oauth: {
+  authentication: {
+    authType:         "oauth",
     provider: "example_calendar",      // Shared key — multiple tools can share this
     authorizationUrl: "https://auth.example-calendar.com/oauth2/authorize",
     tokenUrl:         "https://auth.example-calendar.com/oauth2/token",
@@ -165,7 +170,8 @@ Multiple tools that access the same provider (for example, a `create_calendar_ev
 export const createCalendarEventTool = new ExuluTool({
   id: "create_calendar_event",
   // ...
-  oauth: {
+  authentication: {
+    authType:         "oauth",
     provider: "example_calendar",   // Same key as calendarEventsTool
     authorizationUrl: "https://auth.example-calendar.com/oauth2/authorize",
     tokenUrl:         "https://auth.example-calendar.com/oauth2/token",
