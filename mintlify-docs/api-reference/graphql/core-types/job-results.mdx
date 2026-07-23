@@ -45,7 +45,7 @@ type job_result {
 | `item` | ID string of the primary entity this job operated on (e.g. an eval_run ID). |
 | `context` | Context slug or ID when the job was scoped to a specific knowledge context. |
 | `type` | Job type discriminator (e.g. `"eval_run"`, `"workflow_execution"`). |
-| `trigger` | How the run was initiated: `"manual"` (UI or direct API call), `"api"` (external API trigger), `"scheduled"` (cron routine), or `"email"` (inbound email trigger). `null` on pre-migration rows. |
+| `trigger` | How the run was initiated: `"manual"` (UI or direct API call), `"api"` (external API trigger), `"schedule"` (cron routine), or `"email"` (inbound email trigger). `null` on pre-migration rows. |
 | `trigger_metadata` | JSON envelope with trigger-specific detail. For email triggers this contains the inbound message envelope (e.g. `message_id`, `from`, `subject`); for other trigger types it may be `null`. |
 | `session` | ID of the run-backed chat session created for this job, if any. Cross-links the `agent_sessions` table. |
 | `workflow` | ID of the owning routine (workflow). Replaces label-substring filtering for run-to-routine association. `null` on pre-migration rows. |
