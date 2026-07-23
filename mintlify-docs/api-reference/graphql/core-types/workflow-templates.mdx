@@ -7,7 +7,7 @@ import { EditionBadge } from "/snippets/edition-badge.mdx"
 
 <EditionBadge edition="ee" /> Workflow templates require an Enterprise Edition license (`template-conversations` entitlement).
 
-A `workflow_template` is a reusable automation script: an ordered list of agent-executed steps stored as JSON. Workflows can be triggered manually, via the API, or on a cron schedule. See [Routines overview](/building/routines/overview).
+A `workflow_template` is a reusable automation script: an ordered list of agent-executed steps stored as JSON. Workflows can be triggered manually, via the API, on a cron schedule, or by inbound email. See [Routines overview](/building/routines/overview).
 
 ```graphql
 type workflow_template {
@@ -15,6 +15,7 @@ type workflow_template {
   description: String
   agent: String
   steps_json: JSON!
+  auto_approve_tools: Boolean
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -34,6 +35,7 @@ type workflow_template {
 | --- | --- |
 | `agent` | ID string of the default `agent` executing each step; individual steps may override this. |
 | `steps_json` | JSON array of step definitions. Each step specifies a prompt, optional tools, and per-step agent or model overrides. |
+| `auto_approve_tools` | Boolean, default `false`. When `true`, queue-backed runs skip per-tool approval pauses — all tool calls are pre-approved for the duration of the run. |
 | `variables` | Computed string array of `{{variable}}` placeholder names extracted from `steps_json`; populated at read time. |
 | `rights_mode` | `"public"` or `"private"`; private templates are scoped via `RBAC`. |
 | `created_by` | Numeric ID of the creating user. |
