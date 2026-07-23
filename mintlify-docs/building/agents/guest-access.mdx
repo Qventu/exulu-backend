@@ -79,7 +79,7 @@ When a visitor self-registers through the login-mode flow, IMP creates a user ro
 
 Behaviour specific to external users:
 
-- **Domain allowlist exemption.** If the deployment is configured with `ALLOWED_EMAIL_DOMAINS`, that allowlist gates internal accounts only. External users are explicitly exempt: any email address is accepted for self-registration regardless of domain ([`lib/auth/domain-allowlist.ts`](https://github.com/your-org/imp)).
+- **Domain allowlist exemption.** If the deployment is configured with `ALLOWED_EMAIL_DOMAINS`, that allowlist gates internal accounts only. External users are explicitly exempt: any email address is accepted for self-registration regardless of domain.
 - **Redirect out of the internal shell.** If an external user somehow reaches an internal route (e.g. by navigating to `/`), the application layout detects `type="external"` and immediately redirects them to `/public/agents`. They never see the IMP workbench, administration area, or chat picker.
 - **Email verification required before login.** An external account created by self-registration is marked unverified until the visitor completes the OTP email step. An unverified external account cannot sign in with credentials — the authentication layer skips it even on a correct password, preventing pre-registration attacks.
 
@@ -106,7 +106,7 @@ When `guest_access` is enabled on an agent, it governs **all** anonymous access 
 
 ## API access for guest-published agents
 
-The agent-run REST endpoint honours guest authentication in the same way as the browser chat shell. An unauthenticated REST client can call a `guest_auth_mode: public` agent without any credentials; a `guest_auth_mode: password` agent requires the `x-guest-password` header. See [Public Agents](/api-reference/rest/public-agents) in the REST reference for the full request schema.
+The agent-run REST endpoint honours guest authentication in the same way as the browser chat shell. An unauthenticated REST client can call a `guest_auth_mode: public` agent without any credentials; a `guest_auth_mode: password` agent requires the `x-guest-password` header. Login-mode agents are not callable anonymously over the REST API — requests without a session JWT receive a 401; external users authenticate through the browser flow first. See [Public Agents](/api-reference/rest/public-agents) in the REST reference for the full request schema.
 
 ## Next steps
 
