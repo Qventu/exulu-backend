@@ -48,7 +48,7 @@ type transcription_job {
 | Field | Notes |
 | --- | --- |
 | `audio_s3key` | S3 key of the uploaded audio file. Set for file-upload jobs; absent for live meeting bot jobs. |
-| `status` | Pipeline status string: `"pending"`, `"processing"`, `"done"`, `"error"`, or `"cancelled"`. |
+| `status` | Pipeline status string. Possible values: `"queued"` (job created, waiting to dispatch); `"transcribing"` (audio submitted to the Whisper server or Recall transcript requested); `"awaiting_review"` (transcription complete, pending speaker assignment and finalization); `"saved"` (finalized — a knowledge item has been created); `"failed"` (non-recoverable error, see `error` field); `"cancelled"` (cancelled by the user). For meeting-bot jobs, interrupted `"queued"` and `"transcribing"` rows are reconciled automatically by a background sweep that re-drives missed webhook events. |
 | `whisper_job_id` | BullMQ job ID for the Whisper transcription task; used to poll progress. |
 | `raw_segments` | JSON array of Whisper diarisation segments returned by the transcription service. |
 | `speakers` | JSON map of speaker IDs to display names set during finalization. |
