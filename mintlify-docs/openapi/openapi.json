@@ -2624,9 +2624,9 @@
                         "type": "object",
                         "properties": {
                           "provider": { "type": "string", "description": "Tool provider identifier." },
-                          "auth_type": { "type": "string", "enum": ["oauth", "user_credentials"], "description": "Auth flow used to store the credential." },
-                          "created_at": { "type": "string", "format": "date-time" },
-                          "updated_at": { "type": "string", "format": "date-time" }
+                          "authType": { "type": "string", "enum": ["oauth", "user_credentials"], "description": "Auth flow used to store the credential." },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "updatedAt": { "type": "string", "format": "date-time" }
                         }
                       }
                     }
@@ -2635,7 +2635,7 @@
                 "example": {
                   "ok": true,
                   "credentials": [
-                    { "provider": "google-calendar", "auth_type": "oauth", "created_at": "2026-07-22T10:00:00Z", "updated_at": "2026-07-22T10:00:00Z" }
+                    { "provider": "google-calendar", "authType": "oauth", "createdAt": "2026-07-22T10:00:00Z", "updatedAt": "2026-07-22T10:00:00Z" }
                   ]
                 }
               }
@@ -2762,6 +2762,12 @@
           },
           "404": {
             "description": "HTML error page. No OAuth configuration registered for the provider extracted from `state`.",
+            "content": {
+              "text/html": { "schema": { "type": "string" } }
+            }
+          },
+          "500": {
+            "description": "Provider is registered but not an OAuth provider (misconfiguration).",
             "content": {
               "text/html": { "schema": { "type": "string" } }
             }
@@ -2901,6 +2907,10 @@
           },
           "401": {
             "description": "Not authenticated.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "500": {
+            "description": "Unexpected server error.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "502": {
