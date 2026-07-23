@@ -103,7 +103,8 @@
         { "group": "Governance", "pages": [
           "administration/variables",
           "administration/theme",
-          "administration/api-keys"
+          "administration/api-keys",
+          "administration/email-intake"
         ] }
       ] },
       { "tab": "Self-Hosting", "icon": "server", "groups": [

@@ -1,0 +1,94 @@
+---
+title: "Email intake"
+description: "Configure Mailgun inbound email so routines can be triggered by email — provider credentials, webhook setup, and delivery mechanics."
+icon: "mail"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="super admin" flags="none" />
+
+## What this page is for
+
+The **Email intake** page (`/configuration/email`) is where you connect IMP to a Mailgun inbound domain so that routines can be given dedicated email addresses. Until this setup is complete, the **Email trigger** section in every routine's workbench shows an empty state and email triggers cannot be created or enabled.
+
+## The /configuration/email surface
+
+The page has three sections:
+
+**Provider settings** — the core credentials form. All fields here are scoped to Mailgun (EU region), the only supported provider in v1.
+
+| Field | What it does |
+| --- | --- |
+| **Enable email intake** | Master on/off switch. Disabling it causes the webhook endpoint to reject all incoming deliveries with `503` until re-enabled. Individual routine triggers are not deleted — they resume when you re-enable. |
+| **Inbound domain** | The Mailgun domain that will receive emails (e.g. `mail.your-company.com`). This becomes the `@` part of every routine's generated address. |
+| **Webhook signing key** | The domain's HTTP webhook signing key from Mailgun. Write-only: the API never returns the stored value — the placeholder reads "A signing key is stored" once one has been saved. Submitting a new value replaces the stored key (key rotation). |
+
+Click **Save settings** to apply changes. The webhook URL section becomes active after the first save.
+
+**Webhook URL** — a read-only copy field showing the URL to paste into the Mailgun route. The URL is derived from the platform's public base URL (`{BACKEND}/webhooks/email/mime`). If the environment variable is not set the field shows a pending message; contact your infrastructure team.
+
+**Last webhook received** — a timestamp updated on every verified delivery. Use this to confirm Mailgun is successfully reaching the endpoint: if the timestamp updates within seconds of a test email, the pipe is working.
+
+## Mailgun setup
+
+Work through the setup checklist shown on the page. The steps in order:
+
+1. **Create a Mailgun EU account and add the receiving domain** — for example `mail.your-company.com`. The domain does not need to be your primary mail domain.
+2. **Publish DNS records** — add the MX records (`mxa.eu.mailgun.org`, `mxb.eu.mailgun.org`) and the TXT verification records that Mailgun generates. Allow time for DNS propagation before proceeding.
+3. **Create a catch-all route** — in Mailgun's Routes section, add a single route:
+   - **Expression type:** Match Recipient
+   - **Recipient:** `.*@your-domain` (regular expression matching all addresses on the inbound domain)
+   - **Actions:** `forward(<webhook-url>)` pointing at the Webhook URL copied from the settings page, then `stop()`
+   - Use the **raw MIME** (forward with `/mime`) action — the endpoint expects the `body-mime` field that Mailgun includes only when forwarding raw MIME.
+4. **Set message retention to 0** — in Mailgun, message retention is an account/domain-level setting, not a per-route setting. Set it to 0 so that Mailgun does not store a copy of every inbound email. Verify this step explicitly; the default retention period can be several days.
+5. **Copy the signing key** — go to **Sending** → **Domain settings** → **HTTP webhook signing key** in Mailgun and paste the value into the **Webhook signing key** field above, then save. This key is distinct from your Mailgun API key.
+6. **Send a test email** — send any email to any address on the inbound domain. The **Last webhook received** timestamp should update within a few seconds, confirming that Mailgun is reaching the endpoint and the signature is accepted.
+
+<Note>
+  The signing key lives in Mailgun under **Domain settings**, not under API keys or credentials. It is a separate, per-domain secret used only to authenticate webhook deliveries.
+</Note>
+
+## How delivery works
+
+Understanding the mechanics helps you diagnose delivery issues and reason about reliability.
+
+### Signature verification
+
+Every webhook POST from Mailgun includes three fields: `timestamp`, `token`, and `signature`. The platform verifies the signature by computing `HMAC-SHA256(signing_key, timestamp + token)` and comparing it with the provided signature using a constant-time comparison. A mismatch or missing field returns `401` immediately without touching the database or queue.
+
+### Replay guard
+
+The platform runs two replay checks after a valid signature:
+
+1. **Timestamp window** — the webhook's `timestamp` must be within 5 minutes of the server's current time. Requests outside this window are rejected with `401`.
+2. **Token cache** — the `token` field is stored in Redis with a 15-minute TTL using a SET NX (set-if-not-exists) operation. If the token is already in the cache the delivery is a replay and is rejected. Without Redis the platform degrades gracefully to the timestamp window only — deliveries are still protected, just without the in-window token dedup.
+
+Longer-horizon duplicates (for example a Mailgun retry after a transient failure that has already been processed) are handled separately by the database-backed Message-ID dedup in the guard chain — see [Email triggers](/building/routines/email-triggers#guard-chain) for the full guard sequence.
+
+### Persist-before-ACK
+
+Once signature and replay checks pass, the platform stores the raw MIME email to object storage **before** returning `200 OK` to Mailgun. Only after the email is durably persisted is an intake job enqueued, and only then is the ACK sent.
+
+If anything fails between verification and the ACK — a storage error, a process crash, a network interruption — the platform returns a `500` error. Mailgun interprets any non-`2xx` response as a failure and retries delivery for approximately eight hours. This means a verified email is never silently lost: either it is persisted and processed, or Mailgun retries it until it is.
+
+## Behavior when unconfigured
+
+If the Email intake page has not been configured (no signing key saved, or the enable switch is off), the platform:
+
+- Returns `503` to Mailgun on any webhook delivery attempt.
+- Shows an empty state in the **Email trigger** section of every routine's workbench — users cannot create or enable email triggers.
+- Existing trigger records are preserved in the database; they resume the moment intake is enabled again.
+
+There is no partial state: intake is either fully configured and enabled (signing key present, `enabled = true`) or completely inactive.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Email triggers" icon="mail" href="/building/routines/email-triggers">
+    Give a routine a dedicated inbound address and configure sender filters and rate limits.
+  </Card>
+  <Card title="Variables" icon="variable" href="/administration/variables">
+    Store configuration values referenced by agents and integrations.
+  </Card>
+</Columns>
