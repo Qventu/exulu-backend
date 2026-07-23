@@ -110,7 +110,7 @@ All constructor options are exposed as public properties after construction:
 | `inputSchema` | `z.ZodType \| undefined` | Zod schema for inputs; `undefined` when not provided (defaults to `z.object({})`). |
 | `config` | `ExuluToolConfigParam[]` | Admin-configurable params. |
 | `needsApproval` | `boolean` | Whether the platform prompts the user before running. |
-| `oauth` | `ExuluOauthConfig \| undefined` | OAuth config, or `undefined` when not declared. |
+| `authentication` | `ExuluAuthConfig \| undefined` | Authentication config (OAuth or user credentials), or `undefined`. |
 | `tool` | `Tool` | The AI-SDK `Tool` object created from `description`, `inputSchema`, and `execute`. Used by the framework when converting tools for provider calls. |
 
 ```typescript
