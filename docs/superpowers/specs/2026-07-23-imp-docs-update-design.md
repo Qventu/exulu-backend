@@ -98,7 +98,7 @@ Add a forward cross-link to `exulu-read-api` (the link currently exists only in 
 ## 7. Phase 2 — API reference: regeneration + core types + REST (15 files)
 
 ### 7.1 `api-reference/graphql/schema.graphql` — H (process item)
-Regenerate via the `print-sdl` script (74863ae). The published schema still exposes `users.apikey/anthropic_token/temporary_token` (now hidden) and omits routineRuns, workflowTriggers, guest fields, `auto_approve_tools`, `sandbox_enabled`. **Also add a repeatable refresh step** (npm script in `mintlify-docs/package.json`, e.g. `npm run refresh-sdl`, invoking the backend print-sdl script and writing the artifact in place) and document the workflow in `mintlify-docs/AGENTS.md`. Generated artifacts are never hand-edited.
+Regenerate via the existing `npm run sdl` in `mintlify-docs/` (wraps the backend `scripts/print-sdl.ts` via bun with the EE license env; pass `BACKEND_REPO` explicitly since mintlify-docs lives inside the repo). The published schema still exposes `users.apikey/anthropic_token/temporary_token` (now hidden) and omits routineRuns, workflowTriggers, guest fields, `auto_approve_tools`, `sandbox_enabled`. Core-type pages must copy their SDL blocks verbatim from the regenerated schema — `npm run verify-sdl` enforces this. Generated artifacts are never hand-edited (already documented in `mintlify-docs/AGENTS.md`).
 
 ### 7.2 `api-reference/graphql/core-types/users.mdx` — H
 - Remove `temporary_token`, `apikey`, `password`, `anthropic_token` from the SDL block and field notes — hidden since 51ccd02; the "write-only, set via usersUpdateOneById" note for `apikey` is also stale for reads.
@@ -250,14 +250,14 @@ Client branding: single `favicon.png` replaces the old four-size icon set (**bre
 1. Mintlify link check (`mintlify broken-links` / `mint broken-links`) passes.
 2. Every page referenced in `docs.json` exists and vice versa (new pages added to nav; no orphans).
 3. Grep gates: zero occurrences of `oauth:` as an ExuluTool constructor sample, `inputs._oauth`, or `ExuluOauthConfig` without `authType` in the Developers tab; zero hits for the retired `rights_mode=public` unauthenticated-run rule outside historical changelog content.
-4. `schema.graphql` byte-matches a fresh `refresh-sdl` run.
+4. `schema.graphql` byte-matches a fresh `npm run sdl` run, and `npm run verify-sdl` passes (core-type SDL blocks match the schema verbatim).
 5. Spot-check each H item's stale quote is gone (the audit JSON is the checklist).
 
 ## 13. Follow-ups (explicitly out of this spec)
 
 1. **Changelog/release pipeline** (excluded by decision): July 20 credentials entry lacks the July 22 UI wave; `exulu → imp` CLI rename on the connect-your-agent release page; June 22 agent-workbench stub entry; `build-changelog.mjs` external-href handling; queued announcements (imp rebrand, branding).
 2. **Frontend cleanup:** remove the vestigial trajectory-feedback UI (`TrajectoryReuseIndicator`, POST `/retrieval/trajectories/:ref/feedback` — backend route deleted 2026-07-04).
-3. **Docs process:** consider wiring `refresh-sdl` (and a future openapi generation) into CI so generated artifacts can't drift after the next feature wave.
+3. **Docs process:** consider wiring `npm run sdl` + `npm run verify-sdl` (and a future openapi generation) into CI so generated artifacts can't drift after the next feature wave.
 
 ## 14. Size estimate
 
