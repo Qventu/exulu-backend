@@ -90,6 +90,67 @@ const tools = [
 ];
 ```
 
+## Retrieval pipeline saved config options
+
+When a session is configured with an `agentic_context_search` tool, the following options can be saved on the session's saved knowledge-search configuration. All options are optional; omitted options fall back to their defaults.
+
+| Option key | Type | Default | Effect |
+|---|---|---|---|
+| `instructions` | `string` | `""` | Extra instructions prepended to the tool description shown to the model. |
+| `reranker` | `string` | `"none"` | Reranker backend to apply after retrieval (`"none"` disables reranking). |
+| `managed_context` | `boolean` | `false` | When `true`, the pipeline manages the context window, pruning stale chunks automatically. |
+| `require_preselected_contexts` | `boolean` | `false` | When `true`, only contexts explicitly listed in `preselected` are searched. |
+| `logging` | `boolean` | `false` | Enables verbose pipeline trace logging. |
+| `project_search` | `boolean` | `true` | Includes knowledge items attached to the chat's project as an additional source. |
+| `utility_model` | `string` | `""` | LiteLLM model name used by routing and query-expansion phases; falls back to the session model when empty. |
+| `knowledge_bases` | `object (JSON)` | `{}` | Per-context KB profiles — a JSON map of context ID to a `KbProfile` object with `enabled`, `kind`, `instructions`, and `overrides`. |
+| `routing` | `object (JSON)` | `{ rules: [] }` | Routing rules that direct queries to different context subsets based on content. |
+| `vocabulary` | `object (JSON)` | `{ glossary: [], identifiers: [], rewrites: [], styleHint: "" }` | Domain vocabulary: glossary terms, identifier sets, text rewrites, and a style hint for query expansion. |
+| `memory` | `object (JSON)` | `{}` | Memory behaviour: `enabled`, `override`, `filePrioritization`, `queryAugmentation`. |
+| `tuning` | `object (JSON)` | `{}` | Retrieval tuning knobs: `topK`, `fallbackThreshold`, `pinBoost`, `identifierBoost`, `pageWindow`, `maxQueriesPerContext`. |
+
+JSON-typed options (`knowledge_bases`, `routing`, `vocabulary`, `memory`, `tuning`) accept either a pre-parsed object or a JSON string; invalid JSON or schema failures silently fall back to defaults.
+
+<Info>
+The audit that produced the brief counted 13 options; the canonical source (`ee/agentic-retrieval/pipeline/config.ts`, `parsePipelineConfig`) reads 12 distinct keys. This table reflects the source.
+</Info>
+
+---
+
+## Auto-registered session tools
+
+The following tools are registered automatically for every session that has file uploads configured (`fileUploads.s3Bucket` present). They run without approval (`needsApproval: false`) and do not require an EE entitlement.
+
+### read_session_file
+
+```
+read_session_file(filename, offset?, limit?)
+```
+
+Pages through any file stored in the session's S3 folder by line range — including offloaded tool outputs (`tool-output-*.txt`) and user-uploaded documents. Supports `offset` (1-based) and `limit` to avoid loading the whole file at once. Maximum 16 000 characters returned per call.
+
+Registration site: `src/templates/tools/session-file-read-tool.ts`.
+
+### parse_document
+
+```
+parse_document(filename, pages?, offset?, limit?)
+```
+
+Extracts the text layer of an uploaded PDF or Office document (`.docx`, `.xlsx`, `.pptx`, and more). PDFs are returned with `--- page N ---` markers so the model can locate content by page. Scanned or image-only PDFs are detected and rejected with a hint to use `view_document_page` or a knowledge-base processor instead.
+
+Registration site: `src/templates/tools/parse-document-tool.ts`.
+
+### view_document_page
+
+```
+view_document_page(filename, page?)
+```
+
+Renders a single page of a PDF or Office document — or an uploaded image file — and attaches it as a vision input to the next model turn. Requires a vision-capable model; returns an error when the active model's `supports_vision` flag is `false`. Office documents are converted to PDF via a preview cache before rendering.
+
+Registration site: `src/templates/tools/view-document-page-tool.ts`.
+
 ## Related
 
 - [ExuluTool — introduction](/developers/core/exulu-tool/introduction): how tools are defined and registered.

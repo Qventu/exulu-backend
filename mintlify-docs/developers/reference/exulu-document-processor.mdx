@@ -43,6 +43,8 @@ Processes a document and returns an array of per-page objects with the extracted
 
 <ParamField path="config.processor.maxPagesPerChunk" type="number">
   Maximum pages per OCR request for the `"mistral"` backend. Defaults to `25` (safely below the 30-page Vertex AI limit). The PDF is split into chunks of this size before sending.
+
+  **Byte-size bisection:** in addition to the page limit, each chunk is enforced to stay under 25 MB on disk. Chunks that exceed this byte limit and contain more than one page are deleted and recursively re-split by bisecting the page range until every chunk fits. Single-page chunks that still exceed 25 MB are kept with a stderr warning — they cannot be split further without re-encoding. This logic is implemented in `ee/python/documents/processing/split_pdf.py` and is invoked with `--max-size-mb 25` from the document-processor pipeline.
 </ParamField>
 
 <ParamField path="config.vlm.model" type="string">

@@ -72,6 +72,30 @@ ExuluReadApi.embedQuery(
 
 Embeds a text string using the context's configured embedder model. Returns the embedding vector as a number array.
 
+<ParamField path="context" type="object" required>
+  Context descriptor. `id` must match a registered `ExuluContext`; `embedder.model` selects the LiteLLM embedding model.
+</ParamField>
+
+<ParamField path="text" type="string" required>
+  The text to embed.
+</ParamField>
+
+<ParamField path="opts.user" type="User">
+  Authenticated user. Forwarded to `resolveEmbedder` for spend attribution.
+</ParamField>
+
+<ParamField path="opts.role" type="string">
+  Role ID forwarded to `resolveEmbedder` for access-control tagging.
+</ParamField>
+
+<ParamField path="opts.inputType" type='"document" | "query"'>
+  Hint passed to the embedding model. Controls Matryoshka / asymmetric embedding direction where the model supports it. Defaults to `"query"`.
+</ParamField>
+
+<ResponseField name="return" type="Promise<number[]>">
+  The embedding vector. Returns an empty array when the embedder produces no output.
+</ResponseField>
+
 ---
 
 ### ExuluReadApi.entitiesAvailable
