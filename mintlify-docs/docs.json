@@ -66,6 +66,7 @@
         { "group": "Knowledge", "pages": [
           "building/knowledge/overview",
           "building/knowledge/items",
+          "building/knowledge/bulk-import",
           "building/knowledge/pipeline",
           "building/knowledge/entities"
         ] },
