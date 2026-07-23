@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-16 · Bulk Import</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    p code { font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .feature .extras p { margin: 0 0 16px; font-size: 16px; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-16</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">One feature, and it's the one you've been asking for: get up to 100 items into a knowledge base without clicking through the New item dialog all afternoon. Drop files or a CSV, review everything in a grid, import in one run — sharing included.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="bulk-import">
+        <h2>Bulk import</h2>
+        <p class="one-liner">Up to 100 items into any knowledge base — one drop, one review, one click.</p>
+
+        <!-- Slice 1: files flow, the hero -->
+        <div class="slice">
+          <video src="./shorts/files-drop.mp4" autoplay loop muted playsinline></video>
+          <p>Every knowledge-base workspace now has an <strong>Import</strong> button next to New item. Choose the files flow, drop a pile of PDFs on it, and each file becomes one new item with its name prefilled from the filename — the "50 PDFs, 50 items" request, solved in seconds instead of fifty dialogs.</p>
+          <p>Before anything runs you land in a review grid built from the context's own fields — the same metadata that drives the single-item form, so it works on every knowledge base without configuration. One click on <em>Import 50 items</em> and per-row badges stream Pending → Uploading → Saving → Done while the progress bar fills; rows run four at a time and a failing row never halts the rest.</p>
+          <p>The run ends in a plain verdict — <em>50 created, 0 updated, 0 failed</em> — and the items are live in the workspace behind the dialog.</p>
+        </div>
+
+        <!-- Slice 2: CSV flow with auto-mapping -->
+        <div class="slice">
+          <video src="./shorts/csv-mapping.mp4" autoplay loop muted playsinline></video>
+          <p>The CSV flow handles structured data. Drop a spreadsheet and the Map columns step matches your headers to fields automatically — sample values beside each column so you can sanity-check the match, and any stray column flips to <em>Ignore</em>. A per-context CSV template with example values is one click away if you'd rather start from the correct shape.</p>
+          <p>Imports aren't create-only: rows carrying an <code>id</code> or a matching <code>external_id</code> update existing items, everything else creates new ones. Updates are partial — only the columns you mapped are touched — and the review grid badges every row Create or Update before anything runs, so there are no surprises after the fact.</p>
+        </div>
+
+        <!-- Slice 3: batch access -->
+        <div class="slice">
+          <video src="./shorts/batch-access.mp4" autoplay loop muted playsinline></video>
+          <p>Imported items used to land private, which meant re-opening each one to share it afterwards. Now the review step carries the full sharing control: the <em>Access</em> button opens Visibility &amp; sharing — private, users, roles, or teams with read/write grants, or public — and the choice applies to every created item in the batch.</p>
+          <p>Update rows deliberately keep the access they already have. The grid's read-only Access column makes that explicit: create rows show the chosen mode, update rows show a dash. Import once and the whole batch arrives where your team can already see it.</p>
+        </div>
+
+        <div class="extras">
+          <div class="snippet-label">Fix it in the grid</div>
+          <p>Validation happens before the run, per cell. Invalid cells turn red with the reason inline — <em>Not a number — use a dot decimal like 1.5</em>, <em>Must be one of: …</em> — the counter drops to <em>38 of 40 rows ready</em>, and the import button adapts to <em>Import 38 valid rows</em>: broken rows never block the good ones. Edit cells directly in the grid and watch the counter tick back up. After a run with failures, <em>Retry failed rows</em> re-runs exactly those, and <em>Download error report</em> saves a CSV of the failed rows with the error attached.</p>
+
+          <div class="snippet-label">Limits</div>
+          <p>Batches are comfortable up to 100 items. CSV only for now (no XLSX), one CSV per import, and the files flow requires the knowledge base to have file uploads configured. No new API surface was added — the wizard drives the same per-context mutations and presigned uploads the single-item form already uses, so permissions behave exactly as they do everywhere else.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 16, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

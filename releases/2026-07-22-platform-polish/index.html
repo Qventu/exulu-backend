@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-22 · Platform Polish</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    p code { font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .feature .extras p { margin: 0 0 16px; font-size: 16px; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-22</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">A round of polish — the small things that make the daily loop faster. Skills upload straight from a folder, chat answers paste clean into email and WhatsApp, transcript prompts that never ran get a Run button, and meeting recordings now finish on their own.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="skill-upload">
+        <h2>Skill upload</h2>
+        <p class="one-liner">Drop a .skill file — or a whole skill folder — and get a versioned skill.</p>
+
+        <div class="slice">
+          <video src="./shorts/skill-upload.mp4" autoplay loop muted playsinline></video>
+          <p>The skills library's <strong>New skill</strong> dialog now takes three upload shapes: a <code>.zip</code>, a single <code>.md</code>, and — new — a <code>.skill</code> bundle. Below the file dropzone sits a second zone for an entire <strong>skill folder</strong>: pick it or drag it in, and the folder is zipped client-side, junk files like <code>.DS_Store</code> and <code>__MACOSX</code> stripped, and validated for a <code>SKILL.md</code> at its root before anything is uploaded.</p>
+          <p>The dialog also reads the skill's <code>SKILL.md</code> frontmatter and prefills Name and Description — only into fields you haven't typed in yourself. One click on <em>Create &amp; open</em> and you're in the editor with the full folder contents. On the way out, every skill's overflow menu now offers <em>Export as .skill</em> next to <em>Download as .zip</em>, so skills round-trip cleanly between the web UI and the filesystem format agents use.</p>
+        </div>
+
+        <div class="extras">
+          <div class="snippet-label">Scope</div>
+          <p>The agent side of this — the installer script, registry and install prompts — shipped in the <a href="../2026-07-13-connect-your-agent/skills-sharing.html">Connect your agent</a> release. This round is the web-UI half: the create dialog's dropzones and the detail panel's export/download menu.</p>
+
+          <div class="snippet-label">Limits</div>
+          <p>Skill folders are capped at 50&nbsp;MB uncompressed and 500 files; the folder must contain a <code>SKILL.md</code> at its root.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="formatted-copy">
+        <h2>Formatted copy</h2>
+        <p class="one-liner">Chat answers copy and download formatted for email and WhatsApp.</p>
+
+        <div class="slice">
+          <video src="./shorts/formatted-copy.mp4" autoplay loop muted playsinline></video>
+          <p>The per-message <strong>Copy</strong> button used to put raw markdown on the clipboard — pasting into an email or WhatsApp showed literal <code>**</code> and <code>#</code> characters. Now Copy writes a dual-flavor payload: email-safe HTML built with inline styles only (which is all email clients keep on paste), plus WhatsApp-flavored plain text — <code>*bold*</code>, <code>_italic_</code>, <code>~strike~</code>, headings as bold lines, and tables as column-aligned monospace blocks. Paste into either and it just looks right.</p>
+          <p><strong>Download</strong> became a two-item menu: <em>Formatted (HTML)</em> saves a self-contained styled document, <em>Markdown</em> the raw source. Copies and downloads now exclude reasoning parts — only the visible answer is exported — and exported links are protocol allow-listed. If the browser can't take a rich clipboard write, Copy quietly degrades to the WhatsApp-flavored text, and the toast tells you which one you got.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="transcript-rerun">
+        <h2>Transcript post-processing</h2>
+        <p class="one-liner">Prompts that never ran now show up in the review sheet — with a Run button.</p>
+
+        <div class="slice">
+          <video src="./shorts/transcript-rerun.mp4" autoplay loop muted playsinline></video>
+          <p>When you start a meeting recording you can attach post-processing prompts that auto-run once the transcript arrives. If that auto-run was ever lost — a server restart mid-run, say — the review sheet used to shrug: <em>No post-processing results.</em>, with no way to recover the prompts you'd configured.</p>
+          <p>Now the sheet detects configured prompts with no result and renders each one as a card — named via the prompt library, <em>Not run yet.</em> underneath, and a <strong>Run</strong> button that runs it on the spot (a deleted prompt shows <em>Prompt no longer available</em>). While the backend's automatic run is genuinely still in flight, the sheet shows <em>Running…</em> and polls every five seconds until the result cards appear. The same change fixed a long-standing staleness bug where even the existing <em>Re-run</em> button's result never showed up without reopening the sheet.</p>
+        </div>
+      </section>
+
+      <section class="feature" id="recall-recovery">
+        <h2>Meeting recordings that self-heal</h2>
+        <p class="one-liner">No more meetings stuck in "Processing" forever — jobs finish, or fail with a reason.</p>
+
+        <div class="slice">
+          <p>An honest reliability fix. The meeting-recording webhook acknowledges events <em>before</em> processing them, so the provider never times out — but acknowledged events are never redelivered. A crash or restart mid-processing therefore stranded meetings at "Recording finished" or "Transcribing…" permanently, and the post-processing runs attached to them were silently lost. Users saw zombie "Processing" rows that would never move again.</p>
+          <p>Now a background reconcile loop sweeps every 60 seconds for jobs stuck longer than ten minutes and re-drives them from Recall's own state through the same guarded, idempotent handlers — so a late webhook racing the sweep is harmless. Post-processing became crash-safe with atomic claims and per-prompt heartbeats, so recovery can't double-spend LLM calls; a live call is never transcribed mid-meeting; and a job still stuck 24 hours after the meeting start gives up cleanly with a clear error instead of pretending to work. Meeting recordings now finish — or tell you why they didn't — on their own.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 22, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>
