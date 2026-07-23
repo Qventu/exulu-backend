@@ -75,7 +75,7 @@ type transcription_job {
 query {
   transcription_jobsPagination(
     limit: 20
-    filters: [{ status: { eq: "done" } }]
+    filters: [{ status: { eq: "saved" } }]
     sort: { field: "createdAt", direction: DESC }
   ) {
     items {
