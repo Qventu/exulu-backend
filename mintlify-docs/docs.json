@@ -219,7 +219,8 @@
           "api-reference/graphql/introduction",
           "api-reference/graphql/conventions",
           "api-reference/graphql/dynamic-types",
-          "api-reference/graphql/vector-search"
+          "api-reference/graphql/vector-search",
+          "api-reference/graphql/routine-runs"
         ] },
         { "group": "Core types", "expanded": false, "pages": [
           "api-reference/graphql/core-types/agents",
