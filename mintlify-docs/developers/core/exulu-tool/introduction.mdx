@@ -122,9 +122,9 @@ export const calendarTool = new ExuluTool({
     pkce: true,
     extraAuthParams: { access_type: "offline", prompt: "consent" },
   },
-  execute: async ({ days, inputs }) => {
-    // inputs.oauth.accessToken is injected by the framework when a valid token exists.
-    const events = await fetchCalendarEvents(inputs.oauth.accessToken, days);
+  execute: async ({ days, oauth }) => {
+    // oauth.accessToken is injected by the framework when a valid token exists.
+    const events = await fetchCalendarEvents(oauth.accessToken, days);
     return { result: JSON.stringify(events) };
   },
 });
