@@ -59,7 +59,8 @@
           "building/agents/overview",
           "building/agents/workbench",
           "building/agents/tools-and-skills",
-          "building/agents/access-and-safety"
+          "building/agents/access-and-safety",
+          "building/agents/guest-access"
         ] },
         { "group": "Knowledge", "pages": [
           "building/knowledge/overview",
