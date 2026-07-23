@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-20 · Public Agents</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(240 17% 95%);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0 0 16px;
+      line-height: 1.55;
+    }
+    .feature pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+    .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 28px 0 8px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    footer a { color: hsl(var(--primary)); text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-20</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Agents can now leave your org: flip one switch in the editor and any agent gets a clean public chat at /public/agents — behind a plain link, a shared password, or a real login with self-registration. Guardrails ship on by default: per-IP rate limits, message caps, and a hard-whitelisted public projection that never leaks instructions, tools or model.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="public-agents">
+        <h2>Public agents</h2>
+        <p class="one-liner">Your agent, outside your org — in 30 seconds.</p>
+
+        <!-- Slice 1: enable guest access in the editor -->
+        <div class="slice">
+          <video src="./shorts/enable-guest.mp4" autoplay loop muted playsinline></video>
+          <p>Sharing an agent with a customer no longer needs accounts, invites or a provisioning round-trip. The agent editor has a new <strong>Guest access</strong> section: flip <strong>"Enable guest access"</strong> and the agent goes live on your instance's <code>/public/agents</code> page — name, description and avatar listed, chat one click away. The <strong>Public link</strong> field hands you the URL with a one-click Copy.</p>
+          <p>Three access modes decide who gets in: <strong>Public</strong> — "Anyone with the link can chat. No sign-in." <strong>Password</strong> — "Visitors must enter a shared password.", stored only as a bcrypt hash and verified server-side. <strong>Login</strong> — "Visitors must sign in or register with their email." for external users who should keep their history.</p>
+          <p>The editor also keeps you honest before you expose anything: an agent without a spend cap gets a red alert — "Strongly recommended: set an overall budget for this agent before exposing it publicly." — with the budget editor one click below.</p>
+        </div>
+
+        <!-- Slice 2: the visitor side — gate + anonymous chat -->
+        <div class="slice">
+          <video src="./shorts/guest-chat.mp4" autoplay loop muted playsinline></video>
+          <p>Visitors get a clean, brand-themed chat with no internal app shell: agent avatar and name in a slim header, welcome message, streaming replies. Password-protected agents show a single centered gate — enter the shared password once and it's remembered per agent in an httpOnly cookie that's re-verified against the backend on every load, so a rotated password bounces old visitors straight back to the gate.</p>
+          <p>Anonymous chats create no server-side sessions at all. Transcripts live in the visitor's browser — localStorage, capped at the last 50 messages — so they survive a refresh, and <strong>"Clear conversation"</strong> wipes them on the spot. Nothing accumulates on your side.</p>
+          <p>Need real users instead? Put the agent in <strong>Login</strong> mode: visitors self-register with email + password or a 6-digit OTP code on a branded sign-in page whose cover image is customizable per agent. They become rights-less <code>external</code> users with persistent sessions and a history rail — and they're fenced out of the internal app entirely: any attempt redirects back to <code>/public/agents</code>.</p>
+
+          <div class="snippet-label">REST</div>
+          <pre><code># List published agents (the whitelisted public projection, nothing more)
+curl "$BACKEND/public-agents"
+
+# One agent's public meta — 404 once it's unpublished
+curl "$BACKEND/public-agents/$AGENT_ID/meta"
+
+# Verify a shared password — 204 on match, 401 otherwise (rate-limited)
+curl -X POST "$BACKEND/public-agents/$AGENT_ID/verify-password" \
+  -H 'Content-Type: application/json' -d '{"password":"..."}'</code></pre>
+        </div>
+
+        <!-- Slice 3: guardrails on by default -->
+        <div class="slice">
+          <video src="./shorts/guarded-by-default.mp4" autoplay loop muted playsinline></video>
+          <p>Guest traffic is throttled before it can cost you anything: <strong>10 messages per minute and 60 per hour per IP</strong> (HTTP 429), <strong>8,000 characters per message and 32,000 per payload</strong> (HTTP 413) — enforced before any LLM call and even before the password check, so failed password guesses burn limiter budget instead of becoming a bcrypt oracle. Tune the numbers with <code>EXULU_GUEST_RATE_PER_MINUTE</code>, <code>EXULU_GUEST_RATE_PER_HOUR</code> and the message-cap env vars.</p>
+          <p>The public surface is a hard whitelist — eight fields: id, name, description, avatar, welcome message, slug, auth mode and a cover flag. Instructions, tools and model never leave the server, and the password-hash column is flagged hidden so it can't surface through GraphQL or REST either.</p>
+          <p>Unpublishing is immediate: every public endpoint re-checks <code>guest_access</code> per request, so switching the toggle off takes effect on the next request — the public page answers "This agent is no longer available."</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 20, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

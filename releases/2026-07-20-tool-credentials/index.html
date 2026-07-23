@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-20 · Tool Credentials</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 680px;
+    }
+    .lede code, .slice p code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.86em;
+      background: hsl(var(--accent) / 0.55);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-20</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Tool auth grows from OAuth-only into a general <code>authentication</code> union: a tool declares the fields it needs, and Exulu prompts the user in chat, stores the values encrypted per user, and injects them at execute time. One declarative property — no prompt code, no storage code, no routes.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="tool-credentials">
+        <h2>Tools that ask for their own credentials</h2>
+        <p class="one-liner">Declare <code>authentication: user_credentials</code> on any ExuluTool — Exulu handles the prompt, the storage, and the injection.</p>
+
+        <div class="slice">
+          <video src="./shorts/define-tool.mp4" autoplay loop muted playsinline></video>
+          <p><code>ExuluTool({ oauth })</code> is now <code>ExuluTool({ authentication })</code> — a discriminated union, <code>ExuluOauthConfig | ExuluUserCredentialsConfig</code>, tagged by <code>authType</code>. The OAuth arm is unchanged (3-legged flows keep working), but the rename is breaking: existing configs move to the <code>authentication</code> property and carry an explicit <code>authType: "oauth"</code> tag. The new <code>user_credentials</code> arm covers everything OAuth never could — plain API keys, tokens, username/password — as a list of typed form fields (<code>text</code> or <code>password</code>, optional <code>placeholder</code>/<code>help</code>) plus an optional server-side <code>validate</code> hook.</p>
+          <p>Construction validates the config, registers the provider (tools sharing a provider must declare identical fields — one consent per provider, same as OAuth), and wraps <code>execute</code>. Your tool code just reads <code>inputs.credentials</code>.</p>
+
+          <div class="snippet-label">From the SDK</div>
+          <pre><code>new ExuluTool({
+  id: "acme_crm",
+  name: "Acme CRM",
+  inputSchema: z.object({ query: z.string() }),
+  authentication: {
+    authType: "user_credentials",
+    provider: "acme",
+    fields: [{ name: "apiKey", label: "API Key", type: "password" }],
+  },
+  // runs only once credentials exist — decrypted and injected per user
+  execute: async (inputs) => acme.search(inputs.query, inputs.credentials.apiKey),
+});</code></pre>
+        </div>
+
+        <div class="slice">
+          <video src="./shorts/credential-flow.mp4" autoplay loop muted playsinline></video>
+          <p>At run time the wrapper short-circuits: with no stored credentials, the tool returns <code>{ credentialRequest: { provider, fields, submitUrl, nonce }, result: null }</code> instead of running — a ready-made form contract for the chat surface. The nonce seals <code>{ provider, userId, expiresAt }</code> AES-encrypted, with a 15-minute TTL. <code>POST /credentials/submit</code> requires an authenticated session, cross-checks the session's userId against the nonce, verifies the submitted keys against the declared field set, then upserts the values AES-encrypted as a single JSON blob per <code>(provider, user)</code> in the new <code>user_credentials</code> table. Every later call decrypts and injects <code>inputs.credentials</code> server-side — the values never transit the model.</p>
+          <p>The loop self-heals: when a stored key stops working, <code>execute</code> throws <code>CredentialInvalidError(provider)</code> — Exulu deletes the stale row and returns a fresh credential request in the same chat turn, so the user is re-prompted instead of the tool failing forever.</p>
+
+          <div class="snippet-label">REST</div>
+          <pre><code>curl -X POST https://&lt;your-backend&gt;/credentials/submit \
+  -H "content-type: application/json" \
+  --cookie "&lt;authenticated session&gt;" \
+  -d '{ "nonce": "&lt;from credentialRequest&gt;", "values": { "apiKey": "sk-acme-…" } }'
+# → { "ok": true }</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 20, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>

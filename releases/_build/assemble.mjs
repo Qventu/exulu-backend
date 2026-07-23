@@ -18,6 +18,22 @@ const warnings = [];
 // Display order, newest first. name = sidebar label; headline/lede override
 // the page hero where the original was generic ("What's new in Exulu.").
 const ORDER = [
+  { slug: '2026-07-22-usage-and-budgets', name: 'Usage & Budgets' },
+  {
+    // roundup release: split into one chapter per feature section
+    slug: '2026-07-22-platform-polish', name: 'Platform Polish',
+    splitNames: {
+      'skill-upload': 'Skill Upload',
+      'formatted-copy': 'Formatted Copy',
+      'transcript-rerun': 'Transcript Re-run',
+      'recall-recovery': 'Recording Recovery',
+    },
+  },
+  { slug: '2026-07-21-email-routines', name: 'Email-Triggered Routines' },
+  { slug: '2026-07-20-public-agents', name: 'Public Agents' },
+  { slug: '2026-07-20-agent-knowledge-tools', name: 'Agent Knowledge Tools' },
+  { slug: '2026-07-20-tool-credentials', name: 'Tool Credentials' },
+  { slug: '2026-07-16-bulk-import', name: 'Bulk Import' },
   { slug: '2026-07-13-connect-your-agent', name: 'Connect Your Agent' },
   { slug: '2026-07-08-projects', name: 'Projects' },
   { slug: '2026-07-08-routines', name: 'Routines' },
@@ -87,7 +103,7 @@ const ORDER = [
 const MONTHS = [
   {
     key: '2026-07', label: 'July 2026',
-    blurb: 'Connect your coding agent to the skills library — plus projects, routines, evals, and the July 8 platform drop, feature by feature.',
+    blurb: 'Agents step outside your org, routines answer email, agents write your knowledge, imports land a hundred items at a time — plus usage transparency, the connect-your-agent drop, projects, evals, and the July 8 platform drop.',
   },
   {
     key: '2026-06', label: 'June 2026',
@@ -536,7 +552,7 @@ ${navMarkup()}
     <div class="col intro-inner">
       <span class="pill">Exulu · Release Notes · 2026</span>
       <h1>Everything we <em>shipped</em>.</h1>
-      <p class="lede">Three months of Exulu, chaptered. Projects, routines, evals, a full redesign — every feature below is the real product, demoed in motion, with the API calls to match.</p>
+      <p class="lede">Three months of Exulu, chaptered. Public agents, email-triggered routines, agents that write your knowledge, projects, evals, a full redesign — every feature below is the real product, demoed in motion, with the API calls to match.</p>
       <div class="meta-chips">
         <span class="chip"><b>${stats.chapters}</b> features</span>
         <span class="chip"><b>${stats.improvements}</b> improvements</span>

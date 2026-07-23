@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-22 · Usage &amp; Budgets</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em {
+      font-style: normal;
+      color: hsl(var(--primary));
+    }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    p code { font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(0 0% 4%);
+      color: hsl(0 0% 96%);
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    .feature .extras p { margin: 0 0 16px; font-size: 16px; }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-22</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Cost transparency moves out of the admin console: every user can now see their own model-by-model spend, and every project member sees how the project's budget is doing. Admins close the loop by pinning budget resets to a real billing day.</p>
+    </header>
+
+    <main>
+      <!-- Feature 1: personal usage, the hero -->
+      <section class="feature" id="personal-usage">
+        <h2>Personal usage</h2>
+        <p class="one-liner">See what you spend — your models, your days, right in Settings.</p>
+
+        <div class="slice">
+          <video src="./shorts/personal-usage.mp4" autoplay loop muted playsinline></video>
+          <p>It started as a literal user question: <em>"kann man irgendwo sehen, welche Modelle man zuletzt genutzt hat und wie viel?"</em> Until now the answer was no — the only per-user surface was the little spend chip in the top bar, and the detailed numbers lived on a super-admin analytics page. Now every user gets a <strong>Usage</strong> section on Settings: a 7 / 30 / 90-day range toggle, a daily spend area chart, Spend / Tokens / Requests totals, and a per-model table — all scoped strictly to your own activity via the new <code>GET /me/usage</code> endpoint.</p>
+          <p>The chart is honest by design: the daily series is zero-filled across the whole window, so quiet days sit at 0 instead of being squeezed out of the time axis. The table answers the original question directly — which models, how many requests, how many tokens, how much — sorted by spend. And the top-bar budget popover gains a <em>Details</em> link that lands you on <code>/settings#usage</code>. Deliberately simple: one chart, one table, no lens switchers.</p>
+          <p>Visibility follows the same admin gate as the top-bar chip — the <em>"Show budget status to users"</em> toggle. Switched off, <code>GET /me/usage</code> returns <code>usage: null</code> and the Settings section renders nothing at all. Windows default to the last 30 days and are hard-clamped to 92 days.</p>
+
+          <div class="snippet-label">REST</div>
+          <pre><code>curl -H "Authorization: Bearer $TOKEN" \
+  "$BACKEND/me/usage?start_date=2026-06-23&amp;end_date=2026-07-22"
+
+{ "usage": {
+    "window":  { "start_date": "2026-06-23", "end_date": "2026-07-22" },
+    "totals":  { "spend": 12.34, "total_tokens": 1540000, "api_requests": 415 },
+    "daily":   [ { "date": "2026-07-21", "spend": 0.84, ... } ],
+    "byModel": [ { "model": "claude-sonnet-4-5", "spend": 9.10, ... } ] } }</code></pre>
+        </div>
+      </section>
+
+      <!-- Feature 2: project budget visibility -->
+      <section class="feature" id="project-budget">
+        <h2>Project budget visibility</h2>
+        <p class="one-liner">Members see budget health in the project header — without asking an admin.</p>
+
+        <div class="slice">
+          <video src="./shorts/project-budget.mp4" autoplay loop muted playsinline></video>
+          <p>Project budgets used to be visible only on the admin-only <code>/budgets</code> page — the backend nulled the <code>budget</code> field for everyone else, so members burning a budget had no idea how it was doing. Now <strong>every user who can open a project</strong> sees a compact, read-only indicator in the project header, on every tab: a slim colored bar plus a <em>"38% · Budget"</em> face. No edit affordances, by design.</p>
+          <p>Click it (keyboard works too) and a popover shows the full picture: <em>$114 of $300 used</em>, <em>$186 remaining · Monthly</em>, a linear burn-rate projection — <em>Projected ≈ $265 by reset</em>, with a dashed pace marker on the bar — and <em>Resets 8/1/2026</em>. A project burning too fast flips the bar amber before it ever goes over; red is reserved for actually exceeding the cap.</p>
+          <p>Orgs that don't want raw cost figures exposed keep the existing <em>"Percentage only"</em> display mode: the member popover then speaks only in percentages, and the UI guarantees no dollar amount reaches the DOM (unit-tested). The member payload also omits <code>budget_id</code>. There's no new toggle — being able to open the project is the gate, and a project without a configured budget simply shows nothing.</p>
+        </div>
+      </section>
+
+      <!-- Feature 3: budget reset date -->
+      <section class="feature" id="reset-date">
+        <h2>Budget reset date</h2>
+        <p class="one-liner">Budgets reset on your billing day — not on a proxy default you can't see.</p>
+
+        <div class="slice">
+          <video src="./shorts/reset-date.mp4" autoplay loop muted playsinline></video>
+          <p>This one comes from a real bug report: an admin switched a €300 project budget from weekly to monthly, and the reset date silently stayed on the old weekly date — LiteLLM's <code>update_budget</code> never recomputes <code>budget_reset_at</code>, and its <code>/tag/*</code> endpoints strip the field entirely. The reset date is now an explicit, editable field: the budget editor prefills the smart default for each duration and a calendar picker lets you override it with any date — your billing day, not the proxy's calendar.</p>
+          <p>The defaults are predictable and UTC-standardized: daily budgets reset at next midnight, weekly on next Monday, monthly on the 1st of next month — and changing the reset period snaps the date to the matching default so a stale date can never linger again. Under the hood the backend applies your pick via LiteLLM's <code>/budget/update</code>, the one endpoint that honors the field; if that follow-up fails, the save fails loudly instead of leaving a silently stale date.</p>
+          <p>Everything is additive and backward-compatible — omit <code>budget_reset_at</code> and behavior is unchanged, with no schema migration. The bulk editor applies the same date to every selected entity, the <code>/budgets</code> table shows each budget's reset date, and every user-facing popover picks it up in its <em>"Resets …"</em> line.</p>
+
+          <div class="snippet-label">REST</div>
+          <pre><code>curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  "$BACKEND/admin/budgets/project/42" \
+  -d '{ "max_budget": 300, "budget_duration": "30d",
+        "budget_reset_at": "2026-08-01T00:00:00.000Z" }'
+
+# 200 → { "budget": { "name", "spend", "max_budget", "budget_duration",
+#                     "budget_reset_at", "budget_id" } }</code></pre>
+        </div>
+
+        <div class="extras">
+          <div class="snippet-label">Requirements</div>
+          <p>All three features run through the LiteLLM proxy — the backend talks to it with the master key (which never leaves the backend), and proxy errors surface as clean 502s. Budget writes, including the reset date, stay restricted to super admins and roles with <code>budget_management: write</code>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 22, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>
