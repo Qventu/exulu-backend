@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Exulu — Release · 2026-07-20 · Agent Knowledge Tools</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      /* extracted fresh from frontend/app/globals.css, 2026-07-08 (verified current) */
+      --background: 0 0% 99.2157%;
+      --foreground: 0 0% 0%;
+      --primary: 257.9412 100% 60%;
+      --primary-foreground: 0 0% 100%;
+      --accent: 221.3793 100% 94.3137%;
+      --accent-foreground: 216.3158 76% 49.0196%;
+      --muted-foreground: 0 0% 32.1569%;
+      --border: 240 17.0732% 91.9608%;
+      --card: 0 0% 99.2157%;
+      --code-surface: 231 15% 18%;
+      --code-surface-foreground: 60 30% 96%;
+      --radius: 0.4rem;
+      --tracking-tight: -0.025em;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: 'Inter', system-ui, sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      letter-spacing: var(--tracking-tight);
+      line-height: 1.5;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 80px 24px 120px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: hsl(var(--accent));
+      color: hsl(var(--accent-foreground));
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+    h1.hero {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      margin: 24px 0 16px;
+      letter-spacing: -0.04em;
+    }
+    h1.hero em { font-style: normal; color: hsl(var(--primary)); }
+    .lede {
+      font-size: 20px;
+      color: hsl(var(--muted-foreground));
+      max-width: 640px;
+    }
+    .feature {
+      margin-top: 96px;
+      padding-top: 48px;
+      border-top: 1px solid hsl(var(--border));
+    }
+    .feature h2 {
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+    }
+    .feature .one-liner {
+      color: hsl(var(--muted-foreground));
+      font-size: 18px;
+      margin: 0 0 32px;
+    }
+    .slice { margin-top: 24px; }
+    .slice + .slice { margin-top: 56px; }
+    .slice video {
+      width: 100%;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--accent));
+      display: block;
+      margin: 0 0 24px;
+    }
+    .slice p { margin: 0 0 16px; font-size: 16px; }
+    .slice p code, .feature .one-liner code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.86em;
+      background: hsl(var(--border) / 0.5);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .feature pre {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      background: hsl(var(--code-surface));
+      color: hsl(var(--code-surface-foreground));
+      padding: 20px 24px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin: 24px 0 0;
+      line-height: 1.55;
+    }
+    .feature .snippet-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 32px 0 8px;
+    }
+    footer {
+      margin-top: 120px;
+      padding-top: 32px;
+      border-top: 1px solid hsl(var(--border));
+      font-size: 14px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+    }
+    footer a {
+      color: hsl(var(--primary));
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <span class="pill">Release · 2026-07-20</span>
+      <h1 class="hero">What's new in <em>Exulu</em>.</h1>
+      <p class="lede">Your agents don't just answer from your knowledge anymore — grant them per-knowledge-base write access and they log decisions, file answers, and fix stale entries, with every write approved by you in chat. And when you hand them a document, they stop guessing at the text layer: they render the page and actually look at it.</p>
+    </header>
+
+    <main>
+      <section class="feature" id="kb-write-tools">
+        <h2>Agents that write your knowledge</h2>
+        <p class="one-liner">Let an agent create and update items in selected knowledge bases during chat — explicit opt-in per knowledge base, approval by default.</p>
+
+        <!-- Slice 1: enabling the Knowledge base editor in the agent editor -->
+        <div class="slice">
+          <video src="./shorts/enable-kb-editor.mp4" autoplay loop muted playsinline></video>
+          <p>Until now agents could only <em>read</em> knowledge bases. The new <strong>Knowledge base editor</strong> tool — in the agent editor's Tools section, under the default category — turns an agent from a consumer of your knowledge into a curator of it: log a decision as it's made, file a support answer, correct a stale product entry, all from the chat.</p>
+          <p>Write access is granted per knowledge base, with separate labeled <strong>Create</strong> and <strong>Update</strong> switches on each row. Checking a knowledge base starts create-only — you opt into overwriting existing items explicitly. And it's a strict allowlist: a knowledge base that isn't in the config, or has both switches off, gets no write tool at all. Write access never appears by accident.</p>
+        </div>
+
+        <!-- Slice 2: the approved write round-trip in chat -->
+        <div class="slice">
+          <video src="./shorts/create-item.mp4" autoplay loop muted playsinline></video>
+          <p>At chat runtime the single config entry expands into a pair of real tools per writable knowledge base — <code>create_&lt;ctx&gt;_item</code> and <code>update_&lt;ctx&gt;_item</code> — with typed input schemas generated from that knowledge base's actual field definitions, enum values included, so the model files clean, structured entries instead of free text.</p>
+          <p>Every write asks for approval in the chat by default: review the request, then <strong>Allow once</strong>, <strong>Allow for this chat</strong>, or <strong>Deny</strong>. Once approved, the item is created with your user stamped as creator, and if the knowledge base has embeddings or processing configured, the job is queued automatically — the new entry becomes searchable the moment it completes. A per-agent <strong>Skip chat approval</strong> override exists for trusted automation agents.</p>
+          <p>The guardrails hold even when the agent is capable: updates pass the same row-level write check as the UI, so an agent never lets a user change more than their own rights allow. Reserved runtime keys and hidden (write-only) fields are excluded from tool schemas, guests and anonymous users are refused outright, and there is deliberately no delete tool.</p>
+
+          <div class="snippet-label">Agent tool config</div>
+          <pre><code>{
+  "id": "knowledge_base_editor",
+  "type": "function",
+  "name": "Knowledge base editor",
+  "config": [
+    { "name": "knowledge_bases", "type": "json",
+      // Record&lt;contextId, { create: boolean; update: boolean }&gt;
+      "value": "{\"products\":{\"create\":true,\"update\":true},\"faq\":{\"create\":true,\"update\":false}}" },
+    { "name": "skip_approval", "type": "boolean", "value": false }
+  ]
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="feature" id="document-vision">
+        <h2>Documents, seen page by page</h2>
+        <p class="one-liner"><code>parse_document</code> finds the right page; <code>view_document_page</code> puts the rendered page in front of the model.</p>
+
+        <div class="slice">
+          <video src="./shorts/view-document-page.mp4" autoplay loop muted playsinline></video>
+          <p>Ask about a chart on page 3 of an uploaded PDF and, until now, the agent could only see the extracted text — it would poke at the file from the sandbox and apologize. Two new session tools close that gap, registered automatically whenever session file uploads are configured. No per-agent toggle, no setup.</p>
+          <p><code>parse_document</code> is the free, fast first step: text extraction with <code>--- page N ---</code> markers for PDFs, so the agent learns which page holds what, plus whole-document extraction for Office formats. <code>view_document_page</code> then renders the page — PDF directly, Office via PDF conversion, uploaded images as-is — to a PNG at up to 1568&nbsp;px and delivers it into the model's own context within the same agentic loop. Charts, scans, photos, layouts: the model sees the actual pixels, not a lossy text shadow.</p>
+          <p>The routing takes care of itself. Image-only PDFs are detected by <code>parse_document</code>, which redirects the agent to look at pages visually instead of returning empty text. And on a model without vision support the tool answers deterministically that the page cannot be shown — a clean refusal instead of a hallucinated answer. Rendered images are never persisted to chat history; later turns simply call the tool again to look afresh.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Released July 20, 2026</span>
+      <a href="https://docs.exulu.com">Read the docs →</a>
+    </footer>
+  </div>
+</body>
+</html>
