@@ -96,6 +96,10 @@ input FilterProduct_docs_items {
 }
 ```
 
+<Note>
+If a field definition carries `hidden: true`, it is excluded from the generated object type and the generated Filter input type — it cannot be read via any query or mutation response, and it cannot be used as a filter criterion. Hidden fields do remain present in the mutation Input type so the mutation layer can write them (for example, to hash and store a password). See the [`hidden` flag reference](/developers/core/exulu-context/configuration#fields-hidden) for the field-definition side; the sorting and statistics restrictions are covered in [Conventions — Sorting and Statistics](/api-reference/graphql/conventions#sorting).
+</Note>
+
 The `chunks` field exposes the item's embedded chunks; its element type is part of the core SDL (verbatim):
 
 ```graphql
