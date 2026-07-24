@@ -211,7 +211,7 @@ The following variables are read exclusively by the frontend container. They do 
 
 | Variable | Required? | Purpose | Example |
 |---|---|---|---|
-| `APP_NAME` | No | Application name shown in the browser tab and used as the PWA `name` and `short_name` in the web manifest. Default: `IMP`. Read only by the manifest route at request time. See [Branding](/self-hosting/branding). | `Acme Agents` |
+| `APP_NAME` | No | Application name used as the PWA `name` and `short_name` in the web manifest. Default: `IMP`. Read only by the manifest route. See [Branding](/self-hosting/branding). | `Acme Agents` |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (enables "Sign in with Google"). | `1234.apps.googleusercontent.com` |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret. | `GOCSPX-…` |
 | `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of email domains allowed to sign in. No restriction if absent. | `example.com,contractor.example.com` |
