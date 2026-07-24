@@ -60,6 +60,21 @@ In the message box, type <code>@</code> to open a **Session files** autocomplete
 
 Some tool results — a generated image, an exported document — can be attached to your next message directly from the conversation. Attached files appear under the message box in an **Attachments** row; remove any of them before sending.
 
+## How the agent reads documents
+
+When you upload a PDF or Office document (Word, Excel, PowerPoint), the agent can parse it on demand using two tools:
+
+- **`parse_document`** — extracts the full text from a PDF or Office file. For plain-text or CSV files, `read_session_file` is the right tool instead.
+- **`view_document_page`** — fetches specific pages from a document, useful when the agent needs to look up a particular section without re-extracting the entire file.
+
+You do not need to ask the agent to use these tools explicitly — it chooses them automatically when you ask it to read an uploaded document.
+
+## Oversized outputs and session file offload
+
+When a tool produces a very large result — for example, a long database query or a dense extracted document — the output may exceed the amount the model can hold in its context window at once. In that case the full output is automatically saved as a session file, and the agent receives a short notice that it can call **`read_session_file`** with a filename, offset, and line limit to read the output in pages.
+
+You will see the offloaded file appear in the **Session files** panel under a name like `tool-output-<tool>-<id>.txt`. The agent works through it progressively and reports back as it reads each section.
+
 ## Where session files live
 
 Session files are private to the conversation: "Files in this session aren't shared with other sessions, projects, or knowledge bases." To make a document permanently searchable by agents, it needs to be added to a knowledge context instead — see [Knowledge overview](/building/knowledge/overview) in the Building guide.

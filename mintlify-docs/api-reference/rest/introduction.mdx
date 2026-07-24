@@ -60,10 +60,40 @@ curl https://your-imp-host/ping \
 The token is HS256, signed with the deployment's `NEXTAUTH_SECRET`. This is what the IMP frontend sends automatically. You can copy your personal token from the [API keys](/administration/api-keys) page.
 
 <Note>
-The agent-run endpoint (`/agents/litellm/run/{instance}`) does not require authentication when the agent's `rights_mode` is set to `public`. All other REST endpoints require either an API key or a session JWT.
+Anonymous access to the agent-run endpoint is governed by the agent's **guest mode** (`guest_access` flag + `guest_auth_mode`). An agent with `guest_auth_mode: public` accepts unauthenticated run requests; one with `guest_auth_mode: password` requires a valid `x-guest-password` header. The legacy `rights_mode=public` field remains respected for agents that have not been migrated to guest mode, but guest mode takes precedence when the `guest_access` flag is set. See [Guest Access](/building/agents/guest-access) for the full publishing workflow. All non-public REST endpoints require either an API key or a session JWT.
 
 The `internal-key` header (set to the deployment's `INTERNAL_SECRET`) is accepted only on the Uppy S3 proxy routes (`/s3/*`), which are part of the file-upload infrastructure and documented with the upload endpoints. The session-file routes (`/sessions/{sessionId}/files/...`) use the standard API key or Bearer JWT authentication.
+
+A session JWT sent via `x-api-key` is detected (JWTs contain no `/`, API keys always do) and routed to session auth automatically — the same detection applies here as in the GraphQL API.
 </Note>
+
+## Skills registry
+
+The skills registry powers the `imp` CLI and agent self-installation. Three endpoints are exposed:
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/skills/registry` | Required | RBAC-filtered list of skills the caller may read. Accepts an optional `?tag=<tag>` query parameter to filter by tag. |
+| `GET` | `/skills/registry/:name` | Required | Metadata for a single skill by name. Returns `404` when the skill does not exist; `403` when the caller lacks read access. |
+| `GET` | `/skills/agent/bootstrap` | None | Downloads a zip containing the `imp-skills` bootstrap skill so any agent client can self-install it without a logged-in session. |
+
+`GET /skills/registry` response shape:
+
+```json
+{
+  "skills": [
+    {
+      "name": "web-search",
+      "description": "Searches the web using a configured search provider.",
+      "tags": ["search", "web"],
+      "current_version": 3,
+      "updated_at": "2025-11-14T10:22:00.000Z"
+    }
+  ]
+}
+```
+
+`GET /skills/registry/:name` additionally includes a `history` array of version records.
 
 ## When to use REST vs GraphQL
 

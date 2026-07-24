@@ -12,9 +12,23 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 Open a project from **Projects** to reach the project workspace. The header shows the project name, description, a visibility badge, a star toggle, an overflow menu (⋯), and a **New session** button.
 
-If the project has custom instructions, a quiet line reads **Instructions active · View** below the header. Click it to jump to the project's Settings tab.
+Below the header, a meta row may appear with one or both of the following:
+
+- **Budget indicator** — a compact usage bar showing how much of the project's budget has been spent, with a percentage label. Click or keyboard-activate it to open a popover with the full detail: amount used, amount remaining, projected spend, and reset date. The indicator appears only when the project has a capped budget set; it is read-only for all users (no editing affordances here). Whether the popover shows exact amounts or percentages depends on the platform's display setting.
+- **Instructions active · View** — a quiet line shown when the project has custom instructions. Click **View** to jump to the project's Settings tab.
 
 The workspace has three URL-backed tabs — switching tabs pushes a history entry, so the browser back button steps between them.
+
+### Overflow menu (⋯)
+
+The overflow menu in the header provides quick utilities for the project:
+
+- **Copy project ID** — copies the project's unique identifier to your clipboard. Useful when referencing the project in API calls or support requests.
+- **Download Cowork config** — downloads a ready-made JSON configuration file for the Cowork client. Requests route through the project's gateway, so usage is tracked against the project's budget.
+- **Download Claude Code config** — downloads a `settings.json` file for Claude Code, pre-configured with the project gateway as the API endpoint. Requests route through the project's gateway, so usage is tracked against the project's budget.
+- **Download continue.dev config** — downloads a YAML configuration file for continue.dev. Requests route through the project's gateway, so usage is tracked against the project's budget.
+- **Edit details** — opens the project's Settings tab in edit mode.
+- **Delete project…** — opens the deletion confirmation dialog.
 
 ## Sessions tab
 
@@ -31,7 +45,7 @@ Sessions that belong to a project are visible to all project members, regardless
 
 ## Files tab
 
-The Files tab holds up to 15 knowledge items pinned to the project. Every session in the project can access these items without you having to add them manually each time.
+The Files tab holds up to 15 knowledge items pinned to the project. Every session in the project can access these items without you having to add them manually each time. In addition, when a session belongs to a project, the knowledge search tool automatically includes the project's pinned files as a retrieval source — so agents with knowledge search enabled will draw on project files alongside their other configured sources. See [Knowledge search](/building/agents/knowledge-search) for details on how the project search option works.
 
 The counter in the tab label shows the current count, for example `3/15`. At the limit, the **Add files** button becomes disabled and IMP shows "This project has reached the limit of 15 files. Remove one to add another."
 

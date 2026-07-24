@@ -57,6 +57,18 @@ if (hasOldProviderCol || hasOldKeyCol) {
 
 After the migration runs and drops the old columns, the block becomes a permanent no-op. No state outside the database is required.
 
+## Tool credential store
+
+IMP stores tool credentials (API keys, usernames, passwords entered in agent tool forms) in the `user_credentials` table. Each row holds an AES-encrypted JSON blob keyed off `NEXTAUTH_SECRET`; the raw credential values are never stored in plain text.
+
+The `data` column is write-only at the API layer — list endpoints return provider name, auth type, and timestamps only; the encrypted blob never leaves the backend.
+
+<Warning>
+**Rotating `NEXTAUTH_SECRET` breaks stored tool credentials.** Because each blob is encrypted with the current secret, changing `NEXTAUTH_SECRET` makes every previously stored credential undecryptable. Tool calls that use those credentials will fail with an error until the affected rows are removed from user_credentials (users can then reconnect from chat or Settings → Connections).
+</Warning>
+
+On every boot, initdb drops the legacy `oauth_tokens` table unconditionally (`DROP TABLE IF EXISTS oauth_tokens CASCADE`) before creating (or leaving intact) the replacement `user_credentials` table. No data migration is required — the legacy table had no production users.
+
 ## LiteLLM database
 
 The LiteLLM proxy maintains its own schema in a **separate** Postgres database (set via `LITELLM_DATABASE_URL` in `config.litellm.yaml`). On every boot, IMP runs a guarded `prisma db push` against that database to keep the LiteLLM schema up to date.

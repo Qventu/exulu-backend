@@ -1,0 +1,185 @@
+---
+title: "Public Agents API"
+description: "Unauthenticated endpoints for discovering and verifying access to guest-published agents."
+---
+
+The public-agents endpoints expose a safe, read-only view of agents that an administrator has explicitly published for guest access. No authentication is required for any of these endpoints. The response never includes agent instructions, system prompts, tool configurations, or model details.
+
+## Response shape — `PublicAgentView`
+
+Every endpoint that returns an agent object uses the same 8-field projection:
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string (uuid)` | Agent UUID. |
+| `name` | `string` | Display name. |
+| `description` | `string` | Short description shown in agent pickers. |
+| `image` | `string \| null` | Agent avatar URL, or `null` if not set. |
+| `welcomemessage` | `string` | Greeting text shown to the user before the first message. |
+| `slug` | `string` | Run-route path for this agent (e.g. `/agents/litellm/run`). |
+| `guest_auth_mode` | `"public" \| "password" \| "regular"` | `public` = no gate; `password` = password required; `regular` = authenticated users only. |
+| `guest_has_cover` | `boolean` | Whether a cover image is available via `/public-agents/{id}/cover`. |
+
+## Endpoints
+
+### List guest-published agents
+
+```
+GET /public-agents
+```
+
+Returns all agents with `guest_access: true` and `active: true` as an array of `PublicAgentView` objects.
+
+**Auth:** None.
+
+**Response:**
+
+| Status | Body |
+|---|---|
+| `200` | `PublicAgentView[]` |
+
+```bash
+curl https://your-imp-host/public-agents
+```
+
+```json
+[
+  {
+    "id": "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10",
+    "name": "Support Bot",
+    "description": "Answers product questions and links to documentation.",
+    "image": null,
+    "welcomemessage": "Hello! How can I help you today?",
+    "slug": "/agents/litellm/run",
+    "guest_auth_mode": "public",
+    "guest_has_cover": false
+  }
+]
+```
+
+---
+
+### Get a single agent's metadata
+
+```
+GET /public-agents/{id}/meta
+```
+
+Returns the `PublicAgentView` for one guest-published agent.
+
+**Auth:** None.
+
+**Path parameters:**
+
+| Name | Description |
+|---|---|
+| `id` | Agent UUID. Non-UUID strings and IDs for agents that are not guest-published or inactive return `404` immediately. |
+
+**Response:**
+
+| Status | Body |
+|---|---|
+| `200` | `PublicAgentView` |
+| `404` | `{ "detail": "Not found." }` — agent not found, not guest-published, inactive, or `id` is not a valid UUID. |
+
+```bash
+curl https://your-imp-host/public-agents/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10/meta
+```
+
+```json
+{
+  "id": "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10",
+  "name": "Support Bot",
+  "description": "Answers product questions and links to documentation.",
+  "image": null,
+  "welcomemessage": "Hello! How can I help you today?",
+  "slug": "/agents/litellm/run",
+  "guest_auth_mode": "public",
+  "guest_has_cover": false
+}
+```
+
+---
+
+### Get a cover image
+
+```
+GET /public-agents/{id}/cover
+```
+
+Returns raw cover image bytes for a guest-published agent. The `Content-Type` is inferred from the file extension (`.png` → `image/png`, `.webp` → `image/webp`, otherwise `image/jpeg`). Cached for 5 minutes (`Cache-Control: public, max-age=300`).
+
+**Auth:** None.
+
+**Path parameters:**
+
+| Name | Description |
+|---|---|
+| `id` | Agent UUID. |
+
+**Response:**
+
+| Status | Body |
+|---|---|
+| `200` | Raw image bytes. `Content-Type` set per file extension. |
+| `404` | `{ "detail": "Not found." }` or `{ "detail": "Cover not found." }` — agent not found, not guest-published, no cover image set, or the S3 object is missing. |
+| `500` | `{ "detail": "Failed to read cover." }` — S3 read failed for a reason other than a missing key. |
+
+```bash
+curl https://your-imp-host/public-agents/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10/cover \
+  --output cover.jpg
+```
+
+Use the `guest_has_cover` field from `/public-agents` or `/public-agents/{id}/meta` to determine whether a cover image exists before calling this endpoint.
+
+---
+
+### Verify a password-gated agent's password
+
+```
+POST /public-agents/{id}/verify-password
+```
+
+Verifies a user-supplied password for agents with `guest_auth_mode: "password"`. On success, the client should pass the verified password in the `x-guest-password` header on subsequent run calls.
+
+**Auth:** None. **Rate-limited per client IP** — the limiter fires before any database lookup or bcrypt comparison, so every request (successful or not) counts against the budget to prevent timing-based oracle attacks.
+
+**Path parameters:**
+
+| Name | Description |
+|---|---|
+| `id` | Agent UUID. |
+
+**Request body:**
+
+```json
+{ "password": "hunter2" }
+```
+
+**Response:**
+
+| Status | Body |
+|---|---|
+| `204` | No body. Password is correct. |
+| `401` | `{ "detail": "Incorrect password." }` |
+| `404` | `{ "detail": "Not found." }` — agent not found, not guest-published, or not in `password` auth mode. |
+| `429` | `{ "detail": "Too many requests. Try again later." }` — rate limit exceeded. |
+
+```bash
+curl -X POST https://your-imp-host/public-agents/d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10/verify-password \
+  -H "Content-Type: application/json" \
+  -d '{"password":"hunter2"}'
+```
+
+A `204` response means the password is correct. Store it (in memory for the session) and send it as `x-guest-password` on every run call to the same agent.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Agent runs" icon="play" href="/api-reference/rest/introduction#agent-run-endpoint">
+    Stream or invoke an agent, including guest-mode runs with `x-guest-password`.
+  </Card>
+  <Card title="REST introduction" icon="braces" href="/api-reference/rest/introduction">
+    Authentication overview, streaming semantics, and the full endpoint index.
+  </Card>
+</CardGroup>

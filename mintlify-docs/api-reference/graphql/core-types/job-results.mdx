@@ -21,6 +21,10 @@ type job_result {
   item: String
   context: String
   type: String
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String
   last_processed_at: Date
   embeddings_updated_at: Date
   createdAt: Date
@@ -34,13 +38,17 @@ type job_result {
 | Field | Notes |
 | --- | --- |
 | `job_id` | BullMQ job ID; correlates with the `jobs` query on a specific queue. |
-| `state` | Final state string (e.g. `"completed"`, `"failed"`). |
+| `state` | Run state string. Non-terminal (live) states: `waiting`, `active`, `delayed`, `paused`, `waiting_approval` (persisted — run paused on a tool-approval request; resumes after the approval turn). Terminal states: `completed`, `failed`, `filtered` (an email-trigger guard rejected the message), `cancelled` (admin-cancelled). The `stuck` state is defined but not currently written. |
 | `error` | JSON error payload if the job failed; `null` on success. |
 | `result` | JSON result payload returned by the job worker. |
 | `metadata` | Supplementary key-value data recorded alongside the result (e.g. token counts, agent name). |
 | `item` | ID string of the primary entity this job operated on (e.g. an eval_run ID). |
 | `context` | Context slug or ID when the job was scoped to a specific knowledge context. |
 | `type` | Job type discriminator (e.g. `"eval_run"`, `"workflow_execution"`). |
+| `trigger` | How the run was initiated: `"manual"` (UI or direct API call), `"api"` (external API trigger), `"schedule"` (cron routine), or `"email"` (inbound email trigger). `null` on pre-migration rows. |
+| `trigger_metadata` | JSON envelope with trigger-specific detail. For email triggers this contains the inbound message envelope (e.g. `message_id`, `from`, `subject`); for other trigger types it may be `null`. |
+| `session` | ID of the run-backed chat session created for this job, if any. Cross-links the `agent_sessions` table. |
+| `workflow` | ID of the owning routine (workflow). Replaces label-substring filtering for run-to-routine association. `null` on pre-migration rows. |
 | `tries` | Number of execution attempts before the job reached its final state. |
 | `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
 | `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |

@@ -60,6 +60,10 @@ Compaction replaces the earlier part of the conversation with a compact summary.
 
 The original messages are never deleted. The full history is still visible in the conversation and remains in the database. Only the model's working context is summarized; you can always scroll back to read earlier turns.
 
+<Note>
+Long tool outputs are also truncated per call — up to 25% of the context window (128 k characters by default) — before they are added to the conversation. This is separate from compaction; see [Attachments and session files](/user-guide/chat/attachments-and-session-files) for how oversized outputs are offloaded to session files so the agent can still page through them.
+</Note>
+
 <Tip>
 Use the "Anything to preserve in detail?" field when there are specific numbers, names, or commitments in earlier messages that the agent must keep using exactly. For example: "keep the exact figures from the service reports".
 </Tip>

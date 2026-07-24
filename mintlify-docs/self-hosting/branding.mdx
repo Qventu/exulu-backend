@@ -1,0 +1,67 @@
+---
+title: "Branding"
+description: "How to supply a client favicon, logo, and app name for a self-hosted IMP deployment."
+icon: "paintbrush"
+---
+
+## Branding assets overview
+
+IMP supports white-label branding through static files and an environment variable. There are four image files and one environment variable:
+
+| Asset | What it controls |
+|---|---|
+| `favicon.png` | Browser tab icon and installed-app icon (iOS/Android home screen, Windows taskbar) |
+| `logo_light.png` | Application logo in light mode |
+| `logo_dark.png` | Application logo in dark mode |
+| `cover.jpg` | Login screen cover image |
+| `APP_NAME` env var | Installed-app name (the label shown under the home-screen icon) |
+
+Place image files in the `public/` directory of the project where you run the `@exulu/backend` package. The backend serves that directory as static files, and the frontend loads every asset from the backend URL configured in `BACKEND`.
+
+Missing files 404 silently; the browser falls back to its defaults.
+
+---
+
+## Favicon
+
+Place a single `favicon.png` in your `public/` directory. The frontend loads it as both the browser tab icon and the Apple touch icon (the icon added to an iOS or Android home screen when a user bookmarks the app).
+
+```
+public/
+└── favicon.png   ← single file, square PNG, 512 × 512 px recommended
+```
+
+A 512 × 512 PNG covers all display contexts: small browser tabs, macOS Dock badges, and home-screen icons on high-density mobile displays. A transparent background works best across both light and dark browser chrome.
+
+<Warning>
+**Breaking change for existing brand kits.** Earlier deployments shipped four separate icon files:
+`icon_16x16.png`, `icon_32x32.png`, `icon_48x48.png`, and `icon_512x512.png`. The frontend no longer references these files. If your brand kit only provides those four files, the favicon will 404 and users will see the browser default icon.
+
+**Required action:** add `public/favicon.png` to your deployment. The four old files can be removed.
+</Warning>
+
+---
+
+## Web-app manifest
+
+IMP serves a Web App Manifest at `/manifest.webmanifest` from the frontend origin. Browsers use this manifest to make the app installable as a Progressive Web App (PWA) — the installed app entry on Windows, macOS, Android, and iOS reads its icon and name from this manifest.
+
+The manifest icon points to `$BACKEND/favicon.png`, the same file described above. No additional file is needed.
+
+The manifest is generated at request time so that it picks up the runtime `BACKEND` and `APP_NAME` environment variables — it is not a static file and should not be placed in `public/`.
+
+---
+
+## APP_NAME
+
+Set `APP_NAME` on the **frontend** container to control the installed-app name — the label that appears under the icon when a user adds IMP to their home screen or taskbar.
+
+| Variable | Component | Default | Example |
+|---|---|---|---|
+| `APP_NAME` | Frontend | `IMP` | `Acme Agents` |
+
+When `APP_NAME` is unset, the manifest uses `IMP` for both `name` and `short_name`.
+
+`APP_NAME` appears in the web-app manifest only. It does not affect browser tab titles, which are controlled by [theme settings](/administration/theme).
+
+For the full list of frontend environment variables, see [Environment variables](/self-hosting/environment-variables).

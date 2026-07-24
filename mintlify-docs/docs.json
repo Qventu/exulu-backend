@@ -34,7 +34,9 @@
           "user-guide/chat/dictation",
           "user-guide/chat/prompts-in-chat",
           "user-guide/chat/pinned-knowledge-and-presets",
+          "user-guide/chat/memory",
           "user-guide/chat/tool-approvals",
+          "user-guide/chat/connecting-tools",
           "user-guide/chat/budgets-in-chat",
           "user-guide/chat/context-compaction",
           "user-guide/chat/image-generation",
@@ -59,11 +61,14 @@
           "building/agents/overview",
           "building/agents/workbench",
           "building/agents/tools-and-skills",
-          "building/agents/access-and-safety"
+          "building/agents/access-and-safety",
+          "building/agents/guest-access",
+          "building/agents/knowledge-search"
         ] },
         { "group": "Knowledge", "pages": [
           "building/knowledge/overview",
           "building/knowledge/items",
+          "building/knowledge/bulk-import",
           "building/knowledge/pipeline",
           "building/knowledge/entities"
         ] },
@@ -75,6 +80,7 @@
         ] },
         { "group": "Routines", "pages": [
           "building/routines/overview",
+          "building/routines/email-triggers",
           "building/routines/runs-and-schedules"
         ] },
         { "group": "Evals", "pages": [
@@ -100,7 +106,8 @@
         { "group": "Governance", "pages": [
           "administration/variables",
           "administration/theme",
-          "administration/api-keys"
+          "administration/api-keys",
+          "administration/email-intake"
         ] }
       ] },
       { "tab": "Self-Hosting", "icon": "server", "groups": [
@@ -121,6 +128,7 @@
         { "group": "Operate", "pages": [
           "self-hosting/containers",
           "self-hosting/environment-variables",
+          "self-hosting/branding",
           "self-hosting/database",
           "self-hosting/operations",
           "self-hosting/troubleshooting"
@@ -139,6 +147,7 @@
           "developers/tutorials/queues-and-workers",
           "developers/tutorials/custom-tools",
           "developers/tutorials/oauth-tools",
+          "developers/tutorials/user-credential-tools",
           "developers/tutorials/running-evals",
           "developers/tutorials/mcp"
         ] },
@@ -210,6 +219,7 @@
       { "tab": "API Reference", "icon": "braces", "groups": [
         { "group": "REST", "openapi": "/openapi/openapi.json", "pages": [
           "api-reference/rest/introduction",
+          "api-reference/rest/public-agents",
           "api-reference/rest/gateways-litellm",
           "api-reference/rest/mcp",
           "api-reference/rest/gdpr"
@@ -218,7 +228,8 @@
           "api-reference/graphql/introduction",
           "api-reference/graphql/conventions",
           "api-reference/graphql/dynamic-types",
-          "api-reference/graphql/vector-search"
+          "api-reference/graphql/vector-search",
+          "api-reference/graphql/routine-runs"
         ] },
         { "group": "Core types", "expanded": false, "pages": [
           "api-reference/graphql/core-types/agents",

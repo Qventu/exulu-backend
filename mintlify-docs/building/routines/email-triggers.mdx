@@ -1,0 +1,170 @@
+---
+title: "Email triggers"
+description: "Give a routine a dedicated inbound email address so that every matching email automatically starts a run."
+icon: "mail"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="workflows (write)" />
+
+<Note>
+  Email triggers require the platform's inbound email intake to be configured by
+  a super admin before they can be used. If the **Email trigger** section shows
+  "Email intake isn't configured", contact your super admin. See also:
+  [Email intake](/administration/email-intake) (super-admin setup guide).
+</Note>
+
+## How it works
+
+When you enable an email trigger on a routine, IMP generates a unique inbound
+address for that routine — for example `invoice-approval-3a7f1c2b@mail.example.com`.
+Any email delivered to that address (and not blocked by the guard chain below)
+automatically starts a new run of the routine.
+
+The run receives the email content as step variables (`{email_from}`,
+`{email_subject}`, `{email_body}`) and any attachments are added to the run's
+session so the agent can read them.
+
+## The Triggers workbench section
+
+Open the routine's workbench and scroll to the **Email trigger** section. If
+email intake has not been configured by a super admin, the section shows an
+empty state. Otherwise, you see the trigger form.
+
+### Enabling the trigger
+
+Toggle **Start this routine when an email arrives** to enable or disable the
+trigger. The trigger must be enabled before incoming email starts runs — saving
+with the toggle off suspends delivery without deleting the trigger.
+
+### Inbound address
+
+After the first save, the **Inbound address** field appears with the generated
+address. Use the copy button to copy it to your email client, webhook, or
+forwarding rule.
+
+The address format is `{routine-slug}-{8-hex-chars}@{inbound-domain}`. The slug
+is derived from the routine name (lowercase, non-alphanumeric characters
+replaced with hyphens, truncated to 30 characters). The eight-character suffix
+is random and generated once — it does not change when you rename the routine.
+
+<Warning>
+  There is no regenerate option in the UI. The address is permanent for the
+  lifetime of the trigger. To get a new address, remove the trigger and save a
+  new one.
+</Warning>
+
+### Allowed senders
+
+The **Allowed senders** field accepts a list of exact email addresses
+(`service@example.com`) or `*@domain` wildcards (`*@example.com`). Add entries
+using the input field and the **Add** button; remove any entry with the **×**
+badge button.
+
+Leave the list empty to allow email from any sender.
+
+### Filter rules
+
+Filter rules let you restrict which emails start runs beyond sender matching.
+Add a rule with **Add filter**, choose a **Field**, and enter a regex
+**Pattern**.
+
+| Field | What is matched |
+| --- | --- |
+| **From** | The sender's email address |
+| **Subject** | The email subject line |
+| **Body** | The plain-text body (first 10 KB evaluated) |
+| **Attachment name** | The filename of any attachment |
+
+**All** rules must match for a run to start. An email that fails one or more
+rules is recorded as a filtered run — no routine step executes.
+
+Pattern constraints:
+
+- Case-insensitive matching.
+- Maximum 200 characters per pattern.
+- Patterns are validated for ReDoS safety at save time and rejected if
+  they are considered unsafe.
+
+### Rate limits
+
+| Control | Default | What it does |
+| --- | --- | --- |
+| **Max. emails per hour** | 60 | Cap on total emails accepted per hour across all senders |
+| **Max. per sender per hour** | 10 | Cap on emails from a single sender address per hour |
+
+Both limits use a sliding-window algorithm (current + previous hour bucket).
+If Redis is unavailable, limits are skipped and emails are allowed through.
+Emails that exceed a limit are recorded as filtered runs.
+
+### Filtered run retention
+
+**Keep filtered runs** (default 200) controls how many filtered run records the
+system retains per routine. When a new filtered run is created and the count
+exceeds the retention value, the oldest filtered records are pruned. Set to
+`0` to keep no filtered records at all.
+
+View filtered runs (and all other runs) on the routine's **Runs** section — see
+[Runs and schedules](/building/routines/runs-and-schedules) for details on run
+states and the runs console.
+
+## Guard chain
+
+When an email arrives at the trigger address, the platform runs the following
+checks in order before starting a run. A failure at any step records a filtered
+run (state `filtered`, trigger `email`) and stops processing.
+
+| Step | What is checked | Failure reason |
+| --- | --- | --- |
+| 1. Auto-reply suppression | `Auto-Submitted` header is present and not `no`; `Precedence` is `bulk`, `junk`, or `list`; `X-Autoreply` or `X-Autorespond` header present; sender matches the platform's outbound SMTP address | `auto_reply` |
+| 2. Sender allowlist | Sender address matches at least one entry in the allowed senders list (if the list is non-empty) | `sender_not_allowed` |
+| 3. Rate limits | Neither the per-trigger nor the per-sender hourly limit is exceeded | `rate_limited` |
+| 4. Message-ID dedup | No previous run for this routine already has the same `Message-ID` header value | `duplicate` |
+| 5. Filter rules | All configured regex filter rules match | `filter` |
+
+If all guards pass, a run is started (state `waiting`, then processing).
+
+**Loop protection** — the auto-reply guard runs first so that automated
+responses sent by the routine's agent back to a mailing list or auto-responder
+never re-trigger the routine.
+
+**Dedup is database-backed** — it survives Redis restarts and webhook retries.
+If the platform receives the same email twice (for example a Mailgun retry), the
+second delivery finds the existing run and is silently dropped.
+
+## Email variables in steps
+
+Every step in an email-triggered run has the following variables pre-populated
+by the intake pipeline. Use them in any step message with `{variable_name}`
+syntax.
+
+| Variable | Contains |
+| --- | --- |
+| `{email_from}` | The sender's email address (e.g. `sender@example.com`) |
+| `{email_subject}` | The email subject line (empty string if the email has no subject) |
+| `{email_body}` | The plain-text body of the email (empty string if the body is empty) |
+
+These three variables are **empty-safe**: an empty string is a valid value.
+A missing value (not provided at all) causes the run to fail with a variable
+substitution error, but the intake pipeline always provides all three.
+
+Email attachments are not available as variables — they are uploaded to the
+run's session and the agent can read them through its file-access tools.
+
+<Warning>
+  Emails are untrusted input. Approval-gate any tool with external effects
+  (such as sending email or creating offers) on the agent this routine uses,
+  to prevent prompt-injection attacks delivered via email content.
+</Warning>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Runs and schedules" icon="calendar" href="/building/routines/runs-and-schedules">
+    View filtered and successful run history, retry failed runs, and set a cron schedule.
+  </Card>
+  <Card title="Routines overview" icon="clipboard-list" href="/building/routines/overview">
+    How routines work, the workbench layout, and visibility settings.
+  </Card>
+</Columns>

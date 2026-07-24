@@ -168,6 +168,8 @@ type Query {
   providers: ProviderPaginationResult
   litellmCatalog: [LiteLLMModel!]!
   workflowSchedule(workflow: ID!): WorkflowScheduleResult
+  routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage
+  routineRunsNeedingAttentionCount: Float!
   queue(queue: QueueEnum!): QueueResult
   evals: EvalPaginationResult
   contexts: ContextPaginationResult
@@ -179,6 +181,8 @@ type Query {
   toolCategories: [String!]!
   jobs(queue: QueueEnum!, statusses: [JobStateEnum!], page: Int, limit: Int): JobPaginationResult
   meetingRecordingUsage: MeetingRecordingUsage
+  workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
+  emailInboundConfig: EmailInboundConfig
 }
 
 type Mutation {
@@ -324,6 +328,8 @@ type Mutation {
   runWorkflow(id: ID!, variables: JSON): RunWorkflowReturnPayload
   upsertWorkflowSchedule(workflow: ID!, schedule: String!): WorkflowScheduleReturnPayload
   deleteWorkflowSchedule(workflow: ID!): WorkflowScheduleReturnPayload
+  cancelRoutineRun(id: ID!): RoutineRun
+  retryRoutineRun(id: ID!): RoutineRun
   drainQueue(queue: QueueEnum!): JobActionReturnPayload
   pauseQueue(queue: QueueEnum!): JobActionReturnPayload
   resumeQueue(queue: QueueEnum!): JobActionReturnPayload
@@ -334,6 +340,9 @@ type Mutation {
   transcriptionJobCancel(id: ID!): transcription_job
   meetingBotStart(input: MeetingBotStartInput!): transcription_job
   runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
+  upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
+  deleteWorkflowTrigger(id: ID!): WorkflowTrigger
+  updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
 }
 
 type user {
@@ -347,18 +356,14 @@ type user {
   name: String
   lastname: String
   email: String
-  temporary_token: String
   type: String
   profile_image: String
   super_admin: Boolean
   status: String
   emailVerified: String
-  apikey: String
   scope_mode: String
   agent_ids: JSON
   last_used: Date
-  password: String
-  anthropic_token: String
   personal_system_prompt: String
   role: String
   team: String
@@ -465,18 +470,14 @@ input FilterUser {
   name: FilterOperatorString
   lastname: FilterOperatorString
   email: FilterOperatorString
-  temporary_token: FilterOperatorString
   type: FilterOperatorString
   profile_image: FilterOperatorString
   super_admin: FilterOperatorBoolean
   status: FilterOperatorString
   emailVerified: FilterOperatorString
-  apikey: FilterOperatorString
   scope_mode: FilterOperatorString
   agent_ids: FilterOperatorJSON
   last_used: FilterOperatorDate
-  password: FilterOperatorString
-  anthropic_token: FilterOperatorString
   personal_system_prompt: FilterOperatorString
   role: FilterOperatorString
   team: FilterOperatorString
@@ -645,6 +646,9 @@ type agent {
   animation_responding: String
   sandbox_enabled: Boolean
   max_tool_steps: Float
+  guest_access: Boolean
+  guest_auth_mode: String
+  guest_cover_image: String
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -660,6 +664,7 @@ type agent {
   systemInstructions: String
   workflows: AgentWorkflows
   slug: String
+  guest_has_password: Boolean
   budget: JSON
   id: ID!
   RBAC: RBACData
@@ -684,12 +689,16 @@ input agentInput {
   animation_responding: String
   sandbox_enabled: Boolean
   max_tool_steps: Float
+  guest_access: Boolean
+  guest_auth_mode: String
+  guest_cover_image: String
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
   created_by: Float
   createdAt: Date
   updatedAt: Date
+  guest_password: String
   RBAC: RBACInput
 }
 
@@ -712,6 +721,9 @@ input FilterAgent {
   animation_responding: FilterOperatorString
   sandbox_enabled: FilterOperatorBoolean
   max_tool_steps: FilterOperatorFloat
+  guest_access: FilterOperatorBoolean
+  guest_auth_mode: FilterOperatorString
+  guest_cover_image: FilterOperatorString
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
   rights_mode: FilterOperatorString
@@ -860,6 +872,10 @@ type job_result {
   item: String
   context: String
   type: String
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String
   last_processed_at: Date
   embeddings_updated_at: Date
   createdAt: Date
@@ -878,6 +894,10 @@ input job_resultInput {
   item: String
   context: String
   type: String
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String
   last_processed_at: Date
   embeddings_updated_at: Date
   createdAt: Date
@@ -895,6 +915,10 @@ input FilterJob_result {
   item: FilterOperatorString
   context: FilterOperatorString
   type: FilterOperatorString
+  trigger: FilterOperatorString
+  trigger_metadata: FilterOperatorJSON
+  session: FilterOperatorString
+  workflow: FilterOperatorString
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
   createdAt: FilterOperatorDate
@@ -1611,6 +1635,7 @@ type workflow_template {
   description: String
   agent: String
   steps_json: JSON!
+  auto_approve_tools: Boolean
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -1628,6 +1653,7 @@ input workflow_templateInput {
   description: String
   agent: String
   steps_json: JSON
+  auto_approve_tools: Boolean
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -1642,6 +1668,7 @@ input FilterWorkflow_template {
   description: FilterOperatorString
   agent: FilterOperatorString
   steps_json: FilterOperatorJSON
+  auto_approve_tools: FilterOperatorBoolean
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
   rights_mode: FilterOperatorString
@@ -1894,6 +1921,48 @@ type MeetingRecordingUsage {
   limit_seconds: Float
   percent: Float
   exceeded: Boolean!
+}
+
+type WorkflowTrigger {
+  id: ID!
+  workflow: ID!
+  type: String!
+  enabled: Boolean!
+  address: String!
+  config: JSON!
+  run_as_user: Float
+  createdAt: Date
+  updatedAt: Date
+}
+
+type EmailInboundConfig {
+  provider: String
+  inbound_domain: String
+  enabled: Boolean
+  last_webhook_at: Date
+  webhook_url: String
+  has_signing_key: Boolean
+}
+
+type RoutineRun {
+  id: ID!
+  job_id: String
+  state: String!
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String!
+  workflowName: String
+  agent: String
+  error: JSON
+  tries: Float
+  createdAt: Date
+  updatedAt: Date
+}
+
+type RoutineRunPage {
+  items: [RoutineRun!]!
+  total: Float!
 }
 
 type LiteLLMModel {
@@ -2176,6 +2245,9 @@ enum JobStateEnum {
   completed
   paused
   stuck
+  waiting_approval
+  filtered
+  cancelled
 }
 
 type StatisticsResult {

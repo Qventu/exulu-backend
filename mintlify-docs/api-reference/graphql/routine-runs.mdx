@@ -1,0 +1,171 @@
+---
+title: "Routine runs"
+description: "Query, cancel, and retry routine run records via the routineRuns, cancelRoutineRun, and retryRoutineRun GraphQL operations."
+---
+
+import { EditionBadge } from "/snippets/edition-badge.mdx"
+
+<EditionBadge edition="ee" /> Routine runs require an Enterprise Edition license (`queues` entitlement).
+
+A **routine run** (`RoutineRun`) is the persisted execution record created each time a routine (workflow template) is triggered. It wraps the underlying `job_result` row and enriches it with resolved routine metadata (`workflowName`, `agent`). Run records are scoped to routines the authenticated user can read — callers without a role see an empty result, never an error.
+
+## Types
+
+```graphql
+type RoutineRun {
+  id: ID!
+  job_id: String
+  state: String!
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String!
+  workflowName: String
+  agent: String
+  error: JSON
+  tries: Float
+  createdAt: Date
+  updatedAt: Date
+}
+
+type RoutineRunPage {
+  items: [RoutineRun!]!
+  total: Float!
+}
+```
+
+## Field notes
+
+| Field | Notes |
+| --- | --- |
+| `id` | Primary key of the underlying `job_result` row. |
+| `job_id` | BullMQ job ID at last enqueue. Changes on each retry; the `job_results` table's `jobs` query uses this to correlate with queue state. |
+| `state` | Current run state. See [Job results — field notes](/api-reference/graphql/core-types/job-results) for the full state machine. Non-terminal: `waiting`, `active`, `delayed`, `paused`, `waiting_approval`. Terminal: `completed`, `failed`, `filtered`, `cancelled`. |
+| `trigger` | How the run was initiated: `"manual"` (UI or direct API call), `"api"` (external API trigger), `"schedule"` (cron routine), or `"email"` (inbound email trigger). |
+| `trigger_metadata` | JSON envelope with trigger-specific detail. For email triggers: inbound message envelope (e.g. `message_id`, `from`, `subject`). `null` for other trigger types. |
+| `session` | ID of the agent session created for this run. Cross-links the `agent_sessions` table. |
+| `workflow` | ID of the owning routine (workflow template). |
+| `workflowName` | Resolved name of the routine at query time; `null` if the routine was deleted. |
+| `agent` | ID of the routine's default agent; `null` if the routine was deleted. |
+| `error` | JSON error payload if the run failed; `null` otherwise. |
+| `tries` | Number of execution attempts (incremented on each retry). |
+
+## Queries
+
+### `routineRuns`
+
+Returns a paginated list of run records filtered to routines the caller can read.
+
+```graphql
+routineRuns(
+  page: Int
+  limit: Int
+  workflow: ID
+  states: [String!]
+  triggers: [String!]
+  from: Date
+  to: Date
+  search: String
+  needsAttention: Boolean
+): RoutineRunPage
+```
+
+**Arguments**
+
+| Argument | Type | Notes |
+| --- | --- | --- |
+| `page` | `Int` | 1-based page number. Defaults to 1. |
+| `limit` | `Int` | Rows per page. Defaults to platform default (typically 20). |
+| `workflow` | `ID` | Filter to a single routine by ID. |
+| `states` | `[String!]` | Filter by one or more state strings (e.g. `["failed", "cancelled"]`). |
+| `triggers` | `[String!]` | Filter by trigger source: `"manual"`, `"api"`, `"schedule"`, or `"email"`. |
+| `from` | `Date` | Earliest `createdAt` (inclusive). |
+| `to` | `Date` | Latest `createdAt` (inclusive). |
+| `search` | `String` | Case-insensitive substring match against the run's linked session title. Requires the run to have a `session` — runs without a session are excluded when `search` is set. |
+| `needsAttention` | `Boolean` | When `true`, restricts results to runs in `waiting_approval` state (paused on a tool-approval request). Equivalent to `states: ["waiting_approval"]` but intended for the UI badge pattern. |
+
+**Role-less behavior:** When the authenticated user has no assigned role, `readableRoutines` catches the access-control error and returns an empty routine set. Both `routineRuns` and `routineRunsNeedingAttentionCount` return their zero-result equivalents (`{ items: [], total: 0 }` and `0`) rather than propagating an error.
+
+### `routineRunsNeedingAttentionCount`
+
+Returns a scalar count of runs currently in `waiting_approval` state across all routines the caller can read. Intended for nav-badge polling — it executes a single aggregation query against the composite `(workflow, state, trigger, createdAt)` index.
+
+```graphql
+routineRunsNeedingAttentionCount: Float!
+```
+
+Returns `0` for role-less users (same graceful path as `routineRuns`).
+
+## Mutations
+
+### `cancelRoutineRun`
+
+Cancels an active or waiting run.
+
+```graphql
+cancelRoutineRun(id: ID!): RoutineRun
+```
+
+Cancellable states: `waiting`, `active`, `waiting_approval`. Runs in any terminal state (`completed`, `failed`, `filtered`, `cancelled`) return an error — the resolver uses a compare-and-swap (CAS) update so a concurrent completion cannot be overwritten. On a successful cancel the resolver also attempts a best-effort removal of the pending BullMQ job and clears the session's stream-active flag.
+
+### `retryRoutineRun`
+
+Re-enqueues a failed or cancelled run, resuming from the step where it stopped.
+
+```graphql
+retryRoutineRun(id: ID!): RoutineRun
+```
+
+Retryable states: `failed`, `cancelled`. The resolver reads `current_step_index` from the run's stored bookkeeping metadata and enqueues a new BullMQ job on the same queue with `resumeFromIndex` set to that step. Prior step outputs are preserved in the existing `job_result` row. The run's `error` field is cleared and the state transitions to `waiting` before the job is enqueued. Returns an error for runs that were created before the bookkeeping metadata was introduced (pre-migration rows with no `queue_name` recorded).
+
+**Retry semantics summary:**
+- The same `job_result` row is reused (same `id`, same `session`).
+- Re-execution begins at the failed step — steps that already completed are not re-run.
+- `tries` is incremented by the worker on pickup.
+
+## Example query
+
+```graphql
+query RoutineRunsExample {
+  routineRuns(
+    limit: 20
+    page: 1
+    states: ["failed", "waiting_approval"]
+    triggers: ["schedule", "email"]
+  ) {
+    items {
+      id
+      job_id
+      state
+      trigger
+      workflowName
+      agent
+      session
+      error
+      tries
+      createdAt
+    }
+    total
+  }
+}
+```
+
+## Example mutation
+
+```graphql
+mutation RetryRun {
+  retryRoutineRun(id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890") {
+    id
+    state
+    tries
+    workflow
+    workflowName
+    createdAt
+    updatedAt
+  }
+}
+```
+
+## Run state lifecycle
+
+See [Job results](/api-reference/graphql/core-types/job-results) for the complete state machine, including the `waiting_approval` non-terminal state (run paused on a tool-approval request) and the `filtered` and `cancelled` terminal states.

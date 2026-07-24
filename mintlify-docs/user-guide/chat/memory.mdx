@@ -1,0 +1,50 @@
+---
+title: "Agent memory"
+description: "How agents save facts across conversations, the private-vs-public choice, and where to review or remove memories."
+icon: "brain"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Some agents are set up with a **long-term memory** store — a knowledge context the agent can read from and write to on your behalf. When such an agent learns something worth keeping, it saves a memory item so the fact is available in future conversations too.
+
+Not every agent has memory enabled. If yours does, you'll see it ask a short question before it saves anything.
+
+## The private-vs-public question
+
+Before the agent saves a memory it will ask you to choose visibility:
+
+- **Private** — the memory is visible only to you. Other people who use the same agent cannot see or retrieve it.
+- **Public** — the memory is shared with everyone who has read access to the agent's memory context.
+
+The agent will not save a memory until you answer. Private memories can only be found by you in later conversations; public memories can be found by anyone who can use that agent's memory knowledge base.
+
+<Tip>
+When in doubt, choose **Private**. You can always review and delete the item later from Knowledge.
+</Tip>
+
+## What the agent can remember
+
+The shape of a memory item is defined by the knowledge context the agent is connected to. Every memory includes a **name**, a **description**, and a **surrounding context** note that records why the fact was saved (for example, which question or topic triggered it). Depending on how the agent is configured, extra fields — such as category tags, a rating, or a project label — may also be filled in.
+
+These fields are set by whoever built the agent; you do not need to worry about them. What matters from your side is the visibility choice above.
+
+## Where memories live
+
+All memory items are written to the knowledge context the agent is configured to use as its memory store. You can find them in the **Knowledge** workspace:
+
+1. Open **Knowledge** from the main navigation.
+2. Locate the context that the agent uses as its memory store (the agent's name usually gives a hint).
+3. Browse, search, edit, or delete any item there.
+
+To delete a memory, open the item and choose **Delete**. The agent will no longer retrieve that fact.
+
+<Note>
+You can only see your own **Private** memory items, and shared **Public** items. Private items created by other users are not visible to you.
+</Note>
+
+## For builders
+
+The long-term memory setting for an agent — including which knowledge context serves as its memory store — is configured in the agent workbench. See [Agent workbench](/building/agents/workbench) for details.

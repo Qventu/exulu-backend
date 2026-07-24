@@ -88,6 +88,10 @@ type PageInfo {
 
 `{plural}Statistics` counts records, optionally grouped by a field. Without `groupBy` it returns a single row with `group: "total"`:
 
+<Note>
+`groupBy` must name a defined, non-hidden field (or one of the always-allowed synthetic fields `id`, `createdAt`, `updatedAt`). Passing a hidden field name or an unknown column name causes the resolver to throw: `Cannot group by "{field}".` — no rows are returned.
+</Note>
+
 ```graphql
 query {
   agentsStatistics(groupBy: "category", limit: 10) {
@@ -307,6 +311,10 @@ input SortBy {
 }
 ```
 
+<Note>
+`sort.field` must name a defined, non-hidden field (or one of `id`, `createdAt`, `updatedAt`). Passing a hidden field name or an unknown column name throws: `Cannot sort by "{field}".`
+</Note>
+
 ```graphql
 enum SortDirection {
   ASC
@@ -336,6 +344,8 @@ Two layers apply to every operation:
 **Entity-type gates.** For `agents`, `workflow_templates`, `variables`, `users`, `test_cases`, `eval_sets`, and `eval_runs`, your role must grant at least `read` on the matching permission (`agents`, `workflows`, `variables`, `users`, `evals`). Without it, queries fail with `Access control error: no role found or no access to entity type.` Writes additionally require the `write` level, enforced per record.
 
 **Row-level RBAC.** Tables with RBAC enabled carry a `rights_mode` column (`private`, `public`, `users`, `roles`, `teams`) and a `created_by` column. List and read operations silently filter to rows you can see: public rows, rows you created, and rows shared with you, your role, or your team. Super admins bypass row-level filtering everywhere except `agent_sessions`, which always enforces the session's own sharing rules.
+
+On RBAC-enabled tables, `{plural}CreateOne` accepts an explicit `rights_mode` in the input. Allowed values are `private`, `users`, `roles`, `teams`, and `public`. If the field is omitted the record is created as `private`; if an unrecognised value is supplied the mutation throws `Invalid rights_mode "..." — expected one of: private, users, roles, teams, public` and no row is inserted. `{plural}CopyOneById` always creates the copy as `private` regardless of the source record's `rights_mode`.
 
 RBAC-enabled types expose the resolved sharing state as a `RBAC` field, and accept sharing input on create/update:
 

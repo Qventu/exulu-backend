@@ -37,7 +37,13 @@ A tool that has required parameters but no bindings set will not function at run
 
 ## Per-tool configuration
 
-Many tools expose one or more parameters that must be bound to a value before the agent can call them. Parameter types include plain strings, numbers, and **variable references** — a dropdown that lets you pick a named variable from the organization's Variables store instead of hard-coding a value. Using variable references keeps secrets out of the agent form and allows administrators to rotate values in one place.
+Many tools expose one or more parameters that must be bound to a value before the agent can call them. Parameter types include:
+
+- **string** — a plain text value.
+- **number** — a numeric value.
+- **boolean** — `true` or `false`. The configuration sheet renders a toggle; the stored value is the string `"true"` or `"false"`, parsed to a native boolean at runtime.
+- **json** — a structured object. When the stored value is already an object it passes through as-is; when it is a string, it is JSON-parsed at runtime. Use this for complex configuration like the KB editor's `knowledge_bases` map.
+- **variable reference** — a dropdown that lets you pick a named variable from the organization's Variables store instead of hard-coding a value. Using variable references keeps secrets out of the agent form and allows administrators to rotate values in one place.
 
 To configure a tool:
 
@@ -58,6 +64,32 @@ To configure a tool:
 
 You can reopen the configuration sheet at any time by clicking the **Configure** button (gear icon) on an already-enabled tool row.
 
+## Knowledge base editor
+
+The **Knowledge base editor** is a built-in tool in the **default** category. Enabling it lets the agent create and update items in selected knowledge bases during chat.
+
+When you enable the tool, IMP opens a custom configuration sheet instead of the standard parameter form. The sheet lists every knowledge context in the deployment; check a context to grant the agent write access to it. For each checked context, two switches appear:
+
+- **Create** — the agent may add new items to this context.
+- **Update** — the agent may modify existing items in this context.
+
+A context with both switches off grants no access even though it appears checked. Only contexts you explicitly include and permit are writable.
+
+At the bottom of the sheet, the **Skip approval** toggle controls whether the agent prompts the user for confirmation before writing. When off (the default), the user sees an approval prompt for every create or update call; when on, writes proceed immediately.
+
+<Note>
+Created and updated items still respect the [tool approvals](/user-guide/chat/tool-approvals) setting on the conversation. Skip approval only suppresses the per-call confirmation built into the KB editor — if the user has disabled tool approvals globally, that setting takes precedence in the other direction.
+</Note>
+
+### KB editor safety model
+
+The KB editor enforces multiple independent gates before any write reaches the database:
+
+1. **Explicit per-context opt-in** — a context is writable only if the agent's configuration sheet explicitly enables it with at least one of Create or Update.
+2. **Row-level write access** — for update calls, the platform checks whether the active user has write access to that specific item (matching the item's `rights_mode` — public, private, users, roles, or teams). Items the user cannot write are silently reported as not found to avoid probing.
+3. **Guest refusal** — write tools require an authenticated user. Anonymous guest sessions receive a hard refusal; no DB call is made.
+4. **Schema exclusions** — the following field types are never exposed in the tool schema: `file`, `uuid` (reference fields), `calculated` fields, fields marked `editable: false`, and `hidden` fields. Reserved internal parameter names are also excluded.
+
 ## Sub-agents as tools
 
 When **sub-agent orchestration** is enabled on this deployment, other agents appear in the Tools & skills section under the **Agents** category. Enabling an agent-as-tool means the current agent can call the sub-agent during a conversation — for example, routing specialized questions to a domain expert agent.
@@ -71,6 +103,10 @@ Use sub-agents to decompose complex workflows: a general assistant can delegate 
 ## Skills
 
 Below the tools accordion, the **Skills** section lists available skills. Each skill row shows the skill name and description with a toggle. Skills have no parameters — enabling one activates it for all conversations this agent handles.
+
+<Warning>
+Skills run inside the file sandbox. Enabling a skill on an agent that has the **File sandbox** toggle off has no effect — the skill scripts cannot execute because no sandbox is provisioned. Turn on the File sandbox toggle in the [Chat experience](/building/agents/workbench#chat-experience) section before enabling skills.
+</Warning>
 
 See [Skills](/building/skills/overview) in the Building section for how to define custom skills.
 

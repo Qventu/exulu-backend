@@ -61,7 +61,7 @@ The backend exposes an email tool that agents can call to send emails on behalf 
 `NEXTAUTH_SECRET` must be identical in the frontend and backend environments.
 
 - **Frontend** — NextAuth uses it to sign and verify session JWTs.
-- **Backend** — Uses it to verify JWTs from the frontend, encrypt/decrypt stored OAuth tokens, and encrypt agent variable values.
+- **Backend** — Uses it to verify JWTs from the frontend, encrypt/decrypt stored tool credentials, and encrypt agent variable values.
 
 If the values differ, the backend will reject all authenticated requests from the frontend with a 401.
 
@@ -88,7 +88,7 @@ When both variables are set, the Google sign-in button appears on the login page
 ALLOWED_EMAIL_DOMAINS=example.com,contractor.example.com
 ```
 
-The domains `exulu.com` and `qventu.com` are always allowed.
+The domains `exulu.com` and `qventu.com` are always allowed. External (guest) users are exempt from this restriction — the allowlist governs internal accounts only. See [Guest access](/building/agents/guest-access) for how external self-registration works.
 
 ## Full variable reference
 

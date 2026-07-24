@@ -1,0 +1,120 @@
+---
+title: "Guest Access"
+description: "Publish an agent to visitors outside your organization — no internal account required."
+icon: "door-open"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (write)" />
+
+## What is guest access?
+
+Guest access lets you publish an agent to visitors who are not IMP users. When enabled, the agent is reachable at a public URL — `/public/agents/{id}` — that anyone with the link can open without signing in to the internal platform.
+
+The guest-facing interface is a standalone chat shell that is separate from the authenticated IMP app: visitors see only the agent you published, not the rest of your deployment.
+
+All published agents are listed on the `/public/agents` index, which shows a grid of every guest-enabled agent in the deployment. This means enabling guest access makes the agent appear in that listing — see the warning below before you publish.
+
+## Enabling guest access in the editor
+
+Open the agent in the [workbench](/building/agents/workbench) and scroll to the **Guest access** section.
+
+<Steps>
+  <Step title="Toggle guest access on">
+    Flip the **Enable guest access** switch. This publishes the agent to `/public/agents/{id}` immediately on Save.
+
+    <Warning>
+      The agent appears in the public listing at `/public/agents` as soon as you save. Choose your authentication mode before sharing the link with anyone.
+    </Warning>
+  </Step>
+  <Step title="Choose an authentication mode">
+    Select one of three modes in the radio group that appears (see [Authentication modes](#authentication-modes) below).
+  </Step>
+  <Step title="Set a password (password mode only)">
+    If you chose **Password**, enter a shared secret in the **Password** field. IMP stores only the bcrypt hash — the plain-text value is never persisted. You must set a password before saving: the editor blocks Save if password mode is selected but no password (and no previously-saved password) exists.
+  </Step>
+  <Step title="Upload a cover image (optional)">
+    The **Cover image** picker lets you brand the login or password-gate page visitors see before they can chat. Accepted formats: JPG, JPEG, PNG, WEBP.
+  </Step>
+  <Step title="Configure a spend budget (recommended)">
+    The **Budget** panel is visible in the Guest access section. If the agent has no `max_budget` set, the editor shows a prominent warning. Set a budget to cap how much the public agent can spend — without one, a single visitor could exhaust your deployment's model quota.
+  </Step>
+  <Step title="Save">
+    Click **Save** in the workbench header. The guest URL is shown in the section; use the **Copy** button to grab it.
+  </Step>
+</Steps>
+
+## Authentication modes
+
+Three modes control how visitors are admitted to the guest chat.
+
+### Public
+
+Anyone who has the link can chat — no sign-in, no password. The conversation is **ephemeral**: IMP does not create a server-side session for anonymous visitors. Transcripts are persisted in the visitor's own browser storage (localStorage) as a best-effort convenience, up to the last 50 messages; clearing browser data removes them. Nothing from an anonymous public-mode chat is stored in the deployment's database.
+
+Use this mode for demos, embedded assistants, or any scenario where friction-free access matters more than chat history.
+
+### Password
+
+Visitors must enter a shared password before they can chat. IMP checks the submitted value against a bcrypt hash stored in the database — the plain-text password is never retained. A successful password check writes a short-lived cookie to the visitor's browser; subsequent page loads within the same browser session do not re-prompt.
+
+Like public mode, password-mode chat is **ephemeral for everyone** — authenticated internal users who visit the public URL also get a stateless session. Transcripts are browser-local for anonymous visitors.
+
+Use this mode when you want lightweight access control without requiring visitors to create an account — for example, a pilot deployment shared with a specific partner group via a single team password.
+
+### Login (external registration)
+
+Visitors must sign in or self-register with an email address before they can chat. On first visit, a registration/sign-in page is presented at `/public/agents/{id}/auth`. IMP creates an **external** user account for new registrants (see [External users](#external-users)).
+
+Login mode is the only mode that produces **persistent server-side chat sessions**. Authenticated visitors accumulate chat history that survives page reloads, and can resume a previous conversation via the `?session=` URL parameter. Session history is private to each external user.
+
+<Info>
+  Login mode requires SMTP to be configured on the deployment (`EMAIL_SERVER_HOST`). Without SMTP there is no OTP verification path, and the registration option is hidden or returns a 503. Internal-password sign-in still works if the external user was registered before SMTP was removed.
+</Info>
+
+## External users
+
+When a visitor self-registers through the login-mode flow, IMP creates a user row with `type="external"` and assigns it the **external** role. The external role carries no platform rights — external users cannot access the IMP application, create agents, or read knowledge contexts.
+
+Behaviour specific to external users:
+
+- **Domain allowlist exemption.** If the deployment is configured with `ALLOWED_EMAIL_DOMAINS`, that allowlist gates internal accounts only. External users are explicitly exempt: any email address is accepted for self-registration regardless of domain.
+- **Redirect out of the internal shell.** If an external user somehow reaches an internal route (e.g. by navigating to `/`), the application layout detects `type="external"` and immediately redirects them to `/public/agents`. They never see the IMP workbench, administration area, or chat picker.
+- **Email verification required before login.** An external account created by self-registration is marked unverified until the visitor completes the OTP email step. An unverified external account cannot sign in with credentials — the authentication layer skips it even on a correct password, preventing pre-registration attacks.
+
+## Abuse limits
+
+Guest chat endpoints apply per-IP rate limits and message-size caps. These run in-process; they are not distributed and will reset if the backend process restarts.
+
+| Limit | Default | Environment variable |
+| --- | --- | --- |
+| Requests per minute (per IP) | 10 | `EXULU_GUEST_RATE_PER_MINUTE` |
+| Requests per hour (per IP) | 60 | `EXULU_GUEST_RATE_PER_HOUR` |
+| Max characters per message part | 8 000 | `EXULU_GUEST_MAX_MESSAGE_CHARS` |
+| Max total characters per request | 32 000 | `EXULU_GUEST_MAX_TOTAL_CHARS` |
+
+All four variables accept integer values and take effect at startup (or on next read, since they are re-evaluated on each request). See the [environment variables reference](/self-hosting/environment-variables) for the full list of self-hosting knobs.
+
+When an IP exceeds the per-minute or per-hour cap, the run endpoint returns HTTP 429. Oversized messages return HTTP 400 before any model call is made.
+
+The in-process IP table is bounded to 10 000 tracked addresses; stale entries are evicted opportunistically and by hard cap under sustained load.
+
+<Note>
+When `guest_access` is enabled on an agent, it governs **all** anonymous access to that agent's run endpoint — regardless of the internal sharing mode. In particular, guest access supersedes the legacy `rights_mode=public` field: if an agent has both `guest_access: true` and `rights_mode: public`, the guest-access gate (with its chosen auth mode and abuse limits) applies, and the legacy anonymous path is bypassed. Agents that have never had `guest_access` set keep their previous `rights_mode=public` behavior unchanged.
+</Note>
+
+## API access for guest-published agents
+
+The agent-run REST endpoint honours guest authentication in the same way as the browser chat shell. An unauthenticated REST client can call a `guest_auth_mode: public` agent without any credentials; a `guest_auth_mode: password` agent requires the `x-guest-password` header. Login-mode agents are not callable anonymously over the REST API — requests without a session JWT receive a 401; external users authenticate through the browser flow first. See [Public Agents](/api-reference/rest/public-agents) in the REST reference for the full request schema.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Access & sharing" icon="shield" href="/building/agents/access-and-safety">
+    Control which internal users can open this agent in the IMP chat.
+  </Card>
+  <Card title="REST public-agents" icon="code" href="/api-reference/rest/public-agents">
+    Call a guest-published agent from your own frontend or workflow.
+  </Card>
+</Columns>

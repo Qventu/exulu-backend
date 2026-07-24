@@ -34,7 +34,7 @@ type project {
 | `custom_instructions` | Markdown text injected as additional context into every session opened in this project. |
 | `rights_mode` | `"public"` or `"private"`; private projects are scoped via `RBAC`. |
 | `created_by` | Numeric ID of the user who created this project. |
-| `budget` | JSON budget envelope for cost limits scoped to this project. |
+| `budget` | JSON budget envelope for cost limits scoped to this project. The shape depends on the requester's permissions: users with `budget_management` read/write or super-admin receive the full LiteLLM budget object (including `budget_id`); project members without that permission receive a reduced view — `spend`, `max_budget`, `budget_duration`, `budget_reset_at`, and a `display` echo of the platform `user_budget_display` setting. |
 | `last_processed_at` | Timestamp of the last knowledge-embedding pass over this record. |
 | `embeddings_updated_at` | Timestamp when vector embeddings were last regenerated. |
 

@@ -18,8 +18,8 @@ icon: "wrench"
   <Card title="Streaming support" icon="activity">
     Return a `Promise` or an `AsyncGenerator` from `execute` — the framework handles both.
   </Card>
-  <Card title="OAuth 2.0 flows" icon="lock">
-    Declare an `oauth` config and IMP handles the authorization-code + PKCE dance; the access token arrives in `inputs.oauth`.
+  <Card title="Authentication flows" icon="lock">
+    Declare an `authentication` config (`authType: "oauth"`) and IMP handles the authorization-code + PKCE dance; the access token arrives in `inputs.oauth`.
   </Card>
   <Card title="Approval gates" icon="check-circle">
     `needsApproval: true` (the default) makes the platform prompt the user before the tool runs.
@@ -94,9 +94,9 @@ await app.create({
 });
 ```
 
-## OAuth-protected tools
+## Authentication-protected tools
 
-When a tool needs to act on behalf of the user (for example, reading a user's calendar), declare an `oauth` config:
+When a tool needs to act on behalf of the user (for example, reading a user's calendar), declare an `authentication` config with `authType: "oauth"`:
 
 ```typescript
 import { ExuluTool } from "@exulu/backend";
@@ -111,7 +111,8 @@ export const calendarTool = new ExuluTool({
     days: z.number().int().min(1).max(30).describe("How many days ahead to look."),
   }),
   config: [],
-  oauth: {
+  authentication: {
+    authType: "oauth",
     provider: "google",
     authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
@@ -159,7 +160,7 @@ export const batchIndexTool = new ExuluTool({
 
 <CardGroup cols={2}>
   <Card title="Configuration" icon="settings" href="/developers/core/exulu-tool/configuration">
-    Every constructor option: id, type, inputSchema, config, oauth, needsApproval.
+    Every constructor option: id, type, inputSchema, config, authentication, needsApproval.
   </Card>
   <Card title="API reference" icon="code" href="/developers/core/exulu-tool/api-reference">
     Public properties, the execute() method, and ExuluTool.internal().

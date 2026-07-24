@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "Every ExuluTool constructor option: id, name, description, type, inputSchema, config, needsApproval, oauth, and execute."
+description: "Every ExuluTool constructor option: id, name, description, type, inputSchema, config, needsApproval, authentication, and execute."
 icon: "settings"
 ---
 
@@ -19,8 +19,8 @@ const tool = new ExuluTool({
   config,        // config param array — required (pass [] if none)
   category,      // string
   inputSchema,   // z.ZodType
-  needsApproval, // boolean — default true
-  oauth,         // ExuluOauthConfig
+  needsApproval,   // boolean — default true
+  authentication,  // ExuluAuthConfig
 });
 ```
 
@@ -105,7 +105,7 @@ type ExuluToolConfigParam = {
 </ParamField>
 
 <ParamField path="config[].type" type='"boolean" | "string" | "number" | "variable" | "json"' required>
-  The value type. `"variable"` means the value is looked up from the platform's encrypted variables table — suitable for API keys and secrets. `"json"` accepts any JSON-serializable object.
+  The value type. `"variable"` means the value is looked up from the platform's encrypted variables table — suitable for API keys and secrets. `"json"` accepts any JSON-serializable object; at hydration time, object values are passed through unchanged and string values are `JSON.parse`d — if parsing fails the value falls back to `undefined` and IMP logs a warning.
 </ParamField>
 
 <ParamField path="config[].default" type="string | boolean | number | object">
@@ -152,58 +152,88 @@ config: [
   Whether the platform prompts the user to approve each tool call before `execute` runs. Defaults to `true`. Set `false` for read-only, low-risk tools where interruption is undesirable (for example, a price lookup or a knowledge search).
 </ParamField>
 
-## OAuth
+## Authentication
 
-<ParamField path="oauth" type="ExuluOauthConfig">
-  When set, IMP wraps `execute` with an authorization-code OAuth 2.0 flow. The tool only runs when a valid access token exists for the `(provider, userId)` pair. When no token is present, `execute` is skipped and the tool returns an authorization URL that the agent surfaces to the user. After the user completes the flow, IMP retries the call with a fresh token.
+<Note>
+**Breaking (July 2026):** the `oauth` constructor option was renamed `authentication` and requires an explicit `authType: "oauth"` tag. Update your tool definitions accordingly.
+</Note>
+
+<ParamField path="authentication" type="ExuluAuthConfig">
+  When set, IMP wraps `execute` with an authentication flow. `ExuluAuthConfig` is a discriminated union tagged by `authType`:
+
+  ```typescript
+  type ExuluAuthConfig = ExuluOauthConfig | ExuluUserCredentialsConfig;
+  ```
+
+  Both arms require the `BACKEND` environment variable (the backend's public base URL) to build redirect and credential-submit URLs. Missing `BACKEND` is detected at construction time and throws immediately.
 </ParamField>
 
-```typescript
-type ExuluOauthConfig = {
-  provider?: string;           // Shared key across tools — defaults to the tool's id
-  authorizationUrl: string;    // OAuth authorization endpoint
-  tokenUrl: string;            // OAuth token endpoint
-  clientId: string;
-  clientSecret: string;        // Server-side only — never exposed to the browser
-  scopes: string[];
-  pkce?: boolean;              // S256 PKCE — defaults to true
-  extraAuthParams?: Record<string, string>;  // Extra query params for the auth URL
-};
-```
+<CardGroup cols={2}>
+  <Card title="OAuth tools tutorial" icon="key" href="/developers/tutorials/oauth-tools">
+    Step-by-step guide to building an OAuth-connected tool.
+  </Card>
+  <Card title="User credential tools tutorial" icon="lock" href="/developers/tutorials/user-credential-tools">
+    Step-by-step guide to building a tool with user-supplied credentials.
+  </Card>
+</CardGroup>
 
-<ParamField path="oauth.provider" type="string">
+### OAuth (`authType: "oauth"`)
+
+<ParamField path="authentication" type="ExuluOauthConfig">
+  Configures an authorization-code OAuth 2.0 flow. The tool only runs when a valid access token exists for the `(provider, userId)` pair. When no token is present, `execute` is skipped and the tool returns a structured `oauth: { authorizationUrl }` response that IMP's chat UI renders as a Connect card.
+
+  ```typescript
+  interface ExuluOauthConfig {
+    authType: "oauth";
+    provider: string;                          // Shared key across tools — defaults to the tool's id
+    authorizationUrl: string;                  // OAuth authorization endpoint
+    tokenUrl: string;                          // OAuth token endpoint
+    clientId: string;
+    clientSecret: string;                      // Server-side only — never exposed to the browser
+    scopes: readonly string[];
+    pkce?: boolean;                            // S256 PKCE — defaults to true
+    extraAuthParams?: Record<string, string>;  // Extra query params for the auth URL
+  }
+  ```
+</ParamField>
+
+<ParamField path="authentication.authType" type='"oauth"' required>
+  Discriminant tag. Must be `"oauth"`.
+</ParamField>
+
+<ParamField path="authentication.provider" type="string">
   Provider key shared across tools that use the same OAuth service (for example, `"google"`). Tools sharing a `provider` share tokens per user — one consent screen per provider per user instead of per tool. When omitted, defaults to the tool's `id`.
 </ParamField>
 
-<ParamField path="oauth.authorizationUrl" type="string" required>
+<ParamField path="authentication.authorizationUrl" type="string" required>
   The OAuth provider's authorization endpoint.
 </ParamField>
 
-<ParamField path="oauth.tokenUrl" type="string" required>
+<ParamField path="authentication.tokenUrl" type="string" required>
   The OAuth provider's token endpoint. Used server-side in the token exchange — never exposed to the browser.
 </ParamField>
 
-<ParamField path="oauth.clientId" type="string" required>
+<ParamField path="authentication.clientId" type="string" required>
   OAuth client ID.
 </ParamField>
 
-<ParamField path="oauth.clientSecret" type="string" required>
-  OAuth client secret. Used server-side only.
+<ParamField path="authentication.clientSecret" type="string" required>
+  OAuth client secret. Used server-side only — never exposed to the browser or the model.
 </ParamField>
 
-<ParamField path="oauth.scopes" type="string[]" required>
+<ParamField path="authentication.scopes" type="string[]" required>
   Scopes to request. Joined with spaces in the authorization URL.
 </ParamField>
 
-<ParamField path="oauth.pkce" type="boolean" default="true">
+<ParamField path="authentication.pkce" type="boolean" default="true">
   Whether to use PKCE (S256 code challenge). Most modern providers support it; set `false` for providers that reject PKCE.
 </ParamField>
 
-<ParamField path="oauth.extraAuthParams" type="Record<string, string>">
+<ParamField path="authentication.extraAuthParams" type="Record<string, string>">
   Extra query parameters appended to the authorization URL. For example, `{ access_type: "offline", prompt: "consent" }` forces Google to issue a refresh token.
 </ParamField>
 
-When `oauth` is declared, the framework injects an `oauth` field into the tool's `inputs` on every authenticated call:
+When `authentication` is declared with `authType: "oauth"`, IMP injects an `oauth` field into the tool's `inputs` on every authenticated call. Values are injected server-side and never transit the model.
 
 ```typescript
 type ExuluOauthToolContext = {
@@ -211,12 +241,88 @@ type ExuluOauthToolContext = {
   expiresAt: Date | null;   // null when the provider did not report an expiry
   scopes: string | null;    // space-joined granted scopes, when reported
 };
+
+// Available inside execute as:
+execute: async ({ oauth, ...inputs }) => {
+  const { accessToken } = oauth; // ExuluOauthToolContext
+  // ...
+}
 ```
+
+### User credentials (`authType: "user_credentials"`)
+
+<ParamField path="authentication" type="ExuluUserCredentialsConfig">
+  Prompts the user to supply a set of named credentials (for example an API key and a workspace URL) the first time the tool is called. IMP stores them encrypted per `(provider, userId)` and injects them on subsequent calls. Tools sharing the same `provider` share one stored credential set per user.
+
+  ```typescript
+  interface ExuluUserCredentialsConfig {
+    authType: "user_credentials";
+    provider: string;
+    fields: CredentialField[];
+    validate?: (values: Record<string, string>) => Promise<void>;
+  }
+
+  interface CredentialField {
+    name: string;
+    label: string;
+    type: "text" | "password";
+    placeholder?: string;
+    help?: string;
+  }
+  ```
+</ParamField>
+
+<ParamField path="authentication.authType" type='"user_credentials"' required>
+  Discriminant tag. Must be `"user_credentials"`.
+</ParamField>
+
+<ParamField path="authentication.provider" type="string" required>
+  Identifier for the credential set (for example, `"jira"` or `"my-erp"`). Tools sharing a `provider` share one stored credential set per user — one prompt per provider per user instead of per tool.
+</ParamField>
+
+<ParamField path="authentication.fields" type="CredentialField[]" required>
+  The credential fields to collect. Must contain at least one entry; field names must be unique, non-empty, and have no leading or trailing whitespace. Each field's `type` must be `"text"` or `"password"`.
+</ParamField>
+
+<ParamField path="authentication.validate" type="(values: Record<string, string>) => Promise<void>">
+  Optional server-side hook called after the user submits credentials. Throw any error to reject the submission and surface the message to the user. When omitted, submitted values are stored without server-side validation.
+</ParamField>
+
+When `authentication` is declared with `authType: "user_credentials"`, IMP injects a `credentials` field into the tool's `inputs` on every authenticated call. Values are injected server-side and never transit the model.
+
+```typescript
+// Available inside execute as:
+execute: async ({ credentials, ...inputs }) => {
+  const { apiKey, workspaceUrl } = credentials; // Record<string, string>
+  // ...
+}
+```
+
+**`CredentialInvalidError`** — if `execute` determines that the stored credentials are no longer valid (for example, the upstream API returns 401), throw `CredentialInvalidError(provider, reason?)`. IMP will delete the stale stored row and re-prompt the user in the same turn.
+
+```typescript
+import { CredentialInvalidError } from "@exulu/backend";
+
+execute: async ({ credentials, ...inputs }) => {
+  const res = await callUpstream(credentials.apiKey);
+  if (res.status === 401) {
+    throw new CredentialInvalidError("my-erp", "API key rejected by upstream");
+  }
+  // ...
+}
+```
+
+### Construction-time validation
+
+Both `authType` arms validate their configuration when the `ExuluTool` is constructed (before any request is handled). The following are rejected with a thrown `Error` at startup:
+
+- **OAuth**: missing or blank `authorizationUrl`, `tokenUrl`, `clientId`, `clientSecret`; `scopes` not an array; `provider` with leading/trailing whitespace; missing `BACKEND` env var.
+- **User credentials**: blank or whitespace `provider`; empty `fields` array; duplicate field names; field `name` with leading/trailing whitespace; field `type` other than `"text"` or `"password"`; missing `BACKEND` env var.
 
 ## Execute function
 
 <ParamField path="execute" type="function" required>
-  The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields (for example `oauth` when an OAuth config is present). `options` carries AI-SDK context such as `toolCallId` and `messages` — ignore it if you don't need it.
+  The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields (for example `oauth` when an OAuth authentication config is present, or `credentials` when a user-credentials config is present). `options` carries AI-SDK context such as `toolCallId` and `messages` — ignore it if you don't need it.
 </ParamField>
 
 The return value can be a `Promise` or an `AsyncGenerator` yielding the same shape:

@@ -1,6 +1,6 @@
 ---
 title: "Routines overview"
-description: "Routines are saved chat conversations that run on demand or on a cron schedule — browse the list, run a routine, and understand the workbench."
+description: "Routines are saved chat conversations that run on demand, on a cron schedule, or via inbound email — browse the list, run a routine, and understand the workbench."
 icon: "clipboard-list"
 ---
 
@@ -10,7 +10,7 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 ## What routines are
 
-A routine is a saved conversation template that IMP can replay — with the same steps, the same agent, and optionally the same or varied inputs — whenever you trigger it. Run a routine on demand from the list or from chat, or set it on a cron schedule to run automatically.
+A routine is a saved conversation template that IMP can replay — with the same steps, the same agent, and optionally the same or varied inputs — whenever you trigger it. Run a routine on demand from the list or from chat, set it on a cron schedule to run automatically, or give it a dedicated inbound email address so every matching email starts a run automatically (see [Email triggers](/building/routines/email-triggers)).
 
 Routines let you codify repeatable AI workflows: a weekly status digest, a nightly data-quality check, a customer onboarding conversation, or any pattern you find yourself asking an agent to repeat.
 
@@ -67,9 +67,10 @@ The workbench is a scrollable page with a section nav rail on the left. Sections
 2. **Access** — who can see and edit the routine (Private, Public, or shared with users/teams/roles).
 3. **Steps** — a read-only preview of the conversation steps, with an **Edit steps** button that opens a sheet editor.
 4. **Schedule** — set or remove a cron schedule.
-5. **Runs** — history of past runs with status, timestamps, and retry support.
-6. **Queue** — the job queue for this routine's agent; shows pending and recent jobs.
-7. **Danger zone** — permanent deletion (visible only if you have delete permission).
+5. **Email trigger** — configure an inbound email address that starts a run for every matching email.
+6. **Runs** — history of past runs with status, trigger source, and cancel/retry actions.
+7. **Queue** — the job queue for this routine's agent; shows pending and recent jobs.
+8. **Danger zone** — permanent deletion (visible only if you have delete permission).
 
 Each section is described in detail on [Runs and schedules](/building/routines/runs-and-schedules).
 
