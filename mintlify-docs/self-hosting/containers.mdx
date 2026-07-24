@@ -18,7 +18,7 @@ The `apt-get` layer in both Dockerfiles installs:
 |---|---|
 | `python3`, `python3-pip`, `python3-venv` | Python venv for LiteLLM and the Whisper transcription pipeline |
 | `tesseract-ocr` | OCR fallback for image-based PDFs when no LLM OCR model is configured |
-| `poppler-utils` | PDF rendering (`pdfinfo`, `pdftoppm`) and text extraction (`pdftotext`) for the document processor. `pdftotext` is probed at startup as a required binary — the backend will not start if it is absent. |
+| `poppler-utils` | PDF rendering (`pdfinfo`, `pdftoppm`) and text extraction (`pdftotext`) for the document processor. `pdftotext` is probed at startup as a required binary — the backend refuses to start when `requireSystemDependencies` is enabled; otherwise it logs a warning and document extraction degrades. |
 | `pandoc` | Converts DOCX and other formats to plain text during document ingestion |
 | `libreoffice` | Converts Office formats (`.doc`, `.pptx`, `.xlsx`) to PDF before processing |
 | `ripgrep` | Fast file search used by the built-in code-search skill |

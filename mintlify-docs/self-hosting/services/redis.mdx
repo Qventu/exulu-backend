@@ -47,7 +47,7 @@ exulu-redis:
 
 ## Persistence and rate-limit state
 
-Redis stores the email-inbound rate-limit sliding-window counters (two keys per trigger per sender, each with a 2-hour TTL). These keys are best-effort: **a Redis flush or restart resets the windows**, which means a sender who hit the hourly limit could immediately send again. The impact is bounded — no application data is lost, the windows simply refill from zero.
+Redis stores the email-inbound rate-limit sliding-window counters (two sliding-window counters per email trigger (one per-trigger, one per-sender), each spanning two hourly bucket keys with a 2-hour TTL). These keys are best-effort: **a Redis flush or restart resets the windows**, which means a sender who hit the hourly limit could immediately send again. The impact is bounded — no application data is lost, the windows simply refill from zero.
 
 Message-ID deduplication is **not** Redis-backed; it is stored in the Postgres `job_results` table and survives a Redis restart without gaps.
 
