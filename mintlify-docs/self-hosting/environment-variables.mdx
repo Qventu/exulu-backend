@@ -16,7 +16,7 @@ This page is the authoritative reference for IMP environment variables. Variable
 |---|---|---|---|---|
 | `NODE_ENV` | No | Server, Worker | `production` enables compiled dist; any other value enables dev mode. | `production` |
 | `PORT` | No | Server, Worker | HTTP listen port. Defaults to `9001` on the backend image, `9002` on the worker image. | `9001` |
-| `BACKEND` | Yes | Server, Frontend | Public URL of the backend API — used in OAuth callbacks and Recall webhooks. Must be reachable from the browser and from Recall's servers. | `https://api.imp.example.com` |
+| `BACKEND` | Yes | Server, Frontend | Public URL of the backend API — used in OAuth callbacks, Recall webhooks, inbound-email webhook registration (`/webhooks/email/mime`), and tool-credential submit URLs. Must be reachable from the browser, from Recall's servers, and from any inbound-email provider (e.g. Mailgun). | `https://api.imp.example.com` |
 | `NEXT_BACKEND` | Yes | Frontend | Backend URL reachable from within the frontend container's network. Use the container name when both run on the same Docker network. | `http://exulu-backend:9001` |
 | `NEXTAUTH_URL` | Yes | Frontend | Canonical public URL for NextAuth. Set to the same value as `FRONTEND`. | `https://imp.example.com` |
 | `NEXTAUTH_URL_INTERNAL` | No | Frontend | Backend URL for server-side NextAuth calls. Falls back to `NEXTAUTH_URL` if absent. | `http://exulu-backend:9001` |
@@ -191,12 +191,27 @@ OpenTelemetry export to SigNoz is optional. All three must be set for telemetry 
 
 ---
 
+## Guest access
+
+These variables control the anonymous guest chat feature. All five are optional; the backend uses the defaults listed when the variables are absent.
+
+| Variable | Required? | Component | Default | Purpose | Example |
+|---|---|---|---|---|---|
+| `EXULU_GUEST_RATE_PER_MINUTE` | No | Server | `10` | Maximum messages a single guest IP may send within any rolling one-minute window. Exceeding this returns HTTP 429. | `20` |
+| `EXULU_GUEST_RATE_PER_HOUR` | No | Server | `60` | Maximum messages a single guest IP may send within any rolling one-hour window. Exceeding this returns HTTP 429. | `100` |
+| `EXULU_GUEST_MAX_MESSAGE_CHARS` | No | Server | `8000` | Maximum characters allowed in a single message part. Requests with any text part exceeding this limit are rejected. | `5000` |
+| `EXULU_GUEST_MAX_TOTAL_CHARS` | No | Server | `32000` | Maximum total characters across all text parts in a single request. Requests whose cumulative text exceeds this limit are rejected. | `20000` |
+| `EXULU_TRUST_PROXY` | No | Server | _(unset)_ | Set to `true` when the backend runs behind a trusted reverse proxy that appends the real client IP to `X-Forwarded-For`. When enabled, the rate limiter uses the last entry of that header as the client IP. When unset or any value other than `true`, `X-Forwarded-For` is ignored and the raw socket address is used. | `true` |
+
+---
+
 ## Frontend-only variables
 
 The following variables are read exclusively by the frontend container. They do not appear in the backend source.
 
 | Variable | Required? | Purpose | Example |
 |---|---|---|---|
+| `APP_NAME` | No | Application name shown in the browser tab and used as the PWA `name` and `short_name` in the web manifest. Default: `IMP`. Read only by the manifest route at request time. See [Branding](/self-hosting/branding). | `Acme Agents` |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (enables "Sign in with Google"). | `1234.apps.googleusercontent.com` |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret. | `GOCSPX-…` |
 | `ALLOWED_EMAIL_DOMAINS` | No | Comma-separated list of email domains allowed to sign in. No restriction if absent. | `example.com,contractor.example.com` |
