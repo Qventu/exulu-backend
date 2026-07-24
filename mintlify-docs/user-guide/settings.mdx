@@ -12,7 +12,7 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 Click your name or avatar in the app sidebar to open the user menu, then choose **Settings**. You can also navigate to `/settings` directly.
 
-Settings is described as "How the IMP looks, speaks, and responds to you." It is organized into four sections separated by dividers: **Appearance**, **Language**, **Personal system prompt**, and **Account**.
+Settings is described as "How the IMP looks, speaks, and responds to you." It is organized into six sections separated by dividers: **Appearance**, **Language**, **Personal system prompt**, **Account**, **Usage**, and **Connections**.
 
 ## Appearance
 
@@ -61,3 +61,23 @@ The Account section shows your identity on the platform. All fields are read-onl
 | **Role** | Your assigned role (for example, "Admin"), and a **Super admin** badge if you have super-admin access. |
 
 Below the identity rows, a **Personal API token →** link takes you to `/token` where you can view or regenerate your personal API token. See [API keys and personal tokens](/administration/api-keys#personal-token-token) for details.
+
+## Usage
+
+The Usage section shows your personal model usage over the last 7, 30, or 90 days. Use the range toggle to switch windows. The section contains:
+
+- A totals row (spend and token counts for the selected period).
+- A daily area chart of activity across the range.
+- A per-model table listing requests, tokens, and spend broken down by model.
+
+<Note>
+This section is only visible when an admin has enabled budget visibility. If you do not see it, ask your administrator. See [Budgets in chat](/user-guide/chat/budgets-in-chat) for how budget information surfaces elsewhere in IMP.
+</Note>
+
+## Connections
+
+The Connections section lists the tool credentials you have stored — one row per provider, showing the provider name and the date the connection was made.
+
+To remove a stored credential, click **Revoke** on its row and confirm in the dialog that appears. The credential is deleted immediately and the tool will require you to reconnect before it can be used again.
+
+See [Connecting tools](/user-guide/chat/connecting-tools) for how to add credentials and how they are used during chat.
