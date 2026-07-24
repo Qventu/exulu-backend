@@ -1,0 +1,91 @@
+---
+title: "Connecting tools"
+description: "How to supply credentials when a tool needs them — credential forms, OAuth, and managing connections in Settings."
+icon: "plug"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="none" flags="none" />
+
+Some tools need access to an external service before they can run. When that happens, IMP pauses the conversation and shows you a secure form or a connect button directly in chat — you never need to leave the page, and you never need to type credentials into the message box.
+
+## When a tool needs access
+
+There are two ways a tool can request access, depending on how the tool is set up.
+
+### Credential form
+
+If the tool uses an API key, a token, or a username-and-password pair, a **Connect {service}** card appears inline in the conversation. The card shows:
+
+- A title: **Connect {service}**
+- A short description: "This tool needs access to your {service} account. Your values are stored encrypted and are never shown to the AI model."
+- One or more labelled input fields (required fields are marked with a red asterisk)
+- Optional helper text below each field explaining what to enter
+- A **Save & retry** button
+
+Fill in the fields and click **Save & retry**. IMP validates the fields, stores your values encrypted, and the card collapses into a compact **Connected to {service}** confirmation row. The conversation then continues automatically — you will see a follow-up message such as "{service} credentials saved — please retry," and the assistant re-invokes the tool using the credentials you just saved.
+
+<Note>
+If the form shows "This form expired," the session that generated it has timed out. Ask the assistant to try again — it will show a fresh form.
+</Note>
+
+### OAuth connect button
+
+If the tool uses OAuth (for example, a Google or calendar integration), the card shows:
+
+- A title: **Connect {service}**
+- A description: "This tool needs authorization. Connect your account in the new tab, then come back here."
+- A **Connect** button (opens the provider's sign-in page in a new tab)
+- An **I've connected — retry** button
+
+Click **Connect**, complete the sign-in flow in the new tab, then return to the chat and click **I've connected — retry**. IMP sends a resume message and the assistant re-invokes the tool with your new authorization.
+
+## What happens after connecting
+
+After you submit the form or confirm OAuth, the assistant sends a short resume message in the conversation and re-runs the tool using the credentials you provided. You do not need to retype your request — the conversation picks up where it left off.
+
+If the stored credentials are later rejected by the external service (for example, because the token expired or you revoked access on the provider's side), the form reappears in chat automatically so you can enter updated values.
+
+## Guests on public pages
+
+If you are viewing a public-facing page without being signed in, IMP cannot securely store credentials on your behalf. Instead of the form, you will see a notice:
+
+> "This tool needs credentials. Sign in to the main app to connect it."
+
+Sign in and return to the conversation to see the form.
+
+## Privacy and security
+
+Your credential values are handled with the following protections:
+
+- **Values never reach the AI model.** The form submits directly from your browser to the backend over an authenticated connection. The model only learns whether credentials are present, not what they contain. The card description confirms this: "Your values are stored encrypted and are never shown to the AI model."
+- **Tool chips redact auth payloads.** When a tool call appears as a chip in the conversation, any credential or authorization data in the request is removed from the displayed preview — you will not see raw tokens or keys in the chat history.
+- **The assistant will not collect secrets via chat.** IMP includes a built-in guardrail: if you paste a credential value directly into the message box, the assistant will not repeat it, will not pass it to any tool, and will ask you to use the secure form instead. If the form is no longer visible, asking the assistant to retry the tool will bring it back.
+
+<Warning>
+Always use the credential form — never paste API keys, passwords, or tokens into the conversation.
+</Warning>
+
+## Managing connections in Settings
+
+After you connect a tool, your credentials are saved so subsequent tool calls in any conversation work without prompting you again.
+
+To review or remove your saved connections, open **Settings → Connections**. Each row shows the tool or service name and the date you connected it. Stored values are never displayed.
+
+To remove a connection, click **Revoke** next to the provider name. A confirmation dialog appears:
+
+> "Revoke {provider}? The stored credentials for {provider} are deleted. The next time a tool needs them, the form appears again in chat."
+
+Confirm with **Revoke** to delete the stored credentials. The next time the tool runs, IMP will show the connection form in chat again.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Tool approvals" icon="shield-check" href="/user-guide/chat/tool-approvals">
+    Control which tool calls run — allow once, allow for the chat, or deny.
+  </Card>
+  <Card title="Settings" icon="gear" href="/user-guide/settings">
+    Manage your connections, appearance, and account preferences.
+  </Card>
+</Columns>
