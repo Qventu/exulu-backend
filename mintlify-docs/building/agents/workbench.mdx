@@ -1,6 +1,6 @@
 ---
 title: "Agent workbench"
-description: "All eight workbench sections for configuring an agent: basics, instructions, knowledge, tools, chat experience, appearance, access, and developer."
+description: "All nine workbench sections for configuring an agent: basics, instructions, tools & skills, knowledge & memory, chat experience, access, guest access, appearance, and developer."
 icon: "settings"
 ---
 
@@ -52,16 +52,6 @@ The Instructions section defines what the agent knows to do.
 Prompt templates are a good way to give users pre-written starting points without baking that text into the system prompt.
 </Tip>
 
-## Knowledge & memory
-
-The Knowledge & memory section controls what the agent can retrieve and remember.
-
-**Agentic retrieval** (when the `agentic_context_search` tool is installed on this deployment): a toggle that enables a tool-loop retrieval mode. When enabled, the agent decides when to search and which knowledge bases to query. Enabling opens the **Configure knowledge search** wizard, which walks through Sources, Routing, Vocabulary, Memory, and Behavior steps. You can re-open the wizard at any time by clicking the summary card.
-
-**Long-term memory**: a context combobox. Select a context to give the agent a personal memory store — it reads from and writes items to that context per user over time. Set to "None" to disable memory.
-
-See [Knowledge overview](/building/knowledge/overview) for how contexts, items, and embeddings work.
-
 ## Tools and skills
 
 The Tools & skills section lists every tool and skill available on this deployment and lets you toggle them per agent.
@@ -73,6 +63,16 @@ The Tools & skills section lists every tool and skill available on this deployme
 
 For detailed guidance on tool configuration, sub-agents, and skills, see [Tools and skills](/building/agents/tools-and-skills).
 
+## Knowledge & memory
+
+The Knowledge & memory section controls what the agent can retrieve and remember.
+
+**Agentic retrieval** (when the `agentic_context_search` tool is installed on this deployment): a toggle that enables a tool-loop retrieval mode. When enabled, the agent decides when to search and which knowledge bases to query. Enabling opens the **Configure knowledge search** wizard, which walks through Sources, Routing, Vocabulary, Memory, and Behavior steps. You can re-open the wizard at any time by clicking the summary card.
+
+**Long-term memory**: a context combobox. Select a context to give the agent a personal memory store. When a context is selected, the agent gains a `create_<context-name>_memory_item` tool. Before saving, the agent asks the user whether the item should be **private** (visible only to that user) or **public** (shared across the organization). Set to "None" to disable memory. See [Memory](/user-guide/chat/memory) for how users interact with saved memories.
+
+See [Knowledge overview](/building/knowledge/overview) for how contexts, items, and embeddings work.
+
 ## Chat experience
 
 The Chat experience section controls what users see in the conversation.
@@ -83,16 +83,8 @@ The Chat experience section controls what users see in the conversation.
 | **Follow-up suggestions** | Toggle to enable auto-generated follow-up chips after each agent reply. |
 | **Feedback collection** | Toggle to enable thumbs-up / thumbs-down feedback buttons on agent messages. |
 | **Default agent** | Toggle to make this the agent that loads automatically when a user opens Chat (instead of the agent picker). Only one agent can be default at a time. |
-| **Sandbox** | Toggle to give the agent a sandboxed code execution environment for running code snippets. |
-| **Max tool steps** | Maximum number of sequential tool calls the agent may make before stopping (0–50). Prevents run-away tool loops. |
-
-## Appearance
-
-The Appearance section controls the agent's visual identity.
-
-- **Avatar** — displays the current avatar image (or initial monogram if none is set). Click **Generate avatar** (when available on this deployment) to open the AI avatar generator: describe the look, choose a style, and apply the result. The generator produces a square image stored in your file storage.
-- **Idle animation** — upload a Lottie JSON file that plays while the agent is waiting for input (S3-gated; only shown when S3 is configured). A preview appears after upload.
-- **Responding animation** — upload a Lottie JSON that plays while the agent is generating a reply. Preview appears after upload.
+| **File sandbox** | Toggle to give the agent a file sandbox with `readFile`, `writeFile`, and `bash` tools, plus on-demand document tools (`parse_document`, `view_document_page`). Required for skills and file generation. Off by default. See [Attachments and session files](/user-guide/chat/attachments-and-session-files) for how users upload and reference files in chat. |
+| **Max tool steps per message** | Maximum number of sequential tool calls the agent may make before stopping (0–50). `0` falls back to the platform default of 10. Applies per message to all tools — bash, files, knowledge search, integrations. See [Knowledge search](/building/agents/knowledge-search) for the separate retrieval-step budget. |
 
 ## Access
 
@@ -110,6 +102,30 @@ The **RBAC control** lets you choose one of four sharing modes:
 Select a mode, then add the users or roles. Changes take effect after saving.
 
 For a full guide to sharing and team-level access, see [Access](/building/agents/access-and-safety).
+
+## Guest access
+
+The Guest access section lets you expose the agent to unauthenticated or lightly-authenticated visitors at a public URL (`/public/agents/{id}`).
+
+Enable the toggle to turn on guest access. When enabled, choose one of three auth modes:
+
+| Mode | What visitors experience |
+| --- | --- |
+| **Public** | No sign-in required — anyone with the link can chat. |
+| **Password** | Visitors enter a shared password before chatting. |
+| **Login** | Visitors authenticate via email OTP (requires SMTP). |
+
+The section also shows the shareable public link and lets you set a per-agent spend budget (required before going public — a warning appears if no budget is set). You can also upload a cover image shown on the public landing page.
+
+For full configuration details see [Guest access](/building/agents/guest-access).
+
+## Appearance
+
+The Appearance section controls the agent's visual identity.
+
+- **Avatar** — displays the current avatar image (or initial monogram if none is set). Click **Generate avatar** (when available on this deployment) to open the AI avatar generator: describe the look, choose a style, and apply the result. The generator produces a square image stored in your file storage.
+- **Idle animation** — upload a Lottie JSON file that plays while the agent is waiting for input (S3-gated; only shown when S3 is configured). A preview appears after upload.
+- **Responding animation** — upload a Lottie JSON that plays while the agent is generating a reply. Preview appears after upload.
 
 ## Developer
 
