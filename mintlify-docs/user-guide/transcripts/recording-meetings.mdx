@@ -54,6 +54,14 @@ Meeting recording requires a meeting bot integration configured by your administ
 
 The row in the Processing group shows "In the meeting…" while the bot is active. You can leave the Transcripts page and return later — the job persists.
 
+### Recovery from interruptions
+
+If a meeting job gets stuck in Processing — for example, because of a service restart while the bot was active — IMP runs an automatic reconcile sweep every minute that picks up the stalled job and drives it forward. This means you do not need to take any action; the job resumes on its own.
+
+<Note>
+The reconcile sweep has a 24-hour limit measured from the meeting start. If a job cannot be recovered within that window it is marked as failed. This prevents jobs that genuinely cannot complete from staying in Processing indefinitely.
+</Note>
+
 <Tip>
 A bot joining a meeting is visible to participants (it appears as a named participant). If your organization's policy requires disclosure of recording, check the **Notify participants in chat** option.
 </Tip>

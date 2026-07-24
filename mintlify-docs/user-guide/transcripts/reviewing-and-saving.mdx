@@ -56,7 +56,17 @@ Audio preview is not available for meeting recordings ("Audio preview isn't avai
 
 ## Post-processing results
 
-If post-processing prompts were attached to the job (meeting recordings only), a **Post-processing** section appears below the Transcript panel. It lists each prompt and its result — or "Running…" / "Failed" if it has not finished yet. Click **Re-run** next to any entry to run it again.
+If post-processing prompts were attached to the job (meeting recordings only), a **Post-processing** section appears below the Transcript panel. Each configured prompt appears as a card:
+
+- **Result text** — the prompt ran and returned output.
+- **Re-run** — the prompt ran previously; click to run it again (for example, after renaming speakers).
+- **Run** — the prompt has never run (its auto-run was lost); click **Run** to start it now.
+- **Running…** — a run is in progress or was claimed within the last 30 minutes.
+- **Failed** — the last run produced an error; click **Re-run** to retry.
+
+<Note>
+Prompts configured for a job but whose auto-run did not complete appear as **Run** cards so you can start them manually from the review sheet.
+</Note>
 
 ## Save to Knowledge
 
@@ -67,6 +77,10 @@ Saving a transcript makes it available across IMP surfaces. You can pin it to a 
 </Info>
 
 After saving, the row moves to the **Saved** group. Reopening a saved transcript from the list lets you rename speakers again; clicking **Save changes** updates the existing knowledge item rather than creating a duplicate.
+
+### Delete a saved entry
+
+To remove a saved transcript from the list, click the trash icon on its row. A confirmation dialog titled **"Delete saved transcription?"** appears. By default it removes only the list entry ("This removes the entry from this page. The saved transcript stays in the knowledge base unless you also select it below."). Check **Also delete the saved transcript from the knowledge base** to remove the knowledge item at the same time. Click **Delete** to confirm.
 
 ## Discard a transcript
 
