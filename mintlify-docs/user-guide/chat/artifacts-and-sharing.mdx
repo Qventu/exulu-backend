@@ -16,7 +16,11 @@ Files that the agent writes to the session — documents, spreadsheets, generate
 
 ## Open the share dialog
 
-In the **Session files** panel, each file row has a **Share** action. Click it to open the **Share file** dialog.
+You can reach the share dialog from three places:
+
+- **Session files panel** — each file row has a **Share** (link) button. Click it to open the dialog directly from the file list.
+- **Artifact viewer** — when you open a file for preview, any shareable-link URL the agent wrote in its response becomes a clickable anchor that opens the dialog.
+- **File picker** — when selecting a session file in a message, the share action is also available inline.
 
 If you have previously created links for a file, the dialog opens to a list of existing links. If the file has no links yet, it opens directly to the creation form.
 
@@ -67,6 +71,17 @@ To create an additional link with different settings, click **New link** in the 
 <Tip>
 HTML artifacts produced by the agent — such as charts, dashboards, or formatted reports — render as live pages in the viewer, not as code. If the agent writes an HTML file you want to share as a live preview, use the Public mode so recipients can open it without signing in.
 </Tip>
+
+## Copy or download a message
+
+Individual assistant messages also have their own share actions, accessible via the action bar that appears when you hover over a response:
+
+- **Copy** — copies the message to your clipboard as rich HTML plus WhatsApp-formatted plain text. When you paste into an email client the rich formatting is preserved; when you paste into WhatsApp or a plain-text field the text arrives with WhatsApp-style emphasis markers (`*bold*`, `_italic_`).
+- **Download** — a dropdown with two options:
+  - **Formatted (HTML)** — saves the message as a standalone HTML file with full formatting.
+  - **Markdown** — saves the raw Markdown source.
+
+These actions are separate from artifact sharing and work on any assistant response, regardless of whether it produced any session files.
 
 ## Next steps
 
