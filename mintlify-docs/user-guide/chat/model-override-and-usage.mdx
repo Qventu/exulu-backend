@@ -53,6 +53,10 @@ The panel is divided into sections:
 
 A plain-language note in the panel explains: "Tokens are the units AI usage is measured in — roughly ¾ of a word each."
 
+**Per-message token split** — below each assistant reply, a small footer shows the total token count for that message, followed by the input/output split: for example **1,234 tokens · 890 in / 344 out**. The split lets you see at a glance whether a high-token message was driven by a large prompt (input) or a long reply (output).
+
+**Knowledge-search benchmark line** — when the agent runs a [knowledge search](/building/agents/knowledge-search), a one-line benchmark appears below the search results: for example `↳ retrieval · 1,200 in / 340 out tokens · 1.4 s`. This tells you how many tokens the retrieval consumed and how long it took.
+
 If your account has a budget, a **Your budget** section appears below the token breakdown with a bar showing how much of your period budget has been used.
 
 <Tip>
