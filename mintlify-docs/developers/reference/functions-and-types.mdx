@@ -314,7 +314,7 @@ interface ExuluCredentialsToolContext {
 }
 ```
 
-The credentials context injected into a user-credentials-enabled tool's `execute` inputs as `inputs.credentials`. `credentials` is a `Record<string, string>` keyed by the `name` values declared in `ExuluUserCredentialsConfig.fields`. `userId` and `provider` identify the owner of the stored credential set.
+Exported envelope type describing the shape of the user-credentials context. At runtime, only the plain `credentials` field is injected into a tool's `execute` inputs as `inputs.credentials` — a `Record<string, string>` keyed by the `name` values declared in `ExuluUserCredentialsConfig.fields`. The `userId` and `provider` fields are part of the exported type definition and match what is documented on the configuration page and in the tutorial, but the injected runtime value is the plain record, not the full interface.
 
 ---
 

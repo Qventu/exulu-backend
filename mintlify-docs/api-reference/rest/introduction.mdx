@@ -74,7 +74,7 @@ The skills registry powers the `imp` CLI and agent self-installation. Three endp
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `GET` | `/skills/registry` | Required | RBAC-filtered list of skills the caller may read. Accepts an optional `?tag=<tag>` query parameter to filter by tag. |
-| `GET` | `/skills/registry/:name` | Required | Metadata for a single skill by name. Returns `404` when the skill does not exist or the caller lacks read access (`403`). |
+| `GET` | `/skills/registry/:name` | Required | Metadata for a single skill by name. Returns `404` when the skill does not exist; `403` when the caller lacks read access. |
 | `GET` | `/skills/agent/bootstrap` | None | Downloads a zip containing the `imp-skills` bootstrap skill so any agent client can self-install it without a logged-in session. |
 
 `GET /skills/registry` response shape:
