@@ -72,6 +72,14 @@ Open the role's detail panel, scroll to **Danger zone**, and click **Delete role
 
 System roles are created by IMP on deployment and reflect the platform defaults. They appear with a **System** badge in the list and in the detail panel. System roles cannot be renamed or deleted.
 
+### The external role
+
+The **external** role is a system role seeded automatically on every deployment. It has all seven permission areas set to **None** — external users can reach guest-published agent chat shells but hold no platform rights. IMP assigns this role automatically to self-registered visitors in Login guest-access mode; it is never assigned manually through the Users tab.
+
+<Warning>
+Do not raise the external role's permission levels. Granting any platform right (Agents, Routines, Users, etc.) to the external role extends that right to every self-registered guest visitor. Keep all permission areas at None.
+</Warning>
+
 ## Next steps
 
 <Columns cols={2}>

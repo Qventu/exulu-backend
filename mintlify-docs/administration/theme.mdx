@@ -10,7 +10,13 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 ## What the theme studio is
 
-The **Theme** page (`/configuration`) — labelled "Theme" in the sidebar — is the white-label configuration surface for IMP. It lets you override the platform's CSS variables (colors, typography, shapes) for both light and dark modes, see a live preview before publishing, and roll out changes to all users at once.
+The **Theme** page (`/configuration`) — labelled "Theme" in the sidebar — is the white-label configuration surface for IMP.
+
+<Note>
+The `/configuration` route has a sibling page: [Email intake](/administration/email-intake) (`/configuration/email`), where you connect IMP to a Mailgun inbound domain for email-triggered routines. The two pages share the same path prefix but serve different administration tasks.
+</Note>
+
+It lets you override the platform's CSS variables (colors, typography, shapes) for both light and dark modes, see a live preview before publishing, and roll out changes to all users at once.
 
 Changes you make here apply immediately to every user the next time they load the application. You publish when ready; the draft stays local to your session until then.
 
