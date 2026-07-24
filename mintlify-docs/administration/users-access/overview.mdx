@@ -95,6 +95,14 @@ Select multiple users with the checkboxes in each row. The selection bar that ap
 
 Partial bulk failures are reported per-item in the confirmation dialog.
 
+## External accounts
+
+When an agent has **Login** guest-access mode enabled, visitors can self-register through the agent's public sign-in page. IMP creates these registrants as external accounts (`type="external"`), automatically assigns them the seeded **external** role, and redirects them away from the IMP application on login — they land at `/public/agents` and cannot access the workbench, administration area, or internal chat picker.
+
+External accounts appear in the Users table alongside internal users and can be searched and filtered like any other account. They are not created through the **Add user** flow; they arrive via self-registration. The **external** role cannot be reassigned to an internal purpose — see [Roles](/administration/users-access/roles) for details.
+
+For the full guest-access setup and external user behaviour, see [Guest access](/building/agents/guest-access) in the Building section.
+
 ## Next steps
 
 <Columns cols={2}>
