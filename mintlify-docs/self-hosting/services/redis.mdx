@@ -45,6 +45,14 @@ exulu-redis:
     retries: 5
 ```
 
+## Persistence and rate-limit state
+
+Redis stores the email-inbound rate-limit sliding-window counters (two keys per trigger per sender, each with a 2-hour TTL). These keys are best-effort: **a Redis flush or restart resets the windows**, which means a sender who hit the hourly limit could immediately send again. The impact is bounded — no application data is lost, the windows simply refill from zero.
+
+Message-ID deduplication is **not** Redis-backed; it is stored in the Postgres `job_results` table and survives a Redis restart without gaps.
+
+Guest rate-limit state is held in-process and is also not Redis-backed.
+
 ## Operational notes
 
 **Worker env file.** The worker compose file (`docker-compose.worker.yml`) does not include an `env_file` entry by default. Outside Dokploy, add `env_file: [.env]` to the worker service or inject the variables another way, or the worker starts without Redis credentials and fails on first job.

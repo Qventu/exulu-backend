@@ -209,6 +209,38 @@ Set `EXULU_REQUIRE_SANDBOX=1` to make sandbox failures a hard error at the first
 
 </Accordion>
 
+<Accordion title="Meeting recording stuck in Processing">
+
+**Symptom.** A meeting recording shows "Processing" in the UI (status `queued` or `transcribing`) and does not advance to `awaiting_review` or `saved`, even though the bot joined and the meeting ended.
+
+**Self-healing via the reconcile loop.** When Recall is configured (`RECALL_API_KEY` is set), the backend runs a reconcile loop that polls Recall's own API and re-drives stuck jobs. The loop runs every 60 seconds. If the job was stranded by a crash or restart between the webhook ACK and processing, it will be recovered automatically on the next tick. Wait at least 90 seconds before investigating further. For user-side guidance on re-triggering transcription, see [Recording meetings](/user-guide/transcripts/recording-meetings).
+
+**Check: Recall is not configured.**
+
+If `RECALL_API_KEY` is not set, the reconcile loop does not start and no recovery happens. Verify:
+
+```bash
+docker exec exulu-backend printenv RECALL_API_KEY
+```
+
+If the variable is absent, add it to your `.env` and restart the backend.
+
+**Check: bot did not reach the meeting.**
+
+The Recall bot may have been rejected, encountered a waiting room, or never connected. Check the bot's status in the Recall dashboard or via:
+
+```bash
+docker logs exulu-backend 2>&1 | grep "EXULU-RECALL"
+```
+
+Look for `reconcile tick recovered` entries (the loop found and re-drove stuck jobs) or `reconcile tick failed` entries (the loop itself errored — the error message will indicate the cause).
+
+**Check: webhook events not delivered.**
+
+If Recall's `recording.done` event was never delivered (e.g., the webhook endpoint was unreachable), the reconcile loop compensates. However, if the Recall subscription points at the wrong URL or the endpoint is not publicly reachable, no events arrive. Confirm `POST /recall/webhooks` is accessible from the internet. See [Architecture](/self-hosting/architecture) for exposure guidance.
+
+</Accordion>
+
 <Accordion title="Shared LiteLLM database warning banner">
 
 **Symptom.** On startup you see a banner:
