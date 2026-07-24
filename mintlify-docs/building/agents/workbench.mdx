@@ -83,7 +83,7 @@ The Chat experience section controls what users see in the conversation.
 | **Follow-up suggestions** | Toggle to enable auto-generated follow-up chips after each agent reply. |
 | **Feedback collection** | Toggle to enable thumbs-up / thumbs-down feedback buttons on agent messages. |
 | **Default agent** | Toggle to make this the agent that loads automatically when a user opens Chat (instead of the agent picker). Only one agent can be default at a time. |
-| **File sandbox** | Toggle to give the agent a file sandbox with `readFile`, `writeFile`, and `bash` tools, plus on-demand document tools (`parse_document`, `view_document_page`). Required for skills and file generation. Off by default. See [Attachments and session files](/user-guide/chat/attachments-and-session-files) for how users upload and reference files in chat. |
+| **File sandbox** | Toggle to give the agent a file sandbox with `readFile`, `writeFile`, and `bash` tools. Required for skills and file generation. Off by default. The document tools (`parse_document`, `view_document_page`) are available in all chat sessions with file storage configured, regardless of this toggle. See [Attachments and session files](/user-guide/chat/attachments-and-session-files) for how users upload and reference files in chat. |
 | **Max tool steps per message** | Maximum number of sequential tool calls the agent may make before stopping (0–50). `0` falls back to the platform default of 10. Applies per message to all tools — bash, files, knowledge search, integrations. See [Knowledge search](/building/agents/knowledge-search) for the separate retrieval-step budget. |
 
 ## Access
@@ -118,6 +118,8 @@ Enable the toggle to turn on guest access. When enabled, choose one of three aut
 The section also shows the shareable public link and lets you set a per-agent spend budget (required before going public — a warning appears if no budget is set). You can also upload a cover image shown on the public landing page.
 
 For full configuration details see [Guest access](/building/agents/guest-access).
+
+When the agent firewall feature is enabled on your deployment, an additional Safety section appears in the editor.
 
 ## Appearance
 
