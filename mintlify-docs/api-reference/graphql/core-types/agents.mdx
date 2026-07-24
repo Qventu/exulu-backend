@@ -64,8 +64,8 @@ type agent {
 | `systemInstructions` | Computed: final resolved system prompt after merging `instructions` and `memory`. Read-only. |
 | `capabilities` | Computed: the content types this agent accepts, derived from the underlying model's capabilities. |
 | `sandbox_enabled` | When `true`, the agent opts into the file-system sandbox for tool execution. Sandboxed runs operate in an isolated environment; default is `false`. |
-| `guest_access` | When `true`, the agent is accessible without authentication via a public guest link. |
-| `guest_auth_mode` | Controls how unauthenticated guest visitors authenticate: `"none"` (open), `"password"` (shared password required), or `"sso"` (IdP-backed). |
+| `guest_access` | When `true`, the agent is reachable via a guest link. The link may still require a password or a login depending on `guest_auth_mode`. |
+| `guest_auth_mode` | Controls how guest visitors authenticate: `"public"` (no gate — open access), `"password"` (shared password required), or `"regular"` (login required — authenticated or external users only). |
 | `guest_cover_image` | URL of the cover image shown on the guest landing page for this agent. |
 | `guest_has_password` | Computed: `true` when a guest password has been set on this agent. The password itself (`guest_password`) is input-only — it is hashed server-side and never returned in queries or filters. |
 | `budget` | JSON budget envelope attached to this agent; shape matches the LiteLLM budget object. |

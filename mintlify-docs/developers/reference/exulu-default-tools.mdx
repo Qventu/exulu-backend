@@ -105,6 +105,7 @@ When a session is configured with an `agentic_context_search` tool, the followin
 | `logging` | `boolean` | `false` | Enables verbose pipeline trace logging. |
 | `project_search` | `boolean` | `true` | Includes knowledge items attached to the chat's project as an additional source. |
 | `utility_model` | `string` | `""` | LiteLLM model name used by routing and query-expansion phases; falls back to the session model when empty. |
+| `max_steps` | `number` | `0` | Maximum number of knowledge searches allowed per agent turn. `0` = no search-specific cap (the agent's overall tool-step budget still applies). |
 | `knowledge_bases` | `object (JSON)` | `{}` | Per-context KB profiles — a JSON map of context ID to a `KbProfile` object with `enabled`, `kind`, `instructions`, and `overrides`. |
 | `routing` | `object (JSON)` | `{ rules: [] }` | Routing rules that direct queries to different context subsets based on content. |
 | `vocabulary` | `object (JSON)` | `{ glossary: [], identifiers: [], rewrites: [], styleHint: "" }` | Domain vocabulary: glossary terms, identifier sets, text rewrites, and a style hint for query expansion. |
@@ -117,7 +118,7 @@ JSON-typed options (`knowledge_bases`, `routing`, `vocabulary`, `memory`, `tunin
 
 ## Auto-registered session tools
 
-The following tools are registered automatically for every session that has file uploads configured (`fileUploads.s3Bucket` present). They run without approval (`needsApproval: false`) and do not require an EE entitlement.
+The following tools are registered automatically for every session that has an active session ID and file storage configured (`fileUploads.s3Bucket` present). Both conditions must be met — a session without an ID or without a configured S3 bucket will not receive these tools. They run without approval (`needsApproval: false`) and do not require an EE entitlement.
 
 ### read_session_file
 
