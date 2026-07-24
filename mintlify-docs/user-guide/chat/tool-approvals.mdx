@@ -24,6 +24,20 @@ Some tools — such as the image generation widget and certain internal context 
 Tool parameters configured by an administrator are shown in the approval card for transparency, but you cannot edit them. Only the agent's administrator can change those settings.
 </Note>
 
+## Auto-decline when you move on
+
+If you send a new message while an approval card is still waiting, IMP automatically declines that pending request before processing your message. You will not be stuck: the agent receives a denial response, and you can ask it to try again in your next message.
+
+## Routine runs and approvals
+
+When a scheduled or triggered routine reaches a tool that requires approval, the run pauses in a **waiting for approval** state. IMP opens the linked chat session so you can review the approval card and respond. Once you approve (or deny), the run resumes automatically — you do not need to restart it.
+
+The run banner in the chat links the session to the routine run, so you can navigate between the conversation and the run history on the [Runs and schedules](/building/routines/runs-and-schedules) page.
+
+<Note>
+Tools that need an account or credentials never show an approval card — they instead prompt you for a connection via a credential card. See [Connecting tools](/user-guide/chat/connecting-tools) for how that flow works.
+</Note>
+
 ## The approval card
 
 When the agent requests to run a tool, a card appears inline in the conversation:
