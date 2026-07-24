@@ -46,11 +46,32 @@ Team-scoped sharing ("Teams" mode) is available when your deployment has the RBA
 
 Administrators can also apply organization-wide defaults and override access controls from the Administration area. An agent set to Public still respects any global budget or model restrictions the administrator has configured.
 
+## Guest publishing
+
+Internal sharing modes cover authenticated IMP users. To expose an agent to visitors outside your organization — without requiring an IMP account — enable **Guest access** in the [workbench](/building/agents/workbench#guest-access).
+
+When guest access is on, the agent is reachable at a public URL (`/public/agents/{id}`). Three authentication modes are available: **Public** (no credentials required), **Password** (shared password gate), and **Login** (external email self-registration with persistent sessions).
+
+<Note>
+Guest access supersedes the legacy `rights_mode=public` field. If an agent has both guest access enabled and the legacy public flag, the guest-access gate — with its chosen authentication mode and abuse limits — applies, and the old anonymous path is bypassed. Agents that have never had guest access set keep their previous behavior unchanged.
+</Note>
+
+For the full configuration guide, see [Guest access](/building/agents/guest-access).
+
+## Knowledge base write access
+
+When the [Knowledge base editor](/building/agents/tools-and-skills#knowledge-base-editor) tool is enabled, an agent can create and update knowledge context items during chat. The following safety model applies:
+
+- **Explicit per-context opt-in** — only contexts checked in the tool's configuration sheet, with at least one of Create or Update enabled, are writable. All other contexts are read-only regardless of the agent's knowledge settings.
+- **Dual gate** — a write attempt must pass both the agent-level configuration (is the context opted in?) and a row-level write check (does the active user have write access to that specific item?). Either gate failing blocks the write.
+- **Guest refusal** — write tools require an authenticated user session. Requests from anonymous guest sessions are refused before any database call is made.
+- **Schema exclusions** — the following are never included in the tool schema: `file` and `uuid` fields, `calculated` fields, fields marked `editable: false`, `hidden` fields, and reserved internal parameter names. This limits what the model can write to well-defined, safe columns.
+
 ## Next steps
 
 <Columns cols={2}>
   <Card title="Back to workbench" icon="settings" href="/building/agents/workbench">
-    Review all eight workbench sections.
+    Review all nine workbench sections.
   </Card>
   <Card title="Knowledge overview" icon="brain" href="/building/knowledge/overview">
     Connect knowledge contexts to this agent.
