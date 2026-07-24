@@ -80,6 +80,21 @@ graph TD
 - **Port:** `9876`
 - **Role:** Transcription backend. Runs WhisperX on a GPU and exposes an HTTP endpoint the backend can call for audio/video transcription. Only required if you use the meeting transcription feature. Start it with `npx @exulu/backend exulu-start-whisper`.
 
+## Public webhooks
+
+Two backend HTTP endpoints must be reachable from the public internet — not only from within your Docker network.
+
+| Endpoint | Used by | Notes |
+|---|---|---|
+| `POST /webhooks/email/mime` | Mailgun inbound-routing | Signed with the Mailgun webhook signing key; the backend verifies the signature before processing. The email is persisted to the database before the 2xx ACK is returned so that a restart mid-processing does not silently lose the message. |
+| `POST /recall/webhooks` | Recall.ai bot events | Receives `bot.*` and `recording.done` events. The handler ACKs with 2xx before processing; the reconcile loop (see [Troubleshooting](/self-hosting/troubleshooting)) re-drives any job that is stranded by a crash between the ACK and completion. |
+
+**Exposure guidance.** Both paths must be reachable on the public URL you registered with the respective service (Mailgun inbound route, Recall webhook subscription).
+
+- Route traffic through your reverse proxy (Traefik, nginx, Caddy) to the backend's internal port `9001`.
+- If the backend sits behind a trusted proxy that appends the real client IP to `X-Forwarded-For`, set `EXULU_TRUST_PROXY=true`. Without this flag, the raw socket address is used for rate-limit keying — which will be the proxy's IP, not the originating client's.
+- Do not expose the backend port directly to the internet; keep all other routes internal.
+
 ## Network topology in production
 
 Production deployments use Dokploy and connect services via an external Docker network named `dokploy-network`. The `docker-compose.backend.yml` and `docker-compose.worker.yml` files in the example repo reference this network. In a non-Dokploy setup, replace `dokploy-network` with a network shared across your compose stacks.
