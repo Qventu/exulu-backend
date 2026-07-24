@@ -34,6 +34,7 @@
           "user-guide/chat/dictation",
           "user-guide/chat/prompts-in-chat",
           "user-guide/chat/pinned-knowledge-and-presets",
+          "user-guide/chat/memory",
           "user-guide/chat/tool-approvals",
           "user-guide/chat/connecting-tools",
           "user-guide/chat/budgets-in-chat",
