@@ -35,6 +35,7 @@
           "user-guide/chat/prompts-in-chat",
           "user-guide/chat/pinned-knowledge-and-presets",
           "user-guide/chat/tool-approvals",
+          "user-guide/chat/connecting-tools",
           "user-guide/chat/budgets-in-chat",
           "user-guide/chat/context-compaction",
           "user-guide/chat/image-generation",
