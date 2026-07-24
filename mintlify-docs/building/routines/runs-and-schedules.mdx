@@ -14,7 +14,7 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 ## The routine workbench
 
-Open any routine from the list and click its name or **Edit** to enter the workbench at `/workflows/{id}`. The workbench scrolls through seven sections, with a sticky section nav rail on the left (chip row on smaller screens).
+Open any routine from the list and click its name or **Edit** to enter the workbench at `/workflows/{id}`. The workbench scrolls through eight sections, with a sticky section nav rail on the left (chip row on smaller screens).
 
 The topbar shows the breadcrumb (Routines / `{name}`), an **Open chat** link, and a **Run** button that opens the run dialog.
 
@@ -135,26 +135,70 @@ Confirm with **Remove**. The routine is not deleted — it remains available for
 
 ---
 
+## Email trigger
+
+The **Email trigger** section (labelled "Email trigger" in the section nav) lets you give this routine a dedicated inbound email address. When an email arrives at that address and passes the guard chain, IMP automatically starts a new run.
+
+See [Email triggers](/building/routines/email-triggers) for the full setup guide: enabling the trigger, configuring allowed senders, filter rules, rate limits, and how email content maps to run variables.
+
+---
+
 ## Runs
 
-The Runs section shows a history of every time this routine has been triggered.
+The Runs section shows every run of this routine — both past and in-progress — and lets you act on them.
+
+### Run states
+
+Each run carries one of the following states:
+
+| State | Terminal? | Meaning |
+| --- | --- | --- |
+| `waiting` | No | Queued, not yet picked up by a worker. |
+| `active` | No | Currently executing. |
+| `delayed` | No | Scheduled to start after a delay. |
+| `paused` | No | Worker paused by the queue. |
+| `waiting_approval` | No | Run paused on a tool-approval request; the agent is waiting for a human decision in the linked chat session. Approve or deny the tool call in chat and the run resumes automatically. Shown as **Needs attention** in the UI. |
+| `completed` | Yes | Finished successfully. |
+| `failed` | Yes | Encountered an error. |
+| `filtered` | Yes | An email-trigger guard rejected the inbound message before the run could start. |
+| `cancelled` | Yes | Cancelled by a user or admin action. |
+
+<Note>
+The `stuck` state is defined in the system but not currently written to runs.
+</Note>
+
+### The runs list
 
 The list shows each run with:
 
-- **Status** — succeeded, failed, or running
-- **Started** — timestamp
-- **Duration** — elapsed time
+- **Status** — the run state (see above). The **Needs attention** badge appears for `waiting_approval` runs.
+- **Trigger source** — how the run was started: **Manual** (from the UI or direct API call), **API** (external API trigger), **Schedule** (cron schedule), or **Email** (inbound email trigger).
+- **Started** — relative timestamp.
+- **Duration** — elapsed time for terminal runs.
 
-Click any run row to open a detail panel on the right, which shows:
+A **Needs attention** toggle in the filter bar limits the list to `waiting_approval` runs. A count badge in the navigation shows the number of runs currently waiting for approval across all your routines.
 
-- **Error** — the error message if the run failed
-- **Metadata** — a key/value table of run metadata (variables, agent ID, etc.)
-- **Show raw payload** — toggle to see the full job payload as JSON
-- **Retry with edits** — opens the Run dialog pre-filled with the original inputs so you can adjust and rerun
+### Filter bar
+
+The filter bar lets you narrow the runs list by state, trigger source, date range, and free-text search. Use the **Needs attention** toggle to show only approval-paused runs. **Show filtered** adds `filtered` email guard rejections to the list (hidden by default).
+
+### Run row actions
+
+Click any run row to expand it. The expanded row shows the run's error (if any), trigger metadata, and a raw-payload toggle. Available actions depend on the run's state:
+
+- **Cancel run** — available while the run is non-terminal (`waiting`, `active`, `waiting_approval`). Cancels the run immediately.
+- **Retry run** — available for `failed` or `cancelled` runs. Re-enqueues the run and resumes from the step where it stopped; prior step outputs are preserved.
+- **Open session** — opens the linked chat session for this run (available when a session was created).
 
 <Note>
-"No runs yet" appears when the routine has never been triggered. Click **Run** in the topbar to make a first run.
+Retry re-uses the same run record, resuming from the failed or cancelled step. It does not create a new run row.
 </Note>
+
+### Tool approvals and auto_approve_tools
+
+By default, queue-backed routine runs respect tool approvals: if an agent tool requires user approval, the run pauses at that step and moves to `waiting_approval`. Open the linked chat session, approve or deny the tool call there, and the run resumes automatically.
+
+If the routine has `auto_approve_tools` enabled (a per-routine backend field), all tool calls are pre-approved and the run never pauses for approval — `waiting_approval` cannot occur for those runs. This is an escape hatch for fully automated pipelines; it is off by default. See [Tool approvals](/user-guide/chat/tool-approvals) for how approval works in chat.
 
 ---
 
@@ -186,13 +230,27 @@ Type the routine's exact name and click **Delete routine**. The routine is perma
 
 ---
 
+## The global runs console
+
+The Routines list page also shows a **Runs** console below the routines table. It displays every routine run across your workspace — all routines you can read — and defaults to the **Needs attention** lens so `waiting_approval` runs surface first.
+
+The console uses the same filter bar and run rows as the per-routine Runs section. There is no separate `/runs` page; this console is the workspace-wide view.
+
+---
+
 ## Next steps
 
 <Columns cols={2}>
   <Card title="Routines overview" icon="clipboard-list" href="/building/routines/overview">
     Browse the routines list, run a routine, and understand how routines are created.
   </Card>
-  <Card title="Skills overview" icon="sparkles" href="/building/skills/overview">
-    Package reusable instruction sets for the agent running your routine.
+  <Card title="Email triggers" icon="mail" href="/building/routines/email-triggers">
+    Give a routine a dedicated inbound address to start runs from email.
+  </Card>
+  <Card title="Tool approvals" icon="check-circle" href="/user-guide/chat/tool-approvals">
+    How tool approval works in chat and how it interacts with routine runs.
+  </Card>
+  <Card title="Routine runs API" icon="code" href="/api-reference/graphql/routine-runs">
+    Query, cancel, and retry runs via the GraphQL API.
   </Card>
 </Columns>

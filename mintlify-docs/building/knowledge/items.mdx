@@ -42,13 +42,23 @@ The table paginates. Navigate with **Previous page** / **Next page** or jump to 
 
 ## Create an item
 
-Click **New item** in the top-right of the context workspace.
+Items can be created in three ways:
 
-The **New item** dialog asks for:
+**1. New item (manual)**
+
+Click **New item** in the top-right of the context workspace. The **New item** dialog asks for:
 
 - **Name** (required) — the item's title. Shown in the table and in agent citations.
 
 Click **Create item**. The item appears in the table with empty Processed and Embeddings values. Fill in the item's content by opening it and editing the Fields section.
+
+**2. Bulk import**
+
+Use the [Bulk import](/building/knowledge/bulk-import) flow to create many items at once from a CSV or spreadsheet file. Bulk import maps columns to item fields and queues the pipeline automatically after upload.
+
+**3. Agent-created items**
+
+When the **Knowledge base editor** tool is enabled for an agent, the agent can create and update items during a chat session. See [Tools and skills](/building/agents/tools-and-skills) for how to enable the tool and configure which contexts the agent can write to.
 
 ## Item detail
 
@@ -119,5 +129,11 @@ For bulk pipeline operations (process or embed a filtered set), use the **Filter
   </Card>
   <Card title="Entities" icon="tag" href="/building/knowledge/entities">
     Add structured entity extraction to this context.
+  </Card>
+  <Card title="Bulk import" icon="upload" href="/building/knowledge/bulk-import">
+    Create many items at once from a CSV or spreadsheet file.
+  </Card>
+  <Card title="Tools and skills" icon="wrench" href="/building/agents/tools-and-skills">
+    Enable the Knowledge base editor so agents can write items during chat.
   </Card>
 </Columns>
