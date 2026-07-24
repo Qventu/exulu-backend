@@ -64,7 +64,7 @@ IMP stores tool credentials (API keys, usernames, passwords entered in agent too
 The `data` column is write-only at the API layer — list endpoints return provider name, auth type, and timestamps only; the encrypted blob never leaves the backend.
 
 <Warning>
-**Rotating `NEXTAUTH_SECRET` breaks stored tool credentials.** Because each blob is encrypted with the current secret, changing `NEXTAUTH_SECRET` makes every previously stored credential undecryptable. Users will need to re-enter their credentials for every connected tool after a secret rotation.
+**Rotating `NEXTAUTH_SECRET` breaks stored tool credentials.** Because each blob is encrypted with the current secret, changing `NEXTAUTH_SECRET` makes every previously stored credential undecryptable. Tool calls that use those credentials will fail with an error until the affected rows are removed from user_credentials (users can then reconnect from chat or Settings → Connections).
 </Warning>
 
 On every boot, initdb drops the legacy `oauth_tokens` table unconditionally (`DROP TABLE IF EXISTS oauth_tokens CASCADE`) before creating (or leaving intact) the replacement `user_credentials` table. No data migration is required — the legacy table had no production users.
