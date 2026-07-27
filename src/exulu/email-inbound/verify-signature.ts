@@ -18,9 +18,8 @@ export function verifyPayloadSignature(
   secret: string,
 ): boolean {
   if (!signatureHeader || !secret) return false;
-  const provided = signatureHeader.startsWith("sha256=")
-    ? signatureHeader.slice("sha256=".length)
-    : signatureHeader;
+  if (!signatureHeader.startsWith("sha256=")) return false;
+  const provided = signatureHeader.slice("sha256=".length);
   if (!/^[0-9a-f]+$/i.test(provided)) return false;
 
   const message = timestampHeader
