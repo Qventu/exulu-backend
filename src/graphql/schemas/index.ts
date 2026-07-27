@@ -58,6 +58,14 @@ import {
   toWorkflowTriggerPayload,
   insertTriggerWithSecretRetry,
 } from "@SRC/exulu/email-inbound/resolver-helpers";
+import {
+  detectPayloadFormat,
+  extractMultipartMimePart,
+} from "@SRC/exulu/email-inbound/adapters";
+import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
+import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
+import { uploadFile } from "@SRC/uppy";
+import { randomUUID } from "node:crypto";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -709,6 +717,7 @@ type PageInfo {
     deleteWorkflowTrigger(id: ID!): WorkflowTrigger
     regenerateWorkflowTriggerSecret(id: ID!): WorkflowTrigger
     setWorkflowTriggerSigningSecret(id: ID!, enable: Boolean!): WorkflowTrigger
+    testFireWorkflowTrigger(id: ID!, contentType: String!, payload: String!): TestFireResult
     `;
 
   modelDefs += `
@@ -784,6 +793,13 @@ type PageInfo {
       createdAt: Date
       updatedAt: Date
       signing_secret_once: String
+    }
+
+    type TestFireResult {
+      outcome: String!
+      jobResultId: ID
+      filteredReason: String
+      error: String
     }
 
   `;
@@ -1324,6 +1340,48 @@ type LiteLLMModel {
     const rows = await db.from("workflow_triggers").where({ id: args.id })
       .update({ signing_secret: signingSecret, updatedAt: new Date().toISOString() }).returning("*");
     return toWorkflowTriggerPayload(rows[0], { canWrite: true, signingSecretOnce: once });
+  };
+
+  resolvers.Mutation["testFireWorkflowTrigger"] = async (_, args, context) => {
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    const kind = detectPayloadFormat(args.contentType);
+    let bytes: Buffer;
+    let format: "eml" | "json";
+    try {
+      if (kind === "multipart") {
+        bytes = await extractMultipartMimePart(Buffer.from(args.payload, "latin1"), args.contentType);
+        format = "eml";
+      } else if (kind === "json") {
+        JSON.parse(args.payload); // validate up front for a clean 400-style error
+        bytes = Buffer.from(args.payload, "utf8");
+        format = "json";
+      } else {
+        bytes = Buffer.from(args.payload, "latin1");
+        format = "eml";
+      }
+    } catch (err) {
+      return { outcome: "error", error: err instanceof Error ? err.message : "bad payload" };
+    }
+
+    const ext = format === "json" ? "json" : "eml";
+    const fullKey = await uploadFile(
+      bytes, `${EMAIL_INBOUND_S3_PREFIX}${randomUUID()}.${ext}`, config,
+      { contentType: "application/octet-stream" }, undefined, undefined, true,
+    );
+    const s3Key = fullKey.slice(fullKey.indexOf("/") + 1);
+
+    const outcome = await handleEmailIntake({ s3Key, triggerId: trigger.id, format }, { config, providers });
+    if (outcome.outcome === "fired") return { outcome: "fired", jobResultId: outcome.jobResultId };
+    if (outcome.outcome === "filtered") return { outcome: "filtered", filteredReason: outcome.reason };
+    if (outcome.outcome === "failed") return { outcome: "error", error: "Payload failed to parse." };
+    return { outcome: "dropped" };
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
