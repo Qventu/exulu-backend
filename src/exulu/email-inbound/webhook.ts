@@ -51,7 +51,7 @@ export const createRoutineWebhookHandler =
 
     const secret = String((req.params as any).secret ?? "");
     const db = await deps.getDb();
-    const trigger = secret ? await deps.resolveTrigger(db, secret) : undefined;
+    const trigger = secret.length > 0 ? await deps.resolveTrigger(db, secret) : undefined;
     // 404 (not 401/403) on unknown/disabled: no enumeration oracle.
     if (!trigger || trigger.type !== "email" || !trigger.enabled) {
       console.warn("[EXULU-WEBHOOK] rejected (unknown/disabled secret).");
