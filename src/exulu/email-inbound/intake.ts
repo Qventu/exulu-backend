@@ -52,14 +52,17 @@ const baseTriggerMetadata = (email: InboundEmail) => ({
   message_id: email.messageId,
 });
 
-export const resolveTriggerByAddress = async (
+export const resolveTriggerBySecret = async (
   db: any,
-  recipient: string,
+  secret: string,
 ): Promise<WorkflowTriggerRow | undefined> =>
-  db
-    .from("workflow_triggers")
-    .whereRaw("LOWER(address) = ?", [recipient.trim().toLowerCase()])
-    .first();
+  db.from("workflow_triggers").where({ secret }).first();
+
+export const resolveTriggerById = async (
+  db: any,
+  triggerId: string,
+): Promise<WorkflowTriggerRow | undefined> =>
+  db.from("workflow_triggers").where({ id: triggerId }).first();
 
 /**
  * Per-trigger filtered-row retention (spec §4.4): keep the newest

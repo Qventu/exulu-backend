@@ -123,3 +123,13 @@ export function generateTriggerAddress(routineName: string, inboundDomain: strin
   const suffix = randomBytes(4).toString("hex");
   return `${slugifyRoutineName(routineName)}-${suffix}@${inboundDomain}`;
 }
+
+/** Capability-URL secret for /webhooks/routine/:secret (~192 bits). */
+export function generateTriggerSecret(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+/** Plaintext HMAC shared secret (encrypt before storing). */
+export function generateSigningSecret(): string {
+  return randomBytes(32).toString("base64url");
+}
