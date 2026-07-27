@@ -42,7 +42,11 @@ export interface WorkflowTriggerRow {
   workflow: string;
   type: string;
   enabled: boolean;
-  address: string;
+  /** base64url secret; the /webhooks/routine/:secret routing + auth key. */
+  secret: string;
+  /** AES-encrypted HMAC shared secret, or null when signing is off. */
+  signing_secret: string | null;
+  last_fired_at: string | Date | null;
   /** jsonb — pg returns an object, but tolerate strings defensively. */
   config: EmailTriggerConfig | string;
   run_as_user: number | null;

@@ -89,6 +89,19 @@ export const migrateUserCredentialsDataColumn = async (knex: Knex): Promise<void
   }
 };
 
+export const migrateWorkflowTriggersToSecret = async (knex: Knex): Promise<void> => {
+  const hasAddress = await knex.schema.hasColumn("workflow_triggers", "address");
+  if (hasAddress) {
+    // Unshipped feature: old rows carry Mailgun addresses that no longer route.
+    // Clear them so addMissingFields can add the NOT NULL UNIQUE `secret` column.
+    console.log("[EXULU] Migrating workflow_triggers address -> secret (clearing unshipped dev rows).");
+    await knex("workflow_triggers").del();
+    await knex.schema.alterTable("workflow_triggers", (t) => t.dropColumn("address"));
+  }
+  // Remove the retired platform-level inbound config (spec §3.2).
+  await knex("platform_configurations").where({ config_key: "email_inbound" }).del();
+};
+
 const up = async function (knex: Knex) {
   console.log("[EXULU] Database up.");
 
@@ -153,6 +166,7 @@ const up = async function (knex: Knex) {
   await knex.raw("DROP TABLE IF EXISTS oauth_tokens CASCADE;");
   await knex.raw(userCredentialsSchema());
   await migrateUserCredentialsDataColumn(knex);
+  await migrateWorkflowTriggersToSecret(knex);
 
   // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
   // DB-backed so webhook retries, intake-job retries, and Redis restarts can
