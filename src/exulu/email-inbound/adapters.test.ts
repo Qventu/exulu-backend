@@ -49,3 +49,37 @@ describe("jsonToInboundEmail", () => {
     ).toThrow(/base64|attachment/i);
   });
 });
+
+import { detectPayloadFormat, extractMultipartMimePart } from "./adapters";
+
+describe("detectPayloadFormat", () => {
+  it("classifies content types", () => {
+    expect(detectPayloadFormat("application/json")).toBe("json");
+    expect(detectPayloadFormat("application/json; charset=utf-8")).toBe("json");
+    expect(detectPayloadFormat("multipart/form-data; boundary=xyz")).toBe("multipart");
+    expect(detectPayloadFormat("message/rfc822")).toBe("eml");
+    expect(detectPayloadFormat("text/plain")).toBe("eml");
+    expect(detectPayloadFormat("")).toBe("eml");
+  });
+});
+
+describe("extractMultipartMimePart", () => {
+  const build = (fieldName: string, value: string) => {
+    const boundary = "----exulutest";
+    const body = `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"\r\n\r\n${value}\r\n--${boundary}--\r\n`;
+    return { buffer: Buffer.from(body, "latin1"), contentType: `multipart/form-data; boundary=${boundary}` };
+  };
+  it("pulls the raw MIME from a body-mime field", async () => {
+    const { buffer, contentType } = build("body-mime", "Subject: hi\r\n\r\nbody");
+    const mime = await extractMultipartMimePart(buffer, contentType);
+    expect(mime.toString("latin1")).toContain("Subject: hi");
+  });
+  it("also accepts an `email` field name", async () => {
+    const { buffer, contentType } = build("email", "Subject: x\r\n\r\ny");
+    expect((await extractMultipartMimePart(buffer, contentType)).toString()).toContain("Subject: x");
+  });
+  it("throws when no known MIME field is present", async () => {
+    const { buffer, contentType } = build("other", "z");
+    await expect(extractMultipartMimePart(buffer, contentType)).rejects.toThrow(/body-mime|email|message/i);
+  });
+});

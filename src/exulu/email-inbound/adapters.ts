@@ -2,6 +2,8 @@
 // shared InboundEmail shape (spec §4.2). Raw MIME still goes through
 // normalize.ts:parseRawMime; this module handles the documented JSON shape.
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import Busboy from "busboy";
 import type { InboundEmail } from "./types";
 
 const htmlToText = (html: string): string =>
@@ -38,6 +40,34 @@ const decodeAttachment = (a: any): { filename: string; contentType: string; cont
   }
   return { filename, contentType, content };
 };
+
+export function detectPayloadFormat(contentType: string): "eml" | "json" | "multipart" {
+  const ct = (contentType || "").toLowerCase();
+  if (ct.includes("multipart/form-data")) return "multipart";
+  if (ct.includes("application/json")) return "json";
+  return "eml"; // message/rfc822, text/plain, empty → raw MIME
+}
+
+const MIME_FIELD_NAMES = new Set(["body-mime", "email", "message"]);
+
+/** Extract the raw MIME bytes from a Mailgun-style multipart form. */
+export function extractMultipartMimePart(rawBody: Buffer, contentType: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    let found: Buffer | null = null;
+    const bb = Busboy({ headers: { "content-type": contentType }, defParamCharset: "latin1" });
+    bb.on("field", (name: string, value: string) => {
+      if (found === null && MIME_FIELD_NAMES.has(name.toLowerCase())) {
+        found = Buffer.from(value, "latin1"); // byte-fidelity for 8-bit MIME
+      }
+    });
+    bb.on("close", () => {
+      if (found) resolve(found);
+      else reject(new Error("No raw MIME part found (expected a body-mime, email, or message field)."));
+    });
+    bb.on("error", (err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
+    Readable.from(rawBody).pipe(bb);
+  });
+}
 
 export function jsonToInboundEmail(raw: unknown): InboundEmail {
   if (!raw || typeof raw !== "object") {
