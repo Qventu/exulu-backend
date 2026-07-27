@@ -37,9 +37,12 @@ const makeDeps = (over: Partial<RoutineWebhookDeps> = {}): RoutineWebhookDeps =>
 
 describe("createRoutineWebhookHandler", () => {
   it("404s on an unknown/disabled secret", async () => {
+    const deps = makeDeps({ resolveTrigger: async () => undefined });
     const res = makeRes();
-    await createRoutineWebhookHandler(makeDeps({ resolveTrigger: async () => undefined }))(makeReq() as any, res);
+    await createRoutineWebhookHandler(deps)(makeReq() as any, res);
     expect(res.statusCode).toBe(404);
+    expect(deps.putRawPayload).not.toHaveBeenCalled();
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
   });
 
   it("fires: persists + enqueues a json job and ACKs 200", async () => {
@@ -53,11 +56,12 @@ describe("createRoutineWebhookHandler", () => {
   });
 
   it("401s when signing is enabled and the signature is missing", async () => {
+    const deps = makeDeps({ resolveTrigger: async () => trigger({ signing_secret: "enc" }) });
     const res = makeRes();
-    await createRoutineWebhookHandler(makeDeps({ resolveTrigger: async () => trigger({ signing_secret: "enc" }) }))(
-      makeReq() as any, res,
-    );
+    await createRoutineWebhookHandler(deps)(makeReq() as any, res);
     expect(res.statusCode).toBe(401);
+    expect(deps.putRawPayload).not.toHaveBeenCalled();
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
   });
 
   it("200s when signing is enabled and the signature is valid", async () => {
@@ -74,5 +78,14 @@ describe("createRoutineWebhookHandler", () => {
     const res = makeRes();
     await createRoutineWebhookHandler(makeDeps({ licensedForQueues: () => false }))(makeReq() as any, res);
     expect(res.statusCode).toBe(503);
+  });
+
+  it("429s when the rate limit is exceeded, without persisting or enqueuing", async () => {
+    const deps = makeDeps({ rateLimitExceeded: () => true });
+    const res = makeRes();
+    await createRoutineWebhookHandler(deps)(makeReq() as any, res);
+    expect(res.statusCode).toBe(429);
+    expect(deps.putRawPayload).not.toHaveBeenCalled();
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
   });
 });
