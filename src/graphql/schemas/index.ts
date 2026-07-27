@@ -50,9 +50,10 @@ import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/
 import {
   validateEmailTriggerConfig,
 } from "@SRC/exulu/email-inbound/trigger-config";
-import { parseTriggerConfig } from "@SRC/exulu/email-inbound/types";
+import type { WorkflowTriggerRow } from "@SRC/exulu/email-inbound/types";
 import {
-  insertTriggerWithRetry,
+  toWorkflowTriggerPayload,
+  insertTriggerWithSecretRetry,
 } from "@SRC/exulu/email-inbound/resolver-helpers";
 
 /* 
@@ -762,18 +763,22 @@ type PageInfo {
   `;
 
   // Email-triggered routines (spec §6). run_as_role is deliberately not
-  // exposed; the signing key is write-only (has_signing_key flag only).
+  // exposed; the signing key is write-only (has_signing_secret flag only).
   modelDefs += `
     type WorkflowTrigger {
       id: ID!
       workflow: ID!
       type: String!
       enabled: Boolean!
-      address: String!
+      webhook_url: String
+      has_webhook: Boolean!
+      has_signing_secret: Boolean!
+      last_fired_at: Date
       config: JSON!
       run_as_user: Float
       createdAt: Date
       updatedAt: Date
+      signing_secret_once: String
     }
 
   `;
@@ -1169,12 +1174,6 @@ type LiteLLMModel {
     }
   };
 
-  // pg returns jsonb columns as objects, but normalize defensively.
-  const toWorkflowTriggerPayload = (row: any) => ({
-    ...row,
-    config: parseTriggerConfig(row.config),
-  });
-
   resolvers.Query["workflowTriggers"] = async (_, args, context) => {
     if (!args.workflow) {
       throw new Error("Workflow template ID is required");
@@ -1186,11 +1185,12 @@ type LiteLLMModel {
     if (!hasAccess) {
       throw new Error("You don't have access to this workflow template.");
     }
+    const canWrite = await checkRecordAccess(workflowTemplate, "write", user);
     const rows = await db
       .from("workflow_triggers")
       .where({ workflow: args.workflow })
       .orderBy("createdAt", "asc");
-    return rows.map(toWorkflowTriggerPayload);
+    return rows.map((r: WorkflowTriggerRow) => toWorkflowTriggerPayload(r, { canWrite }));
   };
 
   resolvers.Mutation["upsertWorkflowEmailTrigger"] = async (_, args, context) => {
@@ -1209,13 +1209,6 @@ type LiteLLMModel {
     const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
     if (!hasAccess) {
       throw new Error("You don't have access to this workflow template.");
-    }
-
-    const inbound = await getEmailInboundConfig(db);
-    if (!inbound.enabled || !inbound.inbound_domain) {
-      throw new Error(
-        "Inbound email is not configured on this platform. A super admin must configure it in settings first.",
-      );
     }
 
     const validatedConfig = validateEmailTriggerConfig(args.config);
@@ -1237,12 +1230,12 @@ type LiteLLMModel {
           updatedAt: new Date(),
         })
         .returning("*");
-      return toWorkflowTriggerPayload(updated);
+      return toWorkflowTriggerPayload(updated, { canWrite: true });
     }
 
-    // Server-generated address, unique with regenerate-on-collision
+    // Server-generated secret, unique with regenerate-on-collision
     // (max 5 attempts, INSERT is inside the loop — race-safe, spec §3.1).
-    const created = await insertTriggerWithRetry(
+    const created = await insertTriggerWithSecretRetry(
       async (row) => {
         const [inserted] = await db
           .from("workflow_triggers")
@@ -1259,10 +1252,8 @@ type LiteLLMModel {
         run_as_role: user.role?.id ?? null,
         created_by: user.id,
       },
-      workflowTemplate.name,
-      inbound.inbound_domain,
     );
-    return toWorkflowTriggerPayload(created);
+    return toWorkflowTriggerPayload(created, { canWrite: true });
   };
 
   resolvers.Mutation["deleteWorkflowTrigger"] = async (_, args, context) => {
@@ -1282,7 +1273,7 @@ type LiteLLMModel {
       throw new Error("You don't have access to this workflow template.");
     }
     await db.from("workflow_triggers").where({ id: args.id }).del();
-    return toWorkflowTriggerPayload(trigger);
+    return toWorkflowTriggerPayload(trigger, { canWrite: true });
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
