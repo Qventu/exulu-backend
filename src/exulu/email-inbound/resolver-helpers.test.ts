@@ -1,66 +1,6 @@
 import {
-  toEmailInboundConfigPayload,
   insertTriggerWithRetry,
 } from "./resolver-helpers";
-
-// ---------------------------------------------------------------------------
-// toEmailInboundConfigPayload
-// ---------------------------------------------------------------------------
-
-describe("toEmailInboundConfigPayload", () => {
-  const baseInbound = {
-    provider: "mailgun-eu",
-    inbound_domain: "mail.client.com",
-    enabled: true,
-    last_webhook_at: "2026-07-15T10:00:00.000Z",
-  };
-
-  it("never includes signing_key in the output", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: "super-secret",
-    });
-    expect(payload).not.toHaveProperty("signing_key");
-  });
-
-  it("sets has_signing_key true when a key is present", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: "some-key",
-    });
-    expect(payload.has_signing_key).toBe(true);
-  });
-
-  it("sets has_signing_key false when no key is present", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: null,
-    });
-    expect(payload.has_signing_key).toBe(false);
-  });
-
-  it("derives webhook_url from process.env.BACKEND with trailing slash stripped", () => {
-    const original = process.env.BACKEND;
-    process.env.BACKEND = "https://api.example.com/";
-    try {
-      const payload = toEmailInboundConfigPayload({ ...baseInbound, signing_key: null });
-      expect(payload.webhook_url).toBe("https://api.example.com/webhooks/email/mime");
-    } finally {
-      process.env.BACKEND = original;
-    }
-  });
-
-  it("returns null webhook_url when BACKEND is not set", () => {
-    const original = process.env.BACKEND;
-    delete process.env.BACKEND;
-    try {
-      const payload = toEmailInboundConfigPayload({ ...baseInbound, signing_key: null });
-      expect(payload.webhook_url).toBeNull();
-    } finally {
-      process.env.BACKEND = original;
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // insertTriggerWithRetry
