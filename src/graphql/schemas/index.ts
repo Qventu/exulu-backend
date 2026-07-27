@@ -49,7 +49,10 @@ import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
   validateEmailTriggerConfig,
+  generateTriggerSecret,
+  generateSigningSecret,
 } from "@SRC/exulu/email-inbound/trigger-config";
+import { encrypt } from "@SRC/exulu/auth/credential-store";
 import type { WorkflowTriggerRow } from "@SRC/exulu/email-inbound/types";
 import {
   toWorkflowTriggerPayload,
@@ -704,6 +707,8 @@ type PageInfo {
   mutationDefs += `
     upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
     deleteWorkflowTrigger(id: ID!): WorkflowTrigger
+    regenerateWorkflowTriggerSecret(id: ID!): WorkflowTrigger
+    setWorkflowTriggerSigningSecret(id: ID!, enable: Boolean!): WorkflowTrigger
     `;
 
   modelDefs += `
@@ -1274,6 +1279,51 @@ type LiteLLMModel {
     }
     await db.from("workflow_triggers").where({ id: args.id }).del();
     return toWorkflowTriggerPayload(trigger, { canWrite: true });
+  };
+
+  resolvers.Mutation["regenerateWorkflowTriggerSecret"] = async (_, args, context) => {
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    let updated: any;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const rows = await db.from("workflow_triggers").where({ id: args.id })
+          .update({ secret: generateTriggerSecret(), updatedAt: new Date().toISOString() }).returning("*");
+        updated = rows[0];
+        break;
+      } catch (err: any) {
+        if (err?.code === "23505") continue;
+        throw err;
+      }
+    }
+    if (!updated) throw new Error("Could not generate a unique trigger secret.");
+    return toWorkflowTriggerPayload(updated, { canWrite: true });
+  };
+
+  resolvers.Mutation["setWorkflowTriggerSigningSecret"] = async (_, args, context) => {
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    let once: string | null = null;
+    let signingSecret: string | null = null;
+    if (args.enable) {
+      once = generateSigningSecret();
+      signingSecret = encrypt(once);
+    }
+    const rows = await db.from("workflow_triggers").where({ id: args.id })
+      .update({ signing_secret: signingSecret, updatedAt: new Date().toISOString() }).returning("*");
+    return toWorkflowTriggerPayload(rows[0], { canWrite: true, signingSecretOnce: once });
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
