@@ -117,12 +117,26 @@ All three produce the existing `InboundEmail` (via `normalize.ts`), so the guard
 
 Size caps mirror today's parser (raw ≤ 30 MB; JSON body ≤ a comparable cap). The `latin1` byte-fidelity handling for raw MIME is preserved for adapters 1 & 2.
 
-### 4.3 Intake job
+### 4.3 Intake worker & job
+
+**Worker branch** — the existing `email_intake` job type is reused (no new queue, no new worker; same concurrency/retry registration). The change is localized to the dispatcher branch in `createWorkers` (`ee/workers.ts:1087`), which today passes `{ s3Key, recipient }` to `handleEmailIntake`:
+
+```ts
+// ee/workers.ts (email_intake branch) — before → after
+if (data.type === "email_intake") {
+  if (!data.inputs?.s3Key) throw new Error("No s3Key set for email intake job.");
+  const result = await handleEmailIntake(
+    { s3Key: data.inputs.s3Key, triggerId: data.inputs.triggerId, format: data.inputs.format }, // was: recipient
+    { config, providers },
+  );
+  return { result, metadata: {} };
+}
+```
 
 `intake.ts` changes only at the entry point:
 
 - The job payload carries `triggerId` (+ `format`) instead of `recipient`. `resolveTriggerByAddress(db, recipient)` → **`resolveTriggerById(db, triggerId)`**.
-- The intake loads the S3 payload and runs `parseRawMime` (`eml`) or `jsonToInboundEmail` (`json`).
+- The intake loads the S3 payload and runs `parseRawMime` (`format: 'eml'`) or `jsonToInboundEmail` (`format: 'json'`).
 - The guard chain, dedup (by `message_id`), attachment upload, session creation, variable pre-population (`email_from`, `email_subject`, `email_body`), and run firing are **unchanged**. `filtered`/`fired`/`failed` semantics, per-trigger retention pruning, and the `trigger:'email'` stamping are all retained.
 
 ### 4.4 Optional HMAC signing
@@ -192,6 +206,7 @@ Resolver access control is unchanged in principle: trigger reads/writes check th
 
 ## 9. Roadmap (deferred)
 
+- **Failed-parse S3 orphan cleanup** *(known gap, deliberately deferred)*: happy-path, filtered, and dropped payloads are deleted from S3 immediately (`intake.ts:290/316/340/363`). Unparseable payloads are **retained on purpose** for debugging (the `failed` branch, `intake.ts:307-308`, stashes `s3_key` in `trigger_metadata`), but nothing garbage-collects them when the `failed` `job_results` row is later pruned/deleted — a slow leak in `inbound-webhook/`, most relevant to self-hosted object storage. Fix later via a pruner-tied sweep of orphaned objects or by deleting the S3 object on failed-row deletion. Not addressed in this pass.
 - **Provider-specific JSON auto-mapping**: admin-configured field mapping (`payload.mail.from` → `from`) for tools whose JSON doesn't match the documented shape. The fixed shape covers scripting tools for v1.
 - **Amazon SES + client-owned S3 adapter**: mail lands in the client's bucket; a second adapter fetches + normalizes into `InboundEmail` without touching the pipeline.
 - **Signed-delivery presets**: per-provider signature verification presets (e.g. verify a provider's own signature header) layered on the generic HMAC.
