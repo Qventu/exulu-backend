@@ -1,9 +1,23 @@
 import {
   MAX_FILTER_PATTERN_LENGTH,
   generateTriggerAddress,
+  generateTriggerSecret,
+  generateSigningSecret,
   slugifyRoutineName,
   validateEmailTriggerConfig,
 } from "./trigger-config";
+
+describe("generateTriggerSecret", () => {
+  it("produces a URL-safe ~43-char base64url string, unique per call", () => {
+    const a = generateTriggerSecret();
+    const b = generateTriggerSecret();
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes -> 43 base64url chars
+    expect(a).not.toEqual(b);
+  });
+  it("generateSigningSecret has the same shape", () => {
+    expect(generateSigningSecret()).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
 
 describe("slugifyRoutineName", () => {
   it("lowercases and dashes non-alphanumerics", () => {
