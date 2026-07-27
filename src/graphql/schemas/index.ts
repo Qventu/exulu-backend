@@ -48,15 +48,10 @@ import { transcriptionClient } from "@SRC/exulu/transcription/client";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
-  getEmailInboundConfig,
-  updateEmailInboundConfig,
-} from "@SRC/exulu/email-inbound/config";
-import {
   validateEmailTriggerConfig,
 } from "@SRC/exulu/email-inbound/trigger-config";
 import { parseTriggerConfig } from "@SRC/exulu/email-inbound/types";
 import {
-  toEmailInboundConfigPayload,
   insertTriggerWithRetry,
 } from "@SRC/exulu/email-inbound/resolver-helpers";
 
@@ -708,7 +703,6 @@ type PageInfo {
   mutationDefs += `
     upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
     deleteWorkflowTrigger(id: ID!): WorkflowTrigger
-    updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
     `;
 
   modelDefs += `
@@ -782,14 +776,6 @@ type PageInfo {
       updatedAt: Date
     }
 
-    type EmailInboundConfig {
-      provider: String
-      inbound_domain: String
-      enabled: Boolean
-      last_webhook_at: Date
-      webhook_url: String
-      has_signing_key: Boolean
-    }
   `;
 
   typeDefs += `
@@ -807,7 +793,6 @@ type PageInfo {
 
   typeDefs += `
    workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
-   emailInboundConfig: EmailInboundConfig
     `;
 
   modelDefs += `
@@ -1190,8 +1175,6 @@ type LiteLLMModel {
     config: parseTriggerConfig(row.config),
   });
 
-  // toEmailInboundConfigPayload is imported from resolver-helpers (unit-testable).
-
   resolvers.Query["workflowTriggers"] = async (_, args, context) => {
     if (!args.workflow) {
       throw new Error("Workflow template ID is required");
@@ -1300,30 +1283,6 @@ type LiteLLMModel {
     }
     await db.from("workflow_triggers").where({ id: args.id }).del();
     return toWorkflowTriggerPayload(trigger);
-  };
-
-  resolvers.Query["emailInboundConfig"] = async (_, args, context) => {
-    const user = context.user;
-    if (!user?.super_admin) {
-      throw new Error("Only super admins can view the inbound email configuration.");
-    }
-    const { db } = await postgresClient();
-    return toEmailInboundConfigPayload(await getEmailInboundConfig(db));
-  };
-
-  resolvers.Mutation["updateEmailInboundConfig"] = async (_, args, context) => {
-    const user = context.user;
-    if (!user?.super_admin) {
-      throw new Error("Only super admins can update the inbound email configuration.");
-    }
-    const { db } = await postgresClient();
-    const updated = await updateEmailInboundConfig(db, {
-      ...(args.provider != null ? { provider: args.provider } : {}),
-      ...(args.inbound_domain != null ? { inbound_domain: args.inbound_domain } : {}),
-      ...(args.enabled != null ? { enabled: args.enabled } : {}),
-      ...(args.signing_key ? { signing_key: args.signing_key } : {}),
-    });
-    return toEmailInboundConfigPayload(updated);
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {

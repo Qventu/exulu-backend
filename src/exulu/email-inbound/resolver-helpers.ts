@@ -4,41 +4,6 @@
 
 import { generateTriggerAddress } from "./trigger-config";
 
-export interface EmailInboundConfigShape {
-  provider: string | null;
-  inbound_domain: string | null;
-  enabled: boolean;
-  last_webhook_at: string | null;
-  signing_key: string | null;
-}
-
-export interface EmailInboundConfigPayload {
-  provider: string | null;
-  inbound_domain: string | null;
-  enabled: boolean;
-  last_webhook_at: string | null;
-  webhook_url: string | null;
-  has_signing_key: boolean;
-}
-
-/** Maps the internal config (which carries the decrypted signing key) to the
- *  API payload shape.  The signing_key itself is NEVER included (spec §8). */
-export function toEmailInboundConfigPayload(
-  inbound: EmailInboundConfigShape,
-): EmailInboundConfigPayload {
-  return {
-    provider: inbound.provider,
-    inbound_domain: inbound.inbound_domain,
-    enabled: inbound.enabled,
-    last_webhook_at: inbound.last_webhook_at,
-    webhook_url: process.env.BACKEND
-      ? process.env.BACKEND.replace(/\/+$/, "") + "/webhooks/email/mime"
-      : null,
-    // The signing key itself is write-only and NEVER returned (spec §8).
-    has_signing_key: !!inbound.signing_key,
-  };
-}
-
 export interface InsertTriggerRow {
   workflow: string;
   type: string;
