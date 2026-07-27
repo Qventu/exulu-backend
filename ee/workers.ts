@@ -1085,24 +1085,19 @@ export const createWorkers = async (
             }
 
             if (data.type === "email_intake") {
-              console.log("[EXULU] running an email intake job.", bullmqJob.name);
-
-              if (!data.inputs?.s3Key) {
-                throw new Error(`No s3Key set for email intake job.`);
+              console.log("[EXULU] running a routine webhook intake job.", bullmqJob.name);
+              if (!data.inputs?.s3Key || !data.inputs?.triggerId) {
+                throw new Error(`Missing s3Key/triggerId for email intake job.`);
               }
-
               const result = await handleEmailIntake(
                 {
                   s3Key: data.inputs.s3Key,
-                  recipient: data.inputs.recipient,
+                  triggerId: data.inputs.triggerId,
+                  format: data.inputs.format === "json" ? "json" : "eml",
                 },
                 { config, providers },
               );
-
-              return {
-                result,
-                metadata: {},
-              };
+              return { result, metadata: {} };
             }
 
             throw new Error(`Invalid job type: ${data.type} for job ${bullmqJob.name}.`);
