@@ -1206,7 +1206,8 @@ type LiteLLMModel {
     if (!hasAccess) {
       throw new Error("You don't have access to this workflow template.");
     }
-    const canWrite = await checkRecordAccess(workflowTemplate, "write", user);
+    const hasWorkflowsWriteRole = user?.super_admin || user?.role?.workflows === "write";
+    const canWrite = hasWorkflowsWriteRole && (await checkRecordAccess(workflowTemplate, "write", user));
     const rows = await db
       .from("workflow_triggers")
       .where({ workflow: args.workflow })

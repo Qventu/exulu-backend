@@ -108,22 +108,6 @@ export function validateEmailTriggerConfig(raw: unknown): EmailTriggerConfig {
   return config;
 }
 
-export function slugifyRoutineName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 30)
-    .replace(/-+$/g, "");
-  return slug || "routine";
-}
-
-/** "{routine-slug}-{8 hex}@{inbound_domain}" (spec §3.1). */
-export function generateTriggerAddress(routineName: string, inboundDomain: string): string {
-  const suffix = randomBytes(4).toString("hex");
-  return `${slugifyRoutineName(routineName)}-${suffix}@${inboundDomain}`;
-}
-
 /** Capability-URL secret for /webhooks/routine/:secret (~192 bits). */
 export function generateTriggerSecret(): string {
   return randomBytes(32).toString("base64url");
