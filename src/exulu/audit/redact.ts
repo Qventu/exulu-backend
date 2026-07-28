@@ -1,7 +1,7 @@
 // Aggressive by design: substring match, so "token" also catches accessToken.
 export const SECRET_KEY_DENYLIST = [
   "oauth", "credentials", "accesstoken", "refreshtoken",
-  "password", "secret", "token", "apikey", "authorization",
+  "password", "secret", "token", "apikey", "authorization", "nonce",
 ];
 
 // Injected by convertExuluToolsToAiSdkTools into tool inputs — never audited.
@@ -12,7 +12,7 @@ export const FRAMEWORK_INTERNAL_KEYS = new Set([
 
 const isSecretKey = (key: string, extra: string[]): boolean => {
   const k = key.toLowerCase();
-  if (extra.some((e) => e.toLowerCase() === k)) return true;
+  if (extra.some((e) => k.includes(e.toLowerCase()))) return true;
   return SECRET_KEY_DENYLIST.some((term) => k.includes(term));
 };
 
@@ -38,6 +38,13 @@ const redact = (value: unknown, redactKeys: string[], seen: WeakSet<object>): un
   return out;
 };
 
+/**
+ * Deep-cleans `value` before it is persisted to the audit log.
+ * Key matching is substring-based throughout (e.g. `"token"` catches `accessToken`).
+ * Object-valued secret keys are replaced with `"[redacted]"` to signal that a
+ * subtree was suppressed; primitive-valued secret keys are dropped entirely so
+ * the key name itself does not leak information.
+ */
 export const sanitizeData = (
   value: unknown,
   opts: { maxBytes: number; redactKeys?: string[] },
