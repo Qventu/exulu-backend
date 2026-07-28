@@ -20,7 +20,7 @@ import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
-import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import { JOB_STATUS_ENUM, TERMINAL_JOB_STATES } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
@@ -37,7 +37,7 @@ import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
-import { cancelRoutineRunRow, casJobResultState, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { cancelRoutineRunRow, casJobResultState, deleteRoutineRunRow, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
 import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
 import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -687,6 +687,7 @@ type PageInfo {
   mutationDefs += `
     cancelRoutineRun(id: ID!): RoutineRun
     retryRoutineRun(id: ID!): RoutineRun
+    deleteRoutineRun(id: ID!): ID
     `;
 
   mutationDefs += `
@@ -1720,6 +1721,21 @@ type LiteLLMModel {
 
     const updated = await db.from("job_results").where({ id: row.id }).first();
     return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
+  resolvers.Mutation["deleteRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row } = await loadRoutineRunForWrite(db, user, args.id);
+
+    if (!TERMINAL_JOB_STATES.includes(row.state)) {
+      throw new Error(
+        `Run is in state '${row.state}' and cannot be deleted — cancel it first.`,
+      );
+    }
+
+    await deleteRoutineRunRow(db, row, ExuluQueues);
+    return row.id;
   };
 
   resolvers.Mutation["runEval"] = async (_, args, context, info) => {
