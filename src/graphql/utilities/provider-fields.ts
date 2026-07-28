@@ -8,5 +8,4 @@ export const exuluProviderFields = [
   "provider",
   "authenticationInformation",
   "systemInstructions",
-  "workflows",
 ];
