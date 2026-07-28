@@ -25,6 +25,7 @@ import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
+import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
@@ -641,6 +642,9 @@ type PageInfo {
   typeDefs += `
     queue(queue: QueueEnum!): QueueResult
     `;
+  typeDefs += `
+    queues: [AvailableQueue!]!
+    `;
 
   typeDefs += `
     evals: EvalPaginationResult
@@ -922,6 +926,9 @@ type LiteLLMModel {
       iteration: undefined,
     };
   };
+
+  resolvers.Query["queues"] = async () =>
+    resolveAvailableQueues(() => exuluApp.get().queues());
 
   resolvers.Query["queue"] = async (_, args, context, info) => {
     if (!args.queue) {
@@ -2556,6 +2563,11 @@ type LiteLLMModel {
     }
     `;
 
+  modelDefs += `
+    type AvailableQueue {
+        name: String!
+    }
+    `;
   modelDefs += `
     type QueueResult {
         name: String!
