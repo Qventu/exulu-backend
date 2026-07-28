@@ -36,14 +36,14 @@ export const createAuditS3Writer = (
   const backoffMs = opts?.backoffMs ?? ((attempt: number) => Math.pow(2, attempt) * 1000);
 
   const putNdjson = async (key: string, body: string): Promise<void> => {
-    const command = new PutObjectCommand({
-      Bucket: target.s3Bucket,
-      Key: key,
-      Body: Buffer.from(body, "utf8"),
-      ContentType: "application/x-ndjson",
-    });
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const command = new PutObjectCommand({
+        Bucket: target.s3Bucket,
+        Key: key,
+        Body: Buffer.from(body, "utf8"),
+        ContentType: "application/x-ndjson",
+      });
       try {
         await c.send(command);
         return;

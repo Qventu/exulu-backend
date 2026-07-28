@@ -33,4 +33,19 @@ describe("createAuditS3Writer", () => {
     const writer = createAuditS3Writer(target, client as any, { backoffMs: () => 0 });
     await expect(writer.putNdjson("k", "body")).rejects.toThrow("boom");
   });
+
+  it("rejects after exhausting all retries on persistent SignatureDoesNotMatch and calls send exactly maxRetries times", async () => {
+    let calls = 0;
+    const client = {
+      send: async () => {
+        calls += 1;
+        const e: any = new Error("sig");
+        e.name = "SignatureDoesNotMatch";
+        throw e;
+      },
+    };
+    const writer = createAuditS3Writer(target, client as any, { maxRetries: 3, backoffMs: () => 0 });
+    await expect(writer.putNdjson("k", "body")).rejects.toMatchObject({ name: "SignatureDoesNotMatch" });
+    expect(calls).toBe(3);
+  });
 });
