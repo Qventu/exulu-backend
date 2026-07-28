@@ -312,3 +312,20 @@ export async function deleteAgentSessionData(
     .where({ entity: "agent_session", target_resource_id: sessionId })
     .del();
 }
+
+/**
+ * Deletes a run and its transcript: the linked agent_session (via
+ * deleteAgentSessionData + the session row) and the job_results row. Callers
+ * (the deleteRoutineRun resolver) enforce RBAC + the terminal-state gate.
+ */
+export async function deleteRoutineRunRow(
+  db: any,
+  row: { id: string; session?: string | null },
+  queues: { list: Map<string, { use: () => Promise<any> }> },
+): Promise<void> {
+  if (row.session) {
+    await deleteAgentSessionData(db, row.session, queues);
+    await db.from("agent_sessions").where({ id: row.session }).del();
+  }
+  await db.from("job_results").where({ id: row.id }).del();
+}
