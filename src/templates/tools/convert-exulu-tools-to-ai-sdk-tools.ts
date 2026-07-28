@@ -657,7 +657,7 @@ export const convertExuluToolsToAiSdkTools = async (
                   agent: agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
                   tool: { id: cur.id, name: cur.name, category: cur.category, authentication: cur.authentication },
                   user,
-                  projectId: (project as any)?.id ? String((project as any).id) : undefined,
+                  projectId: project ? String(project) : undefined,
                   sessionID,
                   toolCallId: options?.toolCallId,
                   input: inputs,
