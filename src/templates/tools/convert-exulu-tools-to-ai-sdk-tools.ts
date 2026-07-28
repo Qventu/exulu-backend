@@ -33,6 +33,8 @@ import { createSessionFileReadTool } from "./session-file-read-tool";
 import { createParseDocumentTool } from "./parse-document-tool";
 import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
+import { getAuditLogger } from "@SRC/exulu/audit/logger";
+import { emitToolCallAudit } from "@SRC/exulu/audit/emit-tool-call";
 
 /**
  * Tools whose outputs are consumed inline by the model and must NOT be
@@ -477,6 +479,11 @@ export const convertExuluToolsToAiSdkTools = async (
               "and options",
               options,
             );
+            const __auditStart = Date.now();
+            let __auditOutput: unknown;
+            let __auditStatus: "ok" | "error" = "ok";
+            let __auditError: unknown;
+            try {
             if (!cur.tool?.execute) {
               console.error("[EXULU] Tool execute function is undefined.", cur.tool);
               throw new Error("Tool execute function is undefined.");
@@ -621,20 +628,45 @@ export const convertExuluToolsToAiSdkTools = async (
                 yield value;
                 lastValue = value;
               }
-              if (offloadExempt) return lastValue;
+              if (offloadExempt) { __auditOutput = lastValue; return lastValue; }
               // Cap + offload the FINAL value — that is what becomes the
               // persisted tool result and what every later turn re-sends.
               const guarded = await guardToolOutput(lastValue, guardCtx);
               if (guarded !== lastValue) {
                 yield guarded;
               }
+              __auditOutput = guarded;
               return guarded;
             } else {
               const guarded = offloadExempt
                 ? response
                 : await guardToolOutput(response, guardCtx);
               yield guarded;
+              __auditOutput = guarded;
               return guarded;
+            }
+            } catch (error) {
+              __auditStatus = "error";
+              __auditError = error;
+              throw error;
+            } finally {
+              const __auditLogger = getAuditLogger(exuluConfig ?? {});
+              if (__auditLogger.shouldAuditTool(cur.id)) {
+                const __emit = emitToolCallAudit(__auditLogger, {
+                  durationMs: Date.now() - __auditStart,
+                  agent: agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
+                  tool: { id: cur.id, name: cur.name, category: cur.category, authentication: cur.authentication },
+                  user,
+                  projectId: (project as any)?.id ? String((project as any).id) : undefined,
+                  sessionID,
+                  toolCallId: options?.toolCallId,
+                  input: inputs,
+                  output: __auditOutput,
+                  status: __auditStatus,
+                  error: __auditError,
+                });
+                if (__auditLogger.failClosed) await __emit;
+              }
             }
           },
         },
