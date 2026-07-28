@@ -53,6 +53,7 @@ describe("createRunSession", () => {
     expect(row.title).toBe("Spare parts — 2026-07-15");
     expect(row.rights_mode).toBe("roles");
     expect(row.metadata).toEqual({ routine_id: "wf-1", job_result_id: "jr-1", trigger: "manual" });
+    expect(row.run).toBe("wf-1");
   });
 
   it("defaults rights_mode to private and job_result_id to null", async () => {

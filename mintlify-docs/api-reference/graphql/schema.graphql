@@ -330,6 +330,7 @@ type Mutation {
   deleteWorkflowSchedule(workflow: ID!): WorkflowScheduleReturnPayload
   cancelRoutineRun(id: ID!): RoutineRun
   retryRoutineRun(id: ID!): RoutineRun
+  deleteRoutineRun(id: ID!): ID
   drainQueue(queue: QueueEnum!): JobActionReturnPayload
   pauseQueue(queue: QueueEnum!): JobActionReturnPayload
   resumeQueue(queue: QueueEnum!): JobActionReturnPayload
@@ -1414,6 +1415,7 @@ type agent_session {
   title: String
   project: String
   metadata: JSON
+  run: String
   currenttask: String
   last_processed_at: Date
   embeddings_updated_at: Date
@@ -1433,6 +1435,7 @@ input agent_sessionInput {
   title: String
   project: String
   metadata: JSON
+  run: String
   currenttask: String
   last_processed_at: Date
   embeddings_updated_at: Date
@@ -1451,6 +1454,7 @@ input FilterAgent_session {
   title: FilterOperatorString
   project: FilterOperatorString
   metadata: FilterOperatorJSON
+  run: FilterOperatorString
   currenttask: FilterOperatorString
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
