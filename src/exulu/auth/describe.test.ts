@@ -47,4 +47,26 @@ describe("describeCredentialIdentity", () => {
     );
     expect(out).toEqual({ provider: "moco", authType: "user_credentials", account: "7" });
   });
+
+  it("returns base identity when oauth provider has no stored row", async () => {
+    // No seedOauth call — rows array is empty for this (provider, userId) pair.
+    const out = await describeCredentialIdentity(
+      { authType: "oauth", provider: "github", authorizationUrl: "", tokenUrl: "", clientId: "", clientSecret: "", scopes: [] },
+      99,
+    );
+    expect(out).toEqual({ provider: "github", authType: "oauth", account: "99" });
+  });
+
+  it("provider from auth config is not overridden by a different toolId", async () => {
+    seedOauth("google", 42, {
+      accessToken: "SECRET", scopes: "a b", expiresAt: "2030-01-01T00:00:00.000Z",
+    });
+    const out = await describeCredentialIdentity(
+      { authType: "oauth", provider: "google", authorizationUrl: "", tokenUrl: "", clientId: "", clientSecret: "", scopes: [] },
+      42,
+      "some-other-tool-id",
+    );
+    // provider is still "google" — auth.provider wins when non-empty
+    expect(out?.provider).toBe("google");
+  });
 });
