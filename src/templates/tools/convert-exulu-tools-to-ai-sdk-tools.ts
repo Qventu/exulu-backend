@@ -665,7 +665,13 @@ export const convertExuluToolsToAiSdkTools = async (
                   status: __auditStatus,
                   error: __auditError,
                 });
-                if (__auditLogger.failClosed) await __emit;
+                if (__auditLogger.failClosed) {
+                  await __emit;
+                } else {
+                  __emit.catch((error) =>
+                    console.error(`[EXULU] audit: tool-call emit failed for "${cur.id}":`, error),
+                  );
+                }
               }
             }
           },

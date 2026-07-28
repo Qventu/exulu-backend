@@ -594,7 +594,7 @@ await app.create({
 ```
 
 Records are written as newline-delimited JSON under
-`audit/dt=YYYY-MM-DD/HH/…​.ndjson`. **Secret material is never logged** — only
+`audit/dt=2026-07-28/14/1753970400000-3f8c2a1b.ndjson`. **Secret material is never logged** — only
 credential identity (provider, account, authType, non-secret scopes/expiry).
 When reusing the shared `fileUploads` bucket, the S3 lifecycle rule is not
 applied automatically (to avoid touching a bucket that also holds user files);
