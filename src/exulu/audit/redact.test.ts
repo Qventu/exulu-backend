@@ -37,4 +37,27 @@ describe("sanitizeData", () => {
     a.self = a;
     expect(() => sanitizeData(a, { maxBytes: 100 })).not.toThrow();
   });
+
+  it("drops or redacts a nonce key (plan-mandated must-never-persist)", () => {
+    const { value } = sanitizeData({ nonce: "abc", keep: 42 }, { maxBytes: 10_000 });
+    const s = JSON.stringify(value);
+    expect(s).not.toContain("abc");
+    // primitive nonce must be dropped entirely
+    expect(s).not.toContain('"nonce"');
+    expect(value).toMatchObject({ keep: 42 });
+  });
+
+  it("redactKeys substring-matches camelCase variants (e.g. 'custom' catches customField)", () => {
+    const { value } = sanitizeData(
+      { customField: "sensitive", customData: { nested: true }, keep: "ok" },
+      { maxBytes: 10_000, redactKeys: ["custom"] },
+    );
+    const s = JSON.stringify(value);
+    expect(s).not.toContain("sensitive");
+    // object-valued customData becomes "[redacted]"; primitive customField is dropped
+    expect(s).not.toContain('"customField"');
+    expect(s).toContain('"customData"');
+    expect(s).toContain("[redacted]");
+    expect(value).toMatchObject({ keep: "ok" });
+  });
 });
