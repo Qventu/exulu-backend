@@ -1,6 +1,6 @@
 ---
 title: "Email triggers"
-description: "Give a routine a dedicated inbound email address so that every matching email automatically starts a run."
+description: "Give a routine a per-trigger secret webhook URL so that every matching inbound email automatically starts a run."
 icon: "mail"
 ---
 
@@ -8,52 +8,52 @@ import { RightsCallout } from "/snippets/rights-callout.mdx";
 
 <RightsCallout right="workflows (write)" />
 
-<Note>
-  Email triggers require the platform's inbound email intake to be configured by
-  a super admin before they can be used. If the **Email trigger** section shows
-  "Email intake isn't configured", contact your super admin. See also:
-  [Email intake](/administration/email-intake) (super-admin setup guide).
-</Note>
-
 ## How it works
 
-When you enable an email trigger on a routine, IMP generates a unique inbound
-address for that routine — for example `invoice-approval-3a7f1c2b@mail.example.com`.
-Any email delivered to that address (and not blocked by the guard chain below)
+When you enable an email trigger on a routine, IMP generates a **per-trigger
+secret webhook URL**:
+
+```
+POST {BACKEND}/webhooks/routine/{secret}
+```
+
+Point your email provider's forwarding rule, mail-to-webhook bridge, or any
+HTTP client at this URL. Any delivery that passes the guard chain below
 automatically starts a new run of the routine.
 
 The run receives the email content as step variables (`{email_from}`,
 `{email_subject}`, `{email_body}`) and any attachments are added to the run's
 session so the agent can read them.
 
+For accepted payload formats (raw MIME, multipart form-data, or JSON) and HMAC
+signing details, see [Email intake](/administration/email-intake).
+
 ## The Triggers workbench section
 
-Open the routine's workbench and scroll to the **Email trigger** section. If
-email intake has not been configured by a super admin, the section shows an
-empty state. Otherwise, you see the trigger form.
+Open the routine's workbench and scroll to the **Email trigger** section. You
+see the trigger form once the routine has been saved at least once.
 
 ### Enabling the trigger
 
 Toggle **Start this routine when an email arrives** to enable or disable the
-trigger. The trigger must be enabled before incoming email starts runs — saving
-with the toggle off suspends delivery without deleting the trigger.
+trigger. The trigger must be enabled before incoming deliveries start runs —
+saving with the toggle off suspends delivery without deleting the trigger.
 
-### Inbound address
+### Webhook URL
 
-After the first save, the **Inbound address** field appears with the generated
-address. Use the copy button to copy it to your email client, webhook, or
-forwarding rule.
+After the first save, the **Webhook URL** field shows the per-trigger secret
+URL. Use the copy button to paste it into your email provider's forwarding
+settings.
 
-The address format is `{routine-slug}-{8-hex-chars}@{inbound-domain}`. The slug
-is derived from the routine name (lowercase, non-alphanumeric characters
-replaced with hyphens, truncated to 30 characters). The eight-character suffix
-is random and generated once — it does not change when you rename the routine.
+**Regenerate URL** issues a new secret immediately — the old URL stops working
+at once. Update any forwarding rules before regenerating.
 
-<Warning>
-  There is no regenerate option in the UI. The address is permanent for the
-  lifetime of the trigger. To get a new address, remove the trigger and save a
-  new one.
-</Warning>
+### Webhook signing
+
+Enable **Webhook signing** to require an `X-Exulu-Signature: sha256=<HMAC>`
+header on every delivery. The platform generates a per-trigger signing secret
+distinct from the URL secret. See [Email intake](/administration/email-intake#optional-hmac-signing)
+for the exact header format and replay-defense options.
 
 ### Allowed senders
 
@@ -130,8 +130,9 @@ responses sent by the routine's agent back to a mailing list or auto-responder
 never re-trigger the routine.
 
 **Dedup is database-backed** — it survives Redis restarts and webhook retries.
-If the platform receives the same email twice (for example a Mailgun retry), the
-second delivery finds the existing run and is silently dropped.
+If the platform receives the same email twice (for example a retry from your
+delivery bridge), the second delivery finds the existing run and is silently
+dropped.
 
 ## Email variables in steps
 
