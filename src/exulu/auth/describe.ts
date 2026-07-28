@@ -29,11 +29,11 @@ export const describeCredentialIdentity = async (
   try {
     const row = await credentialStore.get(provider, userId);
     if (!row || row.authType !== "oauth") return base;
-    const blob = row.data as OauthNonSecret;
+    const { scopes, expiresAt } = row.data as OauthNonSecret;
     return {
       ...base,
-      ...(blob.scopes ? { scopes: blob.scopes.split(" ").filter(Boolean) } : {}),
-      ...(blob.expiresAt !== undefined ? { expiresAt: blob.expiresAt } : {}),
+      ...(scopes ? { scopes: scopes.split(" ").filter(Boolean) } : {}),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
     };
   } catch (error) {
     console.error(`[EXULU] describeCredentialIdentity failed for provider "${provider}":`, error);
