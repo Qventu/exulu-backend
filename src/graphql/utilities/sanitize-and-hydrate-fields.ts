@@ -12,7 +12,6 @@ import {
   type LiteLLMCatalogEntry,
 } from "@SRC/exulu/litellm/catalog";
 import { addBudgetField, BUDGET_ENTITY_SINGULARS } from "./budget-field";
-import { getQueue } from "@SRC/exulu/get-queue";
 
 const addProviderFields = async (
   args: Record<string, any>,

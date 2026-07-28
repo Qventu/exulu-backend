@@ -745,7 +745,6 @@ export const createWorkers = async (
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent Provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {

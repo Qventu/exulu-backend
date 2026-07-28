@@ -65,7 +65,6 @@ import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
 import { uploadFile } from "@SRC/uppy";
 import { randomUUID } from "node:crypto";
-import { getQueue } from "@SRC/exulu/get-queue.ts";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 
 /* 
@@ -124,7 +123,6 @@ export function createExuluContextsTypeDefs(table: ExuluTableDefinition): string
     fields.push("  maxContextLength: Int");
     fields.push("  authenticationInformation: String");
     fields.push("  systemInstructions: String");
-    fields.push("  workflows: AgentWorkflows");
     fields.push("  slug: String");
     fields.push("  guest_has_password: Boolean");
   }
@@ -1468,7 +1466,6 @@ type LiteLLMModel {
         const retries = 3;
         let attempts = 0;
 
-        // todo allow setting queue on agent provider and then create a job with type "agent"
         const promise = new Promise<{
           messages: UIMessage[];
           metadata: {
@@ -2642,15 +2639,6 @@ type AgentCapabilities {
     files: [String]
     audio: [String]
     video: [String]
-}
-
-type AgentWorkflows {
-    enabled: Boolean
-    queue: AgentWorkflowQueue
-}
-
-type AgentWorkflowQueue {
-    name: String
 }
 
 type AgentEvalFunction {
