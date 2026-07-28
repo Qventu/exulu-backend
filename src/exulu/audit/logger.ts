@@ -61,6 +61,7 @@ class RealAuditLogger implements AuditLogger {
 }
 
 let _instance: AuditLogger | undefined;
+let _signalClose: (() => void) | undefined;
 
 const build = (
   config: { audit?: any; fileUploads?: any },
@@ -70,6 +71,7 @@ const build = (
   return resolved ? new RealAuditLogger(resolved, builtinToolIds) : noop;
 };
 
+// Call order: initAudit() runs once at app startup (with the real builtinToolIds); getAuditLogger() is for post-init access only.
 export const getAuditLogger = (config: { audit?: any; fileUploads?: any }): AuditLogger => {
   if (!_instance) _instance = build(config, new Set());
   return _instance;
@@ -87,11 +89,23 @@ export const initAudit = async (
       retentionDays: r.retentionDays,
       manage: r.manageLifecycle,
     });
+    if (_signalClose) {
+      process.off("SIGTERM", _signalClose);
+      process.off("SIGINT", _signalClose);
+    }
     const close = () => { void _instance?.close(); };
+    _signalClose = close;
     process.on("SIGTERM", close);
     process.on("SIGINT", close);
   }
   return _instance;
 };
 
-export const __resetAuditForTests = (): void => { _instance = undefined; };
+export const __resetAuditForTests = (): void => {
+  if (_signalClose) {
+    process.off("SIGTERM", _signalClose);
+    process.off("SIGINT", _signalClose);
+    _signalClose = undefined;
+  }
+  _instance = undefined;
+};
