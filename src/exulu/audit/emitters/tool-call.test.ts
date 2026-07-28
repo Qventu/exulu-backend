@@ -3,6 +3,7 @@ jest.mock("@SRC/exulu/auth/describe", () => ({
 }));
 
 import { buildToolCallEvent } from "./tool-call";
+import { describeCredentialIdentity } from "@SRC/exulu/auth/describe";
 
 const opts = { maxBytes: 10_000, captureOutput: true, redactKeys: [], nowIso: () => "2026-07-28T00:00:00.000Z" };
 
@@ -47,6 +48,25 @@ describe("buildToolCallEvent", () => {
 
     const authEv = await buildToolCallEvent({ ...baseCtx, output: { credentialRequest: { provider: "google" } } }, opts);
     expect(authEv.status).toBe("auth_required");
+    expect(authEv.data?.output).toBeUndefined();
+  });
+
+  it("oauth.authorizationUrl short-circuit yields auth_required and suppresses output", async () => {
+    const ev = await buildToolCallEvent(
+      { ...baseCtx, output: { oauth: { authorizationUrl: "https://x/authorize?state=NONCE" } } },
+      opts,
+    );
+    expect(ev.status).toBe("auth_required");
+    expect(ev.data?.output).toBeUndefined();
+  });
+
+  it("omits credential key when describeCredentialIdentity returns undefined", async () => {
+    jest.mocked(describeCredentialIdentity).mockResolvedValueOnce(undefined as any);
+    const ev = await buildToolCallEvent(
+      { ...baseCtx, tool: { ...baseCtx.tool, authentication: { authType: "oauth", provider: "google" } as any } },
+      opts,
+    );
+    expect("credential" in ev).toBe(false);
   });
 
   it("omits output when captureOutput is false", async () => {
