@@ -88,6 +88,14 @@ const agentSessionsSchema: ExuluTableDefinition = {
       type: "json",
     },
     {
+      // The routine/workflow (workflow_template) this session is a run of.
+      // Null for regular user chats; chat history filters run = null so
+      // routine-run sessions do not appear there. Populated by createRunSession.
+      name: "run",
+      type: "uuid",
+      required: false,
+    },
+    {
       name: "currenttask",
       type: "text",
       required: false,
