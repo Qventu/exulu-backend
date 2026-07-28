@@ -41,6 +41,7 @@ describe("jsonToInboundEmail", () => {
   it("throws on missing/invalid from", () => {
     expect(() => jsonToInboundEmail({})).toThrow(/from/i);
     expect(() => jsonToInboundEmail({ from: 123 })).toThrow(/from/i);
+    expect(() => jsonToInboundEmail({ from: "@" })).toThrow(/from/i);
   });
 
   it("throws on malformed base64 attachment", () => {
@@ -81,5 +82,18 @@ describe("extractMultipartMimePart", () => {
   it("throws when no known MIME field is present", async () => {
     const { buffer, contentType } = build("other", "z");
     await expect(extractMultipartMimePart(buffer, contentType)).rejects.toThrow(/body-mime|email|message/i);
+  });
+
+  it("preserves 8-bit MIME bytes (latin1 fidelity — byte-for-byte round-trip)", async () => {
+    // A MIME header + body containing high bytes: ü = 0xFC, é = 0xE9
+    const original = "Subject: Gr\xFCße\r\n\r\ncaf\xE9";
+    const boundary = "----exulutest8bit";
+    // Build the multipart body using latin1 so high bytes survive as-is
+    const bodyStr = `--${boundary}\r\nContent-Disposition: form-data; name="body-mime"\r\n\r\n${original}\r\n--${boundary}--\r\n`;
+    const buffer = Buffer.from(bodyStr, "latin1");
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    const result = await extractMultipartMimePart(buffer, contentType);
+    // The returned Buffer must match the original latin1 bytes exactly
+    expect(result.equals(Buffer.from(original, "latin1"))).toBe(true);
   });
 });

@@ -18,10 +18,10 @@ const htmlToText = (html: string): string =>
     .trim();
 
 const parseFrom = (from: unknown): { address: string; name?: string } => {
-  if (typeof from === "string" && from.includes("@")) return { address: from.trim() };
+  if (typeof from === "string" && /.+@.+/.test(from)) return { address: from.trim() };
   if (from && typeof from === "object") {
     const address = (from as any).address;
-    if (typeof address === "string" && address.includes("@")) {
+    if (typeof address === "string" && /.+@.+/.test(address)) {
       const name = (from as any).name;
       return typeof name === "string" && name ? { address: address.trim(), name } : { address: address.trim() };
     }
@@ -54,7 +54,7 @@ const MIME_FIELD_NAMES = new Set(["body-mime", "email", "message"]);
 export function extractMultipartMimePart(rawBody: Buffer, contentType: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let found: Buffer | null = null;
-    const bb = Busboy({ headers: { "content-type": contentType }, defParamCharset: "latin1" });
+    const bb = Busboy({ headers: { "content-type": contentType }, defCharset: "latin1" });
     bb.on("field", (name: string, value: string) => {
       if (found === null && MIME_FIELD_NAMES.has(name.toLowerCase())) {
         found = Buffer.from(value, "latin1"); // byte-fidelity for 8-bit MIME

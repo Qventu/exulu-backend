@@ -75,9 +75,12 @@ describe("createRoutineWebhookHandler", () => {
   });
 
   it("503s without the queues entitlement", async () => {
+    const deps = makeDeps({ licensedForQueues: () => false });
     const res = makeRes();
-    await createRoutineWebhookHandler(makeDeps({ licensedForQueues: () => false }))(makeReq() as any, res);
+    await createRoutineWebhookHandler(deps)(makeReq() as any, res);
     expect(res.statusCode).toBe(503);
+    expect(deps.putRawPayload).not.toHaveBeenCalled();
+    expect(deps.enqueueIntake).not.toHaveBeenCalled();
   });
 
   it("429s when the rate limit is exceeded, without persisting or enqueuing", async () => {

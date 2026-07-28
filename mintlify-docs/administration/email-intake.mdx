@@ -90,7 +90,7 @@ Requests without a valid signature are rejected with `401`. Unsigned deliveries 
 
 ### Persist-before-ACK
 
-Once the payload is parsed and any signature check passes, the platform stores the email to the database **before** returning `200 OK`. The intake job is enqueued only after the email is durably persisted. A storage or crash failure returns `5xx` — your sender should retry.
+Once the payload is parsed and any signature check passes, the platform persists the raw payload to object storage (S3) **before** returning `200 OK`. The intake job is enqueued only after the payload is durably stored. A storage or crash failure returns `5xx` — your sender should retry.
 
 ### Guard chain
 
