@@ -86,10 +86,10 @@ Two backend HTTP endpoints must be reachable from the public internet — not on
 
 | Endpoint | Used by | Notes |
 |---|---|---|
-| `POST /webhooks/email/mime` | Mailgun inbound-routing | Signed with the Mailgun webhook signing key; the backend verifies the signature before processing. The email is persisted to the database before the 2xx ACK is returned so that a restart mid-processing does not silently lose the message. |
+| `POST /webhooks/routine/{secret}` | Email triggers (inbound email) | Each routine trigger has its own capability-URL secret. The backend parses raw RFC 822 MIME, Mailgun-style multipart, or a JSON body. Optional per-trigger HMAC signing (`X-Exulu-Signature`). The email is persisted before the 2xx ACK is returned so that a restart mid-processing does not silently lose the message. |
 | `POST /recall/webhooks` | Recall.ai bot events | Receives `bot.*` and `recording.done` events. The handler ACKs with 2xx before processing; the reconcile loop (see [Troubleshooting](/self-hosting/troubleshooting)) re-drives any job that is stranded by a crash between the ACK and completion. |
 
-**Exposure guidance.** Both paths must be reachable on the public URL you registered with the respective service (Mailgun inbound route, Recall webhook subscription).
+**Exposure guidance.** Both paths must be reachable on the public URL you set in `BACKEND` (used for routine webhook URLs and for Recall webhook subscription).
 
 - Route traffic through your reverse proxy (Traefik, nginx, Caddy) to the backend's internal port `9001`.
 - If the backend sits behind a trusted proxy that appends the real client IP to `X-Forwarded-For`, set `EXULU_TRUST_PROXY=true`. Without this flag, the raw socket address is used for rate-limit keying — which will be the proxy's IP, not the originating client's.
