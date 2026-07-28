@@ -555,7 +555,6 @@ export const recallService = {
       const resolved = await resolveModel({
         modelId: agent.model,
         user,
-        providers: exuluApp.get().providers,
         agent,
       });
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { generateText, validateUIMessages, type LanguageModel, type UIMessage } from "ai";
 import type { User } from "@EXULU_TYPES/models/user";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
-import { getAgentMessages, saveChat } from "./provider";
+import { getAgentMessages, saveChat } from "./generate-stream";
 import {
   COMPACTION_INSUFFICIENT,
   deriveContextBudget,

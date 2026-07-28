@@ -2,8 +2,6 @@ import type { TestCase } from "@EXULU_TYPES/models/test-case";
 import { type UIMessage } from "ai";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
-import type { ExuluProvider } from "./provider";
-import { checkLicense } from "@EE/entitlements";
 
 interface ExuluEvalParams {
   id: string;
@@ -12,7 +10,6 @@ interface ExuluEvalParams {
   llm: boolean;
   execute: (params: {
     agent: ExuluAgent;
-    provider: ExuluProvider;
     messages: UIMessage[];
     testCase: TestCase;
     config?: Record<string, any>;
@@ -32,7 +29,6 @@ export class ExuluEval {
   private execute: (params: {
     agent: ExuluAgent;
     testCase: TestCase;
-    provider: ExuluProvider;
     messages: UIMessage[];
     config?: Record<string, any>;
   }) => Promise<number>;
@@ -55,13 +51,12 @@ export class ExuluEval {
 
   public async run(
     agent: ExuluAgent,
-    provider: ExuluProvider,
     testCase: TestCase,
     messages: UIMessage[],
     config?: Record<string, any>,
   ): Promise<number> {
     try {
-      const score = await this.execute({ agent, provider, testCase, messages, config });
+      const score = await this.execute({ agent, testCase, messages, config });
       if (score < 0 || score > 100) {
         throw new Error(
           `Eval function ${this.name} must return a score between 0 and 100, got ${score}`,

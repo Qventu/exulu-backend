@@ -184,8 +184,7 @@ if ((contextState === "ok" && !manualOpen) || !session || session.id === "new") 
 - `app/(application)/chat/components/composer.tsx` — submit-time regex interception; `manualCompactOpen` state; `executeCompactCommand` helper; wire `AttachMenu.onCompactRequest`; pass banner props.
 - `app/(application)/chat/components/attach-menu.tsx` — new `onCompactRequest` prop; new "Compact conversation" `MenuEntry`; disabled logic.
 - `app/(application)/chat/components/context-banner.tsx` — accept `manualOpen` / `onCloseManual`; manual-mode branch (neutral tones, `Archive` icon, close button, steer open by default).
-- `messages/en.json` — new keys: `chat.commands.compact.label`, `.description`, `.successToast`; `chat.attach.compact`, `.compactDescription`, `.compactDisabled`; `chat.context.manualTitle`, `.manualBody`, `.manualClose`.
-- `messages/nl.json`, `messages/de.json` — mirror keys.
+- `messages/en.json`, `messages/de.json` — new keys: `chat.commands.compact.label`, `.description`, `.successToast`; `chat.attach.compact`, `.compactDescription`, `.compactDisabled`; `chat.context.manualTitle`, `.manualBody`, `.manualClose`.
 - `app/(application)/chat/components/composer-autocomplete/matching.test.ts` — filter-rule tests; `parseCompactInput` regex tests.
 
 ## Files unchanged

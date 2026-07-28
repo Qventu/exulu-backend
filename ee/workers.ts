@@ -29,8 +29,7 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
 import { updateStatistic } from "@SRC/exulu/statistics";
-import type { ExuluProvider } from "@SRC/exulu/provider.ts";
-import { saveChat, getAgentMessages } from "@SRC/exulu/provider.ts";
+import { saveChat, getAgentMessages, generateStream } from "@SRC/exulu/generate-stream";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
@@ -132,7 +131,6 @@ const installGlobalErrorHandlers = () => {
 let isShuttingDown = false;
 
 export const createWorkers = async (
-  providers: ExuluProvider[],
   queues: ExuluQueueConfig[],
   config: ExuluConfig,
   contexts: ExuluContext[],
@@ -525,11 +523,10 @@ export const createWorkers = async (
 
               const {
                 agent,
-                provider,
                 user,
                 workflow,
                 messages: inputMessages,
-              } = await validateWorkflowPayload(data, providers);
+              } = await validateWorkflowPayload(data);
 
               // Session-backed runs (spec §3.4): reuse the session provided by
               // the enqueuer (email intake / continuation / retry / previous
@@ -576,9 +573,7 @@ export const createWorkers = async (
                     // + substituted text) — pass a fresh deep copy each attempt
                     // so a retry/resume never reuses the mutated array.
                     const messages = await processUiMessagesFlow({
-                      providers,
                       agent,
-                      provider,
                       inputMessages: structuredClone(inputMessages),
                       contexts,
                       user,
@@ -741,12 +736,11 @@ export const createWorkers = async (
 
               const {
                 agent,
-                provider,
                 user,
                 evalRun,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, providers);
+              } = await validateEvalPayload(data);
 
               const retries = 3;
               let attempts = 0;
@@ -768,9 +762,7 @@ export const createWorkers = async (
                 while (attempts < retries) {
                   try {
                     const messages = await processUiMessagesFlow({
-                      providers,
                       agent,
-                      provider,
                       inputMessages,
                       contexts,
                       user,
@@ -877,7 +869,6 @@ export const createWorkers = async (
                 } else {
                   result = await evalMethod.run(
                     agent,
-                    provider,
                     testCase,
                     messages,
                     evalFunction.config || {},
@@ -971,10 +962,9 @@ export const createWorkers = async (
               const {
                 evalRun,
                 agent,
-                provider,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, providers);
+              } = await validateEvalPayload(data);
 
               const evalFunctions: {
                 id: string;
@@ -995,7 +985,6 @@ export const createWorkers = async (
 
                 result = await evalMethod.run(
                   agent,
-                  provider,
                   testCase,
                   inputMessages,
                   evalFunction.config || {},
@@ -1095,7 +1084,7 @@ export const createWorkers = async (
                   triggerId: data.inputs.triggerId,
                   format: data.inputs.format === "json" ? "json" : "eml",
                 },
-                { config, providers },
+                { config },
               );
               return { result, metadata: {} };
             }
@@ -1308,10 +1297,8 @@ export const createWorkers = async (
 
 export const validateWorkflowPayload = async (
   data: BullMqJobData,
-  providers: ExuluProvider[],
 ): Promise<{
   agent: ExuluAgent;
-  provider: ExuluProvider;
   user: User;
   workflow: ExuluWorkflow;
   variables: Record<string, any>;
@@ -1343,12 +1330,6 @@ export const validateWorkflowPayload = async (
     throw new Error(`Agent ${workflow.agent} not found in the database.`);
   }
 
-  const provider = providers.find((a) => a.id === agent.provider);
-
-  if (!provider) {
-    throw new Error(`Provider ${agent.provider} not found in the database.`);
-  }
-
   const user = await db.from("users").where({ id: data.user }).first();
 
   if (!user) {
@@ -1357,7 +1338,6 @@ export const validateWorkflowPayload = async (
 
   return {
     agent,
-    provider,
     user,
     workflow,
     variables: data.inputs,
@@ -1367,10 +1347,8 @@ export const validateWorkflowPayload = async (
 
 const validateEvalPayload = async (
   data: BullMqJobData,
-  providers: ExuluProvider[],
 ): Promise<{
   agent: ExuluAgent;
-  provider: ExuluProvider;
   user: User;
   testCase: TestCase;
   evalRun: EvalRun;
@@ -1414,12 +1392,6 @@ const validateEvalPayload = async (
     throw new Error(`Agent ${evalRun.agent_id} not found in the database.`);
   }
 
-  const provider = providers.find((a) => a.id === agent.provider);
-
-  if (!provider) {
-    throw new Error(`Provider ${agent.provider} not found in the database.`);
-  }
-
   const user = await db.from("users").where({ id: data.user }).first();
 
   if (!user) {
@@ -1434,7 +1406,6 @@ const validateEvalPayload = async (
 
   return {
     agent,
-    provider,
     user,
     testCase,
     evalRun,
@@ -1498,9 +1469,7 @@ const pollJobResult = async ({
 };
 
 export const processUiMessagesFlow = async ({
-  providers,
   agent,
-  provider,
   inputMessages,
   contexts,
   user,
@@ -1512,9 +1481,7 @@ export const processUiMessagesFlow = async ({
   resumeFromIndex,
   respectToolApprovals,
 }: {
-  providers: ExuluProvider[];
   agent: ExuluAgent;
-  provider: ExuluProvider;
   inputMessages: UIMessage[];
   contexts: ExuluContext[];
   user: User;
@@ -1574,7 +1541,6 @@ export const processUiMessagesFlow = async ({
     tools,
     contexts,
     disabledTools,
-    providers,
     user,
   );
 
@@ -1592,11 +1558,10 @@ export const processUiMessagesFlow = async ({
   const resolved = await resolveModel({
     modelId: agent.model,
     user,
-    providers,
     agent: agent,
     routine,
   });
-  const providerapikey = resolved.apiKey;
+
   const resolvedLanguageModel = resolved.languageModel;
 
   // Remove placeholder agent response before sending
@@ -1693,7 +1658,7 @@ export const processUiMessagesFlow = async ({
           const startTime = Date.now();
 
           try {
-            const result = await provider.generateStream({
+            const result = await generateStream({
               contexts,
               agent: agent,
               user,
@@ -1709,7 +1674,6 @@ export const processUiMessagesFlow = async ({
               currentTools: enabledTools,
               allExuluTools: tools,
               languageModel: resolvedLanguageModel,
-              providerapikey,
               toolConfigs: agent.tools,
               exuluConfig: config,
             });

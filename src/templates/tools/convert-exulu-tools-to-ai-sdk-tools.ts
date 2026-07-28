@@ -168,7 +168,6 @@ export const convertExuluToolsToAiSdkTools = async (
   approvedTools: string[] | undefined,
   allExuluTools: ExuluTool[] | undefined,
   configs: ExuluAgentToolConfig[] | undefined,
-  providerapikey?: string,
   contexts?: ExuluContext[],
   user?: User,
   exuluConfig?: ExuluConfig,
@@ -584,7 +583,6 @@ export const convertExuluToolsToAiSdkTools = async (
                 // Convert config to object format if a config object
                 // is available, after we added the .value property
                 // by hydrating it from the variables table.
-                providerapikey: providerapikey,
                 allExuluTools,
                 currentTools,
                 user,

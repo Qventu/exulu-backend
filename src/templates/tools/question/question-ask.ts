@@ -4,7 +4,7 @@ import { ExuluTool } from "@SRC/exulu/tool.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { AgentSession } from "@EXULU_TYPES/models/agent-session";
 import { postgresClient } from "../../../postgres/client";
-import { getSession } from "@SRC/exulu/provider";
+import { getSession } from "@SRC/exulu/generate-stream";
 import { randomUUID } from "node:crypto";
 
 const AnswerOptionSchema = z.object({

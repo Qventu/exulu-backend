@@ -70,7 +70,6 @@ const tables: ExuluTableDefinition[] = TABLE_FACTORIES.filter(
 const schema = createSDL(
   tables,
   [], // contexts — dynamic per deployment, documented as patterns
-  [], // providers — dynamic per deployment
   [], // tools — dynamic per deployment
   {} as ExuluConfig, // config — only threaded into resolvers, not the SDL shape
   [], // evals — dynamic per deployment

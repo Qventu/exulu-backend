@@ -182,61 +182,6 @@ const up = async function (knex: Knex) {
     );
   }
 
-  // One-time data migration: agents.provider + agents.providerapikey  ->  models row + agents.model
-  // Idempotent: gated on existence of the old columns. After first successful run the columns
-  // are dropped and the block is a no-op on every subsequent boot.
-  const hasOldProviderCol = await knex.schema.hasColumn("agents", "provider");
-  const hasOldKeyCol = await knex.schema.hasColumn("agents", "providerapikey");
-
-  if (hasOldProviderCol || hasOldKeyCol) {
-    console.log("[EXULU] Migrating agents.provider/providerapikey -> models table.");
-
-    await knex.transaction(async (trx) => {
-      const pairs: { provider: string; providerapikey: string | null }[] = await trx("agents")
-        .distinct("provider", "providerapikey")
-        .whereNotNull("provider");
-
-      const pairToModelId = new Map<string, string>();
-      for (const { provider, providerapikey } of pairs) {
-        const inserted = await trx("models")
-          .insert({
-            name: `${provider}${providerapikey ? ` (${providerapikey})` : ""}`,
-            provider,
-            authvariable: providerapikey,
-            active: true,
-            rights_mode: "public",
-            created_by: 1,
-          })
-          .returning("id");
-        const id = inserted[0]?.id;
-        if (!id) {
-          throw new Error("[EXULU] Migration: failed to insert models row");
-        }
-        pairToModelId.set(`${provider}::${providerapikey ?? ""}`, id);
-      }
-
-      for (const [key, modelId] of pairToModelId) {
-        const [provider, providerapikey] = key.split("::");
-        const where: { provider: string; providerapikey: string | null } = {
-          provider: provider!,
-          providerapikey: providerapikey ? providerapikey : null,
-        };
-        await trx("agents").where(where).update({ model: modelId });
-      }
-
-      if (hasOldProviderCol) {
-        await trx.schema.alterTable("agents", (t) => t.dropColumn("provider"));
-      }
-      if (hasOldKeyCol) {
-        await trx.schema.alterTable("agents", (t) => t.dropColumn("providerapikey"));
-      }
-
-      console.log(
-        `[EXULU] Migrated ${pairToModelId.size} unique provider+key pairs into models.`,
-      );
-    });
-  }
-
   // Next auth tables
   if (!(await knex.schema.hasTable("verification_token"))) {
     console.log("[EXULU] Creating verification_token table.");

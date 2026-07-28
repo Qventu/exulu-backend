@@ -146,7 +146,6 @@ async function resolveVlmModel(
 
   const { languageModel } = await resolveModel({
     modelId,
-    providers: [], // unused in LiteLLM mode; resolveModel ignores it there
     user: config?.attribution?.user,
     project: config?.attribution?.project,
     agent: config?.attribution?.agent,
