@@ -5,6 +5,19 @@ import { BullMQOtel } from "bullmq-otel";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { checkLicense } from "@EE/entitlements";
 
+/**
+ * Built-in/system queues that ExuluApp registers automatically. They back
+ * internal processing (eval runs, inbound email intake) and must never be
+ * offered to users as a routine's run queue — the `queues` GraphQL query
+ * excludes them (see resolveAvailableQueues). Underscore, not hyphen:
+ * registered queue names are interpolated verbatim into the GraphQL QueueEnum,
+ * where "-" is illegal.
+ */
+export const global_queues = {
+  eval_runs: "eval_runs",
+  email_intake: "email_intake",
+};
+
 // Used for workflows and embedders
 class ExuluQueues {
   queues: {
