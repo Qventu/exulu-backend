@@ -44,7 +44,7 @@ export class AuditSink {
   private objectKey(): string {
     const d = this.now();
     const dt = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-    return `${this.cfg.target.s3prefix}dt=${dt}/${pad(d.getUTCHours())}/${Date.now()}-${randomUUID()}.ndjson`;
+    return `${this.cfg.target.s3prefix}dt=${dt}/${pad(d.getUTCHours())}/${d.getTime()}-${randomUUID()}.ndjson`;
   }
 
   private serialize(events: AuditEvent[]): string {
