@@ -33,7 +33,7 @@ export const buildToolCallEvent = async (
   }
 
   let credential: AuditEvent["credential"];
-  if (ctx.tool.authentication && ctx.user?.id !== undefined) {
+  if (ctx.tool.authentication && ctx.user?.id != null) {
     credential = await describeCredentialIdentity(
       ctx.tool.authentication,
       Number(ctx.user.id),
