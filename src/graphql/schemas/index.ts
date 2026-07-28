@@ -16,7 +16,7 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
-import { queues as ExuluQueues } from "@EE/queues/queues";
+import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
@@ -926,7 +926,10 @@ type LiteLLMModel {
   };
 
   resolvers.Query["queues"] = async () =>
-    resolveAvailableQueues(() => exuluApp.get().queues());
+    resolveAvailableQueues(
+      () => exuluApp.get().queues(),
+      Object.values(global_queues),
+    );
 
   resolvers.Query["queue"] = async (_, args, context, info) => {
     if (!args.queue) {

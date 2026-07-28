@@ -1,5 +1,5 @@
 import { type Express } from "express";
-import { createExpressRoutes, global_queues } from "@SRC/exulu/routes.ts";
+import { createExpressRoutes } from "@SRC/exulu/routes.ts";
 import { ExuluMCP } from "@SRC/mcp/index.ts";
 import express from "express";
 import { trace, type Tracer } from "@opentelemetry/api";
@@ -9,7 +9,7 @@ import winston, { type transport } from "winston";
 import util from "util";
 import { redisServer } from "@EE/queues/server.ts";
 import { getDefaultEvals } from "@SRC/templates/evals/index.ts";
-import { queues as ExuluQueues } from "@EE/queues/queues";
+import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { todoTools } from "@SRC/templates/tools/todo/todo.ts";
 import { questionTools } from "@SRC/templates/tools/question/question.ts";
 import { perplexityTools } from "@SRC/templates/tools/perplexity.ts";
@@ -141,7 +141,7 @@ export class ExuluApp {
   private _agents: ExuluAgent[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
-  private _queues: Promise<ExuluQueueConfig>[] = [];
+  private _queues: ExuluQueueConfig[] = [];
   private _contexts?: Record<string, ExuluContext> = {};
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
@@ -680,8 +680,11 @@ export class ExuluApp {
         // a list of queue names the worker should listen to. If not
         // defined, the worker will listen to all queues.
         let filteredQueues = this._queues;
+
         if (queues) {
-          filteredQueues = filteredQueues.filter((q) => queues.includes(q.queue.name));
+          filteredQueues = filteredQueues.filter((q) => queues.includes(
+            q.queue.name
+          ));
         }
 
         // Create ContextSource schedulers

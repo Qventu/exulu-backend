@@ -91,7 +91,7 @@ import {
 } from "./litellm/budget-service.ts";
 import { getMyUsageView, resolveUsageWindow } from "./litellm/usage-view.ts";
 import multer from "multer";
-import { queues as ExuluQueues } from "@EE/queues/queues";
+import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { redisClient } from "@SRC/redis/client.ts";
 import { createRoutineWebhookHandler, routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
@@ -151,13 +151,6 @@ const getExuluVersionNumber = async () => {
   } catch (error: any) {
     console.error("Could not find or import package.json:", error.message);
   }
-};
-
-export const global_queues = {
-  eval_runs: "eval_runs",
-  // Underscore, not hyphen: registered queue names are interpolated
-  // verbatim into the GraphQL QueueEnum, where "-" is illegal.
-  email_intake: "email_intake",
 };
 
 const {

@@ -22,4 +22,22 @@ describe("resolveAvailableQueues", () => {
   it("returns [] when no queues are registered", () => {
     expect(resolveAvailableQueues(() => [])).toEqual([]);
   });
+
+  it("excludes built-in/system (global) queues", () => {
+    const getQueues = () => [
+      cfg("eval_runs"),
+      cfg("reports"),
+      cfg("email_intake"),
+      cfg("summaries"),
+    ];
+    expect(
+      resolveAvailableQueues(getQueues, ["eval_runs", "email_intake"]),
+    ).toEqual([{ name: "reports" }, { name: "summaries" }]);
+  });
+
+  it("without exclusions, returns every registered queue", () => {
+    expect(resolveAvailableQueues(() => [cfg("only")])).toEqual([
+      { name: "only" },
+    ]);
+  });
 });
