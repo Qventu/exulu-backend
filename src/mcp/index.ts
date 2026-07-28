@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { ExuluProvider } from "@SRC/exulu/provider";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
@@ -21,6 +20,7 @@ import { z } from "zod";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import { exuluApp } from "@SRC/exulu/app/singleton.ts";
+import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 // Create an MCP server
 
 export class ExuluMCP {
@@ -39,7 +39,6 @@ export class ExuluMCP {
     user,
     agent,
     allTools,
-    allProviders,
     allContexts,
     config,
   }: {
@@ -47,7 +46,6 @@ export class ExuluMCP {
     user: User;
     tracer?: Tracer;
     allTools: ExuluTool[];
-    allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
     config: ExuluConfig;
   }): Promise<McpServer> => {
@@ -71,8 +69,7 @@ export class ExuluMCP {
       allTools,
       allContexts,
       disabledTools,
-      allProviders,
-      user,
+      user
     );
 
     if (!agent.model) {
@@ -81,22 +78,13 @@ export class ExuluMCP {
       );
     }
 
-    const resolved = await resolveModel({
-      modelId: agent.model,
-      user,
-      providers: allProviders,
-      agent: agent,
-    });
-    const providerapikey = resolved.apiKey;
-
     // Add the agent itself as a tool so MCP clients can also call the
     // agent directly, instead of just its tools. Skipped in LiteLLM mode:
-    // ExuluProvider.tool() depends on the in-code provider's generateSync,
+    // Agent as tool depends on the in-code provider's generateSync,
     // which doesn't exist when models route through LiteLLM.
     if (!isLiteLLMEnabled()) {
-      const agentTool = await resolved.exuluProvider.tool(
+      const agentTool = await createAgentTool(
         agent.id,
-        allProviders,
         allContexts,
       );
       if (agentTool) {
@@ -136,7 +124,6 @@ export class ExuluMCP {
             [],
             allTools,
             configValues,
-            providerapikey,
             allContexts,
             user,
             config,
@@ -327,13 +314,11 @@ export class ExuluMCP {
   create = async ({
     express,
     allTools,
-    allProviders,
     allContexts,
     config,
   }: {
     express: Express;
     allTools: ExuluTool[];
-    allProviders: ExuluProvider[];
     allContexts: ExuluContext[];
     config: ExuluConfig;
   }): Promise<Express> => {
@@ -389,7 +374,6 @@ export class ExuluMCP {
         agent,
         user,
         allTools,
-        allProviders,
         allContexts,
         config,
       });

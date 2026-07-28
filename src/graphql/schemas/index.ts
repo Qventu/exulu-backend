@@ -8,8 +8,6 @@ import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-mod
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
-import type { ExuluProvider } from "@SRC/exulu/provider";
-import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
@@ -66,6 +64,8 @@ import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
 import { uploadFile } from "@SRC/uppy";
 import { randomUUID } from "node:crypto";
+import { getQueue } from "@SRC/exulu/get-queue.ts";
+import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -276,7 +276,6 @@ export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): 
 export function createSDL(
   tables: ExuluTableDefinition[],
   contexts: ExuluContext[],
-  providers: ExuluProvider[],
   tools: ExuluTool[],
   config: ExuluConfig,
   evals: ExuluEval[],
@@ -598,10 +597,10 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-    Object.assign(resolvers.Query, createQueries(table, providers, tools, contexts));
+    Object.assign(resolvers.Query, createQueries(table, tools, contexts));
     Object.assign(
       resolvers.Mutation,
-      createMutations(table, providers, contexts, tools, config),
+      createMutations(table, contexts, tools, config),
     );
 
     // Add RBAC resolver if enabled
@@ -865,19 +864,6 @@ type LiteLLMModel {
 }
 `;
 
-  resolvers.Query["providers"] = async (_, args, context, info) => {
-    const requestedFields = getRequestedFields(info);
-    return {
-      items: providers.map((provider) => {
-        const object = {};
-        requestedFields.forEach((field) => {
-          object[field] = provider[field];
-        });
-        return object;
-      }),
-    };
-  };
-
   // litellmCatalog: returns the list of models LiteLLM is currently configured
   // to expose. Empty array when LiteLLM is off / misconfigured so callers can
   // invoke this unconditionally. Cache lives in the shared catalog module so
@@ -927,31 +913,6 @@ type LiteLLMModel {
     const agent = await exuluApp.get().agent(workflowTemplate.agent);
     if (!agent) {
       throw new Error("Agent instance not found for workflow template.");
-    }
-
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-      const scheduler = await queue!.queue?.getJobScheduler(args.workflow + "-workflow-schedule");
-      if (scheduler) {
-        return {
-          id: scheduler.id,
-          schedule: scheduler.pattern,
-          next: scheduler.next,
-          iteration: scheduler.iterationCount,
-        };
-      }
     }
 
     return {
@@ -1032,26 +993,6 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-      await queue!.queue?.removeJobScheduler(args.workflow + "-workflow-schedule");
-      return {
-        status: "deleted",
-      };
-    }
-
     return {
       status: "not found",
     };
@@ -1100,26 +1041,10 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-    }
-
     const jobData: BullMqJobData = {
       label: `Workflow Run ${workflow_template_id}`,
       trigger: "api",
-      timeoutInSeconds: queue?.timeoutInSeconds || 180, // default to 3 minutes
+      timeoutInSeconds: 180, // default to 3 minutes
       type: "workflow",
       workflow: workflow_template_id,
       inputs: args.variables,
@@ -1131,10 +1056,21 @@ type LiteLLMModel {
       triggerMetadata: { cron: args.schedule },
     };
 
+    if (!workflowTemplate.queue) {
+      throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
+    }
+    
+    const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+    const queue = queues.find(x => x.queue.name === workflowTemplate.queue);
+  
+    if (!queue) {
+      throw new Error("Queue " + workflowTemplate.queue + " not found as a registered queue in ExuluApp.")
+    }
+
     if (!queue) {
       throw new Error(
-        "Queue not found for provider: " +
-        provider?.id +
+        "Queue not found for id: " +
+        workflowTemplate.queue +
         " for workflow template: " +
         workflow_template_id,
       );
@@ -1378,7 +1314,7 @@ type LiteLLMModel {
     );
     const s3Key = fullKey.slice(fullKey.indexOf("/") + 1);
 
-    const outcome = await handleEmailIntake({ s3Key, triggerId: trigger.id, format }, { config, providers });
+    const outcome = await handleEmailIntake({ s3Key, triggerId: trigger.id, format }, { config });
     if (outcome.outcome === "fired") return { outcome: "fired", jobResultId: outcome.jobResultId };
     if (outcome.outcome === "filtered") return { outcome: "filtered", filteredReason: outcome.reason };
     if (outcome.outcome === "failed") return { outcome: "error", error: "Payload failed to parse." };
@@ -1419,19 +1355,24 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
+    if (!workflowTemplate.queue) {
+      throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
+    }
+    
+    const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+    const queue = queues.find(x => x.queue.name === workflowTemplate.queue);
+  
+    if (!queue) {
+      throw new Error("Queue " + workflowTemplate.queue + " not found as a registered queue in ExuluApp.")
     }
 
-    let queue: ExuluQueueConfig | undefined;
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
+    if (!queue) {
+      throw new Error(
+        "Queue not found for id: " +
+        workflowTemplate.queue +
+        " for workflow template: " +
+        workflow_template_id,
+      );
     }
 
     const jobData: BullMqJobData = {
@@ -1495,11 +1436,10 @@ type LiteLLMModel {
       try {
         const {
           agent,
-          provider,
           user,
           workflow,
           messages: inputMessages,
-        } = await validateWorkflowPayload(jobData, providers);
+        } = await validateWorkflowPayload(jobData);
 
         // Session-backed (spec §3.4) — but keep the legacy blanket approval:
         // without a queue there is no worker to resume a paused run.
@@ -1538,9 +1478,7 @@ type LiteLLMModel {
           while (attempts < retries) {
             try {
               const messages = await processUiMessagesFlow({
-                providers,
                 agent,
-                provider,
                 inputMessages,
                 contexts,
                 user,
@@ -2441,11 +2379,7 @@ type LiteLLMModel {
     const instances = await exuluApp.get().agents();
     let agentTools = await Promise.all(
       instances.map(async (agent: ExuluAgent) => {
-        const provider = await resolveAgentProvider(agent, providers);
-        if (!provider) {
-          return null;
-        }
-        return await provider.tool(agent.id, providers, contexts);
+        return await createAgentTool(agent.id, contexts)
       }),
     );
 

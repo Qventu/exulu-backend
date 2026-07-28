@@ -23,7 +23,6 @@ jest.mock("@SRC/exulu/app/singleton", () => ({
   exuluApp: {
     get: () => ({
       agent: (...args: any[]) => agentSpy(...args),
-      providers: [],
     }),
   },
 }));

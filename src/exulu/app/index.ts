@@ -2,29 +2,6 @@ import { type Express } from "express";
 import { createExpressRoutes, global_queues } from "@SRC/exulu/routes.ts";
 import { ExuluMCP } from "@SRC/mcp/index.ts";
 import express from "express";
-import {
-  claudeSonnet4Provider,
-  claudeOpus4Provider,
-  claudeSonnet45Provider,
-} from "@SRC/templates/providers/anthropic/claude";
-import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "@SRC/templates/providers/cerebras";
-import {
-  vertexGemini25FlashProvider,
-  vertexGemini25ProProvider,
-  vertexGemini3ProProvider,
-  vertexLlamaScout4,
-} from "@SRC/templates/providers/google/vertex";
-import {
-  gpt5MiniProvider,
-  gpt5Provider,
-  gpt5proProvider,
-  gpt5CodexProvider,
-  gpt5NanoProvider,
-  gpt41Provider,
-  gpt41MiniProvider,
-  gpt4oProvider,
-  gpt4oMiniProvider,
-} from "@SRC/templates/providers/openai/gpt.ts";
 import { trace, type Tracer } from "@opentelemetry/api";
 import createLogger from "@SRC/exulu/logger.ts";
 import { postgresClient } from "@SRC/postgres/client.ts";
@@ -41,7 +18,6 @@ import { createImageGenerationWidgetTool } from "@SRC/templates/tools/image-gene
 import { parseImageGenerationModels } from "@SRC/exulu/litellm/parse-image-models.ts";
 import { resolve } from "node:path";
 import { isValidPostgresName } from "@SRC/validators/postgres-name.ts";
-import type { ExuluProvider } from "../provider";
 import type { ExuluEval } from "../evals";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import { getTableName, type ExuluContext, type ExuluContextSource } from "../context";
@@ -162,11 +138,10 @@ export type ExuluConfig = {
 };
 
 export class ExuluApp {
-  private _providers: ExuluProvider[] = [];
   private _agents: ExuluAgent[] = [];
   private _config?: ExuluConfig;
   private _evals: ExuluEval[] = [];
-  private _queues: ExuluQueueConfig[] = [];
+  private _queues: Promise<ExuluQueueConfig>[] = [];
   private _contexts?: Record<string, ExuluContext> = {};
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
@@ -177,19 +152,19 @@ export class ExuluApp {
   // initialize the MCP server if needed.
   create = async ({
     contexts,
-    providers,
     config,
     agents,
     tools,
     evals,
+    queues
   }: {
     // mcps
     contexts?: Record<string, ExuluContext>;
     config: ExuluConfig;
     agents?: ExuluAgent[];
-    providers?: ExuluProvider[];
     evals?: ExuluEval[];
     tools?: ExuluTool[];
+    queues?: Promise<ExuluQueueConfig>[]
     // mcps?: ExuluMcpToolsClient[]
   }): Promise<ExuluApp> => {
     this._evals =
@@ -200,7 +175,7 @@ export class ExuluApp {
     if (contexts && "transcriptions" in contexts) {
       console.warn(
         "[EXULU] User-defined 'transcriptions' context overridden by built-in. " +
-          "Rename your context to avoid the collision.",
+        "Rename your context to avoid the collision.",
       );
     }
     // Spread user contexts first so built-in contexts win the merge — the
@@ -214,28 +189,6 @@ export class ExuluApp {
 
     this._agents = [...(agents ?? [])];
 
-    this._providers = [
-      claudeSonnet4Provider,
-      claudeOpus4Provider,
-      gptOss120bProvider,
-      llama38bProvider,
-      llama3370bProvider,
-      vertexGemini25FlashProvider,
-      vertexGemini25ProProvider,
-      vertexGemini3ProProvider,
-      vertexLlamaScout4,
-      claudeSonnet45Provider,
-      gpt5MiniProvider,
-      gpt5Provider,
-      gpt5proProvider,
-      gpt5CodexProvider,
-      gpt5NanoProvider,
-      gpt41Provider,
-      gpt41MiniProvider,
-      gpt4oProvider,
-      gpt4oMiniProvider,
-      ...(providers ?? []),
-    ];
     this._config = config;
 
     /* let mcpTools: ExuluTool[] = [];
@@ -303,11 +256,6 @@ export class ExuluApp {
           id: this._contexts?.[x]?.id ?? "",
           type: "context" as const,
         })),
-        ...this._providers.map((provider) => ({
-          name: provider.name ?? "",
-          id: provider.id ?? "",
-          type: "agent" as const,
-        })),
         ...this._tools.map((tool) => ({
           name: tool.name ?? "",
           id: tool.id ?? "",
@@ -355,10 +303,19 @@ export class ExuluApp {
         5,
         300,
       );
+
+      if (queues?.length) {
+        // Custom provided queues
+        for (const queue of queues) {
+          queueSet.add(await queue);
+        }
+      }
+
       for (const queue of ExuluQueues.list.values()) {
         const config = await queue.use();
         queueSet.add(config);
       }
+
     }
 
     this._queues = [...new Set(queueSet.values())] as any;
@@ -452,19 +409,19 @@ export class ExuluApp {
           const health = await transcriptionClient.health();
           console.log(
             `[EXULU] Transcription: enabled (server=${process.env.TRANSCRIPTION_SERVER}, ` +
-              `device=${health.device}, GPU=${health.gpu.available ? "enabled" : "disabled"}, ` +
-              `diarization=${health.diarization ? "enabled" : "disabled"})`,
+            `device=${health.device}, GPU=${health.gpu.available ? "enabled" : "disabled"}, ` +
+            `diarization=${health.diarization ? "enabled" : "disabled"})`,
           );
         } catch (err) {
           console.warn(
             `[EXULU] TRANSCRIPTION_SERVER set but not reachable yet: ${(err as Error).message}. ` +
-              `Polling loop is running; jobs will reconcile once the server is up.`,
+            `Polling loop is running; jobs will reconcile once the server is up.`,
           );
         }
       } else {
         console.log(
           "[EXULU] Transcription: disabled (TRANSCRIPTION_SERVER not set). " +
-            "Start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
+          "Start a whisper server with `npx @exulu/backend exulu-start-whisper`.",
         );
       }
 
@@ -563,6 +520,10 @@ export class ExuluApp {
     return undefined;
   }
 
+  public queues(): ExuluQueueConfig[] {
+    return this._queues;
+  }
+
   public async agents(include: {
     source: {
       code: boolean;
@@ -616,16 +577,8 @@ export class ExuluApp {
     return Object.values(this._contexts ?? {}).find((x) => x.id === id);
   }
 
-  public provider(id: string): ExuluProvider | undefined {
-    return this._providers.find((x) => x.id === id);
-  }
-
   public get contexts(): ExuluContext[] {
     return Object.values(this._contexts ?? {});
-  }
-
-  public get providers(): ExuluProvider[] {
-    return this._providers;
   }
 
   public embeddings = {
@@ -787,7 +740,6 @@ export class ExuluApp {
         }
 
         return await createWorkers(
-          this._providers,
           filteredQueues,
           this._config,
           Object.values(this._contexts ?? {}),
@@ -834,7 +786,6 @@ export class ExuluApp {
 
         await createExpressRoutes(
           app,
-          this._providers,
           this._tools,
           Object.values(this._contexts ?? {}),
           this._config,
@@ -847,7 +798,6 @@ export class ExuluApp {
           await mcp.create({
             express: app,
             allTools: this._tools,
-            allProviders: this._providers,
             allContexts: Object.values(this._contexts ?? {}),
             config: this._config,
           });

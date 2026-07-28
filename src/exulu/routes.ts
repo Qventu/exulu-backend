@@ -50,7 +50,7 @@ import { getChunksTableName, getTableName, type ExuluContext } from "./context.t
 import type { ExuluEval } from "./evals.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
-import { ExuluProvider, saveChat } from "./provider.ts";
+import { generateStream, generateSync, saveChat } from "./generate-stream.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
@@ -78,7 +78,6 @@ import { LiteLLMAdminError } from "./litellm/env.ts";
 import {
   getTagDailyActivity,
   listTagsByPrefix,
-  sanitizeTagPrefix,
 } from "./litellm/activity-client.ts";
 import {
   provisionDefaultUserBudget,
@@ -100,7 +99,6 @@ import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
 import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
-import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
@@ -191,7 +189,6 @@ const {
 
 export const createExpressRoutes = async (
   app: Express,
-  providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[] | undefined,
   config: ExuluConfig,
@@ -282,7 +279,6 @@ export const createExpressRoutes = async (
       transcriptionJobsSchema(),
     ],
     contexts ?? [],
-    providers,
     tools,
     config,
     evals,
@@ -430,129 +426,6 @@ export const createExpressRoutes = async (
 
     res.json({
       items: formattedResults.filter((result) => result !== null),
-    });
-  });
-
-  app.post("/generate/agent/image", async (req: Request, res: Response) => {
-    console.log("[EXULU] generate/agent/image", req.body);
-    const authenticationResult = await requestValidators.authenticate(req);
-    if (!authenticationResult.user?.id) {
-      res
-        .status(authenticationResult.code || 500)
-        .json({ detail: `${authenticationResult.message}` });
-      return;
-    }
-
-    const { name, description, style } = req.body;
-    if (!name || !description) {
-      res.status(400).json({
-        message: "Missing name or description in request.",
-      });
-      return;
-    }
-
-    const { db } = await postgresClient();
-
-    // Look up the variable from the variables table
-    const variable = await db
-      .from("variables")
-      .where({ name: "OPENAI_IMAGE_GENERATION_API_KEY" })
-      .first();
-    if (!variable) {
-      res.status(400).json({
-        message: "Provider API key variable not found for OpenAI image generation.",
-      });
-      return;
-    }
-
-    // Get the API key from the variable (decrypt if encrypted)
-    let providerapikey = variable.value;
-
-    if (!variable.encrypted) {
-      res.status(400).json({
-        message:
-          "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-      });
-      return;
-    }
-
-    if (variable.encrypted) {
-      const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-      providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-    }
-
-    const openai = new OpenAI({
-      apiKey: providerapikey,
-    });
-
-    let style_reference = "";
-    if (style === "origami") {
-      style_reference = "minimalistic origami-style, futuristic robot, portrait, focus on face.";
-    } else if (style === "anime") {
-      style_reference =
-        "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face.";
-    } else if (style === "japanese_anime") {
-      style_reference =
-        "minimalistic, make it in the style of japanese anime, futuristic robot, portrait, focus on face.";
-    } else if (style === "vaporwave") {
-      style_reference =
-        "minimalistic, make it in the style of a vaporwave album cover, futuristic robot, portrait, focus on face.";
-    } else if (style === "lego") {
-      style_reference =
-        "minimalistic, make it in the style of LEGO minifigures, futuristic robot, portrait, focus on face.";
-    } else if (style === "paper_cut") {
-      style_reference =
-        "minimalistic, make it in the style of Paper-cut style portrait with color layers, futuristic robot, portrait, focus on face.";
-    } else if (style === "felt_puppet") {
-      style_reference =
-        "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face.";
-    } else if (style === "app_icon") {
-      style_reference =
-        "A playful and modern app icon design of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024.";
-    } else if (style === "pixel_art") {
-      style_reference =
-        "A pixel art style of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024.";
-    } else if (style === "isometric") {
-      style_reference =
-        "3D isometric icon of a robot, centered composition, on a transparent background, no text, no details outside the frame, size is 1024x1024.";
-    } else {
-      style_reference =
-        "A minimalist 3D, robot, portrait, focus on face, floating in space, low-poly design with pastel colors.";
-    }
-
-    const prompt = `
-        A digital portrait of ${name}, visualized as a futuristic robot.  
-The robot’s design reflects '${description}', with props, tools, or symbolic objects that represent its expertise or area of work.  
-Example: if the agent is a financial analyst, it may hold a stack of papers; if it’s a creative strategist it may be painting on a canvas.  
-Style: ${style_reference}.  
-The portrait should have a clean background.  
-Framing: bust portrait, centered.  
-Mood: friendly and intelligent.  
-            `;
-
-    const result = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-    });
-
-    // Save the image to a file
-    const image_base64 = result.data?.[0]?.b64_json;
-
-    if (!image_base64) {
-      res.status(500).json({
-        message: "Failed to generate image.",
-      });
-      return;
-    }
-
-    const uuid = randomUUID();
-    const image_url = await uploadFile(Buffer.from(image_base64, "base64"), `${uuid}.png`, config, {
-      contentType: "image/png",
-    }, authenticationResult.user?.id, undefined, true);
-
-    res.status(200).json({
-      message: "Image generated successfully.",
-      image: image_url,
     });
   });
 
@@ -713,13 +586,7 @@ Mood: friendly and intelligent.
     });
   });
 
-  // Register the agent-run handler for a (provider, slug) pair. In Spec A
-  // catalog mode this is called once per ExuluProvider in providers.forEach
-  // below. In LiteLLM mode it is also called once with a fixed slug and any
-  // provider as the orchestrator (the in-code provider here is only used as
-  // a method-holder for generateStream/generateSync; the actual languageModel
-  // comes from resolveModel's LiteLLM branch).
-  const registerAgentRunRoute = (slug: string, provider: ExuluProvider) => {
+  const registerAgentRunRoute = (slug: string) => {
     app.post(slug + "/:instance", async (req: Request, res: Response) => {
       console.log("[EXULU] POST " + slug + "/:instance", req.body);
 
@@ -742,14 +609,6 @@ Mood: friendly and intelligent.
       }
 
       const { db } = await postgresClient();
-
-      // For agents we dont use bullmq jobs, instead we use a rate limiter to
-      // allow responses in real time while managing availability of infrastructure
-      // or provider limits.
-      // todo add "configuration" object to provider, and allow setting agent instance
-      // specific configurations that overwrite the global ones.
-      // todo allow setting agent instance specific configurations that overwrite the global ones
-      // todo display rate limit message in the chat UI
 
       const agent = await exuluApp.get().agent(instance);
 
@@ -855,7 +714,6 @@ Mood: friendly and intelligent.
         tools,
         contexts || [],
         disabledTools,
-        providers,
         user,
       );
 
@@ -873,7 +731,6 @@ Mood: friendly and intelligent.
         resolved = await resolveModel({
           modelId,
           user,
-          providers,
           agent: agent,
         });
       } catch (err) {
@@ -884,12 +741,10 @@ Mood: friendly and intelligent.
         }
         throw err;
       }
-      const providerapikey = resolved.apiKey;
       const resolvedLanguageModel = resolved.languageModel;
       const resolvedModelId = resolved.model.id;
       const contextWindow = await resolveContextWindow({
-        modelId: resolved.model.id,
-        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        modelId: resolved.model.id
       });
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
@@ -926,9 +781,9 @@ Mood: friendly and intelligent.
           : agent.instructions;
 
         if (headers.session) markStreamActive(headers.session as string);
-        let result: Awaited<ReturnType<typeof provider.generateStream>>;
+        let result: Awaited<ReturnType<typeof generateStream>>;
         try {
-          result = await provider.generateStream({
+          result = await generateStream({
             contexts: contexts,
             agent: agent,
             user,
@@ -941,7 +796,6 @@ Mood: friendly and intelligent.
             approvedTools: approvedTools,
             allExuluTools: tools,
             languageModel: resolvedLanguageModel,
-            providerapikey,
             toolConfigs: agent.tools,
             exuluConfig: config,
             req: req,
@@ -1096,9 +950,9 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        let response: Awaited<ReturnType<typeof provider.generateSync>>;
+        let response: Awaited<ReturnType<typeof generateSync>>;
         try {
-          response = await provider.generateSync({
+          response = await generateSync({
             contexts: contexts,
             agent: agent,
             user,
@@ -1110,7 +964,6 @@ Mood: friendly and intelligent.
             currentSkills: enabledSkills,
             allExuluTools: tools,
             languageModel: resolvedLanguageModel,
-            providerapikey,
             exuluConfig: config,
             toolConfigs: agent.tools,
             contextWindow,
@@ -1188,7 +1041,7 @@ Mood: friendly and intelligent.
       }
       let resolved: Awaited<ReturnType<typeof resolveModel>>;
       try {
-        resolved = await resolveModel({ modelId, user, providers, agent });
+        resolved = await resolveModel({ modelId, user, agent });
       } catch (err) {
         if (err instanceof ResolveModelError) {
           const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
@@ -1198,8 +1051,7 @@ Mood: friendly and intelligent.
         throw err;
       }
       const contextWindow = await resolveContextWindow({
-        modelId: resolved.model.id,
-        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        modelId: resolved.model.id
       });
       const steer = typeof req.body?.steer === "string" ? req.body.steer : undefined;
       try {
@@ -1223,27 +1075,14 @@ Mood: friendly and intelligent.
     });
   };
 
-  // Spec A: one handler per code-defined ExuluProvider, mounted at its slug.
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-    registerAgentRunRoute(slug, provider);
-  });
-
   // LiteLLM mode: a single handler at a fixed path. agent.slug is hydrated to
   // "/agents/litellm/run" in graphql/utilities/sanitize-and-hydrate-fields.ts
   // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
-  if (isLiteLLMEnabled() && providers.length > 0) {
-    registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  if (isLiteLLMEnabled()) {
+    registerAgentRunRoute("/agents/litellm/run");
   }
 
-  // Compact routes: one per code-defined provider, plus LiteLLM fixed path.
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-    registerAgentCompactRoute(slug.replace(/\/run$/, "/compact"));
-  });
-  if (isLiteLLMEnabled() && providers.length > 0) {
+  if (isLiteLLMEnabled()) {
     registerAgentCompactRoute("/agents/litellm/compact");
   }
 
@@ -1309,7 +1148,6 @@ Mood: friendly and intelligent.
       resolved = await resolveModel({
         modelId: agent.model,
         user,
-        providers,
         agent: agent,
       });
     } catch (err) {
@@ -5130,12 +4968,7 @@ Mood: friendly and intelligent.
     // graphql/utilities/sanitize-and-hydrate-fields.ts (~line 125).
     if (isLiteLLMEnabled()) return "/agents/litellm/run";
     if (!agentModel) return "";
-    const { db } = await postgresClient();
-    const modelRow = await db.from("models").where({ id: agentModel }).first();
-    const provider = modelRow?.provider
-      ? providers.find((a) => a.id === modelRow.provider)
-      : undefined;
-    return (provider?.slug as string) || "";
+    return "";
   };
 
   const UUID_RE =
@@ -5241,8 +5074,6 @@ Mood: friendly and intelligent.
   );
 
   app.use(express.static("public"));
-
-  await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config);
 
   return app;
 };

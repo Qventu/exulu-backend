@@ -12,7 +12,6 @@ import { RecursiveChunker } from "./chunking/recursive";
 export { defaultChunker } from "./exulu/chunker.ts"
 export type { ChunkerOperation, ChunkerResponse } from "./exulu/chunker.ts"
 export type { ExuluContextEmbedder } from "./exulu/context.ts"
-export { ExuluProvider } from "./exulu/provider.ts"
 export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluReadApi } from "./exulu/read-api.ts";
@@ -42,29 +41,6 @@ import CryptoJS from "crypto-js";
 import { postgresClient } from "./postgres/client";
 import { type Variable } from "@EXULU_TYPES/models/variable";
 import { MarkdownChunker } from "@EE/chunking/markdown";
-import {  
-  gpt5MiniProvider,
-  gpt5Provider,
-  gpt5proProvider,
-  gpt5CodexProvider,
-  gpt5NanoProvider,
-  gpt41Provider,
-  gpt41MiniProvider,
-  gpt4oProvider,
-  gpt4oMiniProvider,
-} from "./templates/providers/openai/gpt";
-import {
-  claudeSonnet4Provider,
-  claudeOpus4Provider,
-  claudeSonnet45Provider,
-} from "./templates/providers/anthropic/claude";
-import {
-  vertexGemini25FlashProvider,
-  vertexGemini3ProProvider,
-  vertexGemini25ProProvider,
-  vertexLlamaScout4,
-} from "./templates/providers/google/vertex";
-import { gptOss120bProvider, llama38bProvider, llama3370bProvider } from "./templates/providers/cerebras";
 import type { Item } from "@EXULU_TYPES/models/item";
 export type { Item as ExuluItem };
 
@@ -92,36 +68,6 @@ export const ExuluDefaultTools = {
     },
   },
 }
-
-export const ExuluDefaultProviders = {
-  anthropic: {
-    opus4: claudeOpus4Provider,
-    sonnet4: claudeSonnet4Provider,
-    sonnet45: claudeSonnet45Provider,
-  },
-  cerebras: {
-    gptOss120b: gptOss120bProvider,
-    llama38b: llama38bProvider,
-    llama3370b: llama3370bProvider,
-  },
-  google: {
-    vertexGemini25Flash: vertexGemini25FlashProvider,
-    vertexGemini25Pro: vertexGemini25ProProvider,
-    vertexGemini3Pro: vertexGemini3ProProvider,
-    vertexLlamaScout4: vertexLlamaScout4,
-  },
-  openai: {
-    gpt5Mini: gpt5MiniProvider,
-    gpt5: gpt5Provider,
-    gpt5pro: gpt5proProvider,
-    gpt5Codex: gpt5CodexProvider,
-    gpt5Nano: gpt5NanoProvider,
-    gpt41: gpt41Provider,
-    gpt41Mini: gpt41MiniProvider,
-    gpt4o: gpt4oProvider,
-    gpt4oMini: gpt4oMiniProvider,
-  },
-};
 
 export const ExuluVariables = {
   get: async (name: string) => {

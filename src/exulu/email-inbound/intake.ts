@@ -12,11 +12,9 @@ import {
   getS3ObjectBytes,
   uploadFile,
 } from "@SRC/uppy";
-import { saveChat } from "@SRC/exulu/provider";
-import type { ExuluProvider } from "@SRC/exulu/provider";
+import { saveChat } from "@SRC/exulu/generate-stream";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
 import { exuluApp } from "@SRC/exulu/app/singleton";
-import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import { createRunSession } from "@SRC/exulu/routines/run-session";
 import type { BullMqJobData } from "@EE/queues/decorator";
 import { parseRawMime } from "./normalize";
@@ -32,6 +30,7 @@ import {
   type InboundEmail,
   type WorkflowTriggerRow,
 } from "./types";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 
 export type EmailIntakeOutcome =
   | { outcome: "dropped" }
@@ -41,7 +40,6 @@ export type EmailIntakeOutcome =
 
 interface IntakeDeps {
   config: ExuluConfig;
-  providers: ExuluProvider[];
 }
 
 // Keeps the label format the rest of the platform already filters on.
@@ -207,6 +205,7 @@ const fireRun = async (opts: {
     const fromDisplay = email.from.name
       ? `"${email.from.name}" <${email.from.address}>`
       : `<${email.from.address}>`;
+
     const initialMessage = {
       id: randomUUID(),
       role: "user",
@@ -221,6 +220,7 @@ const fireRun = async (opts: {
         ...fileParts,
       ],
     } as UIMessage;
+
     // generateStream loads session history from agent_messages for the run
     // identity, so this message becomes the run's seed context.
     await saveChat({
@@ -228,6 +228,7 @@ const fireRun = async (opts: {
       user: trigger.run_as_user,
       messages: [initialMessage],
     });
+    
   }
 
   // 4. Enqueue the workflow job (queues entitlement is a hard requirement
@@ -236,13 +237,18 @@ const fireRun = async (opts: {
   if (!agent) {
     throw new Error(`Agent ${workflow.agent} not found for workflow ${workflow.id}.`);
   }
-  const provider = await resolveAgentProvider(agent, deps.providers);
-  if (!provider?.workflows?.queue) {
-    throw new Error(
-      `No workflow queue configured for the provider of agent ${workflow.agent}; email triggers require the queues entitlement.`,
-    );
+
+  if (!workflow.queue) {
+    throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
   }
-  const queue = await provider.workflows.queue;
+  
+  const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+  const queue = queues.find(x => x.queue.name === workflow.queue);
+
+  if (!queue) {
+    throw new Error("Queue " + workflow.queue + " not found as a registered queue in ExuluApp.")
+  }
+  
 
   const jobData: BullMqJobData = {
     label: `Workflow Run ${workflow.id}`,

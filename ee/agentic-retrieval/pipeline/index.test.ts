@@ -4,7 +4,7 @@ import { createAgenticRetrievalTool, parsePreselectedItems } from "./index";
 jest.mock("@EE/entitlements", () => ({ checkLicense: () => ({ "agentic-retrieval": true }) }));
 jest.mock("@SRC/exulu/resolve-reranker", () => ({ resolveReranker: jest.fn(async () => ({ model: "m", rerank: async (_q: any, c: any) => c })) }));
 jest.mock("@SRC/exulu/resolve-model", () => ({ resolveModel: jest.fn() }));
-jest.mock("@SRC/exulu/app/singleton", () => ({ exuluApp: { get: () => ({ providers: [] }) } }));
+jest.mock("@SRC/exulu/app/singleton", () => ({ exuluApp: { get: () => () } }));
 jest.mock("./routing", () => ({ runRoutingPhase: jest.fn(async () => ({
   mainContexts: ["docs"], fallbackContexts: [], userPinnedItemIdsByContext: new Map(),
   userRequestedPage: null, hasExplicitDocAndPage: false, steps: [{ text: "routed" }] })) }));

@@ -21,7 +21,6 @@ import { cancelRoutineRunRow } from "@SRC/exulu/routines/run-state.ts";
 import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
-import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
@@ -31,14 +30,12 @@ const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
 const postprocessDeletion = async ({
   table,
   requestedFields,
-  providers,
   contexts,
   tools,
   result,
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -51,7 +48,6 @@ const postprocessDeletion = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: item,
@@ -135,7 +131,6 @@ const postprocessDeletion = async ({
 const postprocessUpdate = async ({
   table,
   requestedFields,
-  providers,
   contexts,
   tools,
   result,
@@ -145,7 +140,6 @@ const postprocessUpdate = async ({
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -164,7 +158,6 @@ const postprocessUpdate = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: item,
@@ -235,7 +228,6 @@ const postprocessUpdate = async ({
 
 export function createMutations(
   table: ExuluTableDefinition,
-  providers: ExuluProvider[],
   contexts: ExuluContext[],
   tools: ExuluTool[],
   config: ExuluConfig,
@@ -461,7 +453,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result: result[0],
@@ -557,7 +548,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: results[0],
@@ -571,7 +561,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result: results[0],
@@ -676,7 +665,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -689,7 +677,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result,
@@ -773,7 +760,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -786,7 +772,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result,
@@ -836,7 +821,6 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -845,7 +829,6 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -887,7 +870,6 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -896,7 +878,6 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,

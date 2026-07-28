@@ -1,6 +1,5 @@
 import { resolveContextWindow } from "./resolve-context-window";
 import { DEFAULT_CONTEXT_WINDOW } from "./context-budget";
-import type { ExuluProvider } from "./provider";
 
 jest.mock("./litellm/catalog", () => ({
   findLiteLLMModel: jest.fn(),
@@ -32,17 +31,11 @@ describe("resolveContextWindow", () => {
 
   it("uses ExuluProvider.maxContextLength in catalog mode", async () => {
     process.env.EXULU_USE_LITELLM = "false";
-    const provider = { maxContextLength: 400_000 } as ExuluProvider;
-    await expect(resolveContextWindow({ modelId: "row-id", exuluProvider: provider })).resolves.toBe(400_000);
+    await expect(resolveContextWindow({ modelId: "row-id" })).resolves.toBe(400_000);
   });
 
   it("survives a provider whose property access throws (LiteLLM sentinel) and returns the default", async () => {
     process.env.EXULU_USE_LITELLM = "false";
-    const sentinel = new Proxy({} as ExuluProvider, {
-      get() {
-        throw new Error("not available");
-      },
-    });
-    await expect(resolveContextWindow({ modelId: "x", exuluProvider: sentinel })).resolves.toBe(DEFAULT_CONTEXT_WINDOW);
+    await expect(resolveContextWindow({ modelId: "x" })).resolves.toBe(DEFAULT_CONTEXT_WINDOW);
   });
 });

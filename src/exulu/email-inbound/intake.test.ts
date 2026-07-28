@@ -27,16 +27,6 @@ jest.mock("@SRC/exulu/app/singleton", () => ({
 }));
 
 const queueAddSpy = jest.fn(async () => ({ id: "bull-1" }));
-const queueConfig = {
-  queue: { add: (...args: any[]) => queueAddSpy(...args) },
-  timeoutInSeconds: 180,
-  retries: 3,
-};
-jest.mock("@SRC/exulu/resolve-agent-provider", () => ({
-  resolveAgentProvider: jest.fn(async () => ({
-    workflows: { queue: Promise.resolve(queueConfig) },
-  })),
-}));
 
 // db fake: chainable builders recorded per table; .first() answers come
 // from a per-table FIFO the test seeds.
@@ -126,7 +116,7 @@ const workflowRow = {
   agent: "agent-1",
   rights_mode: "roles",
 };
-const deps = { config: { fileUploads: {} } as any, providers: [] as any[] };
+const deps = { config: { fileUploads: {} } as any };
 const payload = { s3Key: "inbound-webhook/raw-1.eml", triggerId: "trg-1", format: "eml" as const };
 
 beforeEach(() => {

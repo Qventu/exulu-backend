@@ -6,6 +6,7 @@ import { getEntitiesForItem, resolveEntityModel } from "@SRC/exulu/entities";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import { vectorSearch } from "./vector-search";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields";
+import { BUDGET_ENTITY_SINGULARS } from "../utilities/budget-field";
 import { applyAccessControl } from "../utilities/access-control";
 import { getRequestedFields } from "./utils";
 import { Knex as KnexType } from "knex";
@@ -13,7 +14,6 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { applySorting } from "./apply-sorting";
 import { assertAllowedField } from "./field-allow-list";
 import { applyFilters } from "./apply-filters";
-import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
@@ -94,10 +94,6 @@ export const itemsPaginationRequest = async ({
 
 const removeProviderFields = (requestedFields: string[]) => {
   const filtered = requestedFields.filter((field) => !exuluProviderFields.includes(field));
-  // Always add the model field (FK to models row) — the hydration step in
-  // finalizeRequestedFields looks up the Model row to find the underlying
-  // ExuluProvider and derives the legacy provider fields (providerName,
-  // modelName, capabilities, ...) from it.
   filtered.push("model");
   return filtered;
 };
@@ -131,13 +127,20 @@ export const sanitizeRequestedFields = (
   }
   // `budget` is computed from LiteLLM in finalizeRequestedFields, not a DB
   // column — keep it out of the SQL selection.
-  if (
-    ["user", "role", "team", "project", "agent"].includes(table.name.singular)
-  ) {
+  if (BUDGET_ENTITY_SINGULARS.has(table.name.singular)) {
     requestedFields = requestedFields.filter((field) => field !== "budget");
   }
   if (table.name.singular === "workflow_template") {
-    requestedFields.push("steps_json");
+    // `variables` is computed from steps_json in finalizeRequestedFields, not
+    // a DB column (dropped from the schema 2026-01; only pre-drop DBs still
+    // carry the orphaned physical column). steps_json is force-added as its
+    // hydration source — onto the copy made by the filter, so the caller's
+    // requestedFields (which finalizeRequestedFields consults to strip an
+    // unrequested steps_json from the payload) stays untouched.
+    requestedFields = requestedFields.filter((field) => field !== "variables");
+    if (!requestedFields.includes("steps_json")) {
+      requestedFields.push("steps_json");
+    }
   }
   if (!requestedFields.includes("id")) {
     // We always add the id for the postgres selection
@@ -155,7 +158,6 @@ export const sanitizeRequestedFields = (
 
 export function createQueries(
   table: ExuluTableDefinition,
-  providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[],
 ) {
@@ -196,7 +198,6 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -237,7 +238,6 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -259,7 +259,6 @@ export function createQueries(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -288,7 +287,6 @@ export function createQueries(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result: items,

@@ -419,6 +419,10 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         type: "boolean",
         default: false,
       },
+      {
+        name: "queue",
+        type: "text"
+      }
     ],
   };
 
