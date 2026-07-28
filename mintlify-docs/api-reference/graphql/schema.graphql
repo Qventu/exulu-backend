@@ -60,16 +60,31 @@ type Query {
   skillsPagination(limit: Int, page: Int, filters: [FilterSkill], sort: SortBy): SkillPaginationResult
   skillOne(filters: [FilterSkill], sort: SortBy): skill
   skillsStatistics(filters: [FilterSkill], groupBy: String, limit: Int): [StatisticsResult]!
+  roleById(id: ID!): role
+  roleByIds(ids: [ID!]!): [role]!
+  rolesPagination(limit: Int, page: Int, filters: [FilterRole], sort: SortBy): RolePaginationResult
+  roleOne(filters: [FilterRole], sort: SortBy): role
+  rolesStatistics(filters: [FilterRole], groupBy: String, limit: Int): [StatisticsResult]!
   agentById(id: ID!, project: ID): agent
   agentByIds(ids: [ID!]!): [agent]!
   agentsPagination(limit: Int, page: Int, filters: [FilterAgent], sort: SortBy): AgentPaginationResult
   agentOne(filters: [FilterAgent], sort: SortBy): agent
   agentsStatistics(filters: [FilterAgent], groupBy: String, limit: Int): [StatisticsResult]!
+  feedbackById(id: ID!): feedback
+  feedbackByIds(ids: [ID!]!): [feedback]!
+  feedbackPagination(limit: Int, page: Int, filters: [FilterFeedback], sort: SortBy): FeedbackPaginationResult
+  feedbackOne(filters: [FilterFeedback], sort: SortBy): feedback
+  feedbackStatistics(filters: [FilterFeedback], groupBy: String, limit: Int): [StatisticsResult]!
   projectById(id: ID!): project
   projectByIds(ids: [ID!]!): [project]!
   projectsPagination(limit: Int, page: Int, filters: [FilterProject], sort: SortBy): ProjectPaginationResult
   projectOne(filters: [FilterProject], sort: SortBy): project
   projectsStatistics(filters: [FilterProject], groupBy: String, limit: Int): [StatisticsResult]!
+  job_resultById(id: ID!): job_result
+  job_resultByIds(ids: [ID!]!): [job_result]!
+  job_resultsPagination(limit: Int, page: Int, filters: [FilterJob_result], sort: SortBy): Job_resultPaginationResult
+  job_resultOne(filters: [FilterJob_result], sort: SortBy): job_result
+  job_resultsStatistics(filters: [FilterJob_result], groupBy: String, limit: Int): [StatisticsResult]!
   prompt_library_itemById(id: ID!): prompt_library_item
   prompt_library_itemByIds(ids: [ID!]!): [prompt_library_item]!
   prompt_libraryPagination(limit: Int, page: Int, filters: [FilterPrompt_library_item], sort: SortBy): Prompt_library_itemPaginationResult
@@ -80,6 +95,11 @@ type Query {
   context_presetsPagination(limit: Int, page: Int, filters: [FilterContext_preset], sort: SortBy): Context_presetPaginationResult
   context_presetOne(filters: [FilterContext_preset], sort: SortBy): context_preset
   context_presetsStatistics(filters: [FilterContext_preset], groupBy: String, limit: Int): [StatisticsResult]!
+  teamById(id: ID!): team
+  teamByIds(ids: [ID!]!): [team]!
+  teamsPagination(limit: Int, page: Int, filters: [FilterTeam], sort: SortBy): TeamPaginationResult
+  teamOne(filters: [FilterTeam], sort: SortBy): team
+  teamsStatistics(filters: [FilterTeam], groupBy: String, limit: Int): [StatisticsResult]!
   entity_type_settingById(id: ID!): entity_type_setting
   entity_type_settingByIds(ids: [ID!]!): [entity_type_setting]!
   entity_type_settingsPagination(limit: Int, page: Int, filters: [FilterEntity_type_setting], sort: SortBy): Entity_type_settingPaginationResult
@@ -90,11 +110,26 @@ type Query {
   prompt_favoritesPagination(limit: Int, page: Int, filters: [FilterPrompt_favorite], sort: SortBy): Prompt_favoritePaginationResult
   prompt_favoriteOne(filters: [FilterPrompt_favorite], sort: SortBy): prompt_favorite
   prompt_favoritesStatistics(filters: [FilterPrompt_favorite], groupBy: String, limit: Int): [StatisticsResult]!
+  eval_runById(id: ID!): eval_run
+  eval_runByIds(ids: [ID!]!): [eval_run]!
+  eval_runsPagination(limit: Int, page: Int, filters: [FilterEval_run], sort: SortBy): Eval_runPaginationResult
+  eval_runOne(filters: [FilterEval_run], sort: SortBy): eval_run
+  eval_runsStatistics(filters: [FilterEval_run], groupBy: String, limit: Int): [StatisticsResult]!
   platform_configurationById(id: ID!): platform_configuration
   platform_configurationByIds(ids: [ID!]!): [platform_configuration]!
   platform_configurationsPagination(limit: Int, page: Int, filters: [FilterPlatform_configuration], sort: SortBy): Platform_configurationPaginationResult
   platform_configurationOne(filters: [FilterPlatform_configuration], sort: SortBy): platform_configuration
   platform_configurationsStatistics(filters: [FilterPlatform_configuration], groupBy: String, limit: Int): [StatisticsResult]!
+  eval_setById(id: ID!): eval_set
+  eval_setByIds(ids: [ID!]!): [eval_set]!
+  eval_setsPagination(limit: Int, page: Int, filters: [FilterEval_set], sort: SortBy): Eval_setPaginationResult
+  eval_setOne(filters: [FilterEval_set], sort: SortBy): eval_set
+  eval_setsStatistics(filters: [FilterEval_set], groupBy: String, limit: Int): [StatisticsResult]!
+  test_caseById(id: ID!): test_case
+  test_caseByIds(ids: [ID!]!): [test_case]!
+  test_casesPagination(limit: Int, page: Int, filters: [FilterTest_case], sort: SortBy): Test_casePaginationResult
+  test_caseOne(filters: [FilterTest_case], sort: SortBy): test_case
+  test_casesStatistics(filters: [FilterTest_case], groupBy: String, limit: Int): [StatisticsResult]!
   agent_sessionById(id: ID!): agent_session
   agent_sessionByIds(ids: [ID!]!): [agent_session]!
   agent_sessionsPagination(limit: Int, page: Int, filters: [FilterAgent_session], sort: SortBy): Agent_sessionPaginationResult
@@ -115,6 +150,11 @@ type Query {
   variablesPagination(limit: Int, page: Int, filters: [FilterVariable], sort: SortBy): VariablePaginationResult
   variableOne(filters: [FilterVariable], sort: SortBy): variable
   variablesStatistics(filters: [FilterVariable], groupBy: String, limit: Int): [StatisticsResult]!
+  workflow_templateById(id: ID!): workflow_template
+  workflow_templateByIds(ids: [ID!]!): [workflow_template]!
+  workflow_templatesPagination(limit: Int, page: Int, filters: [FilterWorkflow_template], sort: SortBy): Workflow_templatePaginationResult
+  workflow_templateOne(filters: [FilterWorkflow_template], sort: SortBy): workflow_template
+  workflow_templatesStatistics(filters: [FilterWorkflow_template], groupBy: String, limit: Int): [StatisticsResult]!
   trackingById(id: ID!): tracking
   trackingByIds(ids: [ID!]!): [tracking]!
   trackingPagination(limit: Int, page: Int, filters: [FilterTracking], sort: SortBy): TrackingPaginationResult
@@ -158,18 +198,36 @@ type Mutation {
   skillsUpdateOneById(id: ID!, input: skillInput!): skillMutationPayload
   skillsRemoveOneById(id: ID!): skill
   skillsRemoveOne(where: JSON!): skill
+  rolesCreateOne(input: roleInput!, upsert: Boolean): roleMutationPayload
+  rolesCopyOneById(id: ID!): roleMutationPayload
+  rolesUpdateOne(where: [FilterRole], input: roleInput!): roleMutationPayload
+  rolesUpdateOneById(id: ID!, input: roleInput!): roleMutationPayload
+  rolesRemoveOneById(id: ID!): role
+  rolesRemoveOne(where: JSON!): role
   agentsCreateOne(input: agentInput!, upsert: Boolean): agentMutationPayload
   agentsCopyOneById(id: ID!): agentMutationPayload
   agentsUpdateOne(where: [FilterAgent], input: agentInput!): agentMutationPayload
   agentsUpdateOneById(id: ID!, input: agentInput!): agentMutationPayload
   agentsRemoveOneById(id: ID!): agent
   agentsRemoveOne(where: JSON!): agent
+  feedbackCreateOne(input: feedbackInput!, upsert: Boolean): feedbackMutationPayload
+  feedbackCopyOneById(id: ID!): feedbackMutationPayload
+  feedbackUpdateOne(where: [FilterFeedback], input: feedbackInput!): feedbackMutationPayload
+  feedbackUpdateOneById(id: ID!, input: feedbackInput!): feedbackMutationPayload
+  feedbackRemoveOneById(id: ID!): feedback
+  feedbackRemoveOne(where: JSON!): feedback
   projectsCreateOne(input: projectInput!, upsert: Boolean): projectMutationPayload
   projectsCopyOneById(id: ID!): projectMutationPayload
   projectsUpdateOne(where: [FilterProject], input: projectInput!): projectMutationPayload
   projectsUpdateOneById(id: ID!, input: projectInput!): projectMutationPayload
   projectsRemoveOneById(id: ID!): project
   projectsRemoveOne(where: JSON!): project
+  job_resultsCreateOne(input: job_resultInput!, upsert: Boolean): job_resultMutationPayload
+  job_resultsCopyOneById(id: ID!): job_resultMutationPayload
+  job_resultsUpdateOne(where: [FilterJob_result], input: job_resultInput!): job_resultMutationPayload
+  job_resultsUpdateOneById(id: ID!, input: job_resultInput!): job_resultMutationPayload
+  job_resultsRemoveOneById(id: ID!): job_result
+  job_resultsRemoveOne(where: JSON!): job_result
   prompt_libraryCreateOne(input: prompt_library_itemInput!, upsert: Boolean): prompt_library_itemMutationPayload
   prompt_libraryCopyOneById(id: ID!): prompt_library_itemMutationPayload
   prompt_libraryUpdateOne(where: [FilterPrompt_library_item], input: prompt_library_itemInput!): prompt_library_itemMutationPayload
@@ -182,6 +240,12 @@ type Mutation {
   context_presetsUpdateOneById(id: ID!, input: context_presetInput!): context_presetMutationPayload
   context_presetsRemoveOneById(id: ID!): context_preset
   context_presetsRemoveOne(where: JSON!): context_preset
+  teamsCreateOne(input: teamInput!, upsert: Boolean): teamMutationPayload
+  teamsCopyOneById(id: ID!): teamMutationPayload
+  teamsUpdateOne(where: [FilterTeam], input: teamInput!): teamMutationPayload
+  teamsUpdateOneById(id: ID!, input: teamInput!): teamMutationPayload
+  teamsRemoveOneById(id: ID!): team
+  teamsRemoveOne(where: JSON!): team
   entity_type_settingsCreateOne(input: entity_type_settingInput!, upsert: Boolean): entity_type_settingMutationPayload
   entity_type_settingsCopyOneById(id: ID!): entity_type_settingMutationPayload
   entity_type_settingsUpdateOne(where: [FilterEntity_type_setting], input: entity_type_settingInput!): entity_type_settingMutationPayload
@@ -194,12 +258,30 @@ type Mutation {
   prompt_favoritesUpdateOneById(id: ID!, input: prompt_favoriteInput!): prompt_favoriteMutationPayload
   prompt_favoritesRemoveOneById(id: ID!): prompt_favorite
   prompt_favoritesRemoveOne(where: JSON!): prompt_favorite
+  eval_runsCreateOne(input: eval_runInput!, upsert: Boolean): eval_runMutationPayload
+  eval_runsCopyOneById(id: ID!): eval_runMutationPayload
+  eval_runsUpdateOne(where: [FilterEval_run], input: eval_runInput!): eval_runMutationPayload
+  eval_runsUpdateOneById(id: ID!, input: eval_runInput!): eval_runMutationPayload
+  eval_runsRemoveOneById(id: ID!): eval_run
+  eval_runsRemoveOne(where: JSON!): eval_run
   platform_configurationsCreateOne(input: platform_configurationInput!, upsert: Boolean): platform_configurationMutationPayload
   platform_configurationsCopyOneById(id: ID!): platform_configurationMutationPayload
   platform_configurationsUpdateOne(where: [FilterPlatform_configuration], input: platform_configurationInput!): platform_configurationMutationPayload
   platform_configurationsUpdateOneById(id: ID!, input: platform_configurationInput!): platform_configurationMutationPayload
   platform_configurationsRemoveOneById(id: ID!): platform_configuration
   platform_configurationsRemoveOne(where: JSON!): platform_configuration
+  eval_setsCreateOne(input: eval_setInput!, upsert: Boolean): eval_setMutationPayload
+  eval_setsCopyOneById(id: ID!): eval_setMutationPayload
+  eval_setsUpdateOne(where: [FilterEval_set], input: eval_setInput!): eval_setMutationPayload
+  eval_setsUpdateOneById(id: ID!, input: eval_setInput!): eval_setMutationPayload
+  eval_setsRemoveOneById(id: ID!): eval_set
+  eval_setsRemoveOne(where: JSON!): eval_set
+  test_casesCreateOne(input: test_caseInput!, upsert: Boolean): test_caseMutationPayload
+  test_casesCopyOneById(id: ID!): test_caseMutationPayload
+  test_casesUpdateOne(where: [FilterTest_case], input: test_caseInput!): test_caseMutationPayload
+  test_casesUpdateOneById(id: ID!, input: test_caseInput!): test_caseMutationPayload
+  test_casesRemoveOneById(id: ID!): test_case
+  test_casesRemoveOne(where: JSON!): test_case
   agent_sessionsCreateOne(input: agent_sessionInput!, upsert: Boolean): agent_sessionMutationPayload
   agent_sessionsCopyOneById(id: ID!): agent_sessionMutationPayload
   agent_sessionsUpdateOne(where: [FilterAgent_session], input: agent_sessionInput!): agent_sessionMutationPayload
@@ -224,6 +306,12 @@ type Mutation {
   variablesUpdateOneById(id: ID!, input: variableInput!): variableMutationPayload
   variablesRemoveOneById(id: ID!): variable
   variablesRemoveOne(where: JSON!): variable
+  workflow_templatesCreateOne(input: workflow_templateInput!, upsert: Boolean): workflow_templateMutationPayload
+  workflow_templatesCopyOneById(id: ID!): workflow_templateMutationPayload
+  workflow_templatesUpdateOne(where: [FilterWorkflow_template], input: workflow_templateInput!): workflow_templateMutationPayload
+  workflow_templatesUpdateOneById(id: ID!, input: workflow_templateInput!): workflow_templateMutationPayload
+  workflow_templatesRemoveOneById(id: ID!): workflow_template
+  workflow_templatesRemoveOne(where: JSON!): workflow_template
   trackingCreateOne(input: trackingInput!, upsert: Boolean): trackingMutationPayload
   trackingCopyOneById(id: ID!): trackingMutationPayload
   trackingUpdateOne(where: [FilterTracking], input: trackingInput!): trackingMutationPayload
@@ -484,6 +572,63 @@ type SkillPaginationResult {
   items: [skill]!
 }
 
+type role {
+  name: String
+  agents: String
+  api: String
+  workflows: String
+  variables: String
+  users: String
+  evals: String
+  budget_management: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+  id: ID!
+}
+
+input roleInput {
+  name: String
+  agents: String
+  api: String
+  workflows: String
+  variables: String
+  users: String
+  evals: String
+  budget_management: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterRole {
+  name: FilterOperatorString
+  agents: FilterOperatorString
+  api: FilterOperatorString
+  workflows: FilterOperatorString
+  variables: FilterOperatorString
+  users: FilterOperatorString
+  evals: FilterOperatorString
+  budget_management: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type roleMutationPayload {
+  item: role!
+  job: String
+}
+
+type RolePaginationResult {
+  pageInfo: PageInfo!
+  items: [role]!
+}
+
 type agent {
   name: String
   image: String
@@ -598,6 +743,69 @@ type AgentPaginationResult {
   items: [agent]!
 }
 
+enum statusEnum {
+  OPEN
+  SOLVED
+}
+
+type feedback {
+  description: String
+  status: statusEnum
+  agent: String
+  session: String
+  score: Float
+  user: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+
+input feedbackInput {
+  description: String
+  status: statusEnum
+  agent: String
+  session: String
+  score: Float
+  user: Float
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterOperatorstatusEnum {
+  eq: statusEnum
+  ne: statusEnum
+  in: [statusEnum]
+  and: [FilterOperatorstatusEnum]
+  or: [FilterOperatorstatusEnum]
+}
+
+input FilterFeedback {
+  description: FilterOperatorString
+  status: FilterOperatorstatusEnum
+  agent: FilterOperatorString
+  session: FilterOperatorString
+  score: FilterOperatorFloat
+  user: FilterOperatorFloat
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type feedbackMutationPayload {
+  item: feedback!
+  job: String
+}
+
+type FeedbackPaginationResult {
+  pageInfo: PageInfo!
+  items: [feedback]!
+}
+
 type project {
   name: String!
   description: String
@@ -652,6 +860,80 @@ type projectMutationPayload {
 type ProjectPaginationResult {
   pageInfo: PageInfo!
   items: [project]!
+}
+
+type job_result {
+  job_id: String
+  state: String
+  error: JSON
+  label: String
+  tries: Float
+  result: JSON
+  metadata: JSON
+  item: String
+  context: String
+  type: String
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+
+input job_resultInput {
+  job_id: String
+  state: String
+  error: JSON
+  label: String
+  tries: Float
+  result: JSON
+  metadata: JSON
+  item: String
+  context: String
+  type: String
+  trigger: String
+  trigger_metadata: JSON
+  session: String
+  workflow: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterJob_result {
+  job_id: FilterOperatorString
+  state: FilterOperatorString
+  error: FilterOperatorJSON
+  label: FilterOperatorString
+  tries: FilterOperatorFloat
+  result: FilterOperatorJSON
+  metadata: FilterOperatorJSON
+  item: FilterOperatorString
+  context: FilterOperatorString
+  type: FilterOperatorString
+  trigger: FilterOperatorString
+  trigger_metadata: FilterOperatorJSON
+  session: FilterOperatorString
+  workflow: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type job_resultMutationPayload {
+  item: job_result!
+  job: String
+}
+
+type Job_resultPaginationResult {
+  pageInfo: PageInfo!
+  items: [job_result]!
 }
 
 type prompt_library_item {
@@ -776,6 +1058,45 @@ type Context_presetPaginationResult {
   items: [context_preset]!
 }
 
+type team {
+  name: String!
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  budget: JSON
+  id: ID!
+}
+
+input teamInput {
+  name: String
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterTeam {
+  name: FilterOperatorString
+  description: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type teamMutationPayload {
+  item: team!
+  job: String
+}
+
+type TeamPaginationResult {
+  pageInfo: PageInfo!
+  items: [team]!
+}
+
 type entity_type_setting {
   context: String
   name: String
@@ -861,6 +1182,87 @@ type Prompt_favoritePaginationResult {
   items: [prompt_favorite]!
 }
 
+enum scoring_methodEnum {
+  MEDIAN
+  SUM
+  AVERAGE
+}
+
+type eval_run {
+  name: String
+  timeout_in_seconds: Float
+  eval_set_id: String!
+  agent_id: String!
+  eval_functions: JSON!
+  config: JSON
+  scoring_method: scoring_methodEnum!
+  pass_threshold: Float!
+  test_case_ids: JSON!
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+  RBAC: RBACData
+}
+
+input eval_runInput {
+  name: String
+  timeout_in_seconds: Float
+  eval_set_id: String
+  agent_id: String
+  eval_functions: JSON
+  config: JSON
+  scoring_method: scoring_methodEnum
+  pass_threshold: Float
+  test_case_ids: JSON
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float
+  createdAt: Date
+  updatedAt: Date
+  RBAC: RBACInput
+}
+
+input FilterOperatorscoring_methodEnum {
+  eq: scoring_methodEnum
+  ne: scoring_methodEnum
+  in: [scoring_methodEnum]
+  and: [FilterOperatorscoring_methodEnum]
+  or: [FilterOperatorscoring_methodEnum]
+}
+
+input FilterEval_run {
+  name: FilterOperatorString
+  timeout_in_seconds: FilterOperatorFloat
+  eval_set_id: FilterOperatorString
+  agent_id: FilterOperatorString
+  eval_functions: FilterOperatorJSON
+  config: FilterOperatorJSON
+  scoring_method: FilterOperatorscoring_methodEnum
+  pass_threshold: FilterOperatorFloat
+  test_case_ids: FilterOperatorJSON
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  rights_mode: FilterOperatorString
+  created_by: FilterOperatorFloat
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type eval_runMutationPayload {
+  item: eval_run!
+  job: String
+}
+
+type Eval_runPaginationResult {
+  pageInfo: PageInfo!
+  items: [eval_run]!
+}
+
 type platform_configuration {
   config_key: String!
   config_value: JSON!
@@ -908,6 +1310,100 @@ type platform_configurationMutationPayload {
 type Platform_configurationPaginationResult {
   pageInfo: PageInfo!
   items: [platform_configuration]!
+}
+
+type eval_set {
+  name: String!
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+
+input eval_setInput {
+  name: String
+  description: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterEval_set {
+  name: FilterOperatorString
+  description: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type eval_setMutationPayload {
+  item: eval_set!
+  job: String
+}
+
+type Eval_setPaginationResult {
+  pageInfo: PageInfo!
+  items: [eval_set]!
+}
+
+type test_case {
+  name: String!
+  description: String
+  inputs: JSON!
+  expected_output: String!
+  expected_tools: JSON
+  expected_knowledge_sources: JSON
+  expected_agent_tools: JSON
+  eval_set_id: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+  id: ID!
+}
+
+input test_caseInput {
+  name: String
+  description: String
+  inputs: JSON
+  expected_output: String
+  expected_tools: JSON
+  expected_knowledge_sources: JSON
+  expected_agent_tools: JSON
+  eval_set_id: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  createdAt: Date
+  updatedAt: Date
+}
+
+input FilterTest_case {
+  name: FilterOperatorString
+  description: FilterOperatorString
+  inputs: FilterOperatorJSON
+  expected_output: FilterOperatorString
+  expected_tools: FilterOperatorJSON
+  expected_knowledge_sources: FilterOperatorJSON
+  expected_agent_tools: FilterOperatorJSON
+  eval_set_id: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type test_caseMutationPayload {
+  item: test_case!
+  job: String
+}
+
+type Test_casePaginationResult {
+  pageInfo: PageInfo!
+  items: [test_case]!
 }
 
 type agent_session {
@@ -1133,6 +1629,66 @@ type variableMutationPayload {
 type VariablePaginationResult {
   pageInfo: PageInfo!
   items: [variable]!
+}
+
+type workflow_template {
+  name: String!
+  description: String
+  agent: String
+  steps_json: JSON!
+  auto_approve_tools: Boolean
+  queue: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float!
+  createdAt: Date
+  updatedAt: Date
+  variables: [String]
+  budget: JSON
+  id: ID!
+  RBAC: RBACData
+}
+
+input workflow_templateInput {
+  name: String
+  description: String
+  agent: String
+  steps_json: JSON
+  auto_approve_tools: Boolean
+  queue: String
+  last_processed_at: Date
+  embeddings_updated_at: Date
+  rights_mode: String
+  created_by: Float
+  createdAt: Date
+  updatedAt: Date
+  RBAC: RBACInput
+}
+
+input FilterWorkflow_template {
+  name: FilterOperatorString
+  description: FilterOperatorString
+  agent: FilterOperatorString
+  steps_json: FilterOperatorJSON
+  auto_approve_tools: FilterOperatorBoolean
+  queue: FilterOperatorString
+  last_processed_at: FilterOperatorDate
+  embeddings_updated_at: FilterOperatorDate
+  rights_mode: FilterOperatorString
+  created_by: FilterOperatorFloat
+  createdAt: FilterOperatorDate
+  updatedAt: FilterOperatorDate
+}
+
+type workflow_templateMutationPayload {
+  item: workflow_template!
+  job: String
+}
+
+type Workflow_templatePaginationResult {
+  pageInfo: PageInfo!
+  items: [workflow_template]!
 }
 
 enum typeEnum {
