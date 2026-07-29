@@ -50,7 +50,7 @@ import { getChunksTableName, getTableName, type ExuluContext } from "./context.t
 import type { ExuluEval } from "./evals.ts";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
-import { ExuluProvider, saveChat } from "./provider.ts";
+import { generateStream, generateSync, saveChat } from "./generate-stream.ts";
 import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
@@ -78,7 +78,6 @@ import { LiteLLMAdminError } from "./litellm/env.ts";
 import {
   getTagDailyActivity,
   listTagsByPrefix,
-  sanitizeTagPrefix,
 } from "./litellm/activity-client.ts";
 import {
   provisionDefaultUserBudget,
@@ -92,15 +91,14 @@ import {
 } from "./litellm/budget-service.ts";
 import { getMyUsageView, resolveUsageWindow } from "./litellm/usage-view.ts";
 import multer from "multer";
-import Busboy from "busboy";
-import { queues as ExuluQueues } from "@EE/queues/queues";
+import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { redisClient } from "@SRC/redis/client.ts";
-import { createEmailWebhookHandler } from "./email-inbound/webhook.ts";
-import { getEmailInboundConfig } from "./email-inbound/config.ts";
+import { createRoutineWebhookHandler, routineWebhookRateLimitExceeded } from "./email-inbound/webhook.ts";
+import { resolveTriggerBySecret } from "./email-inbound/intake.ts";
+import { decrypt } from "@SRC/exulu/auth/credential-store.ts";
 import { clearSessionCurrentTask } from "./task-description.ts";
 import { checkApiKeyScope } from "@SRC/utils/check-api-key-scope.ts";
-import { registerOpenAIGatewayRoutes } from "./openai-gateway.ts";
 import { exuluApp } from "./app/singleton.ts";
 import { checkLicense } from "@EE/entitlements.ts";
 import { getEnabledSkills } from "@SRC/utils/enabled-skills.ts";
@@ -155,13 +153,6 @@ const getExuluVersionNumber = async () => {
   }
 };
 
-export const global_queues = {
-  eval_runs: "eval_runs",
-  // Underscore, not hyphen: registered queue names are interpolated
-  // verbatim into the GraphQL QueueEnum, where "-" is illegal.
-  email_intake: "email_intake",
-};
-
 const {
   agentsSchema,
   feedbackSchema,
@@ -189,96 +180,8 @@ const {
   transcriptionJobsSchema,
 } = coreSchemas.get();
 
-/**
- * Byte-faithful multipart field parser for the email webhook.
- *
- * Exported as a factory so it can be tested in isolation. The production
- * wiring passes EMAIL_MIME_MAX_BYTES; tests may pass a smaller value to
- * exercise the fieldSize-truncation branch cheaply.
- *
- * Every terminal event branch is guarded by a single `settled` flag so that
- * busboy's event-ordering quirks (filesLimit → close, error → close) never
- * cause double-dispatch (ERR_HTTP_HEADERS_SENT / next() after a 4xx).
- */
-export const createEmailMultipartParser =
-  (fieldSizeLimit: number) =>
-  (req: Request, res: Response, next: () => void): void => {
-    let settled = false;
-    let bb: ReturnType<typeof Busboy>;
-
-    const settle = (act: () => void) => {
-      if (settled) return;
-      settled = true;
-      act();
-    };
-
-    const abort = () => {
-      req.unpipe(bb);
-      bb.removeAllListeners();
-      req.resume();
-    };
-
-    try {
-      bb = Busboy({
-        headers: req.headers,
-        defCharset: "latin1",
-        limits: { fieldSize: fieldSizeLimit, files: 0 },
-      });
-    } catch {
-      res.status(400).json({ detail: "Malformed multipart request." });
-      return;
-    }
-
-    const fields: Record<string, string> = {};
-    let truncated = false;
-
-    bb.on("field", (name: string, value: string, info: { valueTruncated: boolean }) => {
-      if (info.valueTruncated) {
-        truncated = true;
-        return;
-      }
-      fields[name] = value;
-    });
-
-    bb.on("file", (_name: string, stream: NodeJS.ReadableStream) => {
-      stream.resume();
-      settle(() => {
-        abort();
-        res.status(400).json({ detail: "Unexpected file part in email webhook." });
-      });
-    });
-
-    bb.on("filesLimit", () => {
-      settle(() => {
-        abort();
-        res.status(400).json({ detail: "Unexpected file part in email webhook." });
-      });
-    });
-
-    bb.on("error", (err: unknown) => {
-      settle(() => {
-        abort();
-        res.status(400).json({ detail: err instanceof Error ? err.message : "Malformed multipart request." });
-      });
-    });
-
-    bb.on("close", () => {
-      settle(() => {
-        if (truncated) {
-          res.status(413).json({ detail: "Email exceeds the 30MB intake limit." });
-          return;
-        }
-        req.body = fields;
-        next();
-      });
-    });
-
-    req.pipe(bb);
-  };
-
 export const createExpressRoutes = async (
   app: Express,
-  providers: ExuluProvider[],
   tools: ExuluTool[],
   contexts: ExuluContext[] | undefined,
   config: ExuluConfig,
@@ -296,6 +199,10 @@ export const createExpressRoutes = async (
   if (tracer) {
     console.log("[EXULU] tracer configured", tracer);
   }
+
+  // Capture the raw body for the routine webhook before the global JSON/urlencoded
+  // parsers consume it — the HMAC (spec §4.4) is computed over exact raw bytes.
+  app.use("/webhooks/routine", express.raw({ type: () => true, limit: "30mb" }));
 
   // important to set the limit here, otherwise the proxy will
   // fail for large requests such as those from Claude Code
@@ -365,7 +272,6 @@ export const createExpressRoutes = async (
       transcriptionJobsSchema(),
     ],
     contexts ?? [],
-    providers,
     tools,
     config,
     evals,
@@ -516,129 +422,6 @@ export const createExpressRoutes = async (
     });
   });
 
-  app.post("/generate/agent/image", async (req: Request, res: Response) => {
-    console.log("[EXULU] generate/agent/image", req.body);
-    const authenticationResult = await requestValidators.authenticate(req);
-    if (!authenticationResult.user?.id) {
-      res
-        .status(authenticationResult.code || 500)
-        .json({ detail: `${authenticationResult.message}` });
-      return;
-    }
-
-    const { name, description, style } = req.body;
-    if (!name || !description) {
-      res.status(400).json({
-        message: "Missing name or description in request.",
-      });
-      return;
-    }
-
-    const { db } = await postgresClient();
-
-    // Look up the variable from the variables table
-    const variable = await db
-      .from("variables")
-      .where({ name: "OPENAI_IMAGE_GENERATION_API_KEY" })
-      .first();
-    if (!variable) {
-      res.status(400).json({
-        message: "Provider API key variable not found for OpenAI image generation.",
-      });
-      return;
-    }
-
-    // Get the API key from the variable (decrypt if encrypted)
-    let providerapikey = variable.value;
-
-    if (!variable.encrypted) {
-      res.status(400).json({
-        message:
-          "Provider API key variable not encrypted, for security reasons you are only allowed to use encrypted variables for provider API keys.",
-      });
-      return;
-    }
-
-    if (variable.encrypted) {
-      const bytes = CryptoJS.AES.decrypt(variable.value, process.env.NEXTAUTH_SECRET);
-      providerapikey = bytes.toString(CryptoJS.enc.Utf8);
-    }
-
-    const openai = new OpenAI({
-      apiKey: providerapikey,
-    });
-
-    let style_reference = "";
-    if (style === "origami") {
-      style_reference = "minimalistic origami-style, futuristic robot, portrait, focus on face.";
-    } else if (style === "anime") {
-      style_reference =
-        "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face.";
-    } else if (style === "japanese_anime") {
-      style_reference =
-        "minimalistic, make it in the style of japanese anime, futuristic robot, portrait, focus on face.";
-    } else if (style === "vaporwave") {
-      style_reference =
-        "minimalistic, make it in the style of a vaporwave album cover, futuristic robot, portrait, focus on face.";
-    } else if (style === "lego") {
-      style_reference =
-        "minimalistic, make it in the style of LEGO minifigures, futuristic robot, portrait, focus on face.";
-    } else if (style === "paper_cut") {
-      style_reference =
-        "minimalistic, make it in the style of Paper-cut style portrait with color layers, futuristic robot, portrait, focus on face.";
-    } else if (style === "felt_puppet") {
-      style_reference =
-        "minimalistic, make it in the style of a felt puppet, futuristic robot, portrait, focus on face.";
-    } else if (style === "app_icon") {
-      style_reference =
-        "A playful and modern app icon design of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024.";
-    } else if (style === "pixel_art") {
-      style_reference =
-        "A pixel art style of a robot, minimal flat vector style, glossy highlights, soft shadows, centered composition, high contrast, vibrant colors, rounded corners, on a transparent background, icon-friendly, no text, no details outside the frame, size is 1024x1024.";
-    } else if (style === "isometric") {
-      style_reference =
-        "3D isometric icon of a robot, centered composition, on a transparent background, no text, no details outside the frame, size is 1024x1024.";
-    } else {
-      style_reference =
-        "A minimalist 3D, robot, portrait, focus on face, floating in space, low-poly design with pastel colors.";
-    }
-
-    const prompt = `
-        A digital portrait of ${name}, visualized as a futuristic robot.  
-The robot’s design reflects '${description}', with props, tools, or symbolic objects that represent its expertise or area of work.  
-Example: if the agent is a financial analyst, it may hold a stack of papers; if it’s a creative strategist it may be painting on a canvas.  
-Style: ${style_reference}.  
-The portrait should have a clean background.  
-Framing: bust portrait, centered.  
-Mood: friendly and intelligent.  
-            `;
-
-    const result = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-    });
-
-    // Save the image to a file
-    const image_base64 = result.data?.[0]?.b64_json;
-
-    if (!image_base64) {
-      res.status(500).json({
-        message: "Failed to generate image.",
-      });
-      return;
-    }
-
-    const uuid = randomUUID();
-    const image_url = await uploadFile(Buffer.from(image_base64, "base64"), `${uuid}.png`, config, {
-      contentType: "image/png",
-    }, authenticationResult.user?.id, undefined, true);
-
-    res.status(200).json({
-      message: "Image generated successfully.",
-      image: image_url,
-    });
-  });
-
   // Recall.ai webhook endpoint. Configured in the Recall dashboard as
   // PUBLIC_API_BASE_URL/recall/webhooks, subscribed to bot.*, recording.done,
   // recording.failed, transcript.done, transcript.failed.
@@ -679,65 +462,25 @@ Mood: friendly and intelligent.
     });
   });
 
-  // Mailgun EU inbound email webhook (raw-MIME forward variant): the
-  // catch-all route POSTs multipart/form-data with the signature fields plus
-  // the full raw MIME in `body-mime`. Durability ordering (verify → S3 →
-  // queue → ACK) lives in createEmailWebhookHandler; this block wires the
-  // real S3/queue/db/redis. Mailgun rejects >25MB upstream; parser cap 30MB.
-  // Design doc: docs/superpowers/specs/2026-07-15-email-triggered-routines-design.md §4.2
-  const EMAIL_MIME_MAX_BYTES = 30 * 1024 * 1024;
-
-  // Module-level config cache (30 s staleness accepted for enable/disable and
-  // key rotation — Mailgun retries cover brief 401 windows). Keeps every
-  // unauthenticated webhook request from hitting Postgres before signature
-  // verification.
-  let _emailConfigCache: Awaited<ReturnType<typeof getEmailInboundConfig>> | null = null;
-  let _emailConfigCacheAt = 0;
-  const EMAIL_CONFIG_CACHE_MS = 30_000;
-  const getCachedEmailInboundConfig = async (db: any) => {
-    const now = Date.now();
-    if (_emailConfigCache !== null && now - _emailConfigCacheAt < EMAIL_CONFIG_CACHE_MS) {
-      return _emailConfigCache;
-    }
-    _emailConfigCache = await getEmailInboundConfig(db);
-    _emailConfigCacheAt = now;
-    return _emailConfigCache;
-  };
-
-  // Byte-faithful multipart field parser for the email webhook. Delegates to
-  // the exported createEmailMultipartParser factory (see above) so the logic
-  // can be tested in isolation without instantiating the full routes.
-  const emailMultipartParser = createEmailMultipartParser(EMAIL_MIME_MAX_BYTES);
-
-  const emailWebhookHandler = createEmailWebhookHandler({
+  // Generic routine inbound webhook (spec §4). The secret in the path both
+  // routes and authorizes; raw bytes were captured by the early express.raw
+  // middleware. Durability ordering lives in createRoutineWebhookHandler.
+  const routineWebhookHandler = createRoutineWebhookHandler({
     licensedForQueues: () => checkLicense()["queues"] === true,
     getDb: async () => (await postgresClient()).db,
     getRedis: async () => (await redisClient()).client,
-    getEmailConfig: getCachedEmailInboundConfig,
-    putRawEmail: async (key, body) => {
-      // global=true keeps the key out of any user_ prefix; strip the bucket
-      // prefix uploadFile prepends so the intake job can read the key back
-      // directly via getS3ObjectBytes.
+    resolveTrigger: async (db, secret) => resolveTriggerBySecret(db, secret),
+    decryptSigningSecret: (encrypted) => decrypt(encrypted),
+    putRawPayload: async (key, body) => {
       const fullKey = await uploadFile(
-        body,
-        key,
-        config,
-        { contentType: "message/rfc822" },
-        undefined,
-        undefined,
-        true,
+        body, key, config, { contentType: "application/octet-stream" }, undefined, undefined, true,
       );
       return fullKey.slice(fullKey.indexOf("/") + 1);
     },
     enqueueIntake: async (payload) => {
-      const queue = await ExuluQueues.register(
-        global_queues.email_intake,
-        { worker: 2, queue: 5 },
-        5,
-        300,
-      ).use();
+      const queue = await ExuluQueues.register(global_queues.email_intake, { worker: 2, queue: 5 }, 5, 300).use();
       const jobData: BullMqJobData = {
-        label: "Email intake",
+        label: "Routine webhook intake",
         type: "email_intake",
         trigger: "api",
         timeoutInSeconds: 300,
@@ -751,12 +494,11 @@ Mood: friendly and intelligent.
         backoff: { type: "exponential", delay: 5000 },
       });
     },
+    stampLastFiredAt: async (db, triggerId) =>
+      db.from("workflow_triggers").where({ id: triggerId }).update({ last_fired_at: new Date().toISOString() }),
+    rateLimitExceeded: routineWebhookRateLimitExceeded,
   });
-  app.post(
-    "/webhooks/email/mime",
-    emailMultipartParser,
-    emailWebhookHandler,
-  );
+  app.post("/webhooks/routine/:secret", routineWebhookHandler);
 
   // Ping route that can be used to check if the request
   // is authenticated and the server is running.
@@ -837,13 +579,7 @@ Mood: friendly and intelligent.
     });
   });
 
-  // Register the agent-run handler for a (provider, slug) pair. In Spec A
-  // catalog mode this is called once per ExuluProvider in providers.forEach
-  // below. In LiteLLM mode it is also called once with a fixed slug and any
-  // provider as the orchestrator (the in-code provider here is only used as
-  // a method-holder for generateStream/generateSync; the actual languageModel
-  // comes from resolveModel's LiteLLM branch).
-  const registerAgentRunRoute = (slug: string, provider: ExuluProvider) => {
+  const registerAgentRunRoute = (slug: string) => {
     app.post(slug + "/:instance", async (req: Request, res: Response) => {
       console.log("[EXULU] POST " + slug + "/:instance", req.body);
 
@@ -866,14 +602,6 @@ Mood: friendly and intelligent.
       }
 
       const { db } = await postgresClient();
-
-      // For agents we dont use bullmq jobs, instead we use a rate limiter to
-      // allow responses in real time while managing availability of infrastructure
-      // or provider limits.
-      // todo add "configuration" object to provider, and allow setting agent instance
-      // specific configurations that overwrite the global ones.
-      // todo allow setting agent instance specific configurations that overwrite the global ones
-      // todo display rate limit message in the chat UI
 
       const agent = await exuluApp.get().agent(instance);
 
@@ -979,7 +707,6 @@ Mood: friendly and intelligent.
         tools,
         contexts || [],
         disabledTools,
-        providers,
         user,
       );
 
@@ -997,7 +724,6 @@ Mood: friendly and intelligent.
         resolved = await resolveModel({
           modelId,
           user,
-          providers,
           agent: agent,
         });
       } catch (err) {
@@ -1008,12 +734,10 @@ Mood: friendly and intelligent.
         }
         throw err;
       }
-      const providerapikey = resolved.apiKey;
       const resolvedLanguageModel = resolved.languageModel;
       const resolvedModelId = resolved.model.id;
       const contextWindow = await resolveContextWindow({
-        modelId: resolved.model.id,
-        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        modelId: resolved.model.id
       });
       // todo add authentication based on thread id to guarantee privacy
       // todo validate req.body data structure
@@ -1050,9 +774,9 @@ Mood: friendly and intelligent.
           : agent.instructions;
 
         if (headers.session) markStreamActive(headers.session as string);
-        let result: Awaited<ReturnType<typeof provider.generateStream>>;
+        let result: Awaited<ReturnType<typeof generateStream>>;
         try {
-          result = await provider.generateStream({
+          result = await generateStream({
             contexts: contexts,
             agent: agent,
             user,
@@ -1065,7 +789,6 @@ Mood: friendly and intelligent.
             approvedTools: approvedTools,
             allExuluTools: tools,
             languageModel: resolvedLanguageModel,
-            providerapikey,
             toolConfigs: agent.tools,
             exuluConfig: config,
             req: req,
@@ -1220,9 +943,9 @@ Mood: friendly and intelligent.
           ? `${agent.instructions}\n\n${customInstructions}`
           : agent.instructions;
 
-        let response: Awaited<ReturnType<typeof provider.generateSync>>;
+        let response: Awaited<ReturnType<typeof generateSync>>;
         try {
-          response = await provider.generateSync({
+          response = await generateSync({
             contexts: contexts,
             agent: agent,
             user,
@@ -1234,7 +957,6 @@ Mood: friendly and intelligent.
             currentSkills: enabledSkills,
             allExuluTools: tools,
             languageModel: resolvedLanguageModel,
-            providerapikey,
             exuluConfig: config,
             toolConfigs: agent.tools,
             contextWindow,
@@ -1312,7 +1034,7 @@ Mood: friendly and intelligent.
       }
       let resolved: Awaited<ReturnType<typeof resolveModel>>;
       try {
-        resolved = await resolveModel({ modelId, user, providers, agent });
+        resolved = await resolveModel({ modelId, user, agent });
       } catch (err) {
         if (err instanceof ResolveModelError) {
           const status = err.code === "MODEL_FORBIDDEN" ? 403 : 400;
@@ -1322,8 +1044,7 @@ Mood: friendly and intelligent.
         throw err;
       }
       const contextWindow = await resolveContextWindow({
-        modelId: resolved.model.id,
-        exuluProvider: isLiteLLMEnabled() ? undefined : resolved.exuluProvider,
+        modelId: resolved.model.id
       });
       const steer = typeof req.body?.steer === "string" ? req.body.steer : undefined;
       try {
@@ -1347,27 +1068,14 @@ Mood: friendly and intelligent.
     });
   };
 
-  // Spec A: one handler per code-defined ExuluProvider, mounted at its slug.
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-    registerAgentRunRoute(slug, provider);
-  });
-
   // LiteLLM mode: a single handler at a fixed path. agent.slug is hydrated to
   // "/agents/litellm/run" in graphql/utilities/sanitize-and-hydrate-fields.ts
   // when isLiteLLMEnabled() is true, so the frontend constructs the same URL.
-  if (isLiteLLMEnabled() && providers.length > 0) {
-    registerAgentRunRoute("/agents/litellm/run", providers[0]!);
+  if (isLiteLLMEnabled()) {
+    registerAgentRunRoute("/agents/litellm/run");
   }
 
-  // Compact routes: one per code-defined provider, plus LiteLLM fixed path.
-  providers.forEach((provider) => {
-    const slug = provider.slug as string;
-    if (!slug) return;
-    registerAgentCompactRoute(slug.replace(/\/run$/, "/compact"));
-  });
-  if (isLiteLLMEnabled() && providers.length > 0) {
+  if (isLiteLLMEnabled()) {
     registerAgentCompactRoute("/agents/litellm/compact");
   }
 
@@ -1433,7 +1141,6 @@ Mood: friendly and intelligent.
       resolved = await resolveModel({
         modelId: agent.model,
         user,
-        providers,
         agent: agent,
       });
     } catch (err) {
@@ -5254,12 +4961,7 @@ Mood: friendly and intelligent.
     // graphql/utilities/sanitize-and-hydrate-fields.ts (~line 125).
     if (isLiteLLMEnabled()) return "/agents/litellm/run";
     if (!agentModel) return "";
-    const { db } = await postgresClient();
-    const modelRow = await db.from("models").where({ id: agentModel }).first();
-    const provider = modelRow?.provider
-      ? providers.find((a) => a.id === modelRow.provider)
-      : undefined;
-    return (provider?.slug as string) || "";
+    return "";
   };
 
   const UUID_RE =
@@ -5365,8 +5067,6 @@ Mood: friendly and intelligent.
   );
 
   app.use(express.static("public"));
-
-  await registerOpenAIGatewayRoutes(app, providers, tools, contexts, config);
 
   return app;
 };

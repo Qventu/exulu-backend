@@ -21,7 +21,7 @@ export type PublicToolType = (typeof PUBLIC_TOOL_TYPES)[number];
 
 // "agent" and "context" are framework-managed and intentionally NOT part of
 // PublicToolType. Exulu creates these itself: "agent" for agent-as-tool
-// instrumentation (ExuluProvider.tool) and "context" for the internal
+// instrumentation and "context" for the internal
 // retrieval tools. Their id carries a contract — e.g. an "agent" tool's id
 // MUST be a real agent UUID, since hydration looks the agent up by it — so a
 // consumer setting type:"agent" by mistake produces a UUID lookup crash. Build
@@ -172,19 +172,6 @@ export class ExuluTool {
       throw new Error("Agent not found.");
     }
 
-    let providerapikey: string | undefined;
-    if (agent.model) {
-      const providers = exuluApp.get().providers;
-      const resolved = await resolveModel({
-        modelId: agent.model,
-        user,
-        providers,
-        agent: agent,
-        rbacBypass: true,
-      });
-      providerapikey = resolved.apiKey;
-    }
-
     const { convertExuluToolsToAiSdkTools } = await import(
       "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools"
     );
@@ -195,7 +182,6 @@ export class ExuluTool {
       [],
       [],
       agent.tools,
-      providerapikey,
       undefined,
       user,
       config,

@@ -19,6 +19,7 @@ export interface ExuluWorkflow {
     updatedAt: string;
     agent: string;
     steps_json?: WorkflowStep[];
+    queue?: string;
     /** Spec §5.2: true = legacy blanket tool pre-approval (run never pauses). */
     auto_approve_tools?: boolean;
 }

@@ -81,8 +81,14 @@ export const mapRoutineRunRow = (
   tries: number | null;
   createdAt: unknown;
   updatedAt: unknown;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
 } => {
   const routine = row.workflow ? routineById.get(row.workflow) : undefined;
+  const tokens = parseMaybeJson(row.metadata)?.tokens as
+    | { inputTokens?: number; outputTokens?: number; costUsd?: number }
+    | undefined;
   return {
     id: row.id,
     job_id: row.job_id ?? null,
@@ -97,6 +103,9 @@ export const mapRoutineRunRow = (
     tries: row.tries ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    inputTokens: tokens?.inputTokens ?? null,
+    outputTokens: tokens?.outputTokens ?? null,
+    costUsd: tokens?.costUsd ?? null,
   };
 };
 

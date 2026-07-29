@@ -1,130 +1,80 @@
-import {
-  toEmailInboundConfigPayload,
-  insertTriggerWithRetry,
-} from "./resolver-helpers";
+import { toWorkflowTriggerPayload, insertTriggerWithSecretRetry } from "./resolver-helpers";
+import type { InsertTriggerRow } from "./resolver-helpers";
+import type { WorkflowTriggerRow } from "./types";
 
-// ---------------------------------------------------------------------------
-// toEmailInboundConfigPayload
-// ---------------------------------------------------------------------------
+const row: WorkflowTriggerRow = {
+  id: "t1", workflow: "w1", type: "email", enabled: true,
+  secret: "SECRET", signing_secret: "enc", last_fired_at: null,
+  config: {}, run_as_user: 1, run_as_role: null,
+};
 
-describe("toEmailInboundConfigPayload", () => {
-  const baseInbound = {
-    provider: "mailgun-eu",
-    inbound_domain: "mail.client.com",
-    enabled: true,
-    last_webhook_at: "2026-07-15T10:00:00.000Z",
-  };
-
-  it("never includes signing_key in the output", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: "super-secret",
-    });
-    expect(payload).not.toHaveProperty("signing_key");
+describe("toWorkflowTriggerPayload", () => {
+  it("exposes webhook_url to writers and hides it from readers", () => {
+    process.env.BACKEND = "https://api.example.com";
+    const writer = toWorkflowTriggerPayload(row, { canWrite: true });
+    expect(writer.webhook_url).toBe("https://api.example.com/webhooks/routine/SECRET");
+    expect(writer.has_webhook).toBe(true);
+    expect(writer.has_signing_secret).toBe(true);
+    const reader = toWorkflowTriggerPayload(row, { canWrite: false });
+    expect(reader.webhook_url).toBeNull();
+    expect(reader.has_webhook).toBe(true);
   });
-
-  it("sets has_signing_key true when a key is present", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: "some-key",
-    });
-    expect(payload.has_signing_key).toBe(true);
-  });
-
-  it("sets has_signing_key false when no key is present", () => {
-    const payload = toEmailInboundConfigPayload({
-      ...baseInbound,
-      signing_key: null,
-    });
-    expect(payload.has_signing_key).toBe(false);
-  });
-
-  it("derives webhook_url from process.env.BACKEND with trailing slash stripped", () => {
-    const original = process.env.BACKEND;
-    process.env.BACKEND = "https://api.example.com/";
-    try {
-      const payload = toEmailInboundConfigPayload({ ...baseInbound, signing_key: null });
-      expect(payload.webhook_url).toBe("https://api.example.com/webhooks/email/mime");
-    } finally {
-      process.env.BACKEND = original;
-    }
-  });
-
-  it("returns null webhook_url when BACKEND is not set", () => {
-    const original = process.env.BACKEND;
-    delete process.env.BACKEND;
-    try {
-      const payload = toEmailInboundConfigPayload({ ...baseInbound, signing_key: null });
-      expect(payload.webhook_url).toBeNull();
-    } finally {
-      process.env.BACKEND = original;
-    }
+  it("passes signing_secret_once only when provided", () => {
+    expect(toWorkflowTriggerPayload(row, { canWrite: true }).signing_secret_once).toBeNull();
+    expect(toWorkflowTriggerPayload(row, { canWrite: true, signingSecretOnce: "plain" }).signing_secret_once).toBe("plain");
   });
 });
 
-// ---------------------------------------------------------------------------
-// insertTriggerWithRetry
-// ---------------------------------------------------------------------------
+const baseRow: Omit<InsertTriggerRow, "secret"> = {
+  workflow: "w1",
+  type: "email",
+  enabled: true,
+  config: "{}",
+  run_as_user: "1",
+  run_as_role: null,
+  created_by: "u1",
+};
 
-describe("insertTriggerWithRetry", () => {
-  const baseRow = {
-    workflow: "wf-1",
-    type: "email",
-    enabled: true,
-    config: "{}",
-    run_as_user: "u-1",
-    run_as_role: null,
-    created_by: "u-1",
-  };
+describe("insertTriggerWithSecretRetry", () => {
+  it("(a) first-attempt success: returns the row and calls insertFn once with a non-empty secret", async () => {
+    const returned = { id: "t1", ...baseRow, secret: "abc" };
+    const insertFn = jest.fn(async (row: InsertTriggerRow) => ({ ...returned, secret: row.secret }));
+    const result = await insertTriggerWithSecretRetry(insertFn, baseRow);
+    expect(insertFn).toHaveBeenCalledTimes(1);
+    const calledWith = insertFn.mock.calls[0][0] as InsertTriggerRow;
+    expect(typeof calledWith.secret).toBe("string");
+    expect(calledWith.secret.length).toBeGreaterThan(0);
+    expect(result.secret).toBe(calledWith.secret);
+  });
 
-  it("returns the inserted row on the first successful attempt", async () => {
-    const insertFn = jest.fn().mockResolvedValue({ address: "slug-aabbccdd@mail.client.com" });
-    const result = await insertTriggerWithRetry(
-      insertFn,
-      baseRow,
-      "My Routine",
-      "mail.client.com",
-    );
-    expect(result).toEqual({ address: "slug-aabbccdd@mail.client.com" });
+  it("(b) 23505 on first call then success on second: retries and returns the row", async () => {
+    const collision = Object.assign(new Error("unique violation"), { code: "23505" });
+    let calls = 0;
+    const insertFn = jest.fn(async (row: InsertTriggerRow) => {
+      calls++;
+      if (calls === 1) throw collision;
+      return { id: "t2", ...baseRow, secret: row.secret };
+    });
+    const result = await insertTriggerWithSecretRetry(insertFn, baseRow);
+    expect(insertFn).toHaveBeenCalledTimes(2);
+    expect(result.id).toBe("t2");
+    expect(typeof result.secret).toBe("string");
+    expect(result.secret.length).toBeGreaterThan(0);
+  });
+
+  it("(c) non-23505 error rethrows immediately without further retries", async () => {
+    const boom = new Error("some other db error");
+    const insertFn = jest.fn(async () => { throw boom; });
+    await expect(insertTriggerWithSecretRetry(insertFn, baseRow)).rejects.toThrow("some other db error");
     expect(insertFn).toHaveBeenCalledTimes(1);
   });
 
-  it("retries on 23505 and succeeds on the third attempt", async () => {
-    const collision = Object.assign(new Error("duplicate"), { code: "23505" });
-    const successRow = { address: "my-routine-cccccccc@mail.client.com" };
-    const insertFn = jest
-      .fn()
-      .mockRejectedValueOnce(collision)
-      .mockRejectedValueOnce(collision)
-      .mockResolvedValue(successRow);
-
-    const result = await insertTriggerWithRetry(
-      insertFn,
-      baseRow,
-      "My Routine",
-      "mail.client.com",
+  it("(d) five consecutive 23505 errors throws 'Could not generate a unique trigger secret.'", async () => {
+    const collision = Object.assign(new Error("unique violation"), { code: "23505" });
+    const insertFn = jest.fn(async () => { throw collision; });
+    await expect(insertTriggerWithSecretRetry(insertFn, baseRow)).rejects.toThrow(
+      "Could not generate a unique trigger secret.",
     );
-    expect(result).toEqual(successRow);
-    expect(insertFn).toHaveBeenCalledTimes(3);
-  });
-
-  it("rethrows immediately on a non-23505 error without further attempts", async () => {
-    const dbError = Object.assign(new Error("connection refused"), { code: "08006" });
-    const insertFn = jest.fn().mockRejectedValue(dbError);
-
-    await expect(
-      insertTriggerWithRetry(insertFn, baseRow, "My Routine", "mail.client.com"),
-    ).rejects.toThrow("connection refused");
-    expect(insertFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("throws /after 5 attempts/ when all five inserts collide", async () => {
-    const collision = Object.assign(new Error("duplicate"), { code: "23505" });
-    const insertFn = jest.fn().mockRejectedValue(collision);
-
-    await expect(
-      insertTriggerWithRetry(insertFn, baseRow, "My Routine", "mail.client.com"),
-    ).rejects.toThrow(/after 5 attempts/);
     expect(insertFn).toHaveBeenCalledTimes(5);
   });
 });

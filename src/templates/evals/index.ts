@@ -11,10 +11,9 @@ const llmAsJudgeEval = () => {
       id: "llm_as_judge",
       name: "LLM as Judge",
       description: "Evaluate the output of the LLM as a judge.",
-      execute: async ({ agent, provider, messages, testCase, config }) => {
+      execute: async ({ agent, messages, testCase, config }) => {
         console.log("[EXULU] running llm as judge eval", {
           agent,
-          provider,
           messages,
           testCase,
           config,
@@ -59,7 +58,6 @@ const llmAsJudgeEval = () => {
 
         const resolved = await resolveModel({
           modelId: agent.model,
-          providers: exuluApp.get().providers,
           agent: agent,
           rbacBypass: true,
         });

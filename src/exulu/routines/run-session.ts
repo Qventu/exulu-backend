@@ -29,6 +29,9 @@ export async function createRunSession(opts: {
       created_by: userId,
       title,
       rights_mode: workflow.rights_mode ?? "private",
+      // The routine/workflow this session is a run of; null for user chats.
+      // Chat history filters run = null so run sessions do not appear there.
+      run: workflow.id,
       // Session ⇄ run cross-link; the agent-run route uses job_result_id to
       // resume a paused run after an approval turn (spec §5.5).
       metadata: {

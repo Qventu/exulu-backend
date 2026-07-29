@@ -1,33 +1,19 @@
 import {
   MAX_FILTER_PATTERN_LENGTH,
-  generateTriggerAddress,
-  slugifyRoutineName,
+  generateTriggerSecret,
+  generateSigningSecret,
   validateEmailTriggerConfig,
 } from "./trigger-config";
 
-describe("slugifyRoutineName", () => {
-  it("lowercases and dashes non-alphanumerics", () => {
-    expect(slugifyRoutineName("Spare Parts Handler!")).toBe("spare-parts-handler");
+describe("generateTriggerSecret", () => {
+  it("produces a URL-safe ~43-char base64url string, unique per call", () => {
+    const a = generateTriggerSecret();
+    const b = generateTriggerSecret();
+    expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 bytes -> 43 base64url chars
+    expect(a).not.toEqual(b);
   });
-  it("falls back to 'routine' when nothing survives", () => {
-    expect(slugifyRoutineName("!!! ???")).toBe("routine");
-  });
-  it("caps the slug at 30 characters without a trailing dash", () => {
-    const slug = slugifyRoutineName("a".repeat(28) + " tail that gets cut");
-    expect(slug.length).toBeLessThanOrEqual(30);
-    expect(slug.endsWith("-")).toBe(false);
-  });
-});
-
-describe("generateTriggerAddress", () => {
-  it("produces <slug>-<8 hex>@<domain>", () => {
-    const address = generateTriggerAddress("Spare Parts Handler", "mail.client.com");
-    expect(address).toMatch(/^spare-parts-handler-[0-9a-f]{8}@mail\.client\.com$/);
-  });
-  it("randomizes the suffix", () => {
-    const a = generateTriggerAddress("X routine", "mail.client.com");
-    const b = generateTriggerAddress("X routine", "mail.client.com");
-    expect(a).not.toBe(b);
+  it("generateSigningSecret has the same shape", () => {
+    expect(generateSigningSecret()).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 });
 

@@ -1,10 +1,8 @@
-import type { ExuluProviderWorkflowConfig } from "@SRC/exulu/provider";
-
 export interface ExuluAgent {
     id: string;
     modelName?: string;
     providerName?: string;
-    /** @deprecated Hydrated for read compatibility; the underlying DB column is gone. */
+    /** @deprecated Hydrated for read compatibility; the underlying DB column is gone. Use model instead */
     provider?: string;
     source: "code" | "database";
     memory?: string;
@@ -15,7 +13,6 @@ export interface ExuluAgent {
     image?: string;
     /** FK to models.id — replaces legacy provider + providerapikey columns. */
     model?: string;
-    workflows?: ExuluProviderWorkflowConfig;
     firewall?: {
         enabled: boolean;
         scanners?: {

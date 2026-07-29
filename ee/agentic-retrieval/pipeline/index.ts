@@ -274,7 +274,6 @@ export function createAgenticRetrievalTool(opts: {
           const resolved = await resolveModel({
             modelId: cfg.utilityModel,
             user,
-            providers: exuluApp.get().providers,
             rbacBypass: true,
           });
           utilityModel = resolved.languageModel ?? model;

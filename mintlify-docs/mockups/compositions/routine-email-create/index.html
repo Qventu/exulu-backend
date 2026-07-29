@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — create a routine</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/widgets.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* ── hook ── */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; transform: translateY(10px); }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; transform: translateY(14px); }
+
+      /* ── stage ── */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; transform: translateY(16px); }
+
+      /* ── workbench layout ── */
+      #root .workbench-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+      /* ── section nav rail ── */
+      #root .section-nav { width: 200px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); padding: 16px 0; display: flex; flex-direction: column; gap: 2px; }
+      #root .section-nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .section-nav-item.active { background: var(--surface-2); color: var(--tx-hi); font-weight: 500; }
+      #root .section-nav-item svg { width: 14px; height: 14px; stroke-width: 1.5; flex: none; }
+
+      /* ── workbench content ── */
+      #root .workbench-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .workbench-scroll { flex: 1; overflow: hidden; padding: 32px 48px; }
+      #root .workbench-col { max-width: 680px; display: flex; flex-direction: column; gap: 24px; }
+
+      /* ── DetailSection ── */
+      #root .detail-section { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--hair); background: var(--surface); }
+      #root .detail-section-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--hair); }
+      #root .detail-section-title { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .detail-section-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+      /* ── Basics — name field ── */
+      #root .imp-field { display: flex; flex-direction: column; gap: 6px; }
+      #root .imp-label { font-size: 12px; font-weight: 500; color: var(--tx-hi); }
+      #root .imp-input { display: flex; align-items: center; border: 1px solid var(--hair); background: var(--bg); padding: 9px 12px; font-size: 13px; color: var(--tx-hi); position: relative; min-height: 38px; }
+      #root .imp-input.focused { border-color: var(--accent); }
+      #root .imp-field-hint { font-size: 12px; color: var(--tx-lo); }
+
+      /* cover-wipe for name typing reveal */
+      #root .type-wrap { position: relative; display: inline-block; }
+      #root .type-cover { position: absolute; inset: 0; background: var(--bg); transform-origin: 100% 50%; }
+
+      /* ── Steps rows ── */
+      #root .steps-list { display: flex; flex-direction: column; gap: 0; }
+      #root .step-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--hair); font-size: 13px; color: var(--tx-hi); }
+      #root .step-row:last-child { border-bottom: none; }
+      #root .step-num { font-family: var(--font-mono); font-size: 11px; color: var(--tx-faint); min-width: 18px; }
+      #root .step-name { flex: 1; }
+      #root .step-drag { color: var(--tx-faint); cursor: default; }
+
+      /* ── topbar breadcrumb ── */
+      #root .topbar-breadcrumb { font-size: 13px; color: var(--tx-lo); }
+      #root .topbar-breadcrumb-sep { color: var(--tx-faint); margin: 0 6px; }
+      #root .topbar-breadcrumb-cur { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .topbar-right { display: flex; align-items: center; gap: 8px; }
+
+      /* ── steps section: hidden initially, revealed after nav click ── */
+      #root #steps-section { opacity: 0; }
+      #root #basics-section { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="routine-email-create"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="7.0"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="7.0" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Routines</span>
+          <h1 class="hook-headline" id="hook-headline">Start with a routine.</h1>
+        </div>
+      </div>
+
+      <!-- app workbench -->
+      <div id="app" class="clip" data-start="1.9" data-duration="5.1" data-track-index="3">
+        <div class="stage" id="stage">
+          <div class="imp-shell">
+            <!-- sidebar -->
+            <aside class="imp-sidebar">
+              <div class="imp-wordmark">IMP</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home
+              </div>
+              <div class="imp-sidebar-group">Workspace</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects
+              </div>
+              <div class="imp-sidebar-group">Build</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>Knowledge
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h8"/><path d="M8 12h4"/><path d="M8 18h2"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>Prompts
+              </div>
+              <div class="imp-nav-item active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>Routines
+              </div>
+            </aside>
+
+            <!-- main area -->
+            <div class="imp-main">
+              <!-- topbar -->
+              <div class="imp-topbar">
+                <span>
+                  <span class="topbar-breadcrumb">Routines</span>
+                  <span class="topbar-breadcrumb-sep">/</span>
+                  <span class="topbar-breadcrumb-cur" id="topbar-name">Support triage</span>
+                </span>
+                <span class="topbar-right">
+                  <span class="imp-btn imp-btn-ghost">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+                    Open chat
+                  </span>
+                  <span class="imp-btn imp-btn-ink">Run</span>
+                </span>
+              </div>
+
+              <!-- workbench -->
+              <div class="workbench-body">
+                <!-- section nav -->
+                <nav class="section-nav">
+                  <div class="section-nav-item active" id="nav-basics">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                    Basics
+                  </div>
+                  <div class="section-nav-item" id="nav-access">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Access
+                  </div>
+                  <div class="section-nav-item" id="nav-steps">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+                    Steps
+                  </div>
+                  <div class="section-nav-item" id="nav-schedule">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                    Schedule
+                  </div>
+                  <div class="section-nav-item" id="nav-runs">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    Runs
+                  </div>
+                  <div class="section-nav-item" id="nav-queue">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M5 12h14"/><path d="M5 17h14"/></svg>
+                    Queue
+                  </div>
+                  <div class="section-nav-item" style="color:var(--destructive)" id="nav-danger">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    Danger zone
+                  </div>
+                </nav>
+
+                <!-- content pane: Basics and Steps sections layered -->
+                <div class="workbench-content" style="position:relative;">
+                  <!-- Basics section (visible at start) -->
+                  <div class="workbench-scroll" id="basics-section">
+                    <div class="workbench-col">
+                      <div class="detail-section">
+                        <div class="detail-section-header">
+                          <span class="detail-section-title">Basics</span>
+                        </div>
+                        <div class="detail-section-body">
+                          <div class="imp-field">
+                            <div class="imp-label">Name</div>
+                            <div class="imp-input" id="name-input">
+                              <span class="type-wrap">
+                                <span>Support triage</span>
+                                <span class="type-cover" id="name-cover"></span>
+                              </span>
+                            </div>
+                          </div>
+                          <div class="imp-field">
+                            <div class="imp-label">Description</div>
+                            <div class="imp-input" style="color:var(--tx-faint);font-size:13px;">Optional description…</div>
+                          </div>
+                          <div class="imp-field">
+                            <div class="imp-label">Status</div>
+                            <div class="imp-input" style="justify-content:space-between;">Active<span style="color:var(--tx-faint);font-size:11px;">▾</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Steps section (hidden, fades in after nav click) -->
+                  <div class="workbench-scroll" id="steps-section" style="position:absolute;inset:0;">
+                    <div class="workbench-col">
+                      <div class="detail-section">
+                        <div class="detail-section-header">
+                          <span class="detail-section-title">Steps</span>
+                          <span style="font-family:var(--font-mono);font-size:12px;color:var(--tx-mid);">3 steps</span>
+                        </div>
+                        <div class="steps-list">
+                          <div class="step-row">
+                            <span class="step-num">1</span>
+                            <span class="step-name">Summarise the email</span>
+                            <span class="step-drag">⋮⋮</span>
+                          </div>
+                          <div class="step-row">
+                            <span class="step-num">2</span>
+                            <span class="step-name">Draft a reply</span>
+                            <span class="step-drag">⋮⋮</span>
+                          </div>
+                          <div class="step-row">
+                            <span class="step-num">3</span>
+                            <span class="step-name">Notify the owner</span>
+                            <span class="step-drag">⋮⋮</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* 0.05–0.50  hook enters */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.90–2.35  hook exits; workbench rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.9);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.0);
+
+      /* 2.40–2.70  page sits still — orienting beat */
+
+      /* 2.70  cursor appears at lower-left, glides to Name field and clicks */
+      let t1 = impCursor(tl, { from: [980, 860], to: [580, 378], at: 2.7, click: true, duration: 0.5 });
+
+      /* name-input focus border */
+      tl.to("#name-input", { borderColor: "var(--accent)", duration: 0.15, ease: "power1.out" }, t1 - 0.15);
+
+      /* ~3.35  name cover wipes away to reveal "Support triage" */
+      tl.to("#name-cover", { scaleX: 0, duration: 0.4, ease: "steps(3)" }, t1 + 0.1);
+
+      /* ~3.90  breath; cursor moves toward Steps in section nav */
+      /* section-nav Steps item is at approx x=100 (in the left rail), y=~285 within stage */
+      /* stage is 1600×1000, centered in 1920×1080 → stage offset x=160, y=40 */
+      /* section-nav item "Steps" ≈ 3rd item, y ≈ 16+2*(8+13+8+2)+8+13 = rough ~140px into nav */
+      /* Cursor coordinates are relative to the stage element */
+      let t2 = impCursor(tl, { to: [302, 298], at: t1 + 0.7, click: true, show: false, duration: 0.5 });
+
+      /* nav-steps gets active highlight, nav-basics loses it */
+      tl.to("#nav-basics", { backgroundColor: "transparent", color: "var(--tx-mid)", fontWeight: 400, duration: 0.15 }, t2 - 0.05);
+      tl.to("#nav-steps", { backgroundColor: "var(--surface-2)", color: "var(--tx-hi)", fontWeight: 500, duration: 0.15 }, t2 - 0.05);
+
+      /* basics-section fades out; steps-section fades in */
+      tl.to("#basics-section", { opacity: 0, duration: 0.22, ease: "power1.in" }, t2 + 0.05);
+      tl.to("#steps-section", { opacity: 1, duration: 0.28, ease: "power2.out" }, t2 + 0.18);
+
+      /* cursor fades out */
+      tl.to("#cur", { opacity: 0, duration: 0.2, ease: "power1.in" }, t2 + 0.4);
+
+      /* ~5.50–7.00  settled hold on steps list (≥0.3 s) */
+
+      window.__timelines["routine-email-create"] = tl;
+    </script>
+  </body>
+</html>

@@ -4,16 +4,15 @@ import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import type { User } from "@EXULU_TYPES/models/user.ts";
 import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
-import type { ExuluProvider } from "@SRC/exulu/provider";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { KB_EDITOR_TOOL_ID } from "@SRC/templates/tools/kb-editor-config";
+import { createAgentTool } from "@SRC/exulu/agent-as-tool";
 
 export const getEnabledTools = async (
   agent: ExuluAgent,
   allExuluTools: ExuluTool[],
   allContexts: ExuluContext[],
   disabledTools: string[] = [],
-  providers: ExuluProvider[],
   user?: User,
 ) => {
   let enabledTools: ExuluTool[] = [];
@@ -51,14 +50,6 @@ export const getEnabledTools = async (
                 " was not found in the database.",
             );
           }
-          const provider = providers.find((a) => a.id === agentAsTool.provider);
-          if (!provider) {
-            throw new Error(
-              "Trying to load a tool of type 'agent', but the associated agent with id " +
-                id +
-                " does not have a provider set for it.",
-            );
-          }
 
           // if no access do not return it
           const hasAccessToAgent = await checkRecordAccess(agentAsTool, "read", user);
@@ -67,7 +58,8 @@ export const getEnabledTools = async (
             return null;
           }
 
-          hydrated = await provider.tool(agentAsTool.id, providers, allContexts);
+          hydrated = await createAgentTool(agentAsTool.id, allContexts)
+
         } else {
           hydrated = allExuluTools.find((t) => t.id === id);
         }

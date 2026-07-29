@@ -282,3 +282,50 @@ export async function cancelRoutineRunRow(
     clearStreamActive(row.session);
   }
 }
+
+/**
+ * Side-effects of removing an agent_session (does NOT delete the session row):
+ * its messages, cancelling any still-live runs for it (so an in-flight worker
+ * becomes a no-op), and its point-in-time rbac snapshot. Shared by the generic
+ * agent_sessions delete (postprocessDeletion) and deleteRoutineRunRow.
+ */
+export async function deleteAgentSessionData(
+  db: any,
+  sessionId: string,
+  queues: { list: Map<string, { use: () => Promise<any> }> },
+): Promise<void> {
+  await db.from("agent_messages").where({ session: sessionId }).delete();
+  const liveRuns = await db
+    .from("job_results")
+    .where({ session: sessionId })
+    .whereIn("state", [
+      JOB_STATUS_ENUM.waiting,
+      JOB_STATUS_ENUM.active,
+      JOB_STATUS_ENUM.waiting_approval,
+    ])
+    .select("*");
+  for (const run of liveRuns) {
+    await cancelRoutineRunRow(db, run, queues);
+  }
+  await db
+    .from("rbac")
+    .where({ entity: "agent_session", target_resource_id: sessionId })
+    .del();
+}
+
+/**
+ * Deletes a run and its transcript: the linked agent_session (via
+ * deleteAgentSessionData + the session row) and the job_results row. Callers
+ * (the deleteRoutineRun resolver) enforce RBAC + the terminal-state gate.
+ */
+export async function deleteRoutineRunRow(
+  db: any,
+  row: { id: string; session?: string | null },
+  queues: { list: Map<string, { use: () => Promise<any> }> },
+): Promise<void> {
+  if (row.session) {
+    await deleteAgentSessionData(db, row.session, queues);
+    await db.from("agent_sessions").where({ id: row.session }).del();
+  }
+  await db.from("job_results").where({ id: row.id }).del();
+}

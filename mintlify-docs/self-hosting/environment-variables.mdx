@@ -16,7 +16,7 @@ This page is the authoritative reference for IMP environment variables. Variable
 |---|---|---|---|---|
 | `NODE_ENV` | No | Server, Worker | `production` enables compiled dist; any other value enables dev mode. | `production` |
 | `PORT` | No | Server, Worker | HTTP listen port. Defaults to `9001` on the backend image, `9002` on the worker image. | `9001` |
-| `BACKEND` | Yes | Server, Frontend | Public URL of the backend API — used in OAuth callbacks, Recall webhooks, inbound-email webhook registration (`/webhooks/email/mime`), and tool-credential submit URLs. Must be reachable from the browser, from Recall's servers, and from any inbound-email provider (e.g. Mailgun). | `https://api.imp.example.com` |
+| `BACKEND` | Yes | Server, Frontend | Public URL of the backend API — used in OAuth callbacks, Recall webhooks, per-trigger inbound-email webhook URLs (`/webhooks/routine/{secret}`), and tool-credential submit URLs. Must be reachable from the browser, from Recall's servers, and from any inbound-email delivery source. | `https://api.imp.example.com` |
 | `NEXT_BACKEND` | Yes | Frontend | Backend URL reachable from within the frontend container's network. Use the container name when both run on the same Docker network. | `http://exulu-backend:9001` |
 | `NEXTAUTH_URL` | Yes | Frontend | Canonical public URL for NextAuth. Set to the same value as `FRONTEND`. | `https://imp.example.com` |
 | `NEXTAUTH_URL_INTERNAL` | No | Frontend | Backend URL for server-side NextAuth calls. Falls back to `NEXTAUTH_URL` if absent. | `http://exulu-backend:9001` |

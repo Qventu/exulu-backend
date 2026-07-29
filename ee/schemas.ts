@@ -419,6 +419,10 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
         type: "boolean",
         default: false,
       },
+      {
+        name: "queue",
+        type: "text"
+      }
     ],
   };
 
@@ -454,16 +458,13 @@ export const workflowTemplatesSchema: ExuluTableDefinition = {
           type: "boolean",
           default: false,
         },
-        {
-          // Generated server-side: {routine-slug}-{8 hex}@{inbound_domain}.
-          // Real UNIQUE column (not JSON) because the webhook resolves
-          // triggers by recipient address.
-          name: "address",
-          type: "text",
-          required: true,
-          unique: true,
-          index: true,
-        },
+        // Secret capability URL key: base64url randomBytes(32). Both routes
+        // and authorizes the webhook (POST /webhooks/routine/:secret).
+        { name: "secret", type: "text", required: true, unique: true, index: true },
+        // Optional per-trigger HMAC shared secret, AES-encrypted at rest.
+        { name: "signing_secret", type: "text" },
+        // Stamped on every verified webhook hit; per-trigger setup aid.
+        { name: "last_fired_at", type: "date" },
         {
           // allowed_senders / filters / filtered_run_retention /
           // rate_limit_per_hour / sender_rate_limit_per_hour (spec §3.1).

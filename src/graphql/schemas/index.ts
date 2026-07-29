@@ -8,8 +8,6 @@ import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-mod
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
-import type { ExuluProvider } from "@SRC/exulu/provider";
-import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 import type { ExuluWorkflow } from "@EXULU_TYPES/workflow";
 import { sanitizeName } from "@SRC/utils/sanitize-name.ts";
@@ -18,15 +16,16 @@ import { checkRecordAccess } from "@SRC/utils/check-record-access.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { EvalRun } from "@EXULU_TYPES/models/eval-run";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
-import { queues as ExuluQueues } from "@EE/queues/queues";
+import { queues as ExuluQueues, global_queues } from "@EE/queues/queues";
 import { redisClient as getRedisClient } from "@SRC/redis/client.ts";
 import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { v4 as uuidv4 } from "uuid";
-import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
+import { JOB_STATUS_ENUM, TERMINAL_JOB_STATES } from "@EXULU_TYPES/enums/jobs";
 import type { UIMessage } from "ai";
 import { createAgenticRetrievalTool } from "@EE/agentic-retrieval/pipeline/index";
 import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-tools";
 import { GraphQLDate } from "@SRC/graphql/types";
+import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
@@ -38,7 +37,7 @@ import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
-import { cancelRoutineRunRow, casJobResultState, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
+import { cancelRoutineRunRow, casJobResultState, deleteRoutineRunRow, parseRunMetadata } from "@SRC/exulu/routines/run-state.ts";
 import { applyRoutineRunFilters, mapRoutineRunRow } from "@SRC/exulu/routines/runs-query.ts";
 import { workflowTemplatesSchema } from "@EE/schemas";
 import { checkLicense } from "@EE/entitlements.ts";
@@ -48,17 +47,25 @@ import { transcriptionClient } from "@SRC/exulu/transcription/client";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
-  getEmailInboundConfig,
-  updateEmailInboundConfig,
-} from "@SRC/exulu/email-inbound/config";
-import {
   validateEmailTriggerConfig,
+  generateTriggerSecret,
+  generateSigningSecret,
 } from "@SRC/exulu/email-inbound/trigger-config";
-import { parseTriggerConfig } from "@SRC/exulu/email-inbound/types";
+import { encrypt } from "@SRC/exulu/auth/credential-store";
+import type { WorkflowTriggerRow } from "@SRC/exulu/email-inbound/types";
 import {
-  toEmailInboundConfigPayload,
-  insertTriggerWithRetry,
+  toWorkflowTriggerPayload,
+  insertTriggerWithSecretRetry,
 } from "@SRC/exulu/email-inbound/resolver-helpers";
+import {
+  detectPayloadFormat,
+  extractMultipartMimePart,
+} from "@SRC/exulu/email-inbound/adapters";
+import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
+import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
+import { uploadFile } from "@SRC/uppy";
+import { randomUUID } from "node:crypto";
+import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -116,7 +123,6 @@ export function createExuluContextsTypeDefs(table: ExuluTableDefinition): string
     fields.push("  maxContextLength: Int");
     fields.push("  authenticationInformation: String");
     fields.push("  systemInstructions: String");
-    fields.push("  workflows: AgentWorkflows");
     fields.push("  slug: String");
     fields.push("  guest_has_password: Boolean");
   }
@@ -269,7 +275,6 @@ export function createExuluContextsFilterTypeDefs(table: ExuluTableDefinition): 
 export function createSDL(
   tables: ExuluTableDefinition[],
   contexts: ExuluContext[],
-  providers: ExuluProvider[],
   tools: ExuluTool[],
   config: ExuluConfig,
   evals: ExuluEval[],
@@ -591,10 +596,10 @@ type PageInfo {
   hasNextPage: Boolean!
 }
 `;
-    Object.assign(resolvers.Query, createQueries(table, providers, tools, contexts));
+    Object.assign(resolvers.Query, createQueries(table, tools, contexts));
     Object.assign(
       resolvers.Mutation,
-      createMutations(table, providers, contexts, tools, config),
+      createMutations(table, contexts, tools, config),
     );
 
     // Add RBAC resolver if enabled
@@ -634,6 +639,9 @@ type PageInfo {
 
   typeDefs += `
     queue(queue: QueueEnum!): QueueResult
+    `;
+  typeDefs += `
+    queues: [AvailableQueue!]!
     `;
 
   typeDefs += `
@@ -679,6 +687,7 @@ type PageInfo {
   mutationDefs += `
     cancelRoutineRun(id: ID!): RoutineRun
     retryRoutineRun(id: ID!): RoutineRun
+    deleteRoutineRun(id: ID!): ID
     `;
 
   mutationDefs += `
@@ -708,7 +717,9 @@ type PageInfo {
   mutationDefs += `
     upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
     deleteWorkflowTrigger(id: ID!): WorkflowTrigger
-    updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
+    regenerateWorkflowTriggerSecret(id: ID!): WorkflowTrigger
+    setWorkflowTriggerSigningSecret(id: ID!, enable: Boolean!): WorkflowTrigger
+    testFireWorkflowTrigger(id: ID!, contentType: String!, payload: String!): TestFireResult
     `;
 
   modelDefs += `
@@ -768,28 +779,31 @@ type PageInfo {
   `;
 
   // Email-triggered routines (spec §6). run_as_role is deliberately not
-  // exposed; the signing key is write-only (has_signing_key flag only).
+  // exposed; the signing key is write-only (has_signing_secret flag only).
   modelDefs += `
     type WorkflowTrigger {
       id: ID!
       workflow: ID!
       type: String!
       enabled: Boolean!
-      address: String!
+      webhook_url: String
+      has_webhook: Boolean!
+      has_signing_secret: Boolean!
+      last_fired_at: Date
       config: JSON!
       run_as_user: Float
       createdAt: Date
       updatedAt: Date
+      signing_secret_once: String
     }
 
-    type EmailInboundConfig {
-      provider: String
-      inbound_domain: String
-      enabled: Boolean
-      last_webhook_at: Date
-      webhook_url: String
-      has_signing_key: Boolean
+    type TestFireResult {
+      outcome: String!
+      jobResultId: ID
+      filteredReason: String
+      error: String
     }
+
   `;
 
   typeDefs += `
@@ -807,7 +821,6 @@ type PageInfo {
 
   typeDefs += `
    workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
-   emailInboundConfig: EmailInboundConfig
     `;
 
   modelDefs += `
@@ -825,6 +838,9 @@ type RoutineRun {
   tries: Float
   createdAt: Date
   updatedAt: Date
+  inputTokens: Float
+  outputTokens: Float
+  costUsd: Float
 }
 
 type RoutineRunPage {
@@ -853,19 +869,6 @@ type LiteLLMModel {
   output_cost_per_million_tokens: Float
 }
 `;
-
-  resolvers.Query["providers"] = async (_, args, context, info) => {
-    const requestedFields = getRequestedFields(info);
-    return {
-      items: providers.map((provider) => {
-        const object = {};
-        requestedFields.forEach((field) => {
-          object[field] = provider[field];
-        });
-        return object;
-      }),
-    };
-  };
 
   // litellmCatalog: returns the list of models LiteLLM is currently configured
   // to expose. Empty array when LiteLLM is off / misconfigured so callers can
@@ -918,31 +921,6 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-      const scheduler = await queue!.queue?.getJobScheduler(args.workflow + "-workflow-schedule");
-      if (scheduler) {
-        return {
-          id: scheduler.id,
-          schedule: scheduler.pattern,
-          next: scheduler.next,
-          iteration: scheduler.iterationCount,
-        };
-      }
-    }
-
     return {
       id: undefined,
       schedule: undefined,
@@ -950,6 +928,12 @@ type LiteLLMModel {
       iteration: undefined,
     };
   };
+
+  resolvers.Query["queues"] = async () =>
+    resolveAvailableQueues(
+      () => exuluApp.get().queues(),
+      Object.values(global_queues),
+    );
 
   resolvers.Query["queue"] = async (_, args, context, info) => {
     if (!args.queue) {
@@ -1021,26 +1005,6 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-      await queue!.queue?.removeJobScheduler(args.workflow + "-workflow-schedule");
-      return {
-        status: "deleted",
-      };
-    }
-
     return {
       status: "not found",
     };
@@ -1089,26 +1053,10 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
-    }
-
-    let queue: ExuluQueueConfig | undefined;
-
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
-    }
-
     const jobData: BullMqJobData = {
       label: `Workflow Run ${workflow_template_id}`,
       trigger: "api",
-      timeoutInSeconds: queue?.timeoutInSeconds || 180, // default to 3 minutes
+      timeoutInSeconds: 180, // default to 3 minutes
       type: "workflow",
       workflow: workflow_template_id,
       inputs: args.variables,
@@ -1120,10 +1068,21 @@ type LiteLLMModel {
       triggerMetadata: { cron: args.schedule },
     };
 
+    if (!workflowTemplate.queue) {
+      throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
+    }
+    
+    const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+    const queue = queues.find(x => x.queue.name === workflowTemplate.queue);
+  
+    if (!queue) {
+      throw new Error("Queue " + workflowTemplate.queue + " not found as a registered queue in ExuluApp.")
+    }
+
     if (!queue) {
       throw new Error(
-        "Queue not found for provider: " +
-        provider?.id +
+        "Queue not found for id: " +
+        workflowTemplate.queue +
         " for workflow template: " +
         workflow_template_id,
       );
@@ -1184,14 +1143,6 @@ type LiteLLMModel {
     }
   };
 
-  // pg returns jsonb columns as objects, but normalize defensively.
-  const toWorkflowTriggerPayload = (row: any) => ({
-    ...row,
-    config: parseTriggerConfig(row.config),
-  });
-
-  // toEmailInboundConfigPayload is imported from resolver-helpers (unit-testable).
-
   resolvers.Query["workflowTriggers"] = async (_, args, context) => {
     if (!args.workflow) {
       throw new Error("Workflow template ID is required");
@@ -1203,11 +1154,13 @@ type LiteLLMModel {
     if (!hasAccess) {
       throw new Error("You don't have access to this workflow template.");
     }
+    const hasWorkflowsWriteRole = user?.super_admin || user?.role?.workflows === "write";
+    const canWrite = hasWorkflowsWriteRole && (await checkRecordAccess(workflowTemplate, "write", user));
     const rows = await db
       .from("workflow_triggers")
       .where({ workflow: args.workflow })
       .orderBy("createdAt", "asc");
-    return rows.map(toWorkflowTriggerPayload);
+    return rows.map((r: WorkflowTriggerRow) => toWorkflowTriggerPayload(r, { canWrite }));
   };
 
   resolvers.Mutation["upsertWorkflowEmailTrigger"] = async (_, args, context) => {
@@ -1226,13 +1179,6 @@ type LiteLLMModel {
     const hasAccess = await checkRecordAccess(workflowTemplate, "write", user);
     if (!hasAccess) {
       throw new Error("You don't have access to this workflow template.");
-    }
-
-    const inbound = await getEmailInboundConfig(db);
-    if (!inbound.enabled || !inbound.inbound_domain) {
-      throw new Error(
-        "Inbound email is not configured on this platform. A super admin must configure it in settings first.",
-      );
     }
 
     const validatedConfig = validateEmailTriggerConfig(args.config);
@@ -1254,12 +1200,12 @@ type LiteLLMModel {
           updatedAt: new Date(),
         })
         .returning("*");
-      return toWorkflowTriggerPayload(updated);
+      return toWorkflowTriggerPayload(updated, { canWrite: true });
     }
 
-    // Server-generated address, unique with regenerate-on-collision
+    // Server-generated secret, unique with regenerate-on-collision
     // (max 5 attempts, INSERT is inside the loop — race-safe, spec §3.1).
-    const created = await insertTriggerWithRetry(
+    const created = await insertTriggerWithSecretRetry(
       async (row) => {
         const [inserted] = await db
           .from("workflow_triggers")
@@ -1276,10 +1222,8 @@ type LiteLLMModel {
         run_as_role: user.role?.id ?? null,
         created_by: user.id,
       },
-      workflowTemplate.name,
-      inbound.inbound_domain,
     );
-    return toWorkflowTriggerPayload(created);
+    return toWorkflowTriggerPayload(created, { canWrite: true });
   };
 
   resolvers.Mutation["deleteWorkflowTrigger"] = async (_, args, context) => {
@@ -1299,31 +1243,94 @@ type LiteLLMModel {
       throw new Error("You don't have access to this workflow template.");
     }
     await db.from("workflow_triggers").where({ id: args.id }).del();
-    return toWorkflowTriggerPayload(trigger);
+    return toWorkflowTriggerPayload(trigger, { canWrite: true });
   };
 
-  resolvers.Query["emailInboundConfig"] = async (_, args, context) => {
+  resolvers.Mutation["regenerateWorkflowTriggerSecret"] = async (_, args, context) => {
     const user = context.user;
-    if (!user?.super_admin) {
-      throw new Error("Only super admins can view the inbound email configuration.");
-    }
+    requireWorkflowsWriteRole(user);
     const { db } = await postgresClient();
-    return toEmailInboundConfigPayload(await getEmailInboundConfig(db));
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    let updated: any;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const rows = await db.from("workflow_triggers").where({ id: args.id })
+          .update({ secret: generateTriggerSecret(), updatedAt: new Date().toISOString() }).returning("*");
+        updated = rows[0];
+        break;
+      } catch (err: any) {
+        if (err?.code === "23505") continue;
+        throw err;
+      }
+    }
+    if (!updated) throw new Error("Could not generate a unique trigger secret.");
+    return toWorkflowTriggerPayload(updated, { canWrite: true });
   };
 
-  resolvers.Mutation["updateEmailInboundConfig"] = async (_, args, context) => {
+  resolvers.Mutation["setWorkflowTriggerSigningSecret"] = async (_, args, context) => {
     const user = context.user;
-    if (!user?.super_admin) {
-      throw new Error("Only super admins can update the inbound email configuration.");
-    }
+    requireWorkflowsWriteRole(user);
     const { db } = await postgresClient();
-    const updated = await updateEmailInboundConfig(db, {
-      ...(args.provider != null ? { provider: args.provider } : {}),
-      ...(args.inbound_domain != null ? { inbound_domain: args.inbound_domain } : {}),
-      ...(args.enabled != null ? { enabled: args.enabled } : {}),
-      ...(args.signing_key ? { signing_key: args.signing_key } : {}),
-    });
-    return toEmailInboundConfigPayload(updated);
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    let once: string | null = null;
+    let signingSecret: string | null = null;
+    if (args.enable) {
+      once = generateSigningSecret();
+      signingSecret = encrypt(once);
+    }
+    const rows = await db.from("workflow_triggers").where({ id: args.id })
+      .update({ signing_secret: signingSecret, updatedAt: new Date().toISOString() }).returning("*");
+    return toWorkflowTriggerPayload(rows[0], { canWrite: true, signingSecretOnce: once });
+  };
+
+  resolvers.Mutation["testFireWorkflowTrigger"] = async (_, args, context) => {
+    const user = context.user;
+    requireWorkflowsWriteRole(user);
+    const { db } = await postgresClient();
+    const trigger = await db.from("workflow_triggers").where({ id: args.id }).first();
+    if (!trigger) throw new Error("Trigger not found.");
+    const workflowTemplate = await loadWorkflowTemplateWithRBAC(db, trigger.workflow);
+    if (!(await checkRecordAccess(workflowTemplate, "write", user))) throw new Error("Access denied.");
+
+    const kind = detectPayloadFormat(args.contentType);
+    let bytes: Buffer;
+    let format: "eml" | "json";
+    try {
+      if (kind === "multipart") {
+        bytes = await extractMultipartMimePart(Buffer.from(args.payload, "latin1"), args.contentType);
+        format = "eml";
+      } else if (kind === "json") {
+        JSON.parse(args.payload); // validate up front for a clean 400-style error
+        bytes = Buffer.from(args.payload, "utf8");
+        format = "json";
+      } else {
+        bytes = Buffer.from(args.payload, "latin1");
+        format = "eml";
+      }
+    } catch (err) {
+      return { outcome: "error", error: err instanceof Error ? err.message : "bad payload" };
+    }
+
+    const ext = format === "json" ? "json" : "eml";
+    const fullKey = await uploadFile(
+      bytes, `${EMAIL_INBOUND_S3_PREFIX}${randomUUID()}.${ext}`, config,
+      { contentType: "application/octet-stream" }, undefined, undefined, true,
+    );
+    const s3Key = fullKey.slice(fullKey.indexOf("/") + 1);
+
+    const outcome = await handleEmailIntake({ s3Key, triggerId: trigger.id, format }, { config });
+    if (outcome.outcome === "fired") return { outcome: "fired", jobResultId: outcome.jobResultId };
+    if (outcome.outcome === "filtered") return { outcome: "filtered", filteredReason: outcome.reason };
+    if (outcome.outcome === "failed") return { outcome: "error", error: "Payload failed to parse." };
+    return { outcome: "dropped" };
   };
 
   resolvers.Mutation["runWorkflow"] = async (_, args, context, info) => {
@@ -1360,19 +1367,24 @@ type LiteLLMModel {
       throw new Error("Agent instance not found for workflow template.");
     }
 
-    const provider = await resolveAgentProvider(agent, providers);
-
-    if (!provider) {
-      throw new Error(
-        "ExuluProvider not registered for the model configured on agent instance " +
-        agent.id +
-        ".",
-      );
+    if (!workflowTemplate.queue) {
+      throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
+    }
+    
+    const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+    const queue = queues.find(x => x.queue.name === workflowTemplate.queue);
+  
+    if (!queue) {
+      throw new Error("Queue " + workflowTemplate.queue + " not found as a registered queue in ExuluApp.")
     }
 
-    let queue: ExuluQueueConfig | undefined;
-    if (provider?.workflows?.queue) {
-      queue = await provider.workflows.queue;
+    if (!queue) {
+      throw new Error(
+        "Queue not found for id: " +
+        workflowTemplate.queue +
+        " for workflow template: " +
+        workflow_template_id,
+      );
     }
 
     const jobData: BullMqJobData = {
@@ -1436,11 +1448,10 @@ type LiteLLMModel {
       try {
         const {
           agent,
-          provider,
           user,
           workflow,
           messages: inputMessages,
-        } = await validateWorkflowPayload(jobData, providers);
+        } = await validateWorkflowPayload(jobData);
 
         // Session-backed (spec §3.4) — but keep the legacy blanket approval:
         // without a queue there is no worker to resume a paused run.
@@ -1462,7 +1473,6 @@ type LiteLLMModel {
         const retries = 3;
         let attempts = 0;
 
-        // todo allow setting queue on agent provider and then create a job with type "agent"
         const promise = new Promise<{
           messages: UIMessage[];
           metadata: {
@@ -1479,9 +1489,7 @@ type LiteLLMModel {
           while (attempts < retries) {
             try {
               const messages = await processUiMessagesFlow({
-                providers,
                 agent,
-                provider,
                 inputMessages,
                 contexts,
                 user,
@@ -1716,6 +1724,21 @@ type LiteLLMModel {
 
     const updated = await db.from("job_results").where({ id: row.id }).first();
     return mapRoutineRunRow(updated, new Map([[routine.id, routine]]));
+  };
+
+  resolvers.Mutation["deleteRoutineRun"] = async (_, args, context) => {
+    const user = context.user;
+    const { db } = await postgresClient();
+    const { row } = await loadRoutineRunForWrite(db, user, args.id);
+
+    if (!TERMINAL_JOB_STATES.includes(row.state)) {
+      throw new Error(
+        `Run is in state '${row.state}' and cannot be deleted — cancel it first.`,
+      );
+    }
+
+    await deleteRoutineRunRow(db, row, ExuluQueues);
+    return row.id;
   };
 
   resolvers.Mutation["runEval"] = async (_, args, context, info) => {
@@ -2382,11 +2405,7 @@ type LiteLLMModel {
     const instances = await exuluApp.get().agents();
     let agentTools = await Promise.all(
       instances.map(async (agent: ExuluAgent) => {
-        const provider = await resolveAgentProvider(agent, providers);
-        if (!provider) {
-          return null;
-        }
-        return await provider.tool(agent.id, providers, contexts);
+        return await createAgentTool(agent.id, contexts)
       }),
     );
 
@@ -2564,6 +2583,11 @@ type LiteLLMModel {
     `;
 
   modelDefs += `
+    type AvailableQueue {
+        name: String!
+    }
+    `;
+  modelDefs += `
     type QueueResult {
         name: String!
         concurrency: QueueConcurrency!
@@ -2637,15 +2661,6 @@ type AgentCapabilities {
     files: [String]
     audio: [String]
     video: [String]
-}
-
-type AgentWorkflows {
-    enabled: Boolean
-    queue: AgentWorkflowQueue
-}
-
-type AgentWorkflowQueue {
-    name: String
 }
 
 type AgentEvalFunction {

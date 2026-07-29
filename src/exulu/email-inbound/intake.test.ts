@@ -27,16 +27,6 @@ jest.mock("@SRC/exulu/app/singleton", () => ({
 }));
 
 const queueAddSpy = jest.fn(async () => ({ id: "bull-1" }));
-const queueConfig = {
-  queue: { add: (...args: any[]) => queueAddSpy(...args) },
-  timeoutInSeconds: 180,
-  retries: 3,
-};
-jest.mock("@SRC/exulu/resolve-agent-provider", () => ({
-  resolveAgentProvider: jest.fn(async () => ({
-    workflows: { queue: Promise.resolve(queueConfig) },
-  })),
-}));
 
 // db fake: chainable builders recorded per table; .first() answers come
 // from a per-table FIFO the test seeds.
@@ -111,7 +101,7 @@ const emailWithAttachment = Buffer.from(
 );
 
 const triggerRow = {
-  id: "trigger-1",
+  id: "trg-1",
   workflow: "workflow-1",
   type: "email",
   enabled: true,
@@ -126,8 +116,8 @@ const workflowRow = {
   agent: "agent-1",
   rights_mode: "roles",
 };
-const deps = { config: { fileUploads: {} } as any, providers: [] as any[] };
-const payload = { s3Key: "email-inbound/raw-1.eml", recipient: "spare-parts-1a2b3c4d@mail.client.com" };
+const deps = { config: { fileUploads: {} } as any };
+const payload = { s3Key: "inbound-webhook/raw-1.eml", triggerId: "trg-1", format: "eml" as const };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -323,7 +313,7 @@ describe("handleEmailIntake", () => {
     expect(result).toEqual({ outcome: "failed" });
     const inserted = calls["job_results.insert"]![0]![0];
     expect(inserted.state).toBe("failed");
-    expect(JSON.parse(inserted.error).message).toMatch(/^MIME parse failed: /);
+    expect(JSON.parse(inserted.error).message).toMatch(/^Payload parse failed: /);
     expect(deleteS3ObjectSpy).not.toHaveBeenCalled();
   });
 
@@ -364,6 +354,18 @@ describe("handleEmailIntake", () => {
     const jobIdStamp = updateCalls.find((c: any[]) => c[0]?.job_id != null);
     expect(jobIdStamp).toBeDefined();
     expect(jobIdStamp![0].job_id).toBe("email-run-jr-1");
+  });
+
+  it("parses a JSON payload via the json format branch", async () => {
+    getS3ObjectBytesSpy.mockResolvedValue(Buffer.from(JSON.stringify({ from: "a@b.com", subject: "hi", text: "yo" })));
+    firstResults["workflow_triggers"] = [triggerRow];
+    firstResults["job_results"] = [undefined]; // dedup miss
+    firstResults["workflow_templates"] = [workflowRow];
+    const outcome = await handleEmailIntake(
+      { s3Key: "inbound-webhook/x.json", triggerId: "trg-1", format: "json" },
+      deps,
+    );
+    expect(["fired", "filtered", "dropped"]).toContain(outcome.outcome);
   });
 
   it("repair with message-less session re-seeds: saveChat called and attachments uploaded before enqueue", async () => {

@@ -11,6 +11,8 @@ const { queues: queuesMock } = require("@EE/queues/queues") as {
 
 import {
   casJobResultState,
+  deleteAgentSessionData,
+  deleteRoutineRunRow,
   parseRunMetadata,
   resumeRoutineRunIfWaiting,
   upsertWorkflowRunStart,
@@ -249,5 +251,58 @@ describe("resumeRoutineRunIfWaiting", () => {
     // First update: waiting_approval -> active. Second: revert active -> waiting_approval.
     expect(update).toHaveBeenCalledTimes(2);
     expect(update.mock.calls[1][0]).toEqual({ state: JOB_STATUS_ENUM.waiting_approval });
+  });
+});
+
+// A db mock that records terminal ops (delete/del/select) per table.
+const makeCascadeDb = (opts: { liveRuns?: any[] } = {}) => {
+  const ops: { table: string; where?: any; whereIn?: any[]; op: string }[] = [];
+  const builder = (table: string) => {
+    const b: any = {};
+    b.where = (arg: any) => { b._where = arg; return b; };
+    b.whereIn = (col: string, vals: any[]) => { b._whereIn = [col, vals]; return b; };
+    b.select = async () => {
+      ops.push({ table, where: b._where, whereIn: b._whereIn, op: "select" });
+      return table === "job_results" ? (opts.liveRuns ?? []) : [];
+    };
+    b.delete = async () => { ops.push({ table, where: b._where, op: "delete" }); return 1; };
+    b.del = async () => { ops.push({ table, where: b._where, op: "del" }); return 1; };
+    return b;
+  };
+  const db: any = { from: (t: string) => builder(t) };
+  return { db, ops };
+};
+
+describe("deleteRoutineRunRow", () => {
+  it("deletes the linked session (data + row) and the run row", async () => {
+    const { db, ops } = makeCascadeDb({ liveRuns: [] });
+    await deleteRoutineRunRow(db, { id: "jr-1", session: "sess-1" }, queuesMock);
+    expect(ops).toContainEqual({ table: "agent_messages", where: { session: "sess-1" }, op: "delete" });
+    expect(ops).toContainEqual({ table: "rbac", where: { entity: "agent_session", target_resource_id: "sess-1" }, op: "del" });
+    expect(ops).toContainEqual({ table: "agent_sessions", where: { id: "sess-1" }, op: "del" });
+    expect(ops).toContainEqual({ table: "job_results", where: { id: "jr-1" }, op: "del" });
+  });
+
+  it("deletes only the run row when there is no linked session", async () => {
+    const { db, ops } = makeCascadeDb({});
+    await deleteRoutineRunRow(db, { id: "jr-2", session: null }, queuesMock);
+    expect(ops).toEqual([{ table: "job_results", where: { id: "jr-2" }, op: "del" }]);
+  });
+});
+
+describe("deleteAgentSessionData", () => {
+  it("deletes the session's messages, checks for live runs, and removes its rbac snapshot", async () => {
+    const { db, ops } = makeCascadeDb({ liveRuns: [] });
+    await deleteAgentSessionData(db, "sess-1", queuesMock);
+    expect(ops).toEqual([
+      { table: "agent_messages", where: { session: "sess-1" }, op: "delete" },
+      {
+        table: "job_results",
+        where: { session: "sess-1" },
+        whereIn: ["state", [JOB_STATUS_ENUM.waiting, JOB_STATUS_ENUM.active, JOB_STATUS_ENUM.waiting_approval]],
+        op: "select",
+      },
+      { table: "rbac", where: { entity: "agent_session", target_resource_id: "sess-1" }, op: "del" },
+    ]);
   });
 });

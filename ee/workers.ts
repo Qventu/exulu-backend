@@ -16,7 +16,7 @@ import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { maybePruneJobResults } from "@EE/queues/prune-job-results.ts";
 import { type Tracer } from "@opentelemetry/api";
 import { v4 as uuidv4 } from "uuid";
-import { type UIMessage } from "ai";
+import { createIdGenerator, type UIMessage } from "ai";
 import CryptoJS from "crypto-js";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -29,14 +29,15 @@ import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics.ts";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name.ts";
 import type { ExuluConfig } from "@SRC/exulu/app/index.ts";
 import { updateStatistic } from "@SRC/exulu/statistics";
-import type { ExuluProvider } from "@SRC/exulu/provider.ts";
-import { saveChat, getAgentMessages } from "@SRC/exulu/provider.ts";
+import { saveChat, getAgentMessages, generateStream } from "@SRC/exulu/generate-stream";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { handleEmailIntake } from "@SRC/exulu/email-inbound/intake";
 import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.ts";
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
+import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
+import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
 
 /**
  * Session-backed runs persist messages at each step boundary, so retries must
@@ -132,7 +133,6 @@ const installGlobalErrorHandlers = () => {
 let isShuttingDown = false;
 
 export const createWorkers = async (
-  providers: ExuluProvider[],
   queues: ExuluQueueConfig[],
   config: ExuluConfig,
   contexts: ExuluContext[],
@@ -525,11 +525,10 @@ export const createWorkers = async (
 
               const {
                 agent,
-                provider,
                 user,
                 workflow,
                 messages: inputMessages,
-              } = await validateWorkflowPayload(data, providers);
+              } = await validateWorkflowPayload(data);
 
               // Session-backed runs (spec §3.4): reuse the session provided by
               // the enqueuer (email intake / continuation / retry / previous
@@ -576,9 +575,7 @@ export const createWorkers = async (
                     // + substituted text) — pass a fresh deep copy each attempt
                     // so a retry/resume never reuses the mutated array.
                     const messages = await processUiMessagesFlow({
-                      providers,
                       agent,
-                      provider,
                       inputMessages: structuredClone(inputMessages),
                       contexts,
                       user,
@@ -657,6 +654,22 @@ export const createWorkers = async (
                 cachedInputTokens:
                   (priorTokens?.cachedInputTokens ?? 0) + metadata.tokens.cachedInputTokens,
               };
+
+              // Approximate per-run $ cost (spec 2026-07-29): recompute from the
+              // cumulative token totals × the run model's catalog list price on every
+              // persist, so it stays correct across pause/resume. Null when the model
+              // has no catalog price — the UI shows "—", not a fabricated $0.
+              const modelPrice = await findLiteLLMModel(agent.model ?? "");
+              (tokens as Record<string, number | null>).costUsd = computeRunCostUsd(
+                tokens.inputTokens,
+                tokens.outputTokens,
+                modelPrice
+                  ? {
+                      input_cost_per_million_tokens: modelPrice.input_cost_per_million_tokens,
+                      output_cost_per_million_tokens: modelPrice.output_cost_per_million_tokens,
+                    }
+                  : null,
+              );
 
               if (result.pausedAtStepIndex !== undefined) {
                 // Pause is success (spec §5.3): persist progress and flip to
@@ -741,17 +754,15 @@ export const createWorkers = async (
 
               const {
                 agent,
-                provider,
                 user,
                 evalRun,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, providers);
+              } = await validateEvalPayload(data);
 
               const retries = 3;
               let attempts = 0;
 
-              // todo allow setting queue on agent Provider and then create a job with type "agent"
               const promise = new Promise<{
                 messages: UIMessage[];
                 metadata: {
@@ -768,9 +779,7 @@ export const createWorkers = async (
                 while (attempts < retries) {
                   try {
                     const messages = await processUiMessagesFlow({
-                      providers,
                       agent,
-                      provider,
                       inputMessages,
                       contexts,
                       user,
@@ -877,7 +886,6 @@ export const createWorkers = async (
                 } else {
                   result = await evalMethod.run(
                     agent,
-                    provider,
                     testCase,
                     messages,
                     evalFunction.config || {},
@@ -971,10 +979,9 @@ export const createWorkers = async (
               const {
                 evalRun,
                 agent,
-                provider,
                 testCase,
                 messages: inputMessages,
-              } = await validateEvalPayload(data, providers);
+              } = await validateEvalPayload(data);
 
               const evalFunctions: {
                 id: string;
@@ -995,7 +1002,6 @@ export const createWorkers = async (
 
                 result = await evalMethod.run(
                   agent,
-                  provider,
                   testCase,
                   inputMessages,
                   evalFunction.config || {},
@@ -1085,24 +1091,19 @@ export const createWorkers = async (
             }
 
             if (data.type === "email_intake") {
-              console.log("[EXULU] running an email intake job.", bullmqJob.name);
-
-              if (!data.inputs?.s3Key) {
-                throw new Error(`No s3Key set for email intake job.`);
+              console.log("[EXULU] running a routine webhook intake job.", bullmqJob.name);
+              if (!data.inputs?.s3Key || !data.inputs?.triggerId) {
+                throw new Error(`Missing s3Key/triggerId for email intake job.`);
               }
-
               const result = await handleEmailIntake(
                 {
                   s3Key: data.inputs.s3Key,
-                  recipient: data.inputs.recipient,
+                  triggerId: data.inputs.triggerId,
+                  format: data.inputs.format === "json" ? "json" : "eml",
                 },
-                { config, providers },
+                { config },
               );
-
-              return {
-                result,
-                metadata: {},
-              };
+              return { result, metadata: {} };
             }
 
             throw new Error(`Invalid job type: ${data.type} for job ${bullmqJob.name}.`);
@@ -1313,10 +1314,8 @@ export const createWorkers = async (
 
 export const validateWorkflowPayload = async (
   data: BullMqJobData,
-  providers: ExuluProvider[],
 ): Promise<{
   agent: ExuluAgent;
-  provider: ExuluProvider;
   user: User;
   workflow: ExuluWorkflow;
   variables: Record<string, any>;
@@ -1348,12 +1347,6 @@ export const validateWorkflowPayload = async (
     throw new Error(`Agent ${workflow.agent} not found in the database.`);
   }
 
-  const provider = providers.find((a) => a.id === agent.provider);
-
-  if (!provider) {
-    throw new Error(`Provider ${agent.provider} not found in the database.`);
-  }
-
   const user = await db.from("users").where({ id: data.user }).first();
 
   if (!user) {
@@ -1362,7 +1355,6 @@ export const validateWorkflowPayload = async (
 
   return {
     agent,
-    provider,
     user,
     workflow,
     variables: data.inputs,
@@ -1372,10 +1364,8 @@ export const validateWorkflowPayload = async (
 
 const validateEvalPayload = async (
   data: BullMqJobData,
-  providers: ExuluProvider[],
 ): Promise<{
   agent: ExuluAgent;
-  provider: ExuluProvider;
   user: User;
   testCase: TestCase;
   evalRun: EvalRun;
@@ -1419,12 +1409,6 @@ const validateEvalPayload = async (
     throw new Error(`Agent ${evalRun.agent_id} not found in the database.`);
   }
 
-  const provider = providers.find((a) => a.id === agent.provider);
-
-  if (!provider) {
-    throw new Error(`Provider ${agent.provider} not found in the database.`);
-  }
-
   const user = await db.from("users").where({ id: data.user }).first();
 
   if (!user) {
@@ -1439,7 +1423,6 @@ const validateEvalPayload = async (
 
   return {
     agent,
-    provider,
     user,
     testCase,
     evalRun,
@@ -1503,9 +1486,7 @@ const pollJobResult = async ({
 };
 
 export const processUiMessagesFlow = async ({
-  providers,
   agent,
-  provider,
   inputMessages,
   contexts,
   user,
@@ -1517,9 +1498,7 @@ export const processUiMessagesFlow = async ({
   resumeFromIndex,
   respectToolApprovals,
 }: {
-  providers: ExuluProvider[];
   agent: ExuluAgent;
-  provider: ExuluProvider;
   inputMessages: UIMessage[];
   contexts: ExuluContext[];
   user: User;
@@ -1579,7 +1558,6 @@ export const processUiMessagesFlow = async ({
     tools,
     contexts,
     disabledTools,
-    providers,
     user,
   );
 
@@ -1597,11 +1575,10 @@ export const processUiMessagesFlow = async ({
   const resolved = await resolveModel({
     modelId: agent.model,
     user,
-    providers,
     agent: agent,
     routine,
   });
-  const providerapikey = resolved.apiKey;
+
   const resolvedLanguageModel = resolved.languageModel;
 
   // Remove placeholder agent response before sending
@@ -1698,7 +1675,7 @@ export const processUiMessagesFlow = async ({
           const startTime = Date.now();
 
           try {
-            const result = await provider.generateStream({
+            const result = await generateStream({
               contexts,
               agent: agent,
               user,
@@ -1714,7 +1691,6 @@ export const processUiMessagesFlow = async ({
               currentTools: enabledTools,
               allExuluTools: tools,
               languageModel: resolvedLanguageModel,
-              providerapikey,
               toolConfigs: agent.tools,
               exuluConfig: config,
             });
@@ -1737,6 +1713,16 @@ export const processUiMessagesFlow = async ({
               originalMessages: result.originalMessages,
               sendReasoning: true,
               sendSources: true,
+              // Give each assistant message a real unique id (matches the live
+              // chat path in routes.ts). Without this the SDK assigns id "",
+              // and saveChat's global message_id upsert collapses every empty-id
+              // message onto one frozen-createdAt row — which sorts the tool
+              // approval to the top of the transcript and leaves it out of the
+              // last-message slot the approval handler acts on (buttons inert).
+              generateMessageId: createIdGenerator({
+                prefix: "msg_",
+                size: 16,
+              }),
               onError: (error) => {
                 console.error("[EXULU] Ui message stream error.", error);
                 reject(new Error(error instanceof Error ? error.message : String(error)));

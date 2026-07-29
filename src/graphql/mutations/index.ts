@@ -16,12 +16,10 @@ import { encryptSensitiveFields } from "../utilities/encrypt-sensitive-fields.ts
 import bcrypt from "bcryptjs";
 import { finalizeRequestedFields } from "../utilities/sanitize-and-hydrate-fields.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
-import { JOB_STATUS_ENUM } from "@EXULU_TYPES/enums/jobs";
-import { cancelRoutineRunRow } from "@SRC/exulu/routines/run-state.ts";
+import { deleteAgentSessionData } from "@SRC/exulu/routines/run-state.ts";
 import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
-import type { ExuluProvider } from "@SRC/exulu/provider.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
@@ -31,14 +29,12 @@ const VALID_RIGHTS_MODES = ["private", "users", "roles", "teams", "public"];
 const postprocessDeletion = async ({
   table,
   requestedFields,
-  providers,
   contexts,
   tools,
   result,
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -51,7 +47,6 @@ const postprocessDeletion = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: item,
@@ -87,32 +82,7 @@ const postprocessDeletion = async ({
         return result;
       }
       const { db } = await postgresClient();
-      // delete all messages for the session
-      await db
-        .from("agent_messages")
-        .where({ session: result.id })
-        .delete();
-      // Routine runs (spec §3.4/§5.6): deleting a run's session cancels the
-      // run with FULL cancel parity — the SAME shared helper as the
-      // cancelRoutineRun resolver (CAS to cancelled, so terminal rows keep
-      // their state + pending BullMQ job removal + stream-active cleanup) —
-      // and removes the session's point-in-time rbac snapshot.
-      const liveRuns = await db
-        .from("job_results")
-        .where({ session: result.id })
-        .whereIn("state", [
-          JOB_STATUS_ENUM.waiting,
-          JOB_STATUS_ENUM.active,
-          JOB_STATUS_ENUM.waiting_approval,
-        ])
-        .select("*");
-      for (const run of liveRuns) {
-        await cancelRoutineRunRow(db, run, ExuluQueues);
-      }
-      await db
-        .from("rbac")
-        .where({ entity: "agent_session", target_resource_id: result.id })
-        .del();
+      await deleteAgentSessionData(db, result.id, ExuluQueues);
     }
     if (table.type === "eval_runs") {
       if (!result.id) {
@@ -135,7 +105,6 @@ const postprocessDeletion = async ({
 const postprocessUpdate = async ({
   table,
   requestedFields,
-  providers,
   contexts,
   tools,
   result,
@@ -145,7 +114,6 @@ const postprocessUpdate = async ({
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
-  providers: ExuluProvider[];
   contexts: ExuluContext[];
   tools: ExuluTool[];
   result: any;
@@ -164,7 +132,6 @@ const postprocessUpdate = async ({
       return postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: item,
@@ -235,7 +202,6 @@ const postprocessUpdate = async ({
 
 export function createMutations(
   table: ExuluTableDefinition,
-  providers: ExuluProvider[],
   contexts: ExuluContext[],
   tools: ExuluTool[],
   config: ExuluConfig,
@@ -461,7 +427,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result: result[0],
@@ -557,7 +522,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result: results[0],
@@ -571,7 +535,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result: results[0],
@@ -676,7 +639,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -689,7 +651,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result,
@@ -773,7 +734,6 @@ export function createMutations(
       const { job } = await postprocessUpdate({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -786,7 +746,6 @@ export function createMutations(
           args,
           table,
           requestedFields,
-          providers,
           contexts,
           tools,
           result,
@@ -836,7 +795,6 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -845,7 +803,6 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -887,7 +844,6 @@ export function createMutations(
       await postprocessDeletion({
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,
@@ -896,7 +852,6 @@ export function createMutations(
         args,
         table,
         requestedFields,
-        providers,
         contexts,
         tools,
         result,

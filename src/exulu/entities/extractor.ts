@@ -125,7 +125,6 @@ export const extractEntitiesForItem = async ({
   try {
     const resolved = await resolveModel({
       modelId,
-      providers: exuluApp.get().providers,
       rbacBypass: true,
     });
     languageModel = resolved.languageModel;

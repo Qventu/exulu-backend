@@ -12,14 +12,13 @@ import {
   getS3ObjectBytes,
   uploadFile,
 } from "@SRC/uppy";
-import { saveChat } from "@SRC/exulu/provider";
-import type { ExuluProvider } from "@SRC/exulu/provider";
+import { saveChat } from "@SRC/exulu/generate-stream";
 import type { ExuluConfig } from "@SRC/exulu/app/index";
 import { exuluApp } from "@SRC/exulu/app/singleton";
-import { resolveAgentProvider } from "@SRC/exulu/resolve-agent-provider";
 import { createRunSession } from "@SRC/exulu/routines/run-session";
 import type { BullMqJobData } from "@EE/queues/decorator";
 import { parseRawMime } from "./normalize";
+import { jsonToInboundEmail } from "./adapters";
 import {
   DEFAULT_FILTERED_RUN_RETENTION,
   findDuplicateRun,
@@ -31,6 +30,7 @@ import {
   type InboundEmail,
   type WorkflowTriggerRow,
 } from "./types";
+import type { ExuluQueueConfig } from "@EXULU_TYPES/queue-config";
 
 export type EmailIntakeOutcome =
   | { outcome: "dropped" }
@@ -40,7 +40,6 @@ export type EmailIntakeOutcome =
 
 interface IntakeDeps {
   config: ExuluConfig;
-  providers: ExuluProvider[];
 }
 
 // Keeps the label format the rest of the platform already filters on.
@@ -52,14 +51,17 @@ const baseTriggerMetadata = (email: InboundEmail) => ({
   message_id: email.messageId,
 });
 
-export const resolveTriggerByAddress = async (
+export const resolveTriggerBySecret = async (
   db: any,
-  recipient: string,
+  secret: string,
 ): Promise<WorkflowTriggerRow | undefined> =>
-  db
-    .from("workflow_triggers")
-    .whereRaw("LOWER(address) = ?", [recipient.trim().toLowerCase()])
-    .first();
+  db.from("workflow_triggers").where({ secret }).first();
+
+export const resolveTriggerById = async (
+  db: any,
+  triggerId: string,
+): Promise<WorkflowTriggerRow | undefined> =>
+  db.from("workflow_triggers").where({ id: triggerId }).first();
 
 /**
  * Per-trigger filtered-row retention (spec §4.4): keep the newest
@@ -203,6 +205,7 @@ const fireRun = async (opts: {
     const fromDisplay = email.from.name
       ? `"${email.from.name}" <${email.from.address}>`
       : `<${email.from.address}>`;
+
     const initialMessage = {
       id: randomUUID(),
       role: "user",
@@ -217,6 +220,7 @@ const fireRun = async (opts: {
         ...fileParts,
       ],
     } as UIMessage;
+
     // generateStream loads session history from agent_messages for the run
     // identity, so this message becomes the run's seed context.
     await saveChat({
@@ -224,6 +228,7 @@ const fireRun = async (opts: {
       user: trigger.run_as_user,
       messages: [initialMessage],
     });
+    
   }
 
   // 4. Enqueue the workflow job (queues entitlement is a hard requirement
@@ -232,13 +237,18 @@ const fireRun = async (opts: {
   if (!agent) {
     throw new Error(`Agent ${workflow.agent} not found for workflow ${workflow.id}.`);
   }
-  const provider = await resolveAgentProvider(agent, deps.providers);
-  if (!provider?.workflows?.queue) {
-    throw new Error(
-      `No workflow queue configured for the provider of agent ${workflow.agent}; email triggers require the queues entitlement.`,
-    );
+
+  if (!workflow.queue) {
+    throw new Error("No queue selected for routine (workflow) execution. Routines require a queue.")
   }
-  const queue = await provider.workflows.queue;
+  
+  const queues: ExuluQueueConfig[] = exuluApp.get().queues();
+  const queue = queues.find(x => x.queue.name === workflow.queue);
+
+  if (!queue) {
+    throw new Error("Queue " + workflow.queue + " not found as a registered queue in ExuluApp.")
+  }
+  
 
   const jobData: BullMqJobData = {
     label: `Workflow Run ${workflow.id}`,
@@ -292,7 +302,7 @@ const fireRun = async (opts: {
 };
 
 export async function handleEmailIntake(
-  payload: { s3Key: string; recipient?: string },
+  payload: { s3Key: string; triggerId: string; format: "eml" | "json" },
   deps: IntakeDeps,
 ): Promise<EmailIntakeOutcome> {
   const { db } = await postgresClient();
@@ -300,19 +310,19 @@ export async function handleEmailIntake(
 
   const raw = await getS3ObjectBytes(payload.s3Key, deps.config);
 
+  // Trigger is resolved by id (the webhook already routed by secret).
+  const trigger = await resolveTriggerById(db, payload.triggerId);
+
   let email: InboundEmail;
   try {
-    email = await parseRawMime(raw);
+    email = payload.format === "json"
+      ? jsonToInboundEmail(JSON.parse(raw.toString("utf8")))
+      : await parseRawMime(raw);
   } catch (error) {
-    // Unparseable MIME (spec §9): failed row with a sanitized, truncated
-    // error (no raw headers); the raw .eml is RETAINED for debugging.
-    const trigger = payload.recipient
-      ? await resolveTriggerByAddress(db, payload.recipient)
-      : undefined;
+    // Unparseable payload (spec §9): failed row with a sanitized error; the
+    // raw payload is RETAINED for debugging (see spec §9 orphan-cleanup note).
     if (!trigger) {
-      console.warn(
-        `[EXULU-EMAIL] dropping unparseable email without a resolvable recipient (${payload.s3Key}).`,
-      );
+      console.warn(`[EXULU-WEBHOOK] dropping unparseable payload without a trigger (${payload.s3Key}).`);
       await deleteS3Object(payload.s3Key, deps.config);
       return { outcome: "dropped" };
     }
@@ -324,22 +334,21 @@ export async function handleEmailIntake(
       workflow: trigger.workflow,
       trigger: "email",
       trigger_metadata: JSON.stringify({ s3_key: payload.s3Key }),
-      error: JSON.stringify({ message: `MIME parse failed: ${message}` }),
+      error: JSON.stringify({ message: `Payload parse failed: ${message}` }),
       result: null,
       metadata: {},
     });
     return { outcome: "failed" };
   }
 
-  // 1. Resolve trigger by recipient (spec §4.4.1). Unknown/disabled → log +
-  // drop, no row — nothing to attach it to.
-  const recipient = (payload.recipient ?? email.recipient).trim().toLowerCase();
-  const trigger = recipient ? await resolveTriggerByAddress(db, recipient) : undefined;
   if (!trigger || trigger.type !== "email" || !trigger.enabled) {
-    console.warn(`[EXULU-EMAIL] no enabled email trigger for recipient "${recipient}"; dropping.`);
+    console.warn(`[EXULU-WEBHOOK] no enabled trigger ${payload.triggerId}; dropping.`);
     await deleteS3Object(payload.s3Key, deps.config);
     return { outcome: "dropped" };
   }
+
+  // Stamp the trigger's own id as the "recipient" for the untrusted-data frame.
+  email.recipient = `trigger:${trigger.id}`;
 
   const guard = await runGuardChain({ email, trigger, db, redis });
   if (!guard.ok) {

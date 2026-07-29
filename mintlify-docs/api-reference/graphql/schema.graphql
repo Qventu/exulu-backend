@@ -171,6 +171,7 @@ type Query {
   routineRuns(page: Int, limit: Int, workflow: ID, states: [String!], triggers: [String!], from: Date, to: Date, search: String, needsAttention: Boolean): RoutineRunPage
   routineRunsNeedingAttentionCount: Float!
   queue(queue: QueueEnum!): QueueResult
+  queues: [AvailableQueue!]!
   evals: EvalPaginationResult
   contexts: ContextPaginationResult
   rerankers: RerankerPaginationResult
@@ -182,7 +183,6 @@ type Query {
   jobs(queue: QueueEnum!, statusses: [JobStateEnum!], page: Int, limit: Int): JobPaginationResult
   meetingRecordingUsage: MeetingRecordingUsage
   workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
-  emailInboundConfig: EmailInboundConfig
 }
 
 type Mutation {
@@ -330,6 +330,7 @@ type Mutation {
   deleteWorkflowSchedule(workflow: ID!): WorkflowScheduleReturnPayload
   cancelRoutineRun(id: ID!): RoutineRun
   retryRoutineRun(id: ID!): RoutineRun
+  deleteRoutineRun(id: ID!): ID
   drainQueue(queue: QueueEnum!): JobActionReturnPayload
   pauseQueue(queue: QueueEnum!): JobActionReturnPayload
   resumeQueue(queue: QueueEnum!): JobActionReturnPayload
@@ -342,7 +343,9 @@ type Mutation {
   runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
   upsertWorkflowEmailTrigger(workflow: ID!, enabled: Boolean!, config: JSON!): WorkflowTrigger
   deleteWorkflowTrigger(id: ID!): WorkflowTrigger
-  updateEmailInboundConfig(provider: String, inbound_domain: String, enabled: Boolean, signing_key: String): EmailInboundConfig
+  regenerateWorkflowTriggerSecret(id: ID!): WorkflowTrigger
+  setWorkflowTriggerSigningSecret(id: ID!, enable: Boolean!): WorkflowTrigger
+  testFireWorkflowTrigger(id: ID!, contentType: String!, payload: String!): TestFireResult
 }
 
 type user {
@@ -662,7 +665,6 @@ type agent {
   maxContextLength: Int
   authenticationInformation: String
   systemInstructions: String
-  workflows: AgentWorkflows
   slug: String
   guest_has_password: Boolean
   budget: JSON
@@ -1413,6 +1415,7 @@ type agent_session {
   title: String
   project: String
   metadata: JSON
+  run: String
   currenttask: String
   last_processed_at: Date
   embeddings_updated_at: Date
@@ -1432,6 +1435,7 @@ input agent_sessionInput {
   title: String
   project: String
   metadata: JSON
+  run: String
   currenttask: String
   last_processed_at: Date
   embeddings_updated_at: Date
@@ -1450,6 +1454,7 @@ input FilterAgent_session {
   title: FilterOperatorString
   project: FilterOperatorString
   metadata: FilterOperatorJSON
+  run: FilterOperatorString
   currenttask: FilterOperatorString
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
@@ -1636,6 +1641,7 @@ type workflow_template {
   agent: String
   steps_json: JSON!
   auto_approve_tools: Boolean
+  queue: String
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -1654,6 +1660,7 @@ input workflow_templateInput {
   agent: String
   steps_json: JSON
   auto_approve_tools: Boolean
+  queue: String
   last_processed_at: Date
   embeddings_updated_at: Date
   rights_mode: String
@@ -1669,6 +1676,7 @@ input FilterWorkflow_template {
   agent: FilterOperatorString
   steps_json: FilterOperatorJSON
   auto_approve_tools: FilterOperatorBoolean
+  queue: FilterOperatorString
   last_processed_at: FilterOperatorDate
   embeddings_updated_at: FilterOperatorDate
   rights_mode: FilterOperatorString
@@ -1928,20 +1936,22 @@ type WorkflowTrigger {
   workflow: ID!
   type: String!
   enabled: Boolean!
-  address: String!
+  webhook_url: String
+  has_webhook: Boolean!
+  has_signing_secret: Boolean!
+  last_fired_at: Date
   config: JSON!
   run_as_user: Float
   createdAt: Date
   updatedAt: Date
+  signing_secret_once: String
 }
 
-type EmailInboundConfig {
-  provider: String
-  inbound_domain: String
-  enabled: Boolean
-  last_webhook_at: Date
-  webhook_url: String
-  has_signing_key: Boolean
+type TestFireResult {
+  outcome: String!
+  jobResultId: ID
+  filteredReason: String
+  error: String
 }
 
 type RoutineRun {
@@ -1958,6 +1968,9 @@ type RoutineRun {
   tries: Float
   createdAt: Date
   updatedAt: Date
+  inputTokens: Float
+  outputTokens: Float
+  costUsd: Float
 }
 
 type RoutineRunPage {
@@ -1993,6 +2006,10 @@ type WorkflowScheduleResult {
   schedule: String
   next: Date
   iteration: Int
+}
+
+type AvailableQueue {
+  name: String!
 }
 
 type QueueResult {
@@ -2049,15 +2066,6 @@ type AgentCapabilities {
   files: [String]
   audio: [String]
   video: [String]
-}
-
-type AgentWorkflows {
-  enabled: Boolean
-  queue: AgentWorkflowQueue
-}
-
-type AgentWorkflowQueue {
-  name: String
 }
 
 type AgentEvalFunction {
