@@ -26,6 +26,9 @@ export type {
   ExuluOauthToolContext,
   ExuluCredentialsToolContext,
 } from "./exulu/auth/types"
+export type { AuditEvent } from "./exulu/audit/event";
+export type { AuditConfig } from "./exulu/audit/config";
+export type { AuditLogger } from "./exulu/audit/logger";
 export { ExuluEval } from "./exulu/evals"
 // For script/CLI consumers that resolve models/embeddings against a proxy managed by a
 // separately running server process (same mechanism the worker boot path uses).
