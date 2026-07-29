@@ -36,6 +36,8 @@ import { markStreamActive, clearStreamActive } from "@SRC/exulu/active-streams.t
 import { messageHasPendingApproval, substituteVariablesInMessage } from "@SRC/exulu/routines/flow-steps.ts";
 import { createRunSession } from "@SRC/exulu/routines/run-session.ts";
 import { casJobResultState, parseRunMetadata, upsertWorkflowRunStart } from "@SRC/exulu/routines/run-state.ts";
+import { findLiteLLMModel } from "@SRC/exulu/litellm/catalog.ts";
+import { computeRunCostUsd } from "@SRC/exulu/routines/run-cost.ts";
 
 /**
  * Session-backed runs persist messages at each step boundary, so retries must
@@ -652,6 +654,22 @@ export const createWorkers = async (
                 cachedInputTokens:
                   (priorTokens?.cachedInputTokens ?? 0) + metadata.tokens.cachedInputTokens,
               };
+
+              // Approximate per-run $ cost (spec 2026-07-29): recompute from the
+              // cumulative token totals × the run model's catalog list price on every
+              // persist, so it stays correct across pause/resume. Null when the model
+              // has no catalog price — the UI shows "—", not a fabricated $0.
+              const modelPrice = await findLiteLLMModel(agent.model ?? "");
+              (tokens as Record<string, number | null>).costUsd = computeRunCostUsd(
+                tokens.inputTokens,
+                tokens.outputTokens,
+                modelPrice
+                  ? {
+                      input_cost_per_million_tokens: modelPrice.input_cost_per_million_tokens,
+                      output_cost_per_million_tokens: modelPrice.output_cost_per_million_tokens,
+                    }
+                  : null,
+              );
 
               if (result.pausedAtStepIndex !== undefined) {
                 // Pause is success (spec §5.3): persist progress and flip to
