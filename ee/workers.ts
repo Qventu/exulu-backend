@@ -16,7 +16,7 @@ import type { BullMqJobData } from "@EE/queues/decorator.ts";
 import { maybePruneJobResults } from "@EE/queues/prune-job-results.ts";
 import { type Tracer } from "@opentelemetry/api";
 import { v4 as uuidv4 } from "uuid";
-import { type UIMessage } from "ai";
+import { createIdGenerator, type UIMessage } from "ai";
 import CryptoJS from "crypto-js";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { User } from "@EXULU_TYPES/models/user";
@@ -1713,6 +1713,16 @@ export const processUiMessagesFlow = async ({
               originalMessages: result.originalMessages,
               sendReasoning: true,
               sendSources: true,
+              // Give each assistant message a real unique id (matches the live
+              // chat path in routes.ts). Without this the SDK assigns id "",
+              // and saveChat's global message_id upsert collapses every empty-id
+              // message onto one frozen-createdAt row — which sorts the tool
+              // approval to the top of the transcript and leaves it out of the
+              // last-message slot the approval handler acts on (buttons inert).
+              generateMessageId: createIdGenerator({
+                prefix: "msg_",
+                size: 16,
+              }),
               onError: (error) => {
                 console.error("[EXULU] Ui message stream error.", error);
                 reject(new Error(error instanceof Error ? error.message : String(error)));
