@@ -838,6 +838,9 @@ type RoutineRun {
   tries: Float
   createdAt: Date
   updatedAt: Date
+  inputTokens: Float
+  outputTokens: Float
+  costUsd: Float
 }
 
 type RoutineRunPage {
