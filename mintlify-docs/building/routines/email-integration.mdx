@@ -1,0 +1,114 @@
+---
+title: "Turn emails into automated runs"
+description: "Connect an inbox to a routine so every matching email automatically starts a run — create the routine, wire up the webhook, lock it down, and watch it work."
+icon: "mail-plus"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="workflows (write)" />
+
+Give a routine its own secret webhook URL, point an inbox at it, and every
+matching email automatically starts a run. This tutorial walks the whole path
+end to end. For field-by-field reference, see
+[Email triggers](/building/routines/email-triggers); for payload formats and
+HMAC signing, see [Email intake](/administration/email-intake).
+
+**Before you start**
+- A routine you can edit (this guide creates one), with the `workflows (write)` right.
+- An email source you can add a forwarding rule or webhook to (your mail
+  provider, a mail-to-webhook bridge, or any HTTP client).
+
+<Steps>
+  <Step title="Create a routine">
+    Build the routine that should run for each email. Give it a name and the
+    steps to perform — the incoming email arrives as the variables
+    `{email_from}`, `{email_subject}` and `{email_body}`, and any attachments are
+    added to the run's session so a step can read them.
+
+    <Frame caption="Create a routine and give it the steps to run for each email.">
+      <video autoPlay muted loop playsInline src="/videos/routine-email-create.mp4" />
+    </Frame>
+  </Step>
+
+  <Step title="Enable the email trigger and copy the webhook URL">
+    Open the routine's **Triggers → Email** section and turn on
+    **Start this routine when an email arrives**. IMP generates a per-trigger
+    secret webhook URL:
+
+    ```
+    POST {BACKEND}/webhooks/routine/{secret}
+    ```
+
+    Copy it — you'll point your inbox at it next. The trigger must stay enabled
+    for deliveries to start runs.
+
+    <Frame caption="Toggle the email trigger on, then copy the generated webhook URL.">
+      <video autoPlay muted loop playsInline src="/videos/routine-email-config.mp4" />
+    </Frame>
+  </Step>
+
+  <Step title="Point your email at the webhook">
+    Send matching mail to the webhook URL using whatever your provider supports —
+    a forwarding rule, a mail-to-webhook bridge, or a direct HTTP call. IMP
+    accepts raw MIME, `multipart/form-data`, or JSON. A quick test with `curl`:
+
+    ```bash
+    curl -X POST "$BACKEND/webhooks/routine/{secret}" \
+      -H "Content-Type: application/json" \
+      -d '{"from":"a@acme.com","subject":"Invoice 8842","text":"See attached."}'
+    ```
+
+    An accepted delivery returns `200` and queues a run. See
+    [Email intake](/administration/email-intake) for the full payload formats and
+    HMAC signature details.
+
+    <Frame caption="Point any inbox or HTTP client at the webhook URL to start a run.">
+      <video autoPlay muted loop playsInline src="/videos/routine-email-send.mp4" />
+    </Frame>
+  </Step>
+
+  <Step title="Lock it down">
+    Before going live, tighten the guard chain in the same Email trigger section:
+
+    - **Allowed senders** — an allowlist (exact addresses or `*@domain`); mail
+      from anyone else is filtered out.
+    - **Filter rules** — only start runs for mail matching your patterns (for
+      example, subject contains `invoice`).
+    - **Signing secret** — generate an HMAC secret and have your sender sign
+      deliveries so only authentic requests are accepted.
+    - **Rate limits** — per-trigger and per-sender hourly caps protect the
+      routine from floods.
+
+    <Warning>
+      A run only starts when the trigger is **enabled**, the sender is
+      **allowlisted**, and the mail passes your **filters**. Deliveries that fail
+      a guard are recorded as `filtered` runs so you can see what was dropped.
+    </Warning>
+  </Step>
+
+  <Step title="Watch it run">
+    Each accepted email appears in the routine's **Runs** list with its trigger,
+    subject, duration, and token/cost. Open a run's session to read the
+    transcript — and to answer any tool approvals the agent pauses on.
+
+    <Frame caption="Runs appear with tokens and cost; open a session to review it or answer approvals.">
+      <video autoPlay muted loop playsInline src="/videos/routine-email-run.mp4" />
+    </Frame>
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+- **No run appears** — confirm the trigger is enabled and the sender is on the
+  allowlist; check the Runs list for a `filtered` entry explaining the drop.
+- **Signature rejected** — the HMAC secret on your sender must match the one
+  generated here; regenerating the secret invalidates the old one.
+- **Attachments missing** — send them as parts of the delivery (MIME or
+  `multipart/form-data`); they're attached to the run's session.
+
+## Next steps
+
+- [Email triggers](/building/routines/email-triggers) — the full trigger reference.
+- [Email intake](/administration/email-intake) — payload formats and HMAC signing.
+- [Runs & schedules](/building/routines/runs-and-schedules) — managing and re-running runs.

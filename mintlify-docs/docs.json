@@ -81,6 +81,7 @@
         { "group": "Routines", "pages": [
           "building/routines/overview",
           "building/routines/email-triggers",
+          "building/routines/email-integration",
           "building/routines/runs-and-schedules"
         ] },
         { "group": "Evals", "pages": [
