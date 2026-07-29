@@ -1242,6 +1242,57 @@ export function createMutations(
       }
       return await ctx.entityLayer.detachItem(args.item);
     };
+
+    if (table.RBAC) {
+      mutations[`${tableNamePlural}BulkUpdateRBAC`] = async (_, args, context) => {
+        const { db } = context;
+        const { ids, rights_mode, RBAC } = args;
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+          throw new Error("ids is required and must be a non-empty array.");
+        }
+        if (!VALID_RIGHTS_MODES.includes(rights_mode)) {
+          throw new Error(
+            `Invalid rights_mode "${rights_mode}" — expected one of: ${VALID_RIGHTS_MODES.join(", ")}`,
+          );
+        }
+
+        // Atomic: reject the whole batch if the user lacks write access to any
+        // selected item. Validated BEFORE mutating anything.
+        for (const id of ids) {
+          await validateWriteAccess(id, context);
+        }
+
+        await db.transaction(async (trx) => {
+          // 1. Set rights_mode on every selected item in one statement.
+          //    Deliberately no postprocessUpdate(): a pure access change must
+          //    never delete chunks or re-embed / re-run the processor.
+          await trx(tableNamePlural)
+            .whereIn("id", ids)
+            .update({ rights_mode, updatedAt: new Date() });
+
+          // 2. Overwrite the RBAC grants for each item (diff against existing).
+          for (const id of ids) {
+            const existingRbacRecords = await trx
+              .from("rbac")
+              .where({ entity: table.name.singular, target_resource_id: id })
+              .select("*");
+            await handleRBACUpdate(
+              trx,
+              table.name.singular,
+              id,
+              RBAC ?? {},
+              existingRbacRecords,
+            );
+          }
+        });
+
+        return {
+          message: `Access updated for ${ids.length} item${ids.length === 1 ? "" : "s"}.`,
+          itemCount: ids.length,
+        };
+      };
+    }
   }
 
   return mutations;

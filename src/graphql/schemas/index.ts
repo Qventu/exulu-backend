@@ -421,6 +421,18 @@ export function createSDL(
     ${tableNameSingular}DetachEntities(item: ID!): ${tableNameSingular}EntityDetachPayload
     `;
 
+      if (table.RBAC) {
+        mutationDefs += `
+    ${tableNamePlural}BulkUpdateRBAC(ids: [ID!]!, rights_mode: String!, RBAC: RBACInput): ${tableNameSingular}BulkUpdateRBACPayload
+    `;
+        modelDefs += `
+    type ${tableNameSingular}BulkUpdateRBACPayload {
+      message: String!
+      itemCount: Int!
+    }
+    `;
+      }
+
       if (table.processor) {
         mutationDefs += `
     ${tableNameSingular}ProcessItem(item: ID!): ${tableNameSingular}ProcessItemFieldReturnPayload
