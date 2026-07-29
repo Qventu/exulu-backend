@@ -564,6 +564,43 @@ npx @exulu/frontend
 
 Visit `http://localhost:3001` to access the admin interface. See the [**Exulu Frontend**](https://github.com/Qventu/exulu-frontend) repository for more details.
 
+## Audit logging
+
+Enable an auditable, S3-backed trail of tool calls (which agent called which
+tool, on whose behalf, using which credential identity, with what payload).
+Off by default. Configure via `ExuluApp.create({ config })`:
+
+```ts
+await app.create({
+  tools,
+  config: {
+    // ...existing config...
+    audit: {
+      enabled: true,
+      retentionDays: 90,            // S3 lifecycle expiry
+      // Optional: a dedicated, isolated bucket. Omit to reuse `fileUploads`.
+      s3: {
+        s3region: process.env.AUDIT_S3_REGION!,
+        s3key: process.env.AUDIT_S3_KEY!,
+        s3secret: process.env.AUDIT_S3_SECRET!,
+        s3Bucket: process.env.AUDIT_S3_BUCKET!,
+        s3prefix: "audit/",
+      },
+      // failureMode: "open" (default) | "closed"
+      // sources: { toolCalls: { exclude: ["noisy_tool"] } },
+    },
+  },
+});
+```
+
+Records are written as newline-delimited JSON under
+`audit/dt=2026-07-28/14/1753970400000-3f8c2a1b.ndjson`. **Secret material is never logged** — only
+credential identity (provider, account, authType, non-secret scopes/expiry).
+When reusing the shared `fileUploads` bucket, the S3 lifecycle rule is not
+applied automatically (to avoid touching a bucket that also holds user files);
+the exact rule to apply is logged at startup. Set `manageLifecycle: true` to
+apply it anyway.
+
 ## 🛠️ Development
 
 ```bash

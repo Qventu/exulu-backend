@@ -40,6 +40,9 @@ import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
 import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
 import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
+import type { AuditConfig } from "../audit/config";
+import { initAudit, getAuditLogger, type AuditLogger } from "../audit/logger";
+import { computeBuiltinToolIds } from "./audit-wiring-helpers";
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -128,6 +131,12 @@ export type ExuluConfig = {
     systemPromptPersonalization?: boolean;
   };
   /**
+   * Audit logging. When enabled, structured audit events (starting with one
+   * per tool call) are batched to S3 as NDJSON with configurable retention.
+   * Off by default. See docs/superpowers/specs/2026-07-28-tool-call-audit-layer-design.md.
+   */
+  audit?: AuditConfig;
+  /**
    * When true, ExuluApp.create() throws if any required system binary
    * (pandoc / soffice / pdftoppm — needed by built-in skills like docx) is
    * missing. When false or unset, the missing deps are logged as a warning
@@ -145,6 +154,7 @@ export class ExuluApp {
   private _contexts?: Record<string, ExuluContext> = {};
   private _tools: ExuluTool[] = [];
   private _expressApp: Express | null = null;
+  private _audit?: AuditLogger;
 
   constructor() { }
 
@@ -245,6 +255,16 @@ export class ExuluApp {
       // in the grahql tools resolver.
       // ...mcpTools
     ];
+
+    this._audit = await initAudit(config, {
+      builtinToolIds: computeBuiltinToolIds({
+        todoTools,
+        questionTools,
+        perplexityTools,
+        emailTool,
+        imageGenerationTools,
+      }),
+    });
 
     const checks: {
       name: string;
@@ -579,6 +599,10 @@ export class ExuluApp {
 
   public get contexts(): ExuluContext[] {
     return Object.values(this._contexts ?? {});
+  }
+
+  public get audit(): AuditLogger {
+    return this._audit ?? getAuditLogger(this._config ?? {});
   }
 
   public embeddings = {
