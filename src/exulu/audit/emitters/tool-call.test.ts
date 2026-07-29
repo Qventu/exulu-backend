@@ -74,4 +74,27 @@ describe("buildToolCallEvent", () => {
     expect(ev.data?.output).toBeUndefined();
     expect(ev.data?.input).toBeDefined();
   });
+
+  it("includes the client section when ctx.client is set, and omits it otherwise", async () => {
+    const base = {
+      durationMs: 1,
+      tool: { id: "t1", name: "Tool 1" },
+      user: { id: 1 },
+      input: {},
+      output: {},
+      status: "ok" as const,
+    };
+    const withClient = await buildToolCallEvent(
+      { ...base, client: { ip: "203.0.113.7", userAgent: "UA" } } as any,
+      { maxBytes: 1000, captureOutput: true, redactKeys: [] },
+    );
+    expect(withClient.client).toEqual({ ip: "203.0.113.7", userAgent: "UA" });
+
+    const withoutClient = await buildToolCallEvent(base as any, {
+      maxBytes: 1000,
+      captureOutput: true,
+      redactKeys: [],
+    });
+    expect("client" in withoutClient).toBe(false);
+  });
 });
