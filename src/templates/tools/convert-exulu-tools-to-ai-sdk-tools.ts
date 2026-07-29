@@ -35,6 +35,7 @@ import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
 import { getAuditLogger } from "@SRC/exulu/audit/logger";
 import { emitToolCallAudit } from "@SRC/exulu/audit/emit-tool-call";
+import { extractClientInfo } from "@SRC/exulu/audit/client-info";
 
 /**
  * Tools whose outputs are consumed inline by the model and must NOT be
@@ -664,6 +665,7 @@ export const convertExuluToolsToAiSdkTools = async (
                   output: __auditOutput,
                   status: __auditStatus,
                   error: __auditError,
+                  client: extractClientInfo(req),
                 });
                 if (__auditLogger.failClosed) {
                   await __emit;
