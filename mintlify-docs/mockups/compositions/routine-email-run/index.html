@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — watch it run</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/data-table.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* ── hook ── */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; }
+
+      /* ── stage ── */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; }
+
+      /* ── workbench layout ── */
+      #root .workbench-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+      /* ── section nav rail ── */
+      #root .section-nav { width: 200px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); padding: 16px 0; display: flex; flex-direction: column; gap: 2px; }
+      #root .section-nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .section-nav-item.active { background: var(--surface-2); color: var(--tx-hi); font-weight: 500; }
+      #root .section-nav-item svg { width: 14px; height: 14px; stroke-width: 1.5; flex: none; }
+
+      /* ── workbench content ── */
+      #root .workbench-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .workbench-scroll { flex: 1; overflow: hidden; padding: 32px 48px; }
+      #root .workbench-col { max-width: 900px; display: flex; flex-direction: column; gap: 24px; }
+
+      /* ── breadcrumb / topbar extras ── */
+      #root .topbar-breadcrumb { font-size: 13px; color: var(--tx-lo); }
+      #root .topbar-breadcrumb-sep { color: var(--tx-faint); margin: 0 6px; }
+      #root .topbar-breadcrumb-cur { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .topbar-right { display: flex; align-items: center; gap: 8px; }
+
+      /* ── Runs table layout ── */
+      #root .runs-table { width: 100%; background: var(--surface); border: 1px solid var(--hair); }
+      #root .runs-table-head {
+        display: grid;
+        grid-template-columns: 18px 100px 80px 1fr 90px 60px 130px 80px;
+        align-items: center;
+        height: 36px;
+        padding: 0 16px;
+        gap: 12px;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--hair);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--tx-lo);
+      }
+      #root .runs-table-head .col-cost { text-align: right; }
+
+      /* ── Run row (data row) ── */
+      #root .run-row {
+        display: grid;
+        grid-template-columns: 18px 100px 80px 1fr 90px 60px 130px 80px;
+        align-items: center;
+        height: 52px;
+        padding: 0 16px;
+        gap: 12px;
+        border-bottom: 1px solid var(--hair);
+        font-size: 13px;
+        color: var(--tx-mid);
+        cursor: default;
+        background: var(--surface);
+      }
+      #root .run-row:last-child { border-bottom: none; }
+      #root .run-row.hover { background: var(--surface-2); }
+
+      /* status dot */
+      #root .run-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-soft); flex: none; }
+      #root .run-status-dot.completed { background: var(--accent-soft); }
+
+      /* state badge */
+      #root .run-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border: 1px solid var(--hair);
+        padding: 2px 8px;
+        color: var(--tx-mid);
+        background: var(--chip-soft);
+        white-space: nowrap;
+      }
+      #root .run-badge.completed { color: var(--accent); border-color: rgba(111,154,55,0.3); background: rgba(111,154,55,0.08); }
+
+      /* trigger chip */
+      #root .run-trigger-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        border: 1px solid var(--hair);
+        padding: 2px 8px;
+        color: var(--tx-mid);
+        background: var(--bg);
+        white-space: nowrap;
+      }
+      #root .run-trigger-chip svg { width: 11px; height: 11px; stroke-width: 1.5; }
+
+      /* subject */
+      #root .run-subject { font-size: 13px; color: var(--tx-hi); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+      /* meta cells */
+      #root .run-time { font-family: var(--font-mono); font-size: 12px; color: var(--tx-faint); white-space: nowrap; }
+      #root .run-dur { font-family: var(--font-mono); font-size: 12px; color: var(--tx-faint); }
+      #root .run-tokens { font-family: var(--font-mono); font-size: 12px; color: var(--tx-faint); white-space: nowrap; }
+      #root .run-cost { font-family: var(--font-mono); font-size: 12px; color: var(--tx-faint); text-align: right; }
+
+      /* ghost rows (older runs, always visible) */
+      #root .run-row-ghost { opacity: 0.45; }
+
+      /* ── Session panel (hidden initially, revealed after click) ── */
+      #root #session-panel { overflow: hidden; }
+
+      #root .session-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 20px;
+        border-top: 1px solid var(--hair);
+        border-bottom: 1px solid var(--hair);
+        background: var(--surface-2);
+      }
+      #root .session-header-left { display: flex; align-items: center; gap: 10px; }
+      #root .session-title { font-size: 13px; font-weight: 600; color: var(--tx-hi); }
+      #root .session-meta { font-family: var(--font-mono); font-size: 11px; color: var(--tx-lo); }
+      #root .session-close {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        color: var(--tx-faint);
+        font-size: 14px;
+        cursor: default;
+      }
+
+      /* transcript area */
+      #root .session-transcript { padding: 20px 20px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+      /* user message in transcript */
+      #root .tx-msg-user {
+        align-self: flex-end;
+        max-width: 72%;
+        background: var(--surface-2);
+        padding: 10px 14px;
+        font-size: 13px;
+        color: var(--tx-hi);
+        line-height: 1.5;
+      }
+
+      /* tool approval card */
+      #root .tool-approval-card {
+        border: 1px solid var(--hair);
+        background: var(--surface);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #root .tool-approval-header { display: flex; align-items: flex-start; gap: 10px; }
+      #root .tool-approval-icon { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--tx-mid); }
+      #root .tool-approval-icon svg { width: 16px; height: 16px; stroke-width: 1.5; }
+      #root .tool-approval-title { font-size: 14px; font-weight: 500; color: var(--tx-hi); }
+      #root .tool-approval-desc { font-size: 13px; color: var(--tx-mid); margin-top: 2px; }
+      #root .tool-approval-actions { display: flex; gap: 8px; }
+      #root .tool-btn { font-family: var(--font-mono); font-size: 11.5px; padding: 7px 14px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--hair); cursor: default; }
+      #root .tool-btn-primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+      #root .tool-btn-outline { background: transparent; color: var(--tx-mid); }
+      #root .tool-btn-deny { background: transparent; color: var(--destructive); border-color: var(--hair); }
+
+      /* section header above the table */
+      #root .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+      #root .section-heading-title { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .section-heading-meta { font-family: var(--font-mono); font-size: 12px; color: var(--tx-lo); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="routine-email-run"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="8.5"
+    >
+      <!-- background layer -->
+      <div id="bg" class="clip" data-start="0" data-duration="8.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.2" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Runs</span>
+          <h1 class="hook-headline" id="hook-headline">Every email, a run.</h1>
+        </div>
+      </div>
+
+      <!-- app stage -->
+      <div id="app" class="clip" data-start="1.8" data-duration="6.7" data-track-index="3">
+        <div class="stage" id="stage">
+          <div class="imp-shell">
+            <!-- sidebar -->
+            <aside class="imp-sidebar">
+              <div class="imp-wordmark">IMP</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home
+              </div>
+              <div class="imp-sidebar-group">Workspace</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects
+              </div>
+              <div class="imp-sidebar-group">Build</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>Knowledge
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h8"/><path d="M8 12h4"/><path d="M8 18h2"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>Prompts
+              </div>
+              <div class="imp-nav-item active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>Routines
+              </div>
+            </aside>
+
+            <!-- main area -->
+            <div class="imp-main">
+              <!-- topbar -->
+              <div class="imp-topbar">
+                <span>
+                  <span class="topbar-breadcrumb">Routines</span>
+                  <span class="topbar-breadcrumb-sep">/</span>
+                  <span class="topbar-breadcrumb-cur">Support triage</span>
+                </span>
+                <span class="topbar-right">
+                  <span class="imp-btn imp-btn-ghost">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+                    Open chat
+                  </span>
+                  <span class="imp-btn imp-btn-ink">Run</span>
+                </span>
+              </div>
+
+              <!-- workbench -->
+              <div class="workbench-body">
+                <!-- section nav rail — Runs active -->
+                <nav class="section-nav">
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                    Basics
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Access
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+                    Steps
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                    Schedule
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    Triggers
+                  </div>
+                  <div class="section-nav-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    Runs
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"/><path d="M5 12h14"/><path d="M5 17h14"/></svg>
+                    Queue
+                  </div>
+                  <div class="section-nav-item" style="color:var(--destructive)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    Danger zone
+                  </div>
+                </nav>
+
+                <!-- Runs content -->
+                <div class="workbench-content">
+                  <div class="workbench-scroll">
+                    <div class="workbench-col">
+
+                      <!-- Runs table -->
+                      <div class="runs-table">
+                        <!-- header -->
+                        <div class="runs-table-head">
+                          <span></span>
+                          <span>State</span>
+                          <span>Trigger</span>
+                          <span>Subject</span>
+                          <span>Time</span>
+                          <span>Dur</span>
+                          <span>Tokens</span>
+                          <span class="col-cost">Cost</span>
+                        </div>
+
+                        <!-- NEW run row — slides in from top via GSAP -->
+                        <div class="run-row hover" id="run-row-new">
+                          <span class="run-status-dot completed"></span>
+                          <span class="run-badge completed">Completed</span>
+                          <span class="run-trigger-chip">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            email
+                          </span>
+                          <span class="run-subject">Invoice 8842</span>
+                          <span class="run-time">just now</span>
+                          <span class="run-dur">2s</span>
+                          <span class="run-tokens">↑1.2k ↓340</span>
+                          <span class="run-cost">$0.004</span>
+                        </div>
+
+                        <!-- older ghost rows (always visible, faded) -->
+                        <div class="run-row run-row-ghost">
+                          <span class="run-status-dot completed"></span>
+                          <span class="run-badge completed">Completed</span>
+                          <span class="run-trigger-chip">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            email
+                          </span>
+                          <span class="run-subject">RE: Q3 vendor review</span>
+                          <span class="run-time">4 min ago</span>
+                          <span class="run-dur">3s</span>
+                          <span class="run-tokens">↑980 ↓290</span>
+                          <span class="run-cost">$0.003</span>
+                        </div>
+                        <div class="run-row run-row-ghost">
+                          <span class="run-status-dot completed"></span>
+                          <span class="run-badge completed">Completed</span>
+                          <span class="run-trigger-chip">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                            email
+                          </span>
+                          <span class="run-subject">Delivery confirmation #4471</span>
+                          <span class="run-time">12 min ago</span>
+                          <span class="run-dur">2s</span>
+                          <span class="run-tokens">↑840 ↓210</span>
+                          <span class="run-cost">$0.002</span>
+                        </div>
+
+                        <!-- Session panel: expands below the active row after click -->
+                        <div id="session-panel">
+                          <div class="session-header">
+                            <div class="session-header-left">
+                              <span class="session-title">Session — Invoice 8842</span>
+                              <span class="session-meta">email trigger · 2s · $0.004</span>
+                            </div>
+                            <span class="session-close">✕</span>
+                          </div>
+                          <div class="session-transcript">
+                            <!-- user message -->
+                            <div class="tx-msg-user">Process this invoice email from accounts@acme.com — subject: Invoice 8842.</div>
+
+                            <!-- agent response with tool approval card -->
+                            <div>
+                              <p style="font-size:13px;color:var(--tx-hi);margin:0 0 10px;">I'll look up the invoice details. Please review the tool request below.</p>
+                              <div class="tool-approval-card">
+                                <div class="tool-approval-header">
+                                  <span class="tool-approval-icon">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                                  </span>
+                                  <div>
+                                    <div class="tool-approval-title">Run Internet Search?</div>
+                                    <div class="tool-approval-desc">The agent wants to run this tool. Review the request and choose how to proceed.</div>
+                                  </div>
+                                </div>
+                                <div class="tool-approval-actions">
+                                  <span class="tool-btn tool-btn-primary">Allow once</span>
+                                  <span class="tool-btn tool-btn-outline">Allow for this chat</span>
+                                  <span class="tool-btn tool-btn-deny">Deny</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                      </div><!-- /runs-table -->
+
+                    </div><!-- /workbench-col -->
+                  </div><!-- /workbench-scroll -->
+                </div><!-- /workbench-content -->
+              </div><!-- /workbench-body -->
+            </div><!-- /imp-main -->
+          </div><!-- /imp-shell -->
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div><!-- /stage -->
+      </div><!-- /app clip -->
+    </div><!-- /root -->
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* ── initial GSAP-owned offsets (no CSS transform on any tweened element) ── */
+      tl.set("#hook-eyebrow",  { y: 10 }, 0);
+      tl.set("#hook-headline", { y: 14 }, 0);
+      tl.set("#stage",         { y: 16 }, 0);
+      tl.set("#run-row-new",   { y: -52, opacity: 0 }, 0);
+      tl.set("#session-panel", { height: 0, opacity: 0 }, 0);
+
+      /* ── 0.05–0.55  hook enters ── */
+      tl.to("#hook-eyebrow",  { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* ── 1.80–2.20  hook exits; stage rises in ── */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.30, ease: "power2.in" }, 1.80);
+      tl.to("#stage",      { y: 0, opacity: 1, duration: 0.36, ease: "power2.out" }, 1.90);
+
+      /* ── 2.30  orienting beat — Runs list is visible ── */
+
+      /* ── 2.40  new run row slides in from top ── */
+      tl.to("#run-row-new", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.40);
+
+      /* ── 2.90  cursor appears, glides to the run row ── */
+      /* run-row-new is approximately at y=36(header)+26(half row height) = 62px from top of runs-table
+         Stage is 1600x1000, imp-shell starts at 0,0.
+         sidebar=232px, topbar=52px, section-nav=200px, workbench-scroll pad=32px top
+         Table is in workbench-col after scroll padding.
+         Row center approx: x = 232(sidebar) + 200(nav) + 48(pad) + 460(half of col) = ~940
+                            y = 52(topbar) + 32(pad) + 36(table-head) + 26(half row) = ~146
+         Use stage-relative coordinates (cursor lives inside .stage at 1600x1000) */
+      let t1 = impCursor(tl, { from: [1200, 760], to: [700, 142], at: 2.90, click: true, duration: 0.52 });
+
+      /* row gets hover state on approach (already has .hover class; add ripple effect) */
+      /* cursor click fires at t1 */
+
+      /* ── t1+0.15  session panel reveals (height + fade) ── */
+      tl.to("#session-panel", { height: 290, opacity: 1, duration: 0.52, ease: "power2.out" }, t1 + 0.12);
+
+      /* ── cursor fades out after session panel appears ── */
+      tl.to("#cur", { opacity: 0, duration: 0.20, ease: "power1.in" }, t1 + 0.55);
+
+      /* ── 8.20 → 8.50  settled hold (≥0.3 s) on open session with approval card ── */
+
+      window.__timelines["routine-email-run"] = tl;
+    </script>
+  </body>
+</html>

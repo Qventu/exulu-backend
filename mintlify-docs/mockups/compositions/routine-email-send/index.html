@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — send a test delivery</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* ── hook ── */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; }
+
+      /* ── stage panel ── */
+      #root #stage { display: flex; flex-direction: column; gap: 0; width: 860px; opacity: 0; }
+
+      /* ── webhook URL card ── */
+      #root .url-card { background: var(--surface); border: 1px solid var(--hair); }
+      #root .url-card-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--hair); }
+      #root .url-card-title { font-size: 13px; font-weight: 600; color: var(--tx-hi); }
+      #root .url-card-hint { font-size: 12px; color: var(--tx-lo); }
+      #root .url-card-body { padding: 16px 20px; }
+      #root .webhook-url-row { display: flex; align-items: center; gap: 0; border: 1px solid var(--hair); overflow: hidden; }
+      #root .webhook-method { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 13px; background: var(--surface-2); color: var(--tx-mid); border-right: 1px solid var(--hair); flex: none; }
+      #root .webhook-url { font-family: var(--font-mono); font-size: 12px; color: var(--tx-hi); padding: 10px 13px; flex: 1; background: var(--bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #root .webhook-copy { flex: none; display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 14px; border-left: 1px solid var(--hair); background: var(--bg); color: var(--tx-mid); cursor: default; }
+      #root .webhook-copy svg { width: 13px; height: 13px; stroke-width: 1.5; }
+
+      /* ── terminal card ── */
+      #root .term-card { background: var(--code-bg); border: 1px solid #3a3d52; border-top: none; }
+      #root .term-header { display: flex; align-items: center; gap: 7px; padding: 11px 16px; border-bottom: 1px solid #3a3d52; }
+      #root .term-dot { width: 10px; height: 10px; border-radius: 50%; }
+      #root .term-dot-red { background: #ff5f56; }
+      #root .term-dot-yel { background: #ffbd2e; }
+      #root .term-dot-grn { background: #27c93f; }
+      #root .term-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 0; font-family: var(--font-mono); font-size: 13px; color: var(--code-fg); line-height: 1.6; }
+
+      /* curl lines — hidden; wipe cover reveals each line */
+      #root .term-line { position: relative; white-space: pre; }
+      #root .term-line-cover { position: absolute; inset: 0; background: var(--code-bg); transform-origin: 0 50%; }
+
+      /* prompt glyph */
+      #root .term-prompt { color: #8fbf4d; }
+      /* curl keyword */
+      #root .term-kw { color: #7ec8e3; }
+      /* string / value */
+      #root .term-str { color: #f4c96e; }
+      /* flag */
+      #root .term-flag { color: #c9a0dc; }
+      /* continuation backslash */
+      #root .term-cont { color: #6b748f; }
+
+      /* response line — hidden initially, slides in (initial y set via GSAP) */
+      #root #resp-line { opacity: 0; margin-top: 12px; }
+      #root .resp-status { color: #8fbf4d; font-weight: 600; }
+
+      /* queued note — hidden initially (initial y set via GSAP) */
+      #root #queued-note { opacity: 0; display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 14px; background: rgba(111,154,55,0.12); border: 1px solid rgba(111,154,55,0.28); }
+      #root .queued-note-dot { width: 7px; height: 7px; background: var(--accent-soft); flex: none; }
+      #root .queued-note-text { font-family: var(--font-mono); font-size: 12px; color: #8fbf4d; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="routine-email-send"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="8.5"
+    >
+      <!-- background -->
+      <div id="bg" class="clip" data-start="0" data-duration="8.5" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Connect</span>
+          <h1 class="hook-headline" id="hook-headline">Send a test delivery.</h1>
+        </div>
+      </div>
+
+      <!-- stage: centred column with url card + terminal card -->
+      <div id="stage-clip" class="clip" data-start="1.5" data-duration="7.0" data-track-index="3">
+        <div id="stage">
+
+          <!-- webhook URL card -->
+          <div class="url-card">
+            <div class="url-card-header">
+              <span class="url-card-title">Webhook endpoint</span>
+              <span class="url-card-hint">POST to this URL to trigger a run</span>
+            </div>
+            <div class="url-card-body">
+              <div class="webhook-url-row">
+                <span class="webhook-method">POST</span>
+                <span class="webhook-url">{BACKEND}/webhooks/routine/8f3c…</span>
+                <span class="webhook-copy">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  Copy
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- terminal card -->
+          <div class="term-card">
+            <div class="term-header">
+              <span class="term-dot term-dot-red"></span>
+              <span class="term-dot term-dot-yel"></span>
+              <span class="term-dot term-dot-grn"></span>
+            </div>
+            <div class="term-body">
+              <!-- curl command lines, each with a cover that wipes away -->
+              <div class="term-line" id="tl1">
+                <span class="term-prompt">$</span> <span class="term-kw">curl</span> <span class="term-flag">-X POST</span> <span class="term-str">"$BACKEND/webhooks/routine/8f3c…"</span> <span class="term-cont">\</span>
+                <span class="term-line-cover" id="tc1"></span>
+              </div>
+              <div class="term-line" id="tl2">
+                  <span class="term-flag">-H</span> <span class="term-str">"Content-Type: application/json"</span> <span class="term-cont">\</span>
+                <span class="term-line-cover" id="tc2"></span>
+              </div>
+              <div class="term-line" id="tl3">
+                  <span class="term-flag">-d</span> <span class="term-str">'{"from":"a@acme.com","subject":"Invoice 8842","text":"See attached."}'</span>
+                <span class="term-line-cover" id="tc3"></span>
+              </div>
+
+              <!-- response -->
+              <div id="resp-line">
+                <span class="resp-status">HTTP/1.1 200 OK</span>
+              </div>
+
+              <!-- queued note -->
+              <div id="queued-note">
+                <span class="queued-note-dot"></span>
+                <span class="queued-note-text">queued a run → Support triage</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* set initial GSAP-owned y offsets (keeps CSS clean, avoids transform conflicts) */
+      tl.set("#hook-eyebrow", { y: 10 }, 0);
+      tl.set("#hook-headline", { y: 14 }, 0);
+      tl.set("#stage",       { y: 16 }, 0);
+      tl.set("#resp-line",   { y: 6  }, 0);
+      tl.set("#queued-note", { y: 5  }, 0);
+
+      /* 0.05–0.50  hook enters */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.50–1.90  hook exits; stage rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.5);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 1.6);
+
+      /* 2.0–2.5  orienting beat — reader takes in the URL card */
+
+      /* 2.5  curl line 1 types in (wipe cover shrinks left) */
+      tl.to("#tc1", { scaleX: 0, duration: 0.45, ease: "steps(5)" }, 2.5);
+
+      /* 3.05  curl line 2 */
+      tl.to("#tc2", { scaleX: 0, duration: 0.38, ease: "steps(4)" }, 3.05);
+
+      /* 3.52  curl line 3 (longer body, more steps) */
+      tl.to("#tc3", { scaleX: 0, duration: 0.52, ease: "steps(8)" }, 3.52);
+
+      /* 4.3  breath — command is complete */
+
+      /* 4.6  response line slides in (fade + slide) */
+      tl.to("#resp-line", { y: 0, opacity: 1, duration: 0.36, ease: "power2.out" }, 4.6);
+
+      /* 5.0  queued note fades in */
+      tl.to("#queued-note", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 5.0);
+
+      /* 5.35 → 8.50  settled hold (≥ 0.3 s — actually 3.15 s) on 200 + queued note */
+
+      window.__timelines["routine-email-send"] = tl;
+    </script>
+  </body>
+</html>

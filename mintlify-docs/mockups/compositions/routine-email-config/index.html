@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>IMP mockup — configure email trigger</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="fonts.css" />
+    <link rel="stylesheet" href="kit/app-shell.css" />
+    <link rel="stylesheet" href="kit/widgets.css" />
+    <link rel="stylesheet" href="kit/cursor.css" />
+    <script src="kit/cursor.js"></script>
+    <style>
+      body { margin: 0; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--surface-2); font-family: var(--font-sans); }
+      #root .clip { position: absolute; inset: 0; display: grid; place-items: center; }
+      #root #bg-wash { position: absolute; inset: 0; background: var(--surface-2); }
+
+      /* ── hook ── */
+      #root #hook-inner { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+      #root .hook-eyebrow { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 14px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-lo); opacity: 0; transform: translateY(10px); }
+      #root .hook-eyebrow .dot { width: 9px; height: 9px; background: var(--accent-soft); }
+      #root .hook-headline { margin: 0; font-size: 56px; font-weight: 500; letter-spacing: -0.02em; color: var(--tx-hi); opacity: 0; transform: translateY(14px); }
+
+      /* ── stage ── */
+      #root .stage { position: relative; width: 1600px; height: 1000px; opacity: 0; transform: translateY(16px); }
+
+      /* ── workbench layout ── */
+      #root .workbench-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+      /* ── section nav rail ── */
+      #root .section-nav { width: 200px; flex: none; border-right: 1px solid var(--hair); background: var(--bg); padding: 16px 0; display: flex; flex-direction: column; gap: 2px; }
+      #root .section-nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .section-nav-item.active { background: var(--surface-2); color: var(--tx-hi); font-weight: 500; }
+      #root .section-nav-item svg { width: 14px; height: 14px; stroke-width: 1.5; flex: none; }
+
+      /* ── workbench content ── */
+      #root .workbench-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+      #root .workbench-scroll { flex: 1; overflow: hidden; padding: 32px 48px; }
+      #root .workbench-col { max-width: 680px; display: flex; flex-direction: column; gap: 24px; }
+
+      /* ── DetailSection ── */
+      #root .detail-section { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--hair); background: var(--surface); }
+      #root .detail-section-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--hair); }
+      #root .detail-section-title { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .detail-section-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+      /* ── Trigger tabs (Schedule / Email) ── */
+      #root .trigger-tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface-2); border: 1px solid var(--hair); padding: 3px; gap: 2px; }
+      #root .trigger-tab { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 0; font-size: 13px; color: var(--tx-mid); cursor: default; }
+      #root .trigger-tab svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .trigger-tab.active { background: var(--bg); color: var(--tx-hi); font-weight: 500; border: 1px solid var(--hair); }
+
+      /* ── Toggle row ── */
+      #root .toggle-row { display: flex; align-items: center; gap: 14px; padding: 4px 0; }
+      #root .toggle-label { font-size: 13px; color: var(--tx-hi); font-weight: 500; }
+
+      /* toggle switch */
+      #root .tog-track { position: relative; width: 42px; height: 24px; border: 1px solid var(--hair); background: var(--surface-2); flex: none; transition: none; }
+      #root .tog-track.on { background: var(--accent); border-color: var(--accent); }
+      #root .tog-knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; background: var(--tx-faint); }
+      #root .tog-track.on .tog-knob { left: 21px; background: #fff; }
+
+      /* ── webhook URL row ── */
+      #root .webhook-row { display: flex; flex-direction: column; gap: 8px; overflow: hidden; max-height: 0; opacity: 0; }
+      #root .webhook-row.visible { max-height: 200px; opacity: 1; }
+      #root .webhook-label { font-size: 12px; font-weight: 500; color: var(--tx-hi); }
+      #root .webhook-url-row { display: flex; align-items: center; gap: 0; border: 1px solid var(--hair); overflow: hidden; }
+      #root .webhook-method { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 9px 12px; background: var(--surface-2); color: var(--tx-mid); border-right: 1px solid var(--hair); flex: none; }
+      #root .webhook-url { font-family: var(--font-mono); font-size: 12px; color: var(--tx-hi); padding: 9px 12px; flex: 1; background: var(--bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #root .webhook-copy { flex: none; display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 9px 14px; border-left: 1px solid var(--hair); background: var(--bg); color: var(--tx-mid); cursor: default; }
+      #root .webhook-copy svg { width: 13px; height: 13px; stroke-width: 1.5; }
+      #root .copied-tick { display: none; }
+      #root .webhook-copy.copied { color: var(--accent); }
+      #root .webhook-copy.copied .copy-icon { display: none; }
+      #root .webhook-copy.copied .copied-tick { display: block; }
+
+      /* ── guard controls (senders + filter + secret) ── */
+      #root .guard-controls { display: flex; flex-direction: column; gap: 16px; overflow: hidden; max-height: 0; opacity: 0; }
+      #root .guard-controls.visible { max-height: 400px; opacity: 1; }
+
+      /* field + label */
+      #root .imp-field { display: flex; flex-direction: column; gap: 6px; }
+      #root .imp-label { font-size: 12px; font-weight: 500; color: var(--tx-hi); }
+      #root .imp-field-hint { font-size: 12px; color: var(--tx-lo); }
+
+      /* allowed senders chip area */
+      #root .chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border: 1px solid var(--hair); background: var(--bg); padding: 7px 10px; min-height: 38px; }
+      #root .imp-chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 12px; background: var(--chip-soft); border: 1px solid var(--hair); padding: 3px 9px; color: var(--tx-hi); }
+      #root .imp-chip .chip-x { color: var(--tx-faint); font-size: 11px; cursor: default; }
+
+      /* filter row */
+      #root .filter-row { display: flex; align-items: center; gap: 8px; }
+      #root .filter-select { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--hair); background: var(--bg); padding: 7px 11px; font-size: 13px; color: var(--tx-hi); min-width: 160px; }
+      #root .filter-select span.chev { color: var(--tx-faint); font-size: 11px; }
+      #root .filter-input { flex: 1; border: 1px solid var(--hair); background: var(--bg); padding: 7px 11px; font-size: 13px; color: var(--tx-hi); font-family: var(--font-mono); }
+
+      /* generate signing secret button */
+      #root .btn-secret { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 9px 14px; border: 1px solid var(--hair); background: var(--bg); color: var(--tx-mid); cursor: default; }
+      #root .btn-secret svg { width: 13px; height: 13px; stroke-width: 1.5; }
+
+      /* breadcrumb / topbar extras */
+      #root .topbar-breadcrumb { font-size: 13px; color: var(--tx-lo); }
+      #root .topbar-breadcrumb-sep { color: var(--tx-faint); margin: 0 6px; }
+      #root .topbar-breadcrumb-cur { font-size: 14px; font-weight: 600; color: var(--tx-hi); }
+      #root .topbar-right { display: flex; align-items: center; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="routine-email-config"
+      data-start="0"
+      data-width="1920"
+      data-height="1080"
+      data-duration="9.2"
+    >
+      <div id="bg" class="clip" data-start="0" data-duration="9.2" data-track-index="1">
+        <div id="bg-wash"></div>
+      </div>
+
+      <!-- hook -->
+      <div id="hook" class="clip" data-start="0" data-duration="2.3" data-track-index="2">
+        <div id="hook-inner">
+          <span class="hook-eyebrow" id="hook-eyebrow"><span class="dot"></span>Email Trigger</span>
+          <h1 class="hook-headline" id="hook-headline">One inbound address.</h1>
+        </div>
+      </div>
+
+      <!-- app workbench -->
+      <div id="app" class="clip" data-start="1.9" data-duration="7.3" data-track-index="3">
+        <div class="stage" id="stage">
+          <div class="imp-shell">
+            <!-- sidebar -->
+            <aside class="imp-sidebar">
+              <div class="imp-wordmark">IMP</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Home
+              </div>
+              <div class="imp-sidebar-group">Workspace</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>Chat
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>Projects
+              </div>
+              <div class="imp-sidebar-group">Build</div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/></svg>Agents
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/></svg>Knowledge
+              </div>
+              <div class="imp-nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h8"/><path d="M8 12h4"/><path d="M8 18h2"/><rect x="2" y="2" width="20" height="20" rx="2"/></svg>Prompts
+              </div>
+              <div class="imp-nav-item active">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3"/><rect x="8" y="2" width="8" height="6" rx="1"/></svg>Routines
+              </div>
+            </aside>
+
+            <!-- main area -->
+            <div class="imp-main">
+              <!-- topbar -->
+              <div class="imp-topbar">
+                <span>
+                  <span class="topbar-breadcrumb">Routines</span>
+                  <span class="topbar-breadcrumb-sep">/</span>
+                  <span class="topbar-breadcrumb-cur">Support triage</span>
+                </span>
+                <span class="topbar-right">
+                  <span class="imp-btn imp-btn-ghost">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;margin-right:5px;vertical-align:middle"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/></svg>
+                    Open chat
+                  </span>
+                  <span class="imp-btn imp-btn-ink">Run</span>
+                </span>
+              </div>
+
+              <!-- workbench -->
+              <div class="workbench-body">
+                <!-- section nav rail -->
+                <nav class="section-nav">
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                    Basics
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    Access
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+                    Steps
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                    Schedule
+                  </div>
+                  <div class="section-nav-item active">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                    Triggers
+                  </div>
+                  <div class="section-nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                    Runs
+                  </div>
+                  <div class="section-nav-item" style="color:var(--destructive)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    Danger zone
+                  </div>
+                </nav>
+
+                <!-- workbench content: Triggers / Email tab -->
+                <div class="workbench-content">
+                  <div class="workbench-scroll">
+                    <div class="workbench-col">
+
+                      <div class="detail-section">
+                        <div class="detail-section-header">
+                          <span class="detail-section-title">Triggers</span>
+                        </div>
+
+                        <div class="detail-section-body">
+                          <!-- Tab bar: Schedule / Email — Email active -->
+                          <div class="trigger-tabs">
+                            <div class="trigger-tab">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                              Schedule
+                            </div>
+                            <div class="trigger-tab active">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                              Email
+                            </div>
+                          </div>
+
+                          <!-- Toggle row -->
+                          <div class="toggle-row">
+                            <div class="tog-track" id="tog-track">
+                              <div class="tog-knob" id="tog-knob"></div>
+                            </div>
+                            <span class="toggle-label">Start this routine when an email arrives</span>
+                          </div>
+
+                          <!-- Webhook URL row (hidden until toggle ON) -->
+                          <div class="webhook-row" id="webhook-row">
+                            <div class="webhook-label">Webhook endpoint</div>
+                            <div class="webhook-url-row">
+                              <span class="webhook-method">POST</span>
+                              <span class="webhook-url">{BACKEND}/webhooks/routine/••••••••</span>
+                              <span class="webhook-copy" id="copy-btn">
+                                <!-- copy icon -->
+                                <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                <span class="copy-text">Copy</span>
+                                <!-- check tick (shown on copied) -->
+                                <svg class="copied-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                              </span>
+                            </div>
+                            <div style="font-size:12px;color:var(--tx-lo);">Send inbound emails to this address to trigger the routine.</div>
+                          </div>
+
+                          <!-- Guard controls: senders, filter, signing secret (hidden until revealed) -->
+                          <div class="guard-controls" id="guard-controls">
+                            <!-- Allowed senders -->
+                            <div class="imp-field">
+                              <div class="imp-label">Allowed senders</div>
+                              <div class="chip-row">
+                                <span class="imp-chip">*@acme.com<span class="chip-x">✕</span></span>
+                              </div>
+                              <div class="imp-field-hint">Only emails from these addresses will trigger the routine. Leave empty to allow all.</div>
+                            </div>
+
+                            <!-- Filter -->
+                            <div class="imp-field">
+                              <div class="imp-label">Filters</div>
+                              <div class="filter-row">
+                                <div class="filter-select">Subject<span class="chev">▾</span></div>
+                                <div class="filter-select" style="min-width:120px;">contains<span class="chev">▾</span></div>
+                                <div class="filter-input">"invoice"</div>
+                              </div>
+                              <div class="imp-field-hint">Only trigger when the email matches all filters.</div>
+                            </div>
+
+                            <!-- Generate signing secret -->
+                            <div class="imp-field">
+                              <div class="imp-label">Signing secret</div>
+                              <button class="btn-secret">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                Generate signing secret
+                              </button>
+                              <div class="imp-field-hint">Validate that webhook calls originate from IMP.</div>
+                            </div>
+                          </div>
+
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- cursor -->
+          <div class="imp-cursor" id="cur">
+            <div class="imp-click-ripple"></div>
+            <svg viewBox="0 0 24 24"><path d="M5.5 3.2 19 11.4l-6.2 1.2-3.1 5.6z"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      /* 0.05–0.50  hook enters */
+      tl.to("#hook-eyebrow", { y: 0, opacity: 1, duration: 0.32, ease: "power2.out" }, 0.05);
+      tl.to("#hook-headline", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 0.14);
+
+      /* 1.90–2.35  hook exits; workbench rises in */
+      tl.to("#hook-inner", { y: -14, opacity: 0, duration: 0.32, ease: "power2.in" }, 1.9);
+      tl.to("#stage", { y: 0, opacity: 1, duration: 0.38, ease: "power2.out" }, 2.0);
+
+      /* 2.40–2.70  page sits still (orienting beat) */
+
+      /* 2.70  cursor appears, glides to the toggle and clicks */
+      /* toggle is in the workbench-col area, approx x=480, y=390 within the 1600×1000 stage */
+      let t1 = impCursor(tl, { from: [1200, 860], to: [480, 388], at: 2.7, click: true, duration: 0.48 });
+
+      /* beat 1: toggle switches ON — knob slides right, track fills with accent */
+      tl.to("#tog-track", { backgroundColor: "var(--accent)", borderColor: "var(--accent)", duration: 0.18, ease: "power1.out" }, t1);
+      tl.to("#tog-knob", { left: 21, backgroundColor: "#fff", duration: 0.22, ease: "power2.out" }, t1);
+
+      /* ~3.50  webhook URL row reveals */
+      tl.to("#webhook-row", { maxHeight: 200, opacity: 1, duration: 0.4, ease: "power2.out" }, t1 + 0.35);
+
+      /* ~4.00  cursor glides to Copy button (right side of webhook URL row, approx x=890, y=420) */
+      let t2 = impCursor(tl, { to: [888, 420], at: t1 + 0.78, click: true, show: false, duration: 0.42 });
+
+      /* beat 2: Copy → Copied */
+      tl.to("#copy-btn", { color: "var(--accent)", duration: 0.12, ease: "power1.out" }, t2);
+      tl.set(".copy-icon", { display: "none" }, t2 + 0.05);
+      tl.set(".copy-text", { display: "none" }, t2 + 0.05);
+      tl.set(".copied-tick", { display: "block" }, t2 + 0.05);
+
+      /* ~4.80  brief breath then cursor moves away */
+      tl.to("#cur", { opacity: 0, duration: 0.2, ease: "power1.in" }, t2 + 0.55);
+
+      /* ~5.20  guard controls reveal */
+      tl.to("#guard-controls", { maxHeight: 400, opacity: 1, duration: 0.55, ease: "power2.out" }, t2 + 0.75);
+
+      /* ~8.70–9.20  settled hold on fully configured trigger form */
+
+      window.__timelines["routine-email-config"] = tl;
+    </script>
+  </body>
+</html>
