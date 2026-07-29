@@ -120,4 +120,47 @@ describe("mapRoutineRunRow", () => {
     expect(run.trigger_metadata).toEqual({ cron: "0 3 * * *" });
     expect(run.error).toEqual({ message: "boom" });
   });
+
+  it("maps token totals and cost from metadata.tokens (jsonb or string)", () => {
+    const fromObject = mapRoutineRunRow(
+      {
+        id: "jr-3",
+        state: "completed",
+        workflow: "wf-1",
+        createdAt: "2026-07-29T09:00:00Z",
+        updatedAt: "2026-07-29T09:01:00Z",
+        metadata: { tokens: { inputTokens: 12340, outputTokens: 4512, costUsd: 0.021 } },
+      },
+      routineById,
+    );
+    expect(fromObject).toMatchObject({
+      inputTokens: 12340,
+      outputTokens: 4512,
+      costUsd: 0.021,
+    });
+
+    const fromString = mapRoutineRunRow(
+      {
+        id: "jr-4",
+        state: "completed",
+        workflow: "wf-1",
+        createdAt: "2026-07-29T09:00:00Z",
+        updatedAt: "2026-07-29T09:01:00Z",
+        metadata: JSON.stringify({ tokens: { inputTokens: 5, outputTokens: 6 } }),
+      },
+      routineById,
+    );
+    // costUsd absent → null; tokens still mapped
+    expect(fromString).toMatchObject({ inputTokens: 5, outputTokens: 6, costUsd: null });
+
+    const noMetadata = mapRoutineRunRow(
+      { id: "jr-5", state: "filtered", workflow: "wf-1", metadata: null },
+      routineById,
+    );
+    expect(noMetadata).toMatchObject({
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
+    });
+  });
 });
