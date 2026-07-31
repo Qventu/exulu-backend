@@ -12,10 +12,10 @@
     "color": { "light": "#f8f6f1", "dark": "#1b1714" }
   },
   "logo": {
-    "light": "/logo/exulu-wordmark-light.svg",
-    "dark": "/logo/exulu-wordmark-dark.svg"
+    "light": "/logo/imp-wordmark-light.svg",
+    "dark": "/logo/imp-wordmark-dark.svg"
   },
-  "favicon": "/logo/exulu-icon-light.svg",
+  "favicon": "/logo/imp-icon.svg",
   "icons": { "library": "lucide" },
   "contextual": {
     "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
@@ -264,13 +264,11 @@
     ]
   },
   "footer": {
-    "socials": { "github": "https://github.com/Qventu" },
     "links": [
       {
-        "header": "Company",
+        "header": "IMP",
         "items": [
-          { "label": "Exulu — exulu.com", "href": "https://exulu.com" },
-          { "label": "Imprint", "href": "https://exulu.com/impressum" }
+          { "label": "Intelligence Management Platform", "href": "/get-started/what-is-imp" }
         ]
       }
     ]
