@@ -33,6 +33,14 @@ export const checkItemWriteAccess = async (
     return record.created_by != null && String(record.created_by) === String(user.id);
   }
 
+  // The creator can always edit their own record, regardless of how it is
+  // shared. Mirrors utils/check-record-access.ts, which grants the creator
+  // access in every rights_mode; without this, sharing your own record via the
+  // rbac table (users/roles/teams) would lock you out of editing it.
+  if (record.created_by != null && String(record.created_by) === String(user.id)) {
+    return true;
+  }
+
   // Validate rights_mode before accessing database
   const validRightsModes = ["users", "roles", "teams"];
   if (!validRightsModes.includes(record.rights_mode)) {
