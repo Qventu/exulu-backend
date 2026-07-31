@@ -129,7 +129,7 @@ function neutralResult(
   return {
     memoryChunksForAnswer: [],
     memoryOverride: { active: false, chunks: [], reason: "" },
-    memoryPinnedItemIds: new Set(),
+    memoryPinnedItemIdsByContext: new Map(),
     updatedQuestion: question,
     updatedKeywords: keywords,
     updatedImportantKeyword: importantKeyword,
@@ -272,7 +272,7 @@ export async function runMemoryPhase({
       chunks: [],
       reason: "",
     };
-    let memoryPinnedItemIds = new Set<string>();
+    const memoryPinnedItemIdsByContext = new Map<string, Set<string>>();
     let updatedQuestion = question;
     let updatedKeywords = keywords;
     let updatedImportantKeyword = importantKeyword;
@@ -466,12 +466,15 @@ export async function runMemoryPhase({
         };
       }
 
-      // File prioritization: resolve hints via fuzzyPrefilter against EVERY documentContexts entry
+      // File prioritization: resolve hints via fuzzyPrefilter against EVERY documentContexts entry.
+      // Pins are kept keyed by the context they were resolved in, so the search phase can apply a
+      // pin only to its home context — a tech_doc file must never filter a software-docs search to 0.
       if (fileResult.output?.shouldPrioritizeFiles && fileResult.output?.fileNameHints?.length) {
         const hints = fileResult.output.fileNameHints;
         const pinResults = await Promise.all(
-          documentContexts.map((ctx) =>
-            fuzzyPrefilter({
+          documentContexts.map(async (ctx) => ({
+            ctxId: ctx.id as string,
+            matches: await fuzzyPrefilter({
               cacheKey: `memory-pin:${ctx.id}`,
               relevantKeywords: hints,
               context: ctx,
@@ -479,17 +482,21 @@ export async function runMemoryPhase({
               normalize: (item: any) =>
                 item.external_id ? normalizeFileName(item.external_id) : item.name,
             }).catch(() => []),
-          ),
+          })),
         );
-        for (const results of pinResults) {
-          for (const r of results) {
-            memoryPinnedItemIds.add(r.id);
+        const pinnedNames: string[] = [];
+        for (const { ctxId, matches } of pinResults) {
+          if (!matches.length) continue;
+          const set = memoryPinnedItemIdsByContext.get(ctxId) ?? new Set<string>();
+          for (const m of matches) {
+            set.add(m.id);
+            pinnedNames.push(m.name);
           }
+          memoryPinnedItemIdsByContext.set(ctxId, set);
         }
-        if (memoryPinnedItemIds.size > 0) {
-          const names = pinResults.flat().map((i) => i.name).join(", ");
+        if (pinnedNames.length > 0) {
           steps.push({
-            text: `Memory prioritizes specific document(s); pinning ${memoryPinnedItemIds.size} file(s) into the search: ${names}`,
+            text: `Memory prioritizes specific document(s); pinning ${pinnedNames.length} file(s) into the search: ${pinnedNames.join(", ")}`,
           });
         }
       }
@@ -520,7 +527,7 @@ export async function runMemoryPhase({
     return {
       memoryChunksForAnswer,
       memoryOverride,
-      memoryPinnedItemIds,
+      memoryPinnedItemIdsByContext,
       updatedQuestion,
       updatedKeywords,
       updatedImportantKeyword,

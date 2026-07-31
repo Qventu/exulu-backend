@@ -20,7 +20,7 @@ const base = {
   } as any,
   question: "how to fix door error E42", keywords: ["door", "E42"], importantKeyword: "E42",
   user: {}, role: "r", model: {},
-  preselectedItems: new Map(), identifierPinsByContext: new Map(), memoryPinnedItemIds: new Set<string>(),
+  preselectedItems: new Map(), identifierPinsByContext: new Map(), memoryPinnedItemIdsByContext: new Map<string, Set<string>>(),
   userPinnedItemIdsByContext: new Map(), rewrites: [{ find: "fix", replace: "repair" }],
   styleHint: "", maxQueries: 5, skipPrefilter: false,
 };
@@ -55,7 +55,7 @@ describe("searchContexts", () => {
     await searchContexts({
       ...base, contextIds: ["docs"],
       identifierPinsByContext: new Map([["docs", new Set(["i1"])]]),
-      memoryPinnedItemIds: new Set(["m1"]),
+      memoryPinnedItemIdsByContext: new Map([["docs", new Set(["m1"])]]),
     });
     expect(new Set((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds)).toEqual(new Set(["i1", "m1"]));
 
@@ -63,10 +63,25 @@ describe("searchContexts", () => {
     await searchContexts({
       ...base, contextIds: ["docs"],
       identifierPinsByContext: new Map([["docs", new Set(["i1"])]]),
-      memoryPinnedItemIds: new Set(["m1"]),
+      memoryPinnedItemIdsByContext: new Map([["docs", new Set(["m1"])]]),
       userPinnedItemIdsByContext: new Map([["docs", new Set(["u1"])]]),
     });
     expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual(["u1"]);
+  });
+
+  it("memory pins apply ONLY to their own context (no cross-context leak)", async () => {
+    // Regression: a memory pin resolved in another context (e.g. tech_doc's FST-Miscel-Secrets)
+    // must not become a hard id-whitelist on THIS context, which would filter it down to 0 chunks.
+    await searchContexts({
+      ...base, contextIds: ["docs"],
+      memoryPinnedItemIdsByContext: new Map([
+        ["docs", new Set(["m_docs"])],
+        ["other", new Set(["m_other"])],
+      ]),
+    });
+    const pins = (multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds;
+    expect(pins).toEqual(["m_docs"]);        // own-context pin applied
+    expect(pins).not.toContain("m_other");   // foreign-context pin did NOT leak in
   });
 
   it("preselected items win over everything and skip prefilters", async () => {
@@ -95,7 +110,7 @@ describe("searchContexts", () => {
     await searchContexts({
       ...base, contextIds: ["docs"], skipPrefilter: true,
       identifierPinsByContext: new Map([["docs", new Set(["i1"])]]),
-      memoryPinnedItemIds: new Set(["m1"]),
+      memoryPinnedItemIdsByContext: new Map([["docs", new Set(["m1"])]]),
     });
     expect((multiQuerySearch as jest.Mock).mock.calls[0][0].pinnedItemIds).toEqual([]);
   });

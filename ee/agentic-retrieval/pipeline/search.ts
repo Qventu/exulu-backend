@@ -25,7 +25,7 @@ export async function searchContexts(opts: {
   preselectedItems: Map<string, string[] | null>;
   scopedItemsByContext?: Map<string, string[] | null>;  // Project-added sources: hard item filter per context (null = whole context).
   identifierPinsByContext: Map<string, Set<string>>;   // from resolveIdentifierPins
-  memoryPinnedItemIds: Set<string>;                     // from memory phase (documents kind only)
+  memoryPinnedItemIdsByContext: Map<string, Set<string>>; // from memory phase (documents kind only), keyed by home context
   userPinnedItemIdsByContext: Map<string, Set<string>>; // from routing phase
   rewrites: { find: string; replace: string }[];
   styleHint: string;
@@ -45,7 +45,7 @@ export async function searchContexts(opts: {
     preselectedItems,
     scopedItemsByContext,
     identifierPinsByContext,
-    memoryPinnedItemIds,
+    memoryPinnedItemIdsByContext,
     userPinnedItemIdsByContext,
     rewrites,
     styleHint,
@@ -94,9 +94,13 @@ export async function searchContexts(opts: {
           const identifierPins = identifierPinsByContext.get(ctxId) ?? new Set<string>();
           let pins = new Set<string>(identifierPins);
 
-          // 2b: documents kind only — UNION with memoryPinnedItemIds
+          // 2b: documents kind only — UNION with memory pins that belong to THIS context.
+          // Memory pins are keyed by their home context so a pin resolved elsewhere (e.g. a
+          // tech_doc file) never becomes a hard id-whitelist on a context that lacks it, which
+          // would prefilter that context down to 0 chunks.
           if (kind === "documents") {
-            for (const id of memoryPinnedItemIds) pins.add(id);
+            const memPins = memoryPinnedItemIdsByContext.get(ctxId);
+            if (memPins) for (const id of memPins) pins.add(id);
           }
 
           // 2c: user pins REPLACE everything (authoritative)

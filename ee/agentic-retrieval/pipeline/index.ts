@@ -425,7 +425,7 @@ export function createAgenticRetrievalTool(opts: {
         updatedQuestion,
         updatedKeywords,
         updatedImportantKeyword,
-        memoryPinnedItemIds,
+        memoryPinnedItemIdsByContext,
         memoryOverride,
       } = memResult;
 
@@ -464,7 +464,7 @@ export function createAgenticRetrievalTool(opts: {
           model: utilityModel,
           preselectedItems,
           identifierPinsByContext,
-          memoryPinnedItemIds,
+          memoryPinnedItemIdsByContext,
           userPinnedItemIdsByContext,
           scopedItemsByContext: resolvedProject?.scopedItemsByContext,
           rewrites: cfg.vocabulary.rewrites,
@@ -485,7 +485,7 @@ export function createAgenticRetrievalTool(opts: {
               model: utilityModel,
               preselectedItems,
               identifierPinsByContext,
-              memoryPinnedItemIds,
+              memoryPinnedItemIdsByContext,
               userPinnedItemIdsByContext,
               scopedItemsByContext: resolvedProject?.scopedItemsByContext,
               rewrites: cfg.vocabulary.rewrites,
@@ -499,7 +499,9 @@ export function createAgenticRetrievalTool(opts: {
       // ── Build rerank state ────────────────────────────────────────────────
       // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins ∪ project pins
       const pinnedItemIds = new Set<string>([
-        ...memoryPinnedItemIds,
+        ...(function* () {
+          for (const s of memoryPinnedItemIdsByContext.values()) yield* s;
+        })(),
         ...(function* () {
           for (const s of exactPinsByContext.values()) yield* s;
         })(),
