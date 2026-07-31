@@ -38,7 +38,7 @@ three inline in each run row as `↑{in} ↓{out} ${cost}`.
 | Display | All three inline in the run row: `↑12.3k ↓4.5k  $0.021`. Token pair hidden on narrow widths (existing responsive pattern); `$cost` always shown. |
 | Token source | Reuse the existing `job_results.metadata.tokens.{inputTokens,outputTokens}` — no new columns, no new accumulation code. |
 | Cost basis | Approximate: catalog list prices × existing token totals, no prompt-cache discount, agent-LLM calls only (excludes embeddings/rerank/OCR). Labeled approximate via tooltip. |
-| Cost storage | Stored in the same JSON blob as `metadata.tokens.costUsd`, accumulated with the token fields so it stays resume-safe. No `cost_usd` column. |
+| Cost storage | Stored in the same JSON blob as `metadata.tokens.costUsd`, recomputed from the cumulative token totals on each persist so it stays resume-safe. No `cost_usd` column. |
 | Cost unavailable | If the run's model has no catalog price, `costUsd` is null → the row shows `—` for cost but still shows tokens. |
 | Backfill | None. Runs predating this — and runs with no LLM calls (e.g. `filtered`) — show `—`. |
 
@@ -73,28 +73,33 @@ export function computeRunCostUsd(
 
 `(inputTokens / 1e6) * inputPrice + (outputTokens / 1e6) * outputPrice`.
 
-**2. Executor cost — `ee/workers.ts` (the `generateStream` executor, where the
-returned `metadata.tokens` is assembled)**
-The executor already resolves the model from `agent.model` and assembles this
-invocation's `metadata.tokens` totals. After assembling them, look up the price
-via `findLiteLLMModel(agent.model)` and compute `costUsd =
-computeRunCostUsd(inputTokens, outputTokens, price)` for this invocation;
-include `costUsd` on the returned `metadata.tokens`.
-
-**3. Cost accumulation — `ee/workers.ts` (the token-merge block that sums
-`priorTokens` with the invocation totals)**
-Add `costUsd` to the merged `tokens` object, null-safe so a missing price does
-not fabricate `$0`:
+**2. Cost computation — `ee/workers.ts` (the token-merge block, ~lines 646-654,
+that sums `priorTokens` with the invocation totals into the cumulative `tokens`
+object)**
+`agent` and `jobResultId` are already in scope here, and the merged `tokens`
+object holds the **cumulative** input/output totals (prior + this invocation).
+After it is built, look up the model price and compute cost from those
+cumulative totals, then add `costUsd` to the `tokens` object (which is persisted
+at the pause update and returned for the completed handler):
 
 ```ts
-const priorCost = priorTokens?.costUsd ?? null;
-const stepCost = metadata.tokens.costUsd ?? null;
-const costUsd =
-  priorCost == null && stepCost == null ? null : (priorCost ?? 0) + (stepCost ?? 0);
+const price = await findLiteLLMModel(agent.model); // catalog entry or undefined; cached
+const costUsd = computeRunCostUsd(
+  tokens.inputTokens,
+  tokens.outputTokens,
+  price
+    ? {
+        input_cost_per_million_tokens: price.input_cost_per_million_tokens,
+        output_cost_per_million_tokens: price.output_cost_per_million_tokens,
+      }
+    : null,
+);
 // costUsd joins totalTokens/inputTokens/outputTokens/… in the persisted tokens object
 ```
 
-This mirrors the existing resume-safe token accumulation exactly.
+Recomputing from the cumulative totals each write is inherently resume-safe (no
+separate cost accumulation needed) and single-point (one computation, one model
+lookup). `costUsd` is null when the model has no catalog price.
 
 **4. GraphQL — `src/graphql/schemas/index.ts` + `src/exulu/routines/runs-query.ts`**
 - `type RoutineRun` (schemas/index.ts): add `inputTokens: Float`,
@@ -141,7 +146,7 @@ shown. `aria-label`s + i18n strings under `routineRuns` (`messages/en.json` +
 
 ## Sequencing
 
-1. Backend: cost helper (+test) → executor cost + accumulation → GraphQL type +
+1. Backend: cost helper (+test) → job-processor cost computation → GraphQL type +
    mapper → SDL regen.
 2. Frontend: type + query → formatters (+tests) → row cells + i18n → verify.
 
