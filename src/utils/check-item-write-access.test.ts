@@ -107,6 +107,30 @@ describe("checkItemWriteAccess", () => {
     ).toBe(true);
   });
 
+  it("allows the creator in shared modes without any rbac grant", async () => {
+    // No rbac row is mocked — the creator must be allowed without one.
+    for (const rights_mode of ["users", "roles", "teams"] as const) {
+      expect(
+        await checkItemWriteAccess(
+          context,
+          { id: "i1", rights_mode, created_by: "7" },
+          { id: 7, role: { id: "role-1" }, team: { id: "team-1" } } as any,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("does not treat a non-creator as the creator in shared modes", async () => {
+    mockRbacRow(undefined);
+    expect(
+      await checkItemWriteAccess(
+        context,
+        { id: "i1", rights_mode: "users", created_by: "8" },
+        { id: 7 } as any,
+      ),
+    ).toBe(false);
+  });
+
   it("denies unknown rights_mode values", async () => {
     expect(await checkItemWriteAccess(context, { id: "i1", rights_mode: "bogus" }, { id: 7 } as any)).toBe(false);
   });

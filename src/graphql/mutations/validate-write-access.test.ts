@@ -175,4 +175,24 @@ describe("validateWriteAccess rbac lookups", () => {
       rights: "write",
     });
   });
+
+  it("lets the creator edit their own record shared via users, without an rbac grant", async () => {
+    const { db, captured } = makeDb({ rights_mode: "users", created_by: "2" });
+    const user = {
+      id: 2,
+      super_admin: false,
+      role: { id: ROLE_UUID, name: "default", agents: "write" },
+    };
+
+    let err: any;
+    try {
+      await updateAgent(null, { id: AGENT_ID, input: {} }, makeContext(db, user), {});
+    } catch (e) {
+      err = e;
+    }
+    // The write gate must not reject the creator with a permission error...
+    expect(String(err?.message ?? "")).not.toContain("Insufficient user permissions");
+    // ...and must short-circuit before ever consulting the rbac table.
+    expect(captured.rbacWhere).toBeUndefined();
+  });
 });
