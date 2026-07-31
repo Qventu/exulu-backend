@@ -4,13 +4,13 @@ import { createAgenticRetrievalTool, parsePreselectedItems } from "./index";
 jest.mock("@EE/entitlements", () => ({ checkLicense: () => ({ "agentic-retrieval": true }) }));
 jest.mock("@SRC/exulu/resolve-reranker", () => ({ resolveReranker: jest.fn(async () => ({ model: "m", rerank: async (_q: any, c: any) => c })) }));
 jest.mock("@SRC/exulu/resolve-model", () => ({ resolveModel: jest.fn() }));
-jest.mock("@SRC/exulu/app/singleton", () => ({ exuluApp: { get: () => () } }));
+jest.mock("@SRC/exulu/app/singleton", () => ({ exuluApp: { get: () => ({}) } }));
 jest.mock("./routing", () => ({ runRoutingPhase: jest.fn(async () => ({
   mainContexts: ["docs"], fallbackContexts: [], userPinnedItemIdsByContext: new Map(),
   userRequestedPage: null, hasExplicitDocAndPage: false, steps: [{ text: "routed" }] })) }));
 jest.mock("./memory", () => ({ runMemoryPhase: jest.fn(async () => ({
   memoryChunksForAnswer: [], memoryOverride: { active: false, chunks: [], reason: "" },
-  memoryPinnedItemIds: new Set(), updatedQuestion: "q", updatedKeywords: ["k"],
+  memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q", updatedKeywords: ["k"],
   updatedImportantKeyword: "k", steps: [] })) }));
 jest.mock("./prefilter", () => ({ resolveIdentifierPins: jest.fn(async () => ({
   pinsByContext: new Map(), exactPinsByContext: new Map(), steps: [] })) }));
@@ -75,7 +75,7 @@ describe("createAgenticRetrievalTool", () => {
     runMemoryPhase.mockResolvedValueOnce({
       memoryChunksForAnswer: [{ chunk_id: "m1" }],
       memoryOverride: { active: false, chunks: [], reason: "" },
-      memoryPinnedItemIds: new Set(),
+      memoryPinnedItemIdsByContext: new Map(),
       updatedQuestion: "q",
       updatedKeywords: ["k"],
       updatedImportantKeyword: "k",
@@ -114,7 +114,7 @@ describe("payload deduplication", () => {
     runMemoryPhase.mockResolvedValueOnce({
       memoryChunksForAnswer: [memChunk],
       memoryOverride: { active: false, chunks: [], reason: "" },
-      memoryPinnedItemIds: new Set(), updatedQuestion: "q", updatedKeywords: ["k"],
+      memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q", updatedKeywords: ["k"],
       updatedImportantKeyword: "k",
       steps: [{ text: "memory step", chunks: [memChunk] }],
     });

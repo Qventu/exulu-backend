@@ -1,5 +1,13 @@
 import type { ExuluAuthConfig } from "@SRC/exulu/auth/types";
 
+export type AuditClient = {
+  ip?: string;
+  userAgent?: string;
+  referer?: string;
+  origin?: string;
+  forwardedFor?: string;
+};
+
 export const AUDIT_EVENT_TYPES = {
   TOOL_CALL: "tool.call",
 } as const;
@@ -35,6 +43,7 @@ export type AuditEvent = {
   data?: Record<string, unknown>;
   durationMs?: number;
   truncated?: Record<string, boolean>;
+  client?: AuditClient;
 };
 
 // Context handed to the tool-call emitter (see emitters/tool-call.ts).
@@ -51,4 +60,5 @@ export type AuditToolCallInput = {
   output: unknown;
   status: "ok" | "error" | "auth_required";
   error?: unknown;
+  client?: AuditClient;
 };

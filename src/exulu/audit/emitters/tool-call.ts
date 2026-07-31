@@ -60,6 +60,7 @@ export const buildToolCallEvent = async (
       toolCallId: ctx.toolCallId,
     },
     target: { kind: "tool", id: ctx.tool.id, name: ctx.tool.name, category: ctx.tool.category, builtin: ctx.builtin },
+    ...(ctx.client ? { client: ctx.client } : {}),
     ...(credential ? { credential } : {}),
     status,
     ...(status === "error" ? { error: { name: err?.name, message: String(err?.message ?? err ?? "unknown error") } } : {}),

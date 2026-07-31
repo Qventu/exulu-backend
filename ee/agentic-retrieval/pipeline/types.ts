@@ -21,7 +21,7 @@ export type RoutingPhaseResult = {
 export type MemoryPhaseResult = {
   memoryChunksForAnswer: ChunkWithScore[];
   memoryOverride: { active: boolean; chunks: ChunkWithScore[]; reason: string };
-  memoryPinnedItemIds: Set<string>;
+  memoryPinnedItemIdsByContext: Map<string, Set<string>>;
   updatedQuestion: string;
   updatedKeywords: string[];
   updatedImportantKeyword: string;

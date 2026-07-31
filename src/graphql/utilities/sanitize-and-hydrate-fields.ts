@@ -21,11 +21,15 @@ const addProviderFields = async (
   user: User,
   contexts: ExuluContext[],
 ) => {
+  // An agent without a model (not yet configured), or with LiteLLM disabled,
+  // simply has no catalog entry — every downstream provider field reads
+  // litellmEntry via optional chaining and degrades gracefully. Do NOT throw
+  // here: a thrown error nulls the agent inside agentsPagination.items, which
+  // crashes any consumer that maps the list (regression from the
+  // provider→proxy move, e742ada).
   let litellmEntry: LiteLLMCatalogEntry | undefined;
   if (isLiteLLMEnabled() && result?.model) {
     litellmEntry = await findLiteLLMModel(result.model);
-  } else {
-    throw new Error("Could not load modal for: " + result?.model)
   }
 
   if (requestedFields.includes("providerName")) {
