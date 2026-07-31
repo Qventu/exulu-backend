@@ -74,7 +74,7 @@ describe("runMemoryPhase", () => {
     expect(r.updatedImportantKeyword).toBe("FST-2XT");
   });
 
-  it("resolves file-prioritization pins across all document contexts", async () => {
+  it("resolves file-prioritization pins keyed by their document context", async () => {
     (generateText as jest.Mock)
       .mockResolvedValueOnce({ output: { relevantChunkIds: ["1"] } })
       .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: true, fileNameHints: ["PROJECT_NOTES"] } });
@@ -82,7 +82,9 @@ describe("runMemoryPhase", () => {
     const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "always check PROJECT_NOTES")],
       memoryContext: undefined, documentContexts: [{ id: "docs" }],
       memoryConfig: { enabled: true, override: false, filePrioritization: true, queryAugmentation: false } });
-    expect([...r.memoryPinnedItemIds]).toEqual(["d1"]);
+    // Pins are keyed by the context they were resolved in, so a consumer can apply them
+    // only to that context (no cross-context leak). See search.ts rule 2b.
+    expect([...(r.memoryPinnedItemIdsByContext.get("docs") ?? [])]).toEqual(["d1"]);
   });
 
   it("never throws even when post-Promise.all processing encounters runtime errors", async () => {
