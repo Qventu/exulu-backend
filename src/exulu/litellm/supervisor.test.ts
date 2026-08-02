@@ -287,4 +287,27 @@ describe("enableLiteLLMClientMode", () => {
     expect(getSupervisorState()).toBe("ready");
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  test("remote client mode probes /v1/models with exulu-api-key header", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
+    process.env.EXULU_API_KEY = "sk_a_b/worker";
+    mockFetch.mockResolvedValue({ ok: true });
+
+    enableLiteLLMClientMode();
+    await waitForLiteLLMReady();
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://srv.example/litellm/DEFAULT/v1/models",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ "exulu-api-key": "sk_a_b/worker" }),
+      }),
+    );
+    expect(getSupervisorState()).toBe("ready");
+
+    delete process.env.LITELLM_BASE_URL;
+    delete process.env.EXULU_API_KEY;
+  });
 });

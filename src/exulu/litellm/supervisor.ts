@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { resolveLiteLLMTarget } from "./env";
 
 // Where the LiteLLM admin UI is mounted on the Exulu server. Lives here (not
 // in routes.ts, which also needs it) so this module keeps its zero-app-import
@@ -405,12 +406,11 @@ export const waitForLiteLLMReady = async (): Promise<void> => {
   // for the full boot-time budget, and job-level retries cover the gap.
   if (_clientMode) {
     if (internal.state === "ready") return;
-    const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-    const port = process.env.LITELLM_PORT ?? "4000";
-    const url = `http://${host}:${port}/health/liveliness`;
+    const { baseUrl, authHeaders, remote } = resolveLiteLLMTarget();
+    const url = remote ? `${baseUrl}/v1/models` : `${baseUrl}/health/liveliness`;
     let res: Response;
     try {
-      res = await fetch(url, { method: "GET" });
+      res = await fetch(url, { method: "GET", headers: remote ? authHeaders : {} });
     } catch (err) {
       throw new Error(
         `LiteLLM proxy not reachable at ${url} (is the Exulu server process ` +
