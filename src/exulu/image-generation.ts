@@ -18,6 +18,8 @@
  * prompts.
  */
 
+import { resolveLiteLLMTarget } from "./litellm/env";
+
 export class ImageGenerationError extends Error {
   constructor(
     public readonly upstreamStatus: number,
@@ -35,15 +37,6 @@ export type GeneratedImage = {
   revisedPrompt?: string;
 };
 
-type ProxyConfig = { host: string; port: string; masterKey: string };
-
-const resolveProxyConfig = (): ProxyConfig => {
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
-  if (!masterKey) throw new Error("LITELLM_MASTER_KEY is not set");
-  return { host, port, masterKey };
-};
 
 const normalizeDataEntries = async (
   data: { b64_json?: string; url?: string; revised_prompt?: string }[],
@@ -94,7 +87,7 @@ export async function generateImage(args: {
   if (!args.model) throw new Error("model is required");
   if (!args.prompt) throw new Error("prompt is required");
 
-  const cfg = resolveProxyConfig();
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
 
   const body: Record<string, unknown> = {
     model: args.model,
@@ -104,10 +97,10 @@ export async function generateImage(args: {
   if (args.quality) body.quality = args.quality;
   if (args.n) body.n = args.n;
 
-  const res = await fetch(`http://${cfg.host}:${cfg.port}/v1/images/generations`, {
+  const res = await fetch(`${baseUrl}/v1/images/generations`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${cfg.masterKey}`,
+      ...authHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -160,7 +153,7 @@ export async function editImage(args: {
     throw new Error("at least one reference image is required");
   }
 
-  const cfg = resolveProxyConfig();
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
 
   const form = new FormData();
   form.append("model", args.model);
@@ -188,9 +181,9 @@ export async function editImage(args: {
     );
   }
 
-  const res = await fetch(`http://${cfg.host}:${cfg.port}/v1/images/edits`, {
+  const res = await fetch(`${baseUrl}/v1/images/edits`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${cfg.masterKey}` },
+    headers: { ...authHeaders },
     body: form,
     signal: args.signal,
   });

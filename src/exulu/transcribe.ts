@@ -8,6 +8,8 @@
  * be ready. This module just forwards a parsed multipart file upstream.
  */
 
+import { resolveLiteLLMTarget } from "./litellm/env";
+
 export class TranscriptionError extends Error {
   constructor(
     public readonly upstreamStatus: number,
@@ -25,12 +27,9 @@ export async function transcribeAudio(args: {
   // locale from the client whenever possible.
   language?: string;
 }): Promise<{ text: string }> {
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
   const model = process.env.TRANSCRIPTION_MODEL;
 
-  if (!masterKey) throw new Error("LITELLM_MASTER_KEY is not set");
   if (!model) throw new Error("TRANSCRIPTION_MODEL is not set");
 
   const form = new FormData();
@@ -42,9 +41,9 @@ export async function transcribeAudio(args: {
   form.append("model", model);
   if (args.language) form.append("language", args.language);
 
-  const res = await fetch(`http://${host}:${port}/v1/audio/transcriptions`, {
+  const res = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${masterKey}` },
+    headers: { ...authHeaders },
     body: form,
   });
 
