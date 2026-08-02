@@ -6,6 +6,7 @@ import { buildTags, createTaggedFetch } from "./tags";
 import { provisionDefaultUserBudget } from "./litellm/budget-service";
 import type { Project } from "@EXULU_TYPES/models/project";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
+import { resolveLiteLLMTarget } from "./litellm/env";
 
 export type ModelRow = {
   id: string;
@@ -75,7 +76,7 @@ export class ResolveModelError extends Error {
  * `createOpenAICompatible` is a cheap object construction, so building it on
  * each call has negligible cost.
  */
-const getLiteLLMProvider = ({
+export const getLiteLLMProvider = ({
   user,
   role,
   project,
@@ -90,9 +91,7 @@ const getLiteLLMProvider = ({
   team?: ExuluTeam;
   routine?: { id: string; name: string };
 }) => {
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
   const tags = buildTags({
     user_id: user?.id,
     role_id: role?.id,
@@ -107,16 +106,13 @@ const getLiteLLMProvider = ({
     routine_id: routine?.id,
     routine_name: routine?.name,
   });
-  if (!masterKey) {
-    throw new ResolveModelError(
-      "LITELLM_NOT_CONFIGURED",
-      "LITELLM_MASTER_KEY is required when EXULU_USE_LITELLM=true",
-    );
-  }
   return createOpenAICompatible({
     name: "litellm",
-    baseURL: `http://${host}:${port}/v1`,
-    apiKey: masterKey,
+    baseURL: `${baseUrl}/v1`,
+    // createOpenAICompatible requires a non-empty apiKey; real auth for remote mode is the
+    // exulu-api-key header (added via `headers`). The passthrough strips/ignores Authorization.
+    apiKey: process.env.LITELLM_MASTER_KEY ?? process.env.EXULU_API_KEY ?? "x",
+    headers: authHeaders,
     fetch: createTaggedFetch(tags),
     // Without this flag the openai-compatible provider strips any
     // responseFormat.schema before sending and warns
