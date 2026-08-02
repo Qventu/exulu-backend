@@ -8,6 +8,8 @@
  * by how recently the dev restarted.
  */
 
+import { resolveLiteLLMTarget } from "./env";
+
 export type LiteLLMCatalogEntry = {
   model_name: string;
   upstream_model: string | null;
@@ -45,9 +47,9 @@ export const __resetLiteLLMCatalogCacheForTesting = () => {
 };
 
 /**
- * Fetch the LiteLLM catalog. Returns an empty array when LiteLLM is off, the
- * master key is missing, or the upstream fetch fails — callers can treat
- * "empty list" as the universal degraded state.
+ * Fetch the LiteLLM catalog. Returns an empty array when LiteLLM is off, no
+ * auth is available (local mode without a master key), or the upstream fetch
+ * fails — callers can treat "empty list" as the universal degraded state.
  */
 export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
   if (process.env.EXULU_USE_LITELLM !== "true") return [];
@@ -56,15 +58,21 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
     return _cache.items;
   }
 
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
-  if (!masterKey) return [];
+  let baseUrl: string;
+  let authHeaders: Record<string, string>;
+  try {
+    ({ baseUrl, authHeaders } = resolveLiteLLMTarget());
+  } catch {
+    // e.g. LITELLM_BASE_URL set without EXULU_API_KEY — degrade like other failure modes.
+    return [];
+  }
+  // No way to authenticate (local mode without a master key) → degraded empty state (unchanged contract).
+  if (Object.keys(authHeaders).length === 0) return [];
 
   try {
-    const res = await fetch(`http://${host}:${port}/model/info`, {
+    const res = await fetch(`${baseUrl}/model/info`, {
       method: "GET",
-      headers: { Authorization: `Bearer ${masterKey}` },
+      headers: authHeaders,
     });
     if (!res.ok) {
       console.error(
