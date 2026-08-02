@@ -75,6 +75,7 @@ import { RBACResolver } from "@EE/rbac-resolver.ts";
 import { buildTags, createTaggedFetch, budgetTagFor, type BudgetEntityType } from "./tags.ts";
 import { tagInfo, tagDelete, type BudgetDuration } from "./litellm/admin-client.ts";
 import { LiteLLMAdminError } from "./litellm/env.ts";
+import { isLiteLLMPassthroughPathAllowed } from "./litellm/passthrough-allowlist.ts";
 import {
   getTagDailyActivity,
   listTagsByPrefix,
@@ -2152,7 +2153,7 @@ export const createExpressRoutes = async (
 
     // Allowlist the OpenAI-compatible surface. Admin paths fail closed so
     // future LiteLLM admin endpoints don't accidentally become reachable.
-    if (!req.path.startsWith("/v1/")) {
+    if (!isLiteLLMPassthroughPathAllowed(req.path)) {
       res.status(403).json({
         detail: `Path ${req.path} is not exposed through the Exulu LiteLLM proxy.`,
       });
