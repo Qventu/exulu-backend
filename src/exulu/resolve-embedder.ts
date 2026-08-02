@@ -5,6 +5,7 @@ import { isLiteLLMEnabled, waitForLiteLLMReady } from "./litellm/supervisor";
 import { provisionDefaultUserBudget } from "./litellm/budget-service";
 import { buildTags } from "./tags";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
+import { resolveLiteLLMTarget } from "./litellm/env";
 
 /**
  * resolveEmbedder — the embedding-side counterpart of resolveModel.
@@ -90,15 +91,7 @@ export async function resolveEmbedder(
     );
   }
 
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
-  if (!masterKey) {
-    throw new ResolveEmbedderError(
-      "LITELLM_NOT_CONFIGURED",
-      "LITELLM_MASTER_KEY is required when EXULU_USE_LITELLM=true",
-    );
-  }
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
 
   // Lazily provision the global per-user budget tag if a default is configured.
   // Swallows its own errors; never blocks resolution.
@@ -133,13 +126,13 @@ export async function resolveEmbedder(
     context_name: contextName,
   });
 
-  const endpoint = `http://${host}:${port}/v1/embeddings`;
+  const endpoint = `${baseUrl}/v1/embeddings`;
 
   const embedBatch = async (batch: string[]): Promise<number[][]> => {
     const res = await fetch(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${masterKey}`,
+        ...authHeaders,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

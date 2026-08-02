@@ -50,11 +50,13 @@ describe("resolveReranker", () => {
     );
   });
 
-  test("throws when master key is missing", async () => {
+  test("does not throw when master key is missing in local mode (guard removed — helper owns validation)", async () => {
     delete process.env.LITELLM_MASTER_KEY;
-    await expect(resolveReranker({ model: "rerank-v4.0-pro" })).rejects.toMatchObject(
-      { code: "LITELLM_NOT_CONFIGURED" },
-    );
+    // resolveLiteLLMTarget() in local mode returns empty authHeaders rather than throwing.
+    // The fetch will be attempted; we mock it to resolve so the call completes.
+    mockFetch.mockResolvedValue(okResponse({ results: [] }));
+    const resolved = await resolveReranker({ model: "rerank-v4.0-pro" });
+    expect(resolved).toHaveProperty("rerank");
   });
 
   const chunks = [
@@ -141,5 +143,29 @@ describe("resolveReranker", () => {
     });
     const resolved = await resolveReranker({ model: "m" });
     await expect(resolved.rerank("q", chunks)).resolves.toEqual([]);
+  });
+
+  test("remote mode: uses LITELLM_BASE_URL + exulu-api-key header, no Authorization", async () => {
+    process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
+    process.env.EXULU_API_KEY = "sk_a_b/worker";
+    delete process.env.LITELLM_MASTER_KEY;
+
+    mockFetch.mockResolvedValue(
+      okResponse({
+        results: [{ index: 0, relevance_score: 0.8 }],
+      }),
+    );
+
+    const resolved = await resolveReranker({ model: "rerank-v4.0-pro" });
+    await resolved.rerank("q", chunks);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://srv.example/litellm/DEFAULT/v1/rerank");
+    expect(init.headers["exulu-api-key"]).toBe("sk_a_b/worker");
+    expect(init.headers["Authorization"]).toBeUndefined();
+
+    delete process.env.LITELLM_BASE_URL;
+    delete process.env.EXULU_API_KEY;
   });
 });
