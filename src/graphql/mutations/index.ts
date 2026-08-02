@@ -279,6 +279,14 @@ export function createMutations(
         throw new Error("Only the creator can edit this private record");
       }
 
+      // The creator can always edit their own record, regardless of how it is
+      // shared. checkRecordAccess (reads) already grants the creator access in
+      // every rights_mode; without the same fallback here, sharing your own
+      // record via rbac (users/roles/teams) locks you out of editing it.
+      if (record.created_by != null && String(record.created_by) === String(user.id)) {
+        return true;
+      }
+
       // Check if user has write access via RBAC table
       if (record.rights_mode === "users") {
         const rbacRecord = await db

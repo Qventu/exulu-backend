@@ -9,6 +9,8 @@
  * MP3 bytes.
  */
 
+import { resolveLiteLLMTarget } from "./litellm/env";
+
 export class SpeechError extends Error {
   constructor(
     public readonly upstreamStatus: number,
@@ -22,13 +24,10 @@ export class SpeechError extends Error {
 export async function synthesizeSpeech(args: {
   text: string;
 }): Promise<Buffer> {
-  const host = process.env.LITELLM_HOST ?? "127.0.0.1";
-  const port = process.env.LITELLM_PORT ?? "4000";
-  const masterKey = process.env.LITELLM_MASTER_KEY;
+  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
   const model = process.env.TTS_MODEL;
   const voice = process.env.TTS_VOICE;
 
-  if (!masterKey) throw new Error("LITELLM_MASTER_KEY is not set");
   if (!model) throw new Error("TTS_MODEL is not set");
   // LiteLLM's router requires `voice` even when the upstream provider doesn't
   // strictly need one — without it, /v1/audio/speech 500s with
@@ -42,10 +41,10 @@ export async function synthesizeSpeech(args: {
     response_format: "mp3",
   };
 
-  const res = await fetch(`http://${host}:${port}/v1/audio/speech`, {
+  const res = await fetch(`${baseUrl}/v1/audio/speech`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${masterKey}`,
+      ...authHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),

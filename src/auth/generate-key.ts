@@ -21,25 +21,39 @@ export const deleteApiKey = async (name: string): Promise<{ message: string }> =
   };
 };
 
-export const generateApiKey = async (name: string, email: string): Promise<{ key: string }> => {
+export const generateApiKey = async (
+  name: string,
+  email: string,
+  options?: {
+    superAdmin?: boolean;
+    roleName?: string;
+    rolePermissions?: Record<string, "read" | "write">;
+  },
+): Promise<{ key: string }> => {
   const { db } = await postgresClient();
 
   email = String(email).trim().toLowerCase();
 
+  const superAdmin = options?.superAdmin ?? true;
+  const roleName = options?.roleName ?? "admin";
+  const rolePermissions = options?.rolePermissions ?? {
+    agents: "write",
+    workflows: "write",
+    variables: "write",
+    users: "write",
+  };
+
   console.log("[EXULU] Inserting default user and admin role.");
-  const existingRole = await db.from("roles").where({ name: "admin" }).first();
+  const existingRole = await db.from("roles").where({ name: roleName }).first();
   let roleId;
 
   if (!existingRole) {
-    console.log("[EXULU] Creating default admin role.");
+    console.log(`[EXULU] Creating default ${roleName} role.`);
     const role = await db
       .from("roles")
       .insert({
-        name: "admin",
-        agents: "write",
-        workflows: "write",
-        variables: "write",
-        users: "write",
+        name: roleName,
+        ...rolePermissions,
       })
       .returning("id");
     roleId = role[0].id;
@@ -58,7 +72,7 @@ export const generateApiKey = async (name: string, email: string): Promise<{ key
     await db.from("users").insert({
       name: name,
       email: email,
-      super_admin: true,
+      super_admin: superAdmin,
       createdAt: new Date(),
       updatedAt: new Date(),
       type: "api",
