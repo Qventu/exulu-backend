@@ -46,11 +46,26 @@ export interface LiteLLMTarget {
 }
 
 /**
- * Resolves the LiteLLM target based on the environment:
- * - Remote mode  (LITELLM_BASE_URL set): uses the URL verbatim + exulu-api-key header.
- * - Local mode   (default): derives URL from LITELLM_HOST/PORT + master key Bearer header.
+ * Resolves the correct LiteLLM target (base URL + auth headers) from the
+ * environment. Two modes are supported:
  *
- * NOTE: litellmBase() is left unchanged for the server-only admin clients.
+ * **Default / local mode** (`LITELLM_BASE_URL` is NOT set):
+ *   - Base URL: `http://${LITELLM_HOST ?? "127.0.0.1"}:${LITELLM_PORT ?? "4000"}`
+ *   - Auth: `Authorization: Bearer ${LITELLM_MASTER_KEY}` — header is omitted
+ *     entirely when `LITELLM_MASTER_KEY` is not present in the environment.
+ *
+ * **Remote mode** (`LITELLM_BASE_URL` is set to a non-empty string):
+ *   - `LITELLM_BASE_URL` is used verbatim as the URL prefix (callers append
+ *     `/v1/...`); any trailing slashes are stripped. The intended target is the
+ *     server's authenticated passthrough, e.g.
+ *     `https://<server>/litellm/DEFAULT`.
+ *   - Auth: `exulu-api-key: ${EXULU_API_KEY}` — `EXULU_API_KEY` **must** be
+ *     set; the function throws if it is missing.
+ *   - `LITELLM_MASTER_KEY` is NOT used in this mode and need not be present.
+ *
+ * > Note: {@link litellmBase} (master-key, local proxy) remains the entry
+ * > point for server-side admin clients (tag management, activity polling,
+ * > etc.) and is unaffected by this function.
  */
 export function resolveLiteLLMTarget(): LiteLLMTarget {
   const rawBase = process.env.LITELLM_BASE_URL;
