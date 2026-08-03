@@ -85,6 +85,10 @@ describe("transcribeAudio routing", () => {
       type: "input_audio",
       input_audio: { data: Buffer.from("fake-audio").toString("base64"), format: "wav" },
     });
+    // The UI locale must NOT be injected as a language hint — doing so nudged
+    // Gemini into translating (e.g. German speech → English) despite language "de".
+    expect(body.messages[1].content[0].text).toBe("Transcribe this audio.");
+    expect(body.messages[0].content).toMatch(/never translate/i);
   });
 
   it("routes a whisper model to /audio/transcriptions", async () => {
