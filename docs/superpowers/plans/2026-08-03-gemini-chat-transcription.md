@@ -18,7 +18,7 @@
 - **Two repos:** backend = `/Users/daniel.claessen/Desktop/Projects/exulu/backend`; frontend = `/Users/daniel.claessen/Desktop/Projects/exulu/frontend`; newlkiag config = `/Users/daniel.claessen/Desktop/Projects/newlkiag/config.litellm.yaml`. Do code changes on a feature branch/worktree, not on `develop`/`main` directly.
 - **`reasoning_effort: "disable"`** on every chat transcription request (Gemini thinking-token starvation guard).
 - **System prompt (verbatim, reused everywhere):**
-  `You are an automatic speech recognition engine. Transcribe the audio verbatim in its original language. Output only the transcript text — no quotes, labels, commentary, or translation. If there is no intelligible speech, output nothing.`
+  `You are a speech-to-text transcription engine. Detect the language actually spoken and transcribe it word-for-word in that same language. Never translate. Output only the transcript text — no quotes, labels, or commentary. If there is no intelligible speech, output nothing.`
 
 ---
 
@@ -59,7 +59,7 @@ const body = {
     {
       role: "system",
       content:
-        "You are an automatic speech recognition engine. Transcribe the audio verbatim in its original language. Output only the transcript text — no quotes, labels, commentary, or translation. If there is no intelligible speech, output nothing.",
+        "You are a speech-to-text transcription engine. Detect the language actually spoken and transcribe it word-for-word in that same language. Never translate. Output only the transcript text — no quotes, labels, or commentary. If there is no intelligible speech, output nothing.",
     },
     {
       role: "user",
@@ -163,9 +163,10 @@ Add near the top of `backend/src/exulu/transcribe.ts` (after the imports):
 
 ```ts
 export const TRANSCRIBE_SYSTEM_PROMPT =
-  "You are an automatic speech recognition engine. Transcribe the audio verbatim in " +
-  "its original language. Output only the transcript text — no quotes, labels, " +
-  "commentary, or translation. If there is no intelligible speech, output nothing.";
+  "You are a speech-to-text transcription engine. Detect the language actually spoken " +
+  "and transcribe it word-for-word in that same language. Never translate. Output only " +
+  "the transcript text — no quotes, labels, or commentary. If there is no intelligible " +
+  "speech, output nothing.";
 
 /**
  * True when TRANSCRIPTION_MODEL resolves to a Vertex Gemini chat model, which
@@ -375,8 +376,10 @@ async function transcribeViaChat(
   target: LiteLLMTarget,
   model: string,
 ): Promise<{ text: string }> {
-  const format = (args.file.mimetype.replace(/^audio\//, "").split(";")[0] || "wav").toLowerCase();
-  const languageHint = args.language ? ` The audio language is ${args.language}.` : "";
+  const subtype = args.file.mimetype.replace(/^audio\//, "").split(";")[0];
+  const format = (subtype && subtype.length > 0 ? subtype : "wav").toLowerCase();
+  // No language hint: the composer's UI locale (often "en") nudged Gemini into
+  // translating non-English speech. Rely on auto-detection + the never-translate prompt.
   const body = {
     model,
     temperature: 0,
@@ -386,7 +389,7 @@ async function transcribeViaChat(
       {
         role: "user",
         content: [
-          { type: "text", text: `Transcribe this audio.${languageHint}` },
+          { type: "text", text: "Transcribe this audio." },
           { type: "input_audio", input_audio: { data: args.file.buffer.toString("base64"), format } },
         ],
       },
