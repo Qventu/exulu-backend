@@ -158,8 +158,11 @@ is untouched.
 ### 5. Error handling & edge cases
 
 - Catalog empty/fails → default to the audio endpoint (no regression).
-- Entry routed to chat but `supports_audio_input` is false → fail fast with a clear config
-  error rather than a confusing Gemini 400.
+- Detection relies on the upstream being a Gemini/Vertex chat model, which inherently supports
+  audio input. The `supports_audio_input` catalog flag is **not** used as a hard gate — it is an
+  optional config field authors frequently leave unset (→ `false`), so gating on it would wrongly
+  reject valid Gemini models. A genuinely mis-pointed model surfaces as a normal
+  `TranscriptionError` from the Gemini 4xx.
 - Silent clip → Gemini returns empty → `{ text: "" }` (matches Whisper-on-silence).
 - Non-200 from `/chat/completions` → `TranscriptionError(status, body)` (identical surface).
 
