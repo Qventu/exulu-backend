@@ -111,30 +111,30 @@ Raw `fetch` to `/v1/chat/completions` (same style as today's `transcribe.ts`), b
   `TRANSCRIPTION_MODEL` set), multer + 25 MB limit, `TranscriptionError(status, body)`, and the
   `{ text }` response shape are all identical. No route or GraphQL change.
 
-### 3. Audio format — client-side WAV re-encode
+### 3. Audio format — no conversion needed (verified)
 
-The composer records `audio/webm;codecs=opus` (Chrome/Firefox) or `audio/mp4` (Safari).
-Gemini's API documents only **wav, mp3, aiff, aac, ogg, flac** — `webm` (the Chrome/Firefox
-majority) is not supported, and no single browser can natively record a Gemini-supported format
-cross-browser (Chrome cannot record ogg/wav; Safari cannot record webm). A conversion step is
-therefore required.
+The composer records `audio/webm;codecs=opus` (Chrome/Firefox) or `audio/mp4` (Safari). The
+Gemini API *documents* only wav/mp3/aiff/aac/ogg/flac, which raised the concern that `webm`
+would be rejected and require a conversion step.
 
-**Verify first (implementation step 1):** a tsx repro against local LiteLLM sends a real `webm`
-clip to the Gemini model. If it transcribes cleanly, conversion is dropped entirely. If it
-400s (expected), we implement the conversion below.
+**Verify-first result (2026-08-03, against the real newlkiag upstream `vertex_ai/gemini-3.5-flash`
+via local LiteLLM :4000):** `webm/opus`, `mp4/aac`, `wav`, and `ogg` **all transcribe cleanly** —
+each returned the exact verbatim transcript with `reasoning_effort: "disable"`. The `webm` sample
+was a genuine opus-in-webm clip encoded via the backend's bundled PyAV. Vertex is more lenient
+than the documented Gemini list.
 
-**Conversion location: client-side.** The composer decodes the recording via WebAudio
-(`AudioContext.decodeAudioData`) and re-encodes to **16 kHz mono 16-bit PCM WAV** before upload
-(~40-line util). Rationale:
+**Consequence:** no audio conversion is needed and the composer requires **zero changes**. The
+backend derives the `input_audio.format` from the upload's mimetype:
+`mimetype.replace(/^audio\//, "").split(";")[0]` →
+`audio/webm;codecs=opus` → `"webm"`, `audio/mp4` → `"mp4"`, `audio/ogg` → `"ogg"`,
+`audio/wav` → `"wav"` — all verified working.
 
-- No backend system dependency. `@exulu/backend` is self-hosted per client (Dokploy etc.);
-  a server-side ffmpeg transcode would force ffmpeg onto every client install.
-- Works cross-browser (WebAudio decodes both webm/opus and mp4/aac).
-- 16 kHz mono is optimal for speech models and yields a smaller payload.
-- WAV is also accepted by the whisper `/audio/transcriptions` path, so the existing (selise)
-  deployments keep working after the upload format changes webm → wav (harmless).
-- **Fallback:** if `decodeAudioData` throws (exotic codec), upload the original blob unchanged
-  and let the backend/model attempt it — no hard failure.
+**Deferred fallback (not built):** if a future model/region rejects `webm`, the escape hatch is a
+client-side re-encode to 16 kHz-mono WAV in the composer (WebAudio `decodeAudioData` +
+`OfflineAudioContext`), with a raw-blob fallback on decode failure. Documented here so the option
+is known; not implemented because verification showed it is unnecessary. No backend ffmpeg
+dependency is added (`@exulu/backend` is self-hosted per client, so a server-side transcode is
+avoided by design).
 
 ### 4. Config changes (newlkiag)
 
@@ -168,14 +168,14 @@ is untouched.
 
 ### 6. Testing & rollout
 
-- **Step 1 (verify-first):** tsx repro against local LiteLLM — confirm whether `webm` needs
-  conversion, and that the `input_audio` + `reasoning_effort: "disable"` shape returns clean
-  text.
+- **Step 1 (verify-first): DONE** — confirmed `webm/mp4/wav/ogg` all transcribe via
+  `vertex_ai/gemini-3.5-flash`, and that the `input_audio` + `reasoning_effort: "disable"` shape
+  returns clean verbatim text. Conversion dropped as a result.
 - **Backend unit tests:** routing decision (catalog entry → endpoint choice, incl. fallback),
-  chat request builder, response parsing/cleanup. Mock `fetch` + `findLiteLLMModel`.
-- **Frontend test:** WAV encoder produces a valid 16 kHz-mono WAV header from a known buffer.
-- **Manual smoke:** record in Chrome + Safari against a newlkiag-style Gemini config; verify
-  German + English short clips.
+  chat request builder (incl. `format` derived from mimetype), response parsing/cleanup. Mock
+  `fetch` + `findLiteLLMModel`.
+- **Manual smoke:** record in Chrome + Safari against the newlkiag Gemini config; verify German +
+  English short clips (and that the model stays hidden from the inference picker).
 
 ## Out of scope (YAGNI)
 
