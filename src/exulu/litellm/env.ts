@@ -41,9 +41,36 @@ export interface LiteLLMTarget {
   baseUrl: string;
   /** Headers to merge into every LiteLLM request. */
   authHeaders: Record<string, string>;
-  /** true when LITELLM_BASE_URL is set (remote/passthrough mode). */
+  /** true only in client/worker mode with LITELLM_BASE_URL set (remote/passthrough mode). */
   remote: boolean;
 }
+
+/**
+ * Whether THIS process is a LiteLLM *client* (worker) — it has no local proxy
+ * and must reach an externally-managed one through the Exulu server's
+ * passthrough. Set by the worker boot path via the supervisor's
+ * enableLiteLLMClientMode(). The HTTP-server process leaves this false and
+ * always talks to its own local proxy, so a shared .env that sets
+ * LITELLM_BASE_URL for workers never routes the server's own interactive
+ * traffic through the passthrough (which would re-authenticate as the worker's
+ * service key and mis-attribute/mis-route every user's request).
+ *
+ * Lives here (the zero-app-import module) rather than in supervisor.ts so
+ * resolveLiteLLMTarget() below can read it without an import cycle —
+ * supervisor.ts imports this module, not the other way around.
+ */
+let _clientMode = false;
+
+/** True when this process is in LiteLLM client/worker mode. */
+export const isLiteLLMClientMode = (): boolean => _clientMode;
+
+/**
+ * Set client/worker mode. Called by the supervisor's enableLiteLLMClientMode()
+ * (worker boot) and reset by its test-only reset. Not for direct production use.
+ */
+export const setLiteLLMClientMode = (value: boolean): void => {
+  _clientMode = value;
+};
 
 /**
  * Resolves the correct LiteLLM target (base URL + auth headers) from the
@@ -54,7 +81,14 @@ export interface LiteLLMTarget {
  *   - Auth: `Authorization: Bearer ${LITELLM_MASTER_KEY}` — header is omitted
  *     entirely when `LITELLM_MASTER_KEY` is not present in the environment.
  *
- * **Remote mode** (`LITELLM_BASE_URL` is set to a non-empty string):
+ * **Remote mode** (this process is in client/worker mode AND `LITELLM_BASE_URL`
+ * is set to a non-empty string):
+ *   - Gated on {@link isLiteLLMClientMode}: only worker processes (which have no
+ *     local proxy) go remote. The HTTP-server process owns its own proxy and
+ *     stays local even when `LITELLM_BASE_URL` is present in a shared `.env` —
+ *     otherwise its interactive traffic would loop through its own passthrough,
+ *     re-authenticate as the worker service key, and mis-route/mis-attribute
+ *     every request.
  *   - `LITELLM_BASE_URL` is used verbatim as the URL prefix (callers append
  *     `/v1/...`); any trailing slashes are stripped. The intended target is the
  *     server's authenticated passthrough, e.g.
@@ -69,7 +103,7 @@ export interface LiteLLMTarget {
  */
 export function resolveLiteLLMTarget(): LiteLLMTarget {
   const rawBase = process.env.LITELLM_BASE_URL;
-  if (rawBase && rawBase.trim().length > 0) {
+  if (isLiteLLMClientMode() && rawBase && rawBase.trim().length > 0) {
     const apiKey = process.env.EXULU_API_KEY;
     if (!apiKey) {
       throw new Error("EXULU_API_KEY is required when LITELLM_BASE_URL is set (remote LiteLLM client mode).");
