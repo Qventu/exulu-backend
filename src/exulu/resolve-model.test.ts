@@ -18,6 +18,7 @@ jest.mock("./litellm/budget-service", () => ({
 
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getLiteLLMProvider } from "./resolve-model";
+import { setLiteLLMClientMode } from "./litellm/env";
 
 const mockCreateOpenAICompatible = createOpenAICompatible as jest.MockedFunction<
   typeof createOpenAICompatible
@@ -32,6 +33,8 @@ beforeEach(() => {
     delete process.env[key];
   }
   mockCreateOpenAICompatible.mockClear();
+  // Default to server (non-client) mode; remote-mode tests opt in.
+  setLiteLLMClientMode(false);
 });
 
 afterAll(() => {
@@ -43,6 +46,7 @@ afterAll(() => {
       process.env[key] = value;
     }
   }
+  setLiteLLMClientMode(false);
 });
 
 describe("getLiteLLMProvider", () => {
@@ -57,6 +61,7 @@ describe("getLiteLLMProvider", () => {
   });
 
   test("B (remote): uses LITELLM_BASE_URL/v1 and exulu-api-key header", () => {
+    setLiteLLMClientMode(true); // remote mode requires worker/client role
     process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
     process.env.EXULU_API_KEY = "sk_a_b/worker";
     // LITELLM_MASTER_KEY is not set (deleted in beforeEach)
@@ -70,6 +75,7 @@ describe("getLiteLLMProvider", () => {
   });
 
   test("C (no throw in remote without master key): does not throw", () => {
+    setLiteLLMClientMode(true); // remote mode requires worker/client role
     process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
     process.env.EXULU_API_KEY = "sk_a_b/worker";
     // LITELLM_MASTER_KEY is not set (deleted in beforeEach)

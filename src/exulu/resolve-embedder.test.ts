@@ -25,6 +25,7 @@ jest.mock("./litellm/parse-embedding-models", () => ({
 }));
 
 import { resolveEmbedder } from "./resolve-embedder";
+import { setLiteLLMClientMode } from "./litellm/env";
 
 const mockFetch = jest.fn();
 
@@ -38,6 +39,8 @@ beforeEach(() => {
   process.env.LITELLM_MASTER_KEY = "sk-test";
   process.env.LITELLM_HOST = "127.0.0.1";
   process.env.LITELLM_PORT = "4000";
+  // Default to server (non-client) mode; the remote-mode test opts in.
+  setLiteLLMClientMode(false);
 });
 
 afterEach(() => {
@@ -45,6 +48,7 @@ afterEach(() => {
   delete process.env.LITELLM_MASTER_KEY;
   delete process.env.LITELLM_BASE_URL;
   delete process.env.EXULU_API_KEY;
+  setLiteLLMClientMode(false);
 });
 
 const okEmbeddingResponse = (vectors: number[][]) => ({
@@ -71,6 +75,7 @@ describe("resolveEmbedder", () => {
   });
 
   test("remote mode: uses LITELLM_BASE_URL + exulu-api-key header, no Authorization", async () => {
+    setLiteLLMClientMode(true); // remote mode requires worker/client role
     process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
     process.env.EXULU_API_KEY = "sk_a_b/worker";
     delete process.env.LITELLM_MASTER_KEY;

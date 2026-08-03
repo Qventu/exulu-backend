@@ -1,4 +1,9 @@
-import { fetchLiteLLMCatalog, __resetLiteLLMCatalogCacheForTesting } from "./catalog";
+import {
+  fetchLiteLLMCatalog,
+  findLiteLLMModel,
+  __resetLiteLLMCatalogCacheForTesting,
+} from "./catalog";
+import { setLiteLLMClientMode } from "./env";
 
 describe("fetchLiteLLMCatalog", () => {
   let savedEnv: NodeJS.ProcessEnv;
@@ -17,16 +22,21 @@ describe("fetchLiteLLMCatalog", () => {
     // Reset the module-level cache
     __resetLiteLLMCatalogCacheForTesting();
 
+    // Default to server (non-client) mode; the remote-mode test opts in.
+    setLiteLLMClientMode(false);
+
     // Spy on global fetch
     fetchSpy = jest.spyOn(global, "fetch");
   });
 
   afterEach(() => {
     process.env = savedEnv;
+    setLiteLLMClientMode(false);
     jest.restoreAllMocks();
   });
 
   it("remote mode: uses baseUrl from LITELLM_BASE_URL + exulu-api-key header, returns results", async () => {
+    setLiteLLMClientMode(true); // worker/client process: reaches the proxy via the passthrough
     process.env.EXULU_USE_LITELLM = "true";
     process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
     process.env.EXULU_API_KEY = "sk_a_b/worker";
@@ -88,5 +98,30 @@ describe("fetchLiteLLMCatalog", () => {
 
     expect(result).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("findLiteLLMModel resolves a speech_to_text model that fetchLiteLLMCatalog hides — independent of cache warmth", async () => {
+    // Regression: the transcription router looks up a speech_to_text model
+    // (gemini-transcribe) by name. Previously fetchLiteLLMCatalog cached the
+    // unfiltered list but returned a filtered one, so a cold-cache lookup
+    // returned undefined → the router fell back to /audio/transcriptions →
+    // "Unmapped provider". It must resolve regardless of which call warms the cache.
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+    const data = [
+      { model_name: "vertex-gemini-2.5-flash", model_info: {}, litellm_params: { model: "vertex_ai/gemini-2.5-flash" } },
+      { model_name: "gemini-transcribe", model_info: { type: "speech_to_text" }, litellm_params: { model: "vertex_ai/gemini-3.5-flash" } },
+    ];
+    fetchSpy.mockResolvedValue({ ok: true, json: async () => ({ data }) } as any);
+
+    // Cold cache, picker first: STT model hidden from the inference list...
+    const picker = await fetchLiteLLMCatalog();
+    expect(picker.map((m) => m.model_name)).not.toContain("gemini-transcribe");
+    // ...but still resolvable by name.
+    expect((await findLiteLLMModel("gemini-transcribe"))?.upstream_model).toBe("vertex_ai/gemini-3.5-flash");
+
+    // Cold cache, lookup FIRST (the path that used to return undefined).
+    __resetLiteLLMCatalogCacheForTesting();
+    expect((await findLiteLLMModel("gemini-transcribe"))?.upstream_model).toBe("vertex_ai/gemini-3.5-flash");
   });
 });

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { resolveLiteLLMTarget } from "./env";
+import { resolveLiteLLMTarget, isLiteLLMClientMode, setLiteLLMClientMode } from "./env";
 
 // Where the LiteLLM admin UI is mounted on the Exulu server. Lives here (not
 // in routes.ts, which also needs it) so this module keeps its zero-app-import
@@ -267,13 +267,6 @@ const supervise = async (cfg: ReturnType<typeof resolveConfig>) => {
 let _packageRoot: string | undefined;
 
 /**
- * When true, this process does NOT spawn or supervise a LiteLLM proxy — it
- * connects to an externally-managed one (see enableLiteLLMClientMode). Set by
- * worker boot paths, which share the HTTP server process's single proxy.
- */
-let _clientMode = false;
-
-/**
  * Set the package root once at boot. The caller (ExuluApp) knows where
  * @exulu/backend is installed via its own discovery (python-setup.ts already
  * does this). Keeps this module free of import.meta.url so it's cleanly
@@ -303,7 +296,7 @@ export const setLiteLLMPackageRoot = (root: string): void => {
  */
 export const enableLiteLLMClientMode = (): void => {
   if (internal.readyPromise) return;
-  _clientMode = true;
+  setLiteLLMClientMode(true);
 };
 
 /**
@@ -404,7 +397,7 @@ export const waitForLiteLLMReady = async (): Promise<void> => {
   // the proxy isn't up yet (e.g. a worker booted before the server), this
   // request fails fast and the next call re-probes — far better than hanging
   // for the full boot-time budget, and job-level retries cover the gap.
-  if (_clientMode) {
+  if (isLiteLLMClientMode()) {
     if (internal.state === "ready") return;
     const { baseUrl, authHeaders, remote } = resolveLiteLLMTarget();
     const url = remote ? `${baseUrl}/v1/models` : `${baseUrl}/health/liveliness`;
@@ -494,5 +487,5 @@ export const __resetSupervisorForTesting = () => {
   internal.shutdownRequested = false;
   shutdownHandlersRegistered = false;
   _packageRoot = undefined;
-  _clientMode = false;
+  setLiteLLMClientMode(false);
 };
