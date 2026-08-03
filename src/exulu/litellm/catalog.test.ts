@@ -1,4 +1,5 @@
 import { fetchLiteLLMCatalog, __resetLiteLLMCatalogCacheForTesting } from "./catalog";
+import { setLiteLLMClientMode } from "./env";
 
 describe("fetchLiteLLMCatalog", () => {
   let savedEnv: NodeJS.ProcessEnv;
@@ -17,16 +18,21 @@ describe("fetchLiteLLMCatalog", () => {
     // Reset the module-level cache
     __resetLiteLLMCatalogCacheForTesting();
 
+    // Default to server (non-client) mode; the remote-mode test opts in.
+    setLiteLLMClientMode(false);
+
     // Spy on global fetch
     fetchSpy = jest.spyOn(global, "fetch");
   });
 
   afterEach(() => {
     process.env = savedEnv;
+    setLiteLLMClientMode(false);
     jest.restoreAllMocks();
   });
 
   it("remote mode: uses baseUrl from LITELLM_BASE_URL + exulu-api-key header, returns results", async () => {
+    setLiteLLMClientMode(true); // worker/client process: reaches the proxy via the passthrough
     process.env.EXULU_USE_LITELLM = "true";
     process.env.LITELLM_BASE_URL = "https://srv.example/litellm/DEFAULT";
     process.env.EXULU_API_KEY = "sk_a_b/worker";
