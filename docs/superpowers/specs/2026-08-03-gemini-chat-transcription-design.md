@@ -90,19 +90,26 @@ Raw `fetch` to `/v1/chat/completions` (same style as today's `transcribe.ts`), b
   "temperature": 0,
   "reasoning_effort": "disable",   // Gemini 2.5/3 thinking counts against output → empty/slow without it
   "messages": [
-    { "role": "system", "content": "<verbatim-ASR instruction>" },
+    { "role": "system", "content": "<never-translate ASR instruction>" },
     { "role": "user", "content": [
-      { "type": "text", "text": "Transcribe this audio.<optional: The language is de.>" },
+      { "type": "text", "text": "Transcribe this audio." },
       { "type": "input_audio", "input_audio": { "data": "<base64>", "format": "wav" } }
     ]}
   ]
 }
 ```
 
-- **System prompt:** "You are an automatic speech recognition engine. Transcribe the audio
-  verbatim in its original language. Output only the transcript text — no quotes, labels,
-  commentary, or translation. If there is no intelligible speech, output nothing." The
-  optional `language` hint from the composer is appended to the user text part.
+- **System prompt:** "You are a speech-to-text transcription engine. Detect the language actually
+  spoken and transcribe it word-for-word in that same language. Never translate. Output only the
+  transcript text — no quotes, labels, or commentary. If there is no intelligible speech, output
+  nothing."
+- **No language hint (fixed 2026-08-03).** The composer sends the user's UI locale as `language`,
+  which is frequently `en` even when the speaker uses another language. Injecting it as
+  "The audio language is en" was an authoritative pro-English signal that nudged Gemini into
+  **translating** German speech to English. The chat path therefore ignores `args.language` and
+  relies on Gemini's auto-detection plus the never-translate instruction (verified DE→DE / EN→EN
+  on short and long clips). `args.language` remains meaningful only for the whisper
+  `/audio/transcriptions` path.
 - `reasoning_effort: "disable"` guards the Gemini thinking-token starvation failure mode
   (see reference memory `gemini3-thinking-token-starvation`).
 - **Response:** read `choices[0].message.content`, trim, strip stray wrapping quotes/backticks;
