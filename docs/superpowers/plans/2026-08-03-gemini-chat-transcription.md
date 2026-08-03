@@ -4,7 +4,7 @@
 
 **Goal:** Make the chat composer's speech-to-text work with a GCP model by transcribing short clips through Vertex **Gemini chat completions** (`input_audio`) instead of LiteLLM's `/audio/transcriptions` endpoint, which has no Vertex support.
 
-**Architecture:** `transcribe.ts` looks up `TRANSCRIPTION_MODEL` in the LiteLLM catalog and routes: a Gemini/Vertex upstream → `POST /v1/chat/completions` with an audio part; anything else (whisper, deepgram) → the existing `/audio/transcriptions` path. The browser re-encodes its recording to 16 kHz-mono WAV before upload because Gemini does not accept `webm`. No new env var, no route/GraphQL change.
+**Architecture:** `transcribe.ts` looks up `TRANSCRIPTION_MODEL` in the LiteLLM catalog and routes: a Gemini/Vertex upstream → `POST /v1/chat/completions` with an audio part; anything else (whisper, deepgram) → the existing `/audio/transcriptions` path. The `input_audio.format` is derived from the upload's mimetype — verification (Task 1) confirmed Vertex Gemini accepts the browser's native `webm`/`mp4` directly, so **no client-side conversion and no frontend change are needed**. No new env var, no route/GraphQL change. Backend-only.
 
 **Tech Stack:** TypeScript, Node 22, backend tests in **jest** (`npm test`, `@SRC/*` path alias), frontend tests in **vitest** (`vitest run`, colocated `*.test.ts`), `tsx` for repro scripts, WebAudio (`AudioContext` / `OfflineAudioContext`) in the browser.
 
@@ -22,9 +22,13 @@
 
 ---
 
-### Task 1: Verify-first repro (decision gate)
+### Task 1: Verify-first repro (decision gate) — ✅ DONE 2026-08-03
 
-Confirm whether `webm` needs conversion and that the `input_audio` + `reasoning_effort: "disable"` request shape returns clean text from Gemini through local LiteLLM. **This gates Tasks 4–5:** if a raw `webm` clip transcribes cleanly, skip the frontend WAV work.
+**Result:** Against the real newlkiag upstream `vertex_ai/gemini-3.5-flash` (via local LiteLLM :4000), `webm/opus`, `mp4/aac`, `wav`, and `ogg` **all returned the exact verbatim transcript** with `reasoning_effort: "disable"` + `temperature: 0` and the system prompt below. The `webm` sample was a genuine opus-in-webm clip (encoded via the backend's bundled PyAV). **Conclusion: no audio conversion is needed — Tasks 4 & 5 are dropped, the composer is unchanged.** The backend derives `input_audio.format` from the upload mimetype.
+
+The original repro procedure is retained below for reference.
+
+Confirm whether `webm` needs conversion and that the `input_audio` + `reasoning_effort: "disable"` request shape returns clean text from Gemini through local LiteLLM.
 
 **Files:**
 - Create (throwaway, not committed): `backend/scripts/repro-transcribe-gemini.ts`
@@ -293,6 +297,21 @@ describe("transcribeAudio routing", () => {
 
     await expect(transcribeAudio(audioArgs())).rejects.toBeInstanceOf(TranscriptionError);
   });
+
+  it("derives the input_audio format from the upload mimetype (webm/opus)", async () => {
+    findLiteLLMModel.mockResolvedValue({ upstream_model: "vertex_ai/gemini-2.5-flash" });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ choices: [{ message: { content: "x" } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await transcribeAudio({
+      file: { buffer: Buffer.from("a"), originalname: "recording.webm", mimetype: "audio/webm;codecs=opus" },
+    });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.messages[1].content[1].input_audio.format).toBe("webm");
+  });
 });
 ```
 
@@ -409,9 +428,11 @@ git commit -m "feat(transcribe): route Gemini STT through /chat/completions with
 
 ---
 
-### Task 4: Frontend WAV encoder + re-encode util
+### Task 4: Frontend WAV encoder + re-encode util — ❌ DROPPED (Task 1 proved webm works)
 
-**Gated on Task 1:** only do Tasks 4–5 if the repro showed `webm` is rejected by Gemini.
+> **Do not implement.** Verification showed Vertex Gemini accepts the browser's native `webm`/`mp4`
+> directly, so no client-side conversion is needed. The code below is kept only as the documented
+> escape-hatch reference (see spec §3). **Skip to Task 6.**
 
 **Files:**
 - Create: `frontend/app/(application)/chat/components/audio-to-wav.ts`
@@ -535,9 +556,9 @@ git commit -m "feat(composer): 16kHz-mono WAV re-encode util for Gemini STT"
 
 ---
 
-### Task 5: Wire WAV re-encode into the composer
+### Task 5: Wire WAV re-encode into the composer — ❌ DROPPED (Task 1 proved webm works)
 
-**Gated on Task 1** (same as Task 4).
+> **Do not implement.** The composer is unchanged. Kept only as escape-hatch reference. **Skip to Task 6.**
 
 **Files:**
 - Modify: `frontend/app/(application)/chat/components/composer.tsx` (`handleRecordingStop`, ~line 372–390; add import near the other component imports)
@@ -600,50 +621,27 @@ git commit -m "feat(composer): re-encode recordings to WAV before transcription 
 
 ---
 
-### Task 6: newlkiag config change (applied in the newlkiag repo)
+### Task 6: newlkiag config change — mostly DONE (needs proxy restart + smoke test)
+
+**Status:** The user already edited `config.litellm.yaml` to `model_name: gemini-transcribe` →
+`model: vertex_ai/gemini-3.5-flash` (type `speech_to_text`), and set
+`TRANSCRIPTION_MODEL=gemini-transcribe` + `EXULU_USE_LITELLM=true`. The **running** LiteLLM proxy
+on :4000 still shows the old `chirp3` entry, so it must be **restarted** to load the rename.
 
 **Files:**
-- Modify: `/Users/daniel.claessen/Desktop/Projects/newlkiag/config.litellm.yaml` (the `chirp3` model entry, ~lines 36–43)
+- Already modified: `/Users/daniel.claessen/Desktop/Projects/newlkiag/config.litellm.yaml`
 
-- [ ] **Step 1: Swap the broken Chirp entry to a Gemini upstream**
+- [ ] **Step 1: Restart the LiteLLM proxy** so `/v1/models` lists `gemini-transcribe` (not `chirp3`).
 
-Replace:
+Verify: `curl -s http://127.0.0.1:4000/v1/models -H "Authorization: Bearer $KEY"` includes `gemini-transcribe`.
 
-```yaml
-  - model_name: chirp3
-    litellm_params:
-      model: vertex_ai/chirp-3
-      vertex_ai_project: "dx-newlift"
-      vertex_ai_location: "eu"
-    model_info:
-      type: speech_to_text
-      brand: "google"
-      region: "eu"
-```
+- [ ] **Step 2: Smoke-test the composer**
 
-with:
+Record a short clip in the composer (Chrome **and** Safari); confirm German + English clips
+transcribe, the model does **not** appear in the inference model picker, and a LiteLLM spend-log
+row is written for `gemini-transcribe`.
 
-```yaml
-  - model_name: gemini-transcribe
-    litellm_params:
-      model: vertex_ai/gemini-2.5-flash
-      vertex_ai_project: "dx-newlift"
-      vertex_ai_location: "europe-west1"   # match the location the gemini-2.5-flash chat entry already uses
-    model_info:
-      type: speech_to_text                 # keeps it hidden from the inference picker
-      brand: "google"
-      region: "eu"
-```
-
-- [ ] **Step 2: Set the env var**
-
-Set `TRANSCRIPTION_MODEL=gemini-transcribe` (and ensure `EXULU_USE_LITELLM=true`) in the newlkiag backend environment.
-
-- [ ] **Step 3: Restart LiteLLM + backend and smoke-test**
-
-Record a short clip in the composer (Chrome and Safari); confirm German + English clips transcribe and the model does not appear in the inference model picker. Verify a LiteLLM spend log row is written for the `gemini-transcribe` model.
-
-Commit in the newlkiag repo per its own conventions.
+Commit any further config tweaks in the newlkiag repo per its own conventions.
 
 ---
 
@@ -653,7 +651,7 @@ Commit in the newlkiag repo per its own conventions.
 - Root cause / approach → Tasks 2–3 (routing + chat path). ✓
 - Routing by config metadata, no env var, catalog-miss fallback → Task 2 (`isGeminiChatTranscriptionModel`) + Task 3 (wiring, fallback test). ✓
 - Chat request shape (input_audio, system prompt, `reasoning_effort: "disable"`, temperature 0, response cleanup) → Task 3 + Task 2 (`cleanTranscript`). ✓
-- Audio format / client-side WAV re-encode, verify-first → Task 1 (gate) + Tasks 4–5. ✓
+- Audio format, verify-first → Task 1 (DONE: webm/mp4/wav/ogg all work → conversion dropped, Tasks 4–5 not implemented; format derived from mimetype in Task 3). ✓
 - Config change → Task 6. ✓
 - Error handling (non-200 → TranscriptionError, silent → empty, decode fallback) → Task 3 tests + Task 5 fallback. ✓
 - **Deviation from spec (Section 5):** the "`supports_audio_input` false → fail fast" guard is intentionally **dropped**. `supports_audio_input` is an optional config field that authors frequently leave unset (→ `false`), which would wrongly reject valid Gemini models; a Gemini upstream inherently supports audio, so the upstream-match rule already carries that guarantee. A genuinely mis-pointed model surfaces as a normal `TranscriptionError` from the Gemini 4xx.
