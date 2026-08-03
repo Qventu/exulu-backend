@@ -12,9 +12,10 @@ import { resolveLiteLLMTarget, type LiteLLMTarget } from "./litellm/env";
 import { findLiteLLMModel } from "./litellm/catalog";
 
 export const TRANSCRIBE_SYSTEM_PROMPT =
-  "You are an automatic speech recognition engine. Transcribe the audio verbatim in " +
-  "its original language. Output only the transcript text — no quotes, labels, " +
-  "commentary, or translation. If there is no intelligible speech, output nothing.";
+  "You are a speech-to-text transcription engine. Detect the language actually spoken " +
+  "and transcribe it word-for-word in that same language. Never translate. Output only " +
+  "the transcript text — no quotes, labels, or commentary. If there is no intelligible " +
+  "speech, output nothing.";
 
 /**
  * True when TRANSCRIPTION_MODEL resolves to a Vertex Gemini chat model, which
@@ -120,7 +121,11 @@ async function transcribeViaChat(
   // e.g. "audio/webm;codecs=opus" → "webm"; empty/unknown → "wav".
   const subtype = args.file.mimetype.replace(/^audio\//, "").split(";")[0];
   const format = (subtype && subtype.length > 0 ? subtype : "wav").toLowerCase();
-  const languageHint = args.language ? ` The audio language is ${args.language}.` : "";
+  // NB: deliberately no language hint. The composer sends the user's UI locale,
+  // which is often "en" even when the speaker uses another language — passing it
+  // as an authoritative hint nudged Gemini into translating German speech to
+  // English. Gemini auto-detects the spoken language; the system prompt forbids
+  // translation. (args.language stays meaningful only for the whisper path.)
   const body = {
     model,
     temperature: 0,
@@ -130,7 +135,7 @@ async function transcribeViaChat(
       {
         role: "user",
         content: [
-          { type: "text", text: `Transcribe this audio.${languageHint}` },
+          { type: "text", text: "Transcribe this audio." },
           {
             type: "input_audio",
             input_audio: { data: args.file.buffer.toString("base64"), format },
