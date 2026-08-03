@@ -51,7 +51,14 @@ export const __resetLiteLLMCatalogCacheForTesting = () => {
  * auth is available (local mode without a master key), or the upstream fetch
  * fails — callers can treat "empty list" as the universal degraded state.
  */
-export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
+/**
+ * Fetch the FULL catalog (all model types), cached. This is the source of
+ * truth for by-name lookups (findLiteLLMModel) — which must be able to find
+ * speech_to_text / text_to_speech models too. The inference-picker filter lives
+ * in fetchLiteLLMCatalog below, NOT here, so the cache and every lookup stay
+ * consistent regardless of cache warmth.
+ */
+const fetchFullCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
   if (process.env.EXULU_USE_LITELLM !== "true") return [];
 
   if (_cache && _cache.expiresAt > Date.now()) {
@@ -120,14 +127,25 @@ export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
     }
 
     const uniqueItems = Array.from(map.values());
-    
+
     _cache = { expiresAt: Date.now() + CACHE_TTL_MS, items: uniqueItems };
-    // filter out type: speech_to_text and type: text_to_speech
-    return uniqueItems.filter((m) => m.type !== "speech_to_text" && m.type !== "text_to_speech");
+    return uniqueItems;
   } catch (err) {
     console.error("[EXULU] litellmCatalog: failed to fetch /model/info:", err);
     return [];
   }
+};
+
+/**
+ * Inference-facing catalog: the full catalog minus speech_to_text /
+ * text_to_speech entries (STT/TTS models are not selectable for chat/agents).
+ * Consumed by the `litellmCatalog` GraphQL resolver + addProviderFields. The
+ * filter lives here (not in fetchFullCatalog) so the cache is shared and the
+ * result no longer depends on cache warmth.
+ */
+export const fetchLiteLLMCatalog = async (): Promise<LiteLLMCatalogEntry[]> => {
+  const items = await fetchFullCatalog();
+  return items.filter((m) => m.type !== "speech_to_text" && m.type !== "text_to_speech");
 };
 
 /**
@@ -139,6 +157,10 @@ export const findLiteLLMModel = async (
   modelName: string,
 ): Promise<LiteLLMCatalogEntry | undefined> => {
   if (!modelName) return undefined;
-  const items = await fetchLiteLLMCatalog();
+  // Use the FULL catalog: lookups must resolve speech_to_text / text_to_speech
+  // models too (e.g. TRANSCRIPTION_MODEL routing). fetchLiteLLMCatalog would
+  // filter those out and this would intermittently return undefined depending
+  // on cache warmth.
+  const items = await fetchFullCatalog();
   return items.find((m) => m.model_name === modelName);
 };
