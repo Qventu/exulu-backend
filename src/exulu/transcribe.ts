@@ -8,7 +8,8 @@
  * be ready. This module just forwards a parsed multipart file upstream.
  */
 
-import { resolveLiteLLMTarget } from "./litellm/env";
+import { resolveLiteLLMTarget, type LiteLLMTarget } from "./litellm/env";
+import { findLiteLLMModel } from "./litellm/catalog";
 
 export const TRANSCRIBE_SYSTEM_PROMPT =
   "You are an automatic speech recognition engine. Transcribe the audio verbatim in " +
@@ -46,18 +47,39 @@ export class TranscriptionError extends Error {
   }
 }
 
-export async function transcribeAudio(args: {
+type TranscribeArgs = {
   file: { buffer: Buffer; originalname: string; mimetype: string };
-  // ISO-639-1 language code (e.g. "de", "en"). When omitted Whisper
+  // ISO-639-1 language code (e.g. "de", "en"). When omitted the model
   // auto-detects, which is unreliable on short clips — pass the user's UI
   // locale from the client whenever possible.
   language?: string;
-}): Promise<{ text: string }> {
-  const { baseUrl, authHeaders } = resolveLiteLLMTarget();
-  const model = process.env.TRANSCRIPTION_MODEL;
+};
 
+/**
+ * Transcribe an audio upload via LiteLLM. Routes on the configured
+ * TRANSCRIPTION_MODEL: a Vertex Gemini chat model goes through
+ * /v1/chat/completions (audio as an input_audio part); everything else
+ * (whisper, deepgram, …) uses the /v1/audio/transcriptions endpoint. A failed
+ * catalog lookup falls back to the audio endpoint (unchanged legacy behaviour).
+ */
+export async function transcribeAudio(args: TranscribeArgs): Promise<{ text: string }> {
+  const target = resolveLiteLLMTarget();
+  const model = process.env.TRANSCRIPTION_MODEL;
   if (!model) throw new Error("TRANSCRIPTION_MODEL is not set");
 
+  const entry = await findLiteLLMModel(model).catch(() => undefined);
+  if (isGeminiChatTranscriptionModel(entry)) {
+    return transcribeViaChat(args, target, model);
+  }
+  return transcribeViaAudioEndpoint(args, target, model);
+}
+
+/** Legacy path: multipart upload to LiteLLM /v1/audio/transcriptions (whisper etc.). */
+async function transcribeViaAudioEndpoint(
+  args: TranscribeArgs,
+  target: LiteLLMTarget,
+  model: string,
+): Promise<{ text: string }> {
   const form = new FormData();
   form.append(
     "file",
@@ -67,9 +89,9 @@ export async function transcribeAudio(args: {
   form.append("model", model);
   if (args.language) form.append("language", args.language);
 
-  const res = await fetch(`${baseUrl}/v1/audio/transcriptions`, {
+  const res = await fetch(`${target.baseUrl}/v1/audio/transcriptions`, {
     method: "POST",
-    headers: { ...authHeaders },
+    headers: { ...target.authHeaders },
     body: form,
   });
 
@@ -83,4 +105,57 @@ export async function transcribeAudio(args: {
 
   const json = (await res.json()) as { text?: string };
   return { text: typeof json.text === "string" ? json.text : "" };
+}
+
+/**
+ * Gemini path: send the audio as an input_audio part to /v1/chat/completions.
+ * Vertex Gemini accepts the browser's native webm/mp4 directly (verified), so
+ * the format is derived from the upload mimetype — no conversion needed.
+ */
+async function transcribeViaChat(
+  args: TranscribeArgs,
+  target: LiteLLMTarget,
+  model: string,
+): Promise<{ text: string }> {
+  // e.g. "audio/webm;codecs=opus" → "webm"; empty/unknown → "wav".
+  const subtype = args.file.mimetype.replace(/^audio\//, "").split(";")[0];
+  const format = (subtype && subtype.length > 0 ? subtype : "wav").toLowerCase();
+  const languageHint = args.language ? ` The audio language is ${args.language}.` : "";
+  const body = {
+    model,
+    temperature: 0,
+    reasoning_effort: "disable",
+    messages: [
+      { role: "system", content: TRANSCRIBE_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `Transcribe this audio.${languageHint}` },
+          {
+            type: "input_audio",
+            input_audio: { data: args.file.buffer.toString("base64"), format },
+          },
+        ],
+      },
+    ],
+  };
+
+  const res = await fetch(`${target.baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { ...target.authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new TranscriptionError(
+      res.status,
+      `LiteLLM transcription failed (status ${res.status}): ${errBody}`.trim(),
+    );
+  }
+
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return { text: cleanTranscript(json.choices?.[0]?.message?.content) };
 }
