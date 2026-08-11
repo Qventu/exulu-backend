@@ -108,7 +108,7 @@ The strongest evidence in the report, and it needs nothing beyond LiteLLM.
 | Active people, trend | Distinct user tags per month | Baseline |
 | Median active **days** per person | Distinct dates with ≥1 request, median across active users | Habit vs. demo. Days-of-return is far harder to perform than request volume |
 | **Retention cohorts** | Of users first active in month M, the % still active in M+1, M+2, M+3 | The flattening curve is the least gameable proof that exists |
-| Breadth | Distinct agents / models / projects per active person | Woven in, or a single trick |
+| Breadth | Distinct agents / models / projects / **client tools** per active person | Woven in, or a single trick |
 | Concentration | Share of spend and activity held by the top 10% of users | If it is one power user's hobby rather than a company capability, the report says so |
 
 **Retention must count human-initiated activity only.** A scheduled routine retains itself
@@ -138,7 +138,7 @@ receiving rather than filing.
 
 | Metric | Definition |
 |---|---|
-| Dormant users | Provisioned in `LiteLLM_UserTable`, zero requests in 60 days |
+| **Lapsed users** | Active in any of the three prior months, but not in this one |
 | Dormant keys | `LiteLLM_VerificationToken` rows with no recent spend |
 | Abandoned agents | `agent_id_*` tags with historical traffic and none in 30 days |
 | Failing traffic | Spend on requests that failed |
@@ -148,6 +148,12 @@ receiving rather than filing.
 Cold knowledge contexts (embedded but never retrieved) are **not** measurable here: vector
 retrieval is not an LLM call and leaves no trace in LiteLLM.
 
+**There is no seat roster, so there is no dormant-seat metric.** Phase 0 found
+`LiteLLM_UserTable` holds 7 rows against 52 users seen in tags, and `LiteLLM_TeamTable` is
+empty — the roster lives in Exulu, which is out of bounds under C4. Computing
+"dormant ÷ provisioned" would have divided by 7 and reported a confidently wrong
+percentage. Lapsed-user counts need only request history, and are honest.
+
 ### Panel 5 — Use cases
 
 Two independent sources that cross-check each other. A single source you cannot validate is
@@ -155,6 +161,13 @@ a claim; two sources that agree are evidence.
 
 **(a) Deterministic spine.** Complete coverage, no content access, no LLM cost.
 
+- **Client tool, free and exact.** LiteLLM auto-tags every request with the caller's
+  `User-Agent` — `User-Agent: claude-cli`, `User-Agent: Kilo-Code`, `User-Agent: OpenAI`,
+  `User-Agent: ai-sdk` (Exulu's own backend). Phase 0 found 14 coarse variants and 130
+  version-specific ones; the coarse tag is the reporting dimension, the versioned one is
+  noise. This needs no prompt access and no classifier, so it belongs in **Phase 1**, not
+  Phase 3. Note the format is `User-Agent: <value>` with a colon and space — it does *not*
+  follow the `dimension_value` convention of Exulu's tags and needs its own parser.
 - Tool popularity from the `tools` array in the request body (what was available) and
   `tool_calls` in the response (what the model chose).
 - MCP tools are first-class: `mcp_namespaced_tool_name` is a column and a daily-table
@@ -233,11 +246,16 @@ Two write paths deliver identity, and they differ:
 
 - **Proxy passthrough** (`routes.ts:2130-2253`) sets both `x-litellm-tags` and
   `x-litellm-spend-logs-metadata` headers. Tags: user, role, project, team.
-- **In-app chat** (`tags.ts:156-205` `createTaggedFetch`) injects `metadata.tags` into the
-  request **body** only, no headers. Tags additionally include `agent_id` and `routine_id`
-  (`resolve-model.ts:95`).
+- **In-app chat** (`tags.ts:156-205` `createTaggedFetch`) sets no headers; it injects the
+  same tag strings into the request **body**. Tags additionally include `agent_id` and
+  `routine_id` (`resolve-model.ts:95`).
 
-Neither path sends a session identifier.
+**Both paths land in `SpendLogs.request_tags`, and only there.** Phase 0 confirmed the
+`x-litellm-spend-logs-metadata` header does *not* surface as queryable keys on the
+`metadata` column — read tags, never metadata.
+
+Neither path sends a session identifier, yet `session_id` is fully populated: LiteLLM
+assigns it itself.
 
 ### Prompt and tool-call storage — two traps
 
@@ -255,23 +273,29 @@ Building against `messages` yields nothing. Use `proxy_server_request`.
 Tool results are stored only for MCP tools, via `mcp_tool_call_metadata`
 (name, arguments, result). Non-MCP tool outcomes are not recorded anywhere.
 
-### Must be verified empirically before building
+### Verified empirically — Phase 0, 2026-08-11
 
-These depend on runtime configuration, not schema. Thirty minutes of read-only queries
-against OPEN's live LiteLLM database settles all of them and is worth more than further
-code reading.
+Settled against a production backup (112,559 `SpendLogs` rows, 2026-06-02 → 2026-08-09).
+Full results: `2026-08-11-value-ledger-phase0-findings.md`.
 
-- Is `session_id` actually populated? Neither Exulu path sends one.
-- Is `LiteLLM_DailyTagSpend` genuinely daily-grain? Its unique constraint appears to include
-  `request_id`, unlike the other five, which would make it per-request.
-- Do tags land reliably on both write paths, and what is the real attribution coverage today?
-- Does `LiteLLM_DailyUserSpend.user_id` collapse to the master key, as predicted?
-- Current row volume in `SpendLogs`, to size the classification sampling.
+| question | answer |
+|---|---|
+| Attribution coverage | **100%** for user / team / role. project 82.3%, agent 2.1% |
+| `session_id` populated? | **Yes, 100%** — 30,086 sessions. No sessionisation heuristic needed |
+| `DailyTagSpend` grain | Genuine daily grain; `date` is **`text`**, not `date` |
+| `user` column collapse? | **Yes** — 97% `default_user_id`. `DailyUserSpend` is unusable |
+| `status` vocabulary | Exactly `success` / `failure`. 7.5% failure |
+| `SpendLogs` volume | 112,559 rows over ~10 weeks — small enough to query directly |
 
-If `session_id` is unpopulated, sessions can be recovered two ways without touching Exulu:
-sessionise by user plus inactivity gap (standard web-analytics practice), or exploit the
-fact that multi-turn chats resend their history — hashing the first user message plus user
-id recovers conversation identity almost exactly.
+Two results changed the design rather than confirming it:
+
+- **Exulu identity is absent from `metadata`.** `metadata ? 'user_id'` matches **0 of
+  112,559** rows; only LiteLLM's own `user_api_key_user_id` is present. Any implementation
+  reading `metadata->>'user_id'` returns nothing. `request_tags` is the sole attribution
+  channel — which is what this design already assumed, and why it survived.
+- **`messages` is always empty**, on every row, despite prompt storage being enabled in
+  production. Prompts are in `proxy_server_request` (85% of rows) and outputs in `response`
+  (82%). Phase 3 needs no configuration change to proceed.
 
 ## Architecture
 
@@ -316,9 +340,9 @@ doubles as the client-billing-split export referenced in the non-goals.
 This design describes more than one implementation plan's worth of work. It decomposes into
 four phases, each independently useful, each getting its own plan.
 
-**Phase 0 — Empirical verification.** Read-only queries against OPEN's live LiteLLM
-database to settle the runtime unknowns listed above. Half a day. Its findings can
-invalidate parts of Phases 1 and 3, so nothing else starts first.
+**Phase 0 — Empirical verification. ✅ Done 2026-08-11.** Settled against a production
+backup restored locally. It caught two defects that would each have produced a silently
+empty or wrong Phase 1, and confirmed the gate: coverage is 100%, so Phase 1 proceeds.
 
 **Phase 1 — Snapshot and report.** Own schema, monthly snapshot job, Panels 1, 2, 3 and 4,
 HTML email plus CSV. This is the whole promise of the design: an artifact that arrives and
