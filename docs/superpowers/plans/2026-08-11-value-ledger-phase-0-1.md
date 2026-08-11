@@ -182,9 +182,9 @@ const PROBES: Probe[] = [
             WHERE "startTime" >= NOW() - INTERVAL '30 days'
           )
           SELECT ROUND(SUM(spend)::numeric, 2) AS total_spend,
-                 ROUND(SUM(spend) FILTER (WHERE tags @> '["__probe__"]' IS NOT NULL
-                   AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(tags) t
-                               WHERE t LIKE 'user_id\\_%'))::numeric, 2) AS spend_with_user_tag,
+                 ROUND(SUM(spend) FILTER (WHERE EXISTS (
+                   SELECT 1 FROM jsonb_array_elements_text(tags) t
+                   WHERE t LIKE 'user_id\\_%'))::numeric, 2) AS spend_with_user_tag,
                  ROUND(SUM(spend) FILTER (WHERE EXISTS (
                    SELECT 1 FROM jsonb_array_elements_text(tags) t
                    WHERE t LIKE 'team_id\\_%'))::numeric, 2) AS spend_with_team_tag,
@@ -306,6 +306,12 @@ cd ~/Desktop/Projects/exulu/adoption-and-value-tracker
 git add -A
 git commit -m "feat: phase 0 read-only litellm probe script"
 ```
+
+> **Implemented 2026-08-11 (commits ce5ec2f, 0e257c8).** Two refinements landed during
+> review and are in the code rather than above: the `pool.connect()` call and the two
+> `SET` statements are wrapped so a connection failure writes a `## CONNECTION FAILED`
+> section to **stdout** (it would otherwise leave an empty `phase0-findings.md` with the
+> error only on stderr), and cleanup moved into a `finally` guarded by `if (client)`.
 
 - [ ] **Step 7: Hand off to Daniel**
 
