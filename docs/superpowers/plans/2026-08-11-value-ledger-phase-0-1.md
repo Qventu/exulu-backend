@@ -668,7 +668,30 @@ describe("valuesForDimension", () => {
     expect(valuesForDimension(tags, "user_id")).toEqual(["1", "2"]);
   });
 });
+
+describe("parseClientTool", () => {
+  it("reads the coarse User-Agent tag", () => {
+    expect(parseClientTool("User-Agent: claude-cli")).toBe("claude-cli");
+  });
+
+  it("ignores the version-specific variant so tools are not double counted", () => {
+    // Production emits both forms for the same request; counting both would
+    // report claude-cli twice and inflate every tool share.
+    expect(parseClientTool("User-Agent: claude-cli/2.1.170 (external, cli)")).toBeNull();
+  });
+
+  it("returns null for an Exulu dimension tag", () => {
+    expect(parseClientTool("user_id_42")).toBeNull();
+  });
+
+  it("is not confused by parseTag — User-Agent tags are not dimensions", () => {
+    expect(parseTag("User-Agent: claude-cli")).toBeNull();
+  });
+});
 ```
+
+Import `parseClientTool` alongside `parseTag` and `valuesForDimension` at the top of the
+test file.
 
 - [ ] **Step 2: Run it to confirm it fails**
 
@@ -712,12 +735,30 @@ export function valuesForDimension(tags: string[], dim: Dimension): string[] {
   }
   return out;
 }
+
+/**
+ * LiteLLM auto-tags every request with the caller's User-Agent. These do NOT follow the
+ * `dimension_value` convention — the format is `User-Agent: claude-cli`, with a colon and
+ * space — so parseTag() correctly returns null for them and they need their own parser.
+ *
+ * Two granularities are emitted: a coarse tag with no "/" ("User-Agent: claude-cli",
+ * 14 variants in production) and a version-specific one ("User-Agent: claude-cli/2.1.170
+ * (external, cli)", 130 variants). Only the coarse tag is a useful reporting dimension.
+ */
+const UA_PREFIX = "User-Agent: ";
+
+export function parseClientTool(tag: string): string | null {
+  if (!tag.startsWith(UA_PREFIX)) return null;
+  const value = tag.slice(UA_PREFIX.length).trim();
+  if (value.length === 0) return null;
+  return value.includes("/") ? null : value;   // drop the versioned variant
+}
 ```
 
 - [ ] **Step 4: Run the tests**
 
 Run: `pnpm vitest run tests/metrics/tags.test.ts`
-Expected: 6 passed
+Expected: 10 passed
 
 - [ ] **Step 5: Commit**
 
@@ -739,7 +780,7 @@ defines the contract and a fixture implementation so Tasks 7–10 are pure and f
 
 **Interfaces:**
 - Produces: `LiteLLMSource`, `DailyTagRow`, `UserMonthRow`, `UserDayRow`,
-  `ModelSpendRow`, `MonthTotals`, `ProvisionedUser`, `TeamRow`, `AgentLastSeenRow`;
+  `ModelSpendRow`, `MonthTotals`, `UserTeamRow`, `ClientToolRow`, `AgentLastSeenRow`;
   `Snapshot` and its four panel types; `makeFakeSource(rows)` 
 - Consumes: `Dimension` from Task 4
 
@@ -770,9 +811,21 @@ export type UserMonthRow = { userId: string; month: string };  // month = YYYY-M
 
 export type ModelSpendRow = { model: string; spendUsd: number };
 
-export type ProvisionedUser = { userId: string; teamId: string | null };
+/**
+ * A user's team, recovered from tag CO-OCCURRENCE on the same request — a row carrying
+ * both `user_id_42` and `team_name_engineering`. Phase 0 found LiteLLM_UserTable holds 7
+ * rows against 52 users in tags, and LiteLLM_TeamTable is empty, so the identity tables
+ * cannot supply this. Co-occurrence is only visible in SpendLogs, not in DailyTagSpend.
+ */
+export type UserTeamRow = { userId: string; teamLabel: string };
 
-export type TeamRow = { teamId: string; alias: string | null };
+/** Client tool from LiteLLM's auto-added `User-Agent: ` tag (coarse form only). */
+export type ClientToolRow = {
+  tool: string;
+  spendUsd: number;
+  requests: number;
+  activeUsers: number;
+};
 
 export type AgentLastSeenRow = {
   agentId: string;
@@ -795,8 +848,10 @@ export interface LiteLLMSource {
   /** Requests and spend that carry a routine_id_* tag. */
   automationTotals(fromIso: string, toIso: string): Promise<{ requests: number; spendUsd: number }>;
   modelSpend(fromIso: string, toIso: string): Promise<ModelSpendRow[]>;
-  provisionedUsers(): Promise<ProvisionedUser[]>;
-  teams(): Promise<TeamRow[]>;
+  /** (user, team) pairs from tag co-occurrence. Replaces the empty identity tables. */
+  userTeams(fromIso: string, toIso: string): Promise<UserTeamRow[]>;
+  /** Client tools from LiteLLM's auto-added User-Agent tags. */
+  clientTools(fromIso: string, toIso: string): Promise<ClientToolRow[]>;
   /** Agents with any historical traffic, and when they were last seen. */
   agentsLastSeen(asOfIso: string): Promise<AgentLastSeenRow[]>;
 }
@@ -831,6 +886,13 @@ export type TeamAdoption = {
   medianActiveDays: number;
 };
 
+export type ClientToolAdoption = {
+  tool: string;
+  spendReporting: number;
+  activePeople: number;
+  shareOfSpendPct: number;
+};
+
 export type AdoptionPanel = {
   activePeople: number;
   medianActiveDays: number;
@@ -838,6 +900,7 @@ export type AdoptionPanel = {
   concentrationTop10PctOfSpendPct: number;
   concentrationTop10PctOfRequestsPct: number;
   teams: TeamAdoption[];
+  clientTools: ClientToolAdoption[];
 };
 
 export type ReliabilityPanel = {
@@ -856,10 +919,17 @@ export type AbandonedAgent = {
   historicalSpendReporting: number;
 };
 
+/**
+ * No seat roster exists in LiteLLM (UserTable: 7 rows vs 52 users in tags; TeamTable
+ * empty), so there is no honest "dormant ÷ provisioned" percentage — dividing by 7 would
+ * have reported a confidently wrong figure. Lapse is expressed against observed history
+ * instead, which needs no roster.
+ */
 export type WastePanel = {
-  provisionedUserCount: number;
-  dormantUserCount: number;
-  dormantUserPct: number;
+  activeThisMonth: number;
+  activeInPriorWindow: number;   // distinct users active in the 3 months before this one
+  lapsedUsers: number;           // active in the prior window, absent this month
+  returningUsers: number;        // active this month, absent from the prior window
   abandonedAgents: AbandonedAgent[];
   modelMix: { model: string; spendReporting: number; sharePct: number }[];
 };
@@ -888,8 +958,8 @@ Create `src/litellm/source-fake.ts`:
 
 ```ts
 import type {
-  AgentLastSeenRow, DailyTagRow, LiteLLMSource, ModelSpendRow,
-  MonthTotals, ProvisionedUser, TeamRow, UserDayRow, UserMonthRow,
+  AgentLastSeenRow, ClientToolRow, DailyTagRow, LiteLLMSource, ModelSpendRow,
+  MonthTotals, UserDayRow, UserMonthRow, UserTeamRow,
 } from "./types";
 
 export type FakeData = {
@@ -900,8 +970,8 @@ export type FakeData = {
   humanUserMonths?: UserMonthRow[];
   automationTotals?: { requests: number; spendUsd: number };
   modelSpend?: ModelSpendRow[];
-  provisionedUsers?: ProvisionedUser[];
-  teams?: TeamRow[];
+  userTeams?: UserTeamRow[];
+  clientTools?: ClientToolRow[];
   agentsLastSeen?: AgentLastSeenRow[];
 };
 
@@ -918,8 +988,8 @@ export function makeFakeSource(data: FakeData): LiteLLMSource {
     async humanUserMonths() { return data.humanUserMonths ?? []; },
     async automationTotals() { return data.automationTotals ?? { requests: 0, spendUsd: 0 }; },
     async modelSpend() { return data.modelSpend ?? []; },
-    async provisionedUsers() { return data.provisionedUsers ?? []; },
-    async teams() { return data.teams ?? []; },
+    async userTeams() { return data.userTeams ?? []; },
+    async clientTools() { return data.clientTools ?? []; },
     async agentsLastSeen() { return data.agentsLastSeen ?? []; },
   };
 }
@@ -1000,15 +1070,19 @@ DROP TABLE IF EXISTS "LiteLLM_TeamTable";
 CREATE TABLE "LiteLLM_TeamTable" (team_id TEXT PRIMARY KEY, team_alias TEXT);
 
 -- Two users, one of them also driving an automated routine.
+-- Tag shapes match production: LiteLLM auto-adds a coarse and a versioned
+-- User-Agent tag to every request.
 INSERT INTO "LiteLLM_SpendLogs" VALUES
  ('r1','2026-08-01T09:00:00Z', 1.00,'gpt-x','success',
-    '["user_id_1","team_id_t1","agent_id_a1"]'),
+    '["user_id_1","team_id_t1","team_name_eng","agent_id_a1",
+      "User-Agent: claude-cli","User-Agent: claude-cli/2.1.170 (external, cli)"]'),
  ('r2','2026-08-01T10:00:00Z', 2.00,'gpt-x','success',
-    '["user_id_1","team_id_t1","agent_id_a1"]'),
+    '["user_id_1","team_id_t1","team_name_eng","agent_id_a1",
+      "User-Agent: claude-cli","User-Agent: claude-cli/2.1.170 (external, cli)"]'),
  ('r3','2026-08-02T09:00:00Z', 4.00,'gpt-y','failure',
-    '["user_id_2","team_id_t1"]'),
+    '["user_id_2","team_id_t1","team_name_eng","User-Agent: ai-sdk"]'),
  ('r4','2026-08-03T09:00:00Z', 8.00,'gpt-y','success',
-    '["user_id_1","routine_id_rt1"]'),
+    '["user_id_1","routine_id_rt1","User-Agent: ai-sdk"]'),
  ('r5','2026-08-04T09:00:00Z',16.00,'gpt-y','success', '[]');
 
 INSERT INTO "LiteLLM_UserTable" VALUES ('1','t1'), ('2','t1'), ('3','t1');
@@ -1077,6 +1151,27 @@ describe("source-sql", () => {
     expect(a.requests).toBe(1);
     expect(a.spendUsd).toBeCloseTo(8.0, 6);
   });
+
+  it("recovers user->team pairs from tag co-occurrence", async () => {
+    const pairs = await created.source.userTeams(FROM, TO);
+    expect(pairs).toEqual(
+      expect.arrayContaining([
+        { userId: "1", teamLabel: "eng" },
+        { userId: "2", teamLabel: "eng" },
+      ]),
+    );
+    expect(pairs).toHaveLength(2);   // deduplicated across r1/r2
+  });
+
+  it("counts client tools once, ignoring the versioned User-Agent variant", async () => {
+    const tools = await created.source.clientTools(FROM, TO);
+    const claude = tools.find((t) => t.tool === "claude-cli")!;
+    // r1 + r2 only. If the versioned tag were also counted this would be 6.00.
+    expect(claude.spendUsd).toBeCloseTo(3.0, 6);
+    expect(claude.requests).toBe(2);
+    expect(claude.activeUsers).toBe(1);
+    expect(tools.some((t) => t.tool.includes("/"))).toBe(false);
+  });
 });
 ```
 
@@ -1113,7 +1208,7 @@ import type pg from "pg";
 import { createLiteLLMPool } from "../db/litellm";
 import type {
   AgentLastSeenRow, DailyTagRow, LiteLLMSource, ModelSpendRow,
-  MonthTotals, ProvisionedUser, TeamRow, UserDayRow, UserMonthRow,
+  ClientToolRow, MonthTotals, UserDayRow, UserMonthRow, UserTeamRow,
 } from "./types";
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -1227,14 +1322,52 @@ export function createLiteLLMSource(connectionString: string): {
       return rows.map((r) => ({ model: r.model, spendUsd: num(r.spend) })) satisfies ModelSpendRow[];
     },
 
-    async provisionedUsers() {
-      const { rows } = await pool.query(`SELECT user_id, team_id FROM "LiteLLM_UserTable"`);
-      return rows.map((r) => ({ userId: r.user_id, teamId: r.team_id })) satisfies ProvisionedUser[];
+    async userTeams(from, to) {
+      // Co-occurrence on the same row: the user tag and the team tag from one request.
+      // LiteLLM_UserTable/TeamTable cannot serve this — Phase 0 found 7 rows and 0 rows
+      // respectively against 52 users actually seen in tags.
+      const { rows } = await pool.query(
+        `SELECT DISTINCT substring(u from 9) AS user_id, substring(t from 11) AS team_label
+         FROM "LiteLLM_SpendLogs" s,
+              LATERAL jsonb_array_elements_text(s.request_tags::jsonb) AS u,
+              LATERAL jsonb_array_elements_text(s.request_tags::jsonb) AS t
+         WHERE s."startTime" >= $1 AND s."startTime" < $2
+           AND u LIKE 'user\\_id\\_%' AND t LIKE 'team\\_name\\_%'`,
+        [from, to],
+      );
+      return rows.map((r) => ({
+        userId: r.user_id, teamLabel: r.team_label,
+      })) satisfies UserTeamRow[];
     },
 
-    async teams() {
-      const { rows } = await pool.query(`SELECT team_id, team_alias FROM "LiteLLM_TeamTable"`);
-      return rows.map((r) => ({ teamId: r.team_id, alias: r.team_alias })) satisfies TeamRow[];
+    async clientTools(from, to) {
+      // One row per request: pull the coarse tool tag and the user tag, then group.
+      // LiteLLM emits both "User-Agent: claude-cli" and a versioned variant containing
+      // "/"; counting both would double every tool's spend, so the versioned form is
+      // excluded here as well as in parseClientTool().
+      // Verified against production: July claude-cli = 3777.33 / 46,602 req / 28 users.
+      const { rows } = await pool.query(
+        `SELECT tool,
+                COALESCE(SUM(spend),0) AS spend,
+                COUNT(*) AS requests,
+                COUNT(DISTINCT user_id) AS users
+         FROM (
+           SELECT s.spend,
+             (SELECT substring(x from 13) FROM jsonb_array_elements_text(s.request_tags::jsonb) x
+              WHERE x LIKE 'User-Agent: %' AND x NOT LIKE '%/%' LIMIT 1) AS tool,
+             (SELECT substring(x from 9) FROM jsonb_array_elements_text(s.request_tags::jsonb) x
+              WHERE x LIKE 'user\\_id\\_%' LIMIT 1) AS user_id
+           FROM "LiteLLM_SpendLogs" s
+           WHERE s."startTime" >= $1 AND s."startTime" < $2
+         ) z
+         WHERE tool IS NOT NULL
+         GROUP BY 1 ORDER BY 2 DESC`,
+        [from, to],
+      );
+      return rows.map((r) => ({
+        tool: r.tool, spendUsd: num(r.spend),
+        requests: num(r.requests), activeUsers: num(r.users),
+      })) satisfies ClientToolRow[];
     },
 
     async agentsLastSeen(asOf) {
@@ -1260,12 +1393,24 @@ export function createLiteLLMSource(connectionString: string): {
 ```
 
 `substring(u from 9)` strips `user_id_` (8 chars); `substring(t from 10)` strips
-`agent_id_` (9 chars). Both are covered by the Task 6 tests.
+`agent_id_` (9 chars); `substring(t from 11)` strips `team_name_` (10 chars);
+`substring(x from 13)` strips `User-Agent: ` (12 chars). All covered by the Task 6 tests.
+
+**Two things production taught us about these queries — do not "simplify" them away:**
+
+1. **A user can carry more than one team tag.** In July, one of 45 users appears under two
+   teams. Left unresolved, summing per-team `activePeople` yields 46 for 45 people and the
+   team table silently stops adding up. Task 8 must collapse each user to exactly one team
+   deterministically — see the rule there.
+2. **`SpendLogs` and `DailyTagSpend` do not reconcile exactly.** July claude-cli is
+   $3,777.33 from `SpendLogs` against $3,765.90 from `DailyTagSpend` — 0.3% apart, almost
+   certainly a UTC day-boundary difference. Both are internally consistent; mixing them in
+   one figure is not. **`SpendLogs` is the single source for every number in the report.**
 
 - [ ] **Step 6: Run the integration test**
 
 Run: `pnpm vitest run tests/litellm/source-sql.integration.test.ts`
-Expected: 5 passed
+Expected: 7 passed
 
 - [ ] **Step 7: Commit**
 
@@ -1605,15 +1750,47 @@ describe("buildAdoption", () => {
         { userId: "2", day: "2026-08-01" },
         { userId: "3", day: "2026-08-01" },
       ],
-      provisionedUsers: [
-        { userId: "1", teamId: "t1" },
-        { userId: "2", teamId: "t1" },
-        { userId: "3", teamId: "t2" },
+      userTeams: [
+        { userId: "1", teamLabel: "Eng" },
+        { userId: "2", teamLabel: "Eng" },
+        { userId: "3", teamLabel: "Solo" },
       ],
-      teams: [{ teamId: "t1", alias: "Eng" }, { teamId: "t2", alias: "Solo" }],
     });
     const a = await buildAdoption(src, OPTS);
     expect(a.teams.map((t) => t.teamLabel).sort()).toEqual(["Eng", "Other"]);
+  });
+
+  it("collapses a user carrying two team tags to exactly one team", async () => {
+    // Production has one such user. Without collapsing, per-team activePeople sums to
+    // more than the actual headcount and the team table stops adding up.
+    const src = makeFakeSource({
+      humanUserDays: [
+        { userId: "1", day: "2026-08-01" },
+        { userId: "2", day: "2026-08-01" },
+      ],
+      userTeams: [
+        { userId: "1", teamLabel: "Beta" },
+        { userId: "1", teamLabel: "Alpha" },
+        { userId: "2", teamLabel: "Alpha" },
+      ],
+    });
+    const a = await buildAdoption(src, { ...OPTS, minN: 1 });
+    expect(a.teams.reduce((s, t) => s + t.activePeople, 0)).toBe(2);
+    expect(a.teams.find((t) => t.teamLabel === "Alpha")!.activePeople).toBe(2);
+    expect(a.teams.some((t) => t.teamLabel === "Beta")).toBe(false);
+  });
+
+  it("reports client tools with spend shares", async () => {
+    const src = makeFakeSource({
+      clientTools: [
+        { tool: "claude-cli", spendUsd: 75, requests: 100, activeUsers: 8 },
+        { tool: "ai-sdk", spendUsd: 25, requests: 40, activeUsers: 3 },
+      ],
+    });
+    const a = await buildAdoption(src, OPTS);
+    expect(a.clientTools[0]).toEqual({
+      tool: "claude-cli", spendReporting: 75, activePeople: 8, shareOfSpendPct: 75,
+    });
   });
 });
 ```
@@ -1666,8 +1843,8 @@ export async function buildAdoption(
   const days = await src.humanUserDays(opts.fromIso, opts.toIso);
   const months = await src.humanUserMonths(opts.retentionFromIso, opts.toIso);
   const userRows = await src.dailyByTagPrefix(opts.fromIso, opts.toIso, "user_id_");
-  const provisioned = await src.provisionedUsers();
-  const teamRows = await src.teams();
+  const userTeamRows = await src.userTeams(opts.fromIso, opts.toIso);
+  const toolRows = await src.clientTools(opts.fromIso, opts.toIso);
 
   // Active days per user
   const daysByUser = new Map<string, Set<string>>();
@@ -1715,13 +1892,19 @@ export async function buildAdoption(
       }),
     }));
 
-  // Teams
-  const teamOf = new Map(provisioned.map((p) => [p.userId, p.teamId]));
-  const aliasOf = new Map(teamRows.map((t) => [t.teamId, t.alias ?? t.teamId]));
+  // Teams. A user may carry more than one team tag (one of 45 did in production), so
+  // collapse to exactly one team per user — otherwise per-team activePeople sums to more
+  // than the headcount and the table stops adding up. Deterministic rule: the
+  // alphabetically first label, so the same input always yields the same report.
+  const teamOf = new Map<string, string>();
+  for (const { userId, teamLabel } of userTeamRows) {
+    const current = teamOf.get(userId);
+    if (current === undefined || teamLabel < current) teamOf.set(userId, teamLabel);
+  }
+
   const byTeam = new Map<string, { users: Set<string>; spend: number; days: number[] }>();
   for (const [userId, daySet] of daysByUser) {
-    const teamId = teamOf.get(userId) ?? "unassigned";
-    const label = aliasOf.get(teamId) ?? "Unassigned";
+    const label = teamOf.get(userId) ?? "Unassigned";
     if (!byTeam.has(label)) byTeam.set(label, { users: new Set(), spend: 0, days: [] });
     const entry = byTeam.get(label)!;
     entry.users.add(userId);
@@ -1735,6 +1918,14 @@ export async function buildAdoption(
     medianActiveDays: median(e.days),
   }));
 
+  const toolSpendTotal = toolRows.reduce((s, t) => s + t.spendUsd, 0);
+  const clientTools = toolRows.map((t) => ({
+    tool: t.tool,
+    spendReporting: t.spendUsd * opts.fxRateUsdToReporting,
+    activePeople: t.activeUsers,
+    shareOfSpendPct: toolSpendTotal > 0 ? (t.spendUsd / toolSpendTotal) * 100 : 0,
+  }));
+
   return {
     activePeople: daysByUser.size,
     medianActiveDays: median([...daysByUser.values()].map((s) => s.size)),
@@ -1742,6 +1933,7 @@ export async function buildAdoption(
     concentrationTop10PctOfSpendPct: topDecileSharePct([...spendByUser.values()]),
     concentrationTop10PctOfRequestsPct: topDecileSharePct([...requestsByUser.values()]),
     teams: rollUpBelowMinN(teams, opts.minN),
+    clientTools,
   };
 }
 ```
@@ -1769,7 +1961,7 @@ git add -A && git commit -m "feat: panel 2 adoption with retention cohorts and m
 - Produces: `buildReliability(src, opts): Promise<ReliabilityPanel>` with
   `opts = { fromIso, toIso, fxRateUsdToReporting }`;
   `buildWaste(src, opts): Promise<WastePanel>` with
-  `opts = { fromIso, toIso, dormancyFromIso, abandonedBeforeDay, fxRateUsdToReporting }`
+  `opts = { fromIso, toIso, priorWindowFromIso, abandonedBeforeDay, fxRateUsdToReporting }`
 
 Spend cannot be attributed to failed requests — the daily tables carry success and
 failure counts but not spend split by outcome, and `SpendLogs.spend` is per row without a
@@ -1815,25 +2007,37 @@ import { makeFakeSource } from "../../src/litellm/source-fake";
 import { buildWaste } from "../../src/metrics/waste";
 
 const OPTS = {
-  fromIso: "2026-06-01T00:00:00Z", toIso: "2026-09-01T00:00:00Z",
-  dormancyFromIso: "2026-07-02T00:00:00Z",
+  fromIso: "2026-08-01T00:00:00Z", toIso: "2026-09-01T00:00:00Z",
+  priorWindowFromIso: "2026-05-01T00:00:00Z",
   abandonedBeforeDay: "2026-08-01",
   fxRateUsdToReporting: 1,
 };
 
 describe("buildWaste", () => {
-  it("counts provisioned users with no recent activity as dormant", async () => {
-    const src = makeFakeSource({
-      provisionedUsers: [
-        { userId: "1", teamId: null }, { userId: "2", teamId: null },
-        { userId: "3", teamId: null }, { userId: "4", teamId: null },
-      ],
-      humanUserDays: [{ userId: "1", day: "2026-08-01" }],
-    });
+  it("counts lapsed and returning users against observed history, not a roster", async () => {
+    // The fake returns the same rows for any window, so drive the two windows apart
+    // by stubbing humanUserDays per call.
+    const thisMonth = [{ userId: "1", day: "2026-08-05" }, { userId: "9", day: "2026-08-06" }];
+    const priorWin = [{ userId: "1", day: "2026-06-05" }, { userId: "2", day: "2026-06-06" },
+                      { userId: "3", day: "2026-07-07" }];
+    let call = 0;
+    const src = {
+      ...makeFakeSource({}),
+      async humanUserDays() { return call++ === 0 ? thisMonth : priorWin; },
+    };
     const w = await buildWaste(src, OPTS);
-    expect(w.provisionedUserCount).toBe(4);
-    expect(w.dormantUserCount).toBe(3);
-    expect(w.dormantUserPct).toBeCloseTo(75, 6);
+    expect(w.activeThisMonth).toBe(2);       // users 1, 9
+    expect(w.activeInPriorWindow).toBe(3);   // users 1, 2, 3
+    expect(w.lapsedUsers).toBe(2);           // 2 and 3 stopped
+    expect(w.returningUsers).toBe(1);        // 9 is new
+  });
+
+  it("exposes no provisioned-seat denominator", async () => {
+    // LiteLLM has no roster (7 UserTable rows vs 52 real users), so any percentage
+    // against a provisioned count would be confidently wrong.
+    const w = await buildWaste(makeFakeSource({}), OPTS);
+    expect(w).not.toHaveProperty("provisionedUserCount");
+    expect(w).not.toHaveProperty("dormantUserPct");
   });
 
   it("flags agents last seen before the cutoff as abandoned", async () => {
@@ -1860,7 +2064,7 @@ describe("buildWaste", () => {
 
   it("names agents but never people", async () => {
     const src = makeFakeSource({
-      provisionedUsers: [{ userId: "secret-person", teamId: null }],
+      humanUserDays: [{ userId: "secret-person", day: "2026-08-01" }],
     });
     const w = await buildWaste(src, OPTS);
     expect(JSON.stringify(w)).not.toContain("secret-person");
@@ -1911,8 +2115,8 @@ import type { AbandonedAgent, WastePanel } from "./types";
 export type WasteOptions = {
   fromIso: string;
   toIso: string;
-  /** Start of the dormancy window (e.g. 60 days before month end). */
-  dormancyFromIso: string;
+  /** Start of the prior window used for lapse detection (3 months before this month). */
+  priorWindowFromIso: string;
   /** Agents last seen strictly before this day are abandoned (YYYY-MM-DD). */
   abandonedBeforeDay: string;
   fxRateUsdToReporting: number;
@@ -1921,13 +2125,17 @@ export type WasteOptions = {
 export async function buildWaste(
   src: LiteLLMSource, opts: WasteOptions,
 ): Promise<WastePanel> {
-  const provisioned = await src.provisionedUsers();
-  const recentDays = await src.humanUserDays(opts.dormancyFromIso, opts.toIso);
+  const thisMonth = await src.humanUserDays(opts.fromIso, opts.toIso);
+  const prior = await src.humanUserDays(opts.priorWindowFromIso, opts.fromIso);
   const agents = await src.agentsLastSeen(opts.toIso);
   const models = await src.modelSpend(opts.fromIso, opts.toIso);
 
-  const activeRecently = new Set(recentDays.map((d) => d.userId));
-  const dormantUserCount = provisioned.filter((p) => !activeRecently.has(p.userId)).length;
+  // No seat roster exists in LiteLLM, so lapse is measured against observed history
+  // rather than a provisioned denominator. See WastePanel's note.
+  const nowSet = new Set(thisMonth.map((d) => d.userId));
+  const priorSet = new Set(prior.map((d) => d.userId));
+  const lapsedUsers = [...priorSet].filter((u) => !nowSet.has(u)).length;
+  const returningUsers = [...nowSet].filter((u) => !priorSet.has(u)).length;
 
   const abandonedAgents: AbandonedAgent[] = agents
     .filter((a) => a.lastSeenDay === null || a.lastSeenDay < opts.abandonedBeforeDay)
@@ -1941,10 +2149,10 @@ export async function buildWaste(
   const totalModelSpend = models.reduce((s, m) => s + m.spendUsd, 0);
 
   return {
-    provisionedUserCount: provisioned.length,
-    dormantUserCount,
-    dormantUserPct:
-      provisioned.length > 0 ? (dormantUserCount / provisioned.length) * 100 : 0,
+    activeThisMonth: nowSet.size,
+    activeInPriorWindow: priorSet.size,
+    lapsedUsers,
+    returningUsers,
     abandonedAgents,
     modelMix: models.map((m) => ({
       model: m.model,
@@ -1976,7 +2184,7 @@ git add -A && git commit -m "feat: panels 3 and 4 reliability and waste ledger"
 
 **Interfaces:**
 - Consumes: all four panel builders, `AppConfig`, own db client
-- Produces: `monthWindow(month): { fromIso; toIso; dormancyFromIso; abandonedBeforeDay }`,
+- Produces: `monthWindow(month): { fromIso; toIso; priorWindowFromIso; abandonedBeforeDay }`,
   `assertMonthComplete(src, month, now): Promise<void>` (throws),
   `buildSnapshot(src, cfg, month, now): Promise<Snapshot>`,
   `freezeSnapshot(db, snapshot): Promise<{ frozen: boolean }>`
@@ -2059,23 +2267,23 @@ import type { LiteLLMSource } from "../litellm/types";
 export type MonthWindow = {
   fromIso: string;
   toIso: string;
-  dormancyFromIso: string;
+  priorWindowFromIso: string;
   abandonedBeforeDay: string;
 };
 
-const DORMANCY_DAYS = 60;
+const PRIOR_WINDOW_MONTHS = 3;
 const ABANDONED_DAYS = 30;
 
 export function monthWindow(month: string): MonthWindow {
   const [y, m] = month.split("-").map(Number) as [number, number];
   const from = new Date(Date.UTC(y, m - 1, 1));
   const to = new Date(Date.UTC(y, m, 1));
-  const dormancyFrom = new Date(to.getTime() - DORMANCY_DAYS * 86_400_000);
+  const priorWindowFrom = new Date(Date.UTC(y, m - 1 - PRIOR_WINDOW_MONTHS, 1));
   const abandonedBefore = new Date(to.getTime() - ABANDONED_DAYS * 86_400_000);
   return {
     fromIso: from.toISOString(),
     toIso: to.toISOString(),
-    dormancyFromIso: dormancyFrom.toISOString(),
+    priorWindowFromIso: priorWindowFrom.toISOString(),
     abandonedBeforeDay: abandonedBefore.toISOString().slice(0, 10),
   };
 }
@@ -2141,7 +2349,7 @@ describe("buildSnapshot", () => {
     const src = makeFakeSource({
       monthTotals: { spendUsd: 10, apiRequests: 1, successfulRequests: 1, failedRequests: 0 },
       humanUserDays: [{ userId: "person-42", day: "2026-08-01" }],
-      provisionedUsers: [{ userId: "person-42", teamId: null }],
+      userTeams: [{ userId: "person-42", teamLabel: "Eng" }],
     });
     const snap = await buildSnapshot(src, CFG, "2026-08", new Date("2026-09-01T12:00:00Z"));
     expect(JSON.stringify(snap)).not.toContain("person-42");
@@ -2186,7 +2394,7 @@ export async function buildSnapshot(
     buildReliability(src, { fromIso: w.fromIso, toIso: w.toIso, fxRateUsdToReporting: fx }),
     buildWaste(src, {
       fromIso: w.fromIso, toIso: w.toIso,
-      dormancyFromIso: w.dormancyFromIso,
+      priorWindowFromIso: w.priorWindowFromIso,
       abandonedBeforeDay: w.abandonedBeforeDay,
       fxRateUsdToReporting: fx,
     }),
@@ -2515,6 +2723,10 @@ export function makeSnapshotFixture(overrides: Partial<Snapshot> = {}): Snapshot
         { teamLabel: "Engineering", activePeople: 28, spendReporting: 3600, medianActiveDays: 12 },
         { teamLabel: "Other", activePeople: 13, spendReporting: 1247, medianActiveDays: 4 },
       ],
+      clientTools: [
+        { tool: "claude-cli", spendReporting: 3777.33, activePeople: 28, shareOfSpendPct: 89.4 },
+        { tool: "ai-sdk", spendReporting: 42.4, activePeople: 16, shareOfSpendPct: 1.0 },
+      ],
     },
     reliability: {
       apiRequests: 51234, successfulRequests: 50890, failedRequests: 344,
@@ -2522,7 +2734,7 @@ export function makeSnapshotFixture(overrides: Partial<Snapshot> = {}): Snapshot
       automationSpendReporting: 610.5, automationSharePct: 8.04,
     },
     waste: {
-      provisionedUserCount: 52, dormantUserCount: 11, dormantUserPct: 21.15,
+      activeThisMonth: 41, activeInPriorWindow: 46, lapsedUsers: 11, returningUsers: 6,
       abandonedAgents: [
         { agentLabel: "legacy-summariser", lastSeenDay: "2026-05-14", historicalSpendReporting: 312.4 },
       ],
@@ -2639,13 +2851,19 @@ export function renderCsv(s: Snapshot): string {
     ["reliability", "api_requests", "", s.reliability.apiRequests],
     ["reliability", "failure_rate_pct", "", s.reliability.failureRatePct],
     ["reliability", "automation_share_pct", "", s.reliability.automationSharePct],
-    ["waste", "provisioned_users", "", s.waste.provisionedUserCount],
-    ["waste", "dormant_users", "", s.waste.dormantUserCount],
+    ["waste", "active_this_month", "", s.waste.activeThisMonth],
+    ["waste", "active_in_prior_window", "", s.waste.activeInPriorWindow],
+    ["waste", "lapsed_users", "", s.waste.lapsedUsers],
+    ["waste", "returning_users", "", s.waste.returningUsers],
   ];
 
   for (const t of s.adoption.teams) {
     rows.push(["adoption", "team_spend_reporting", t.teamLabel, t.spendReporting]);
     rows.push(["adoption", "team_active_people", t.teamLabel, t.activePeople]);
+  }
+  for (const t of s.adoption.clientTools) {
+    rows.push(["adoption", "client_tool_spend_reporting", t.tool, t.spendReporting]);
+    rows.push(["adoption", "client_tool_active_people", t.tool, t.activePeople]);
   }
   for (const m of s.waste.modelMix) {
     rows.push(["waste", "model_spend_reporting", m.model, m.spendReporting]);
@@ -2707,6 +2925,12 @@ export function renderHtml(s: Snapshot): string {
           `${cur} ${n.currency(a.historicalSpendReporting)} spent historically</li>`)
         .join("") + `</ul>`;
 
+  const tools = s.adoption.clientTools
+    .map((t) => `<tr><td>${n.raw(t.tool)}</td><td>${n.int(t.activePeople)}</td>` +
+      `<td>${cur} ${n.currency(t.spendReporting)}</td>` +
+      `<td>${n.pct(t.shareOfSpendPct)}%</td></tr>`)
+    .join("");
+
   const models = s.waste.modelMix
     .map((m) => `<tr><td>${n.raw(m.model)}</td>` +
       `<td>${cur} ${n.currency(m.spendReporting)}</td>` +
@@ -2747,6 +2971,8 @@ export function renderHtml(s: Snapshot): string {
 ${retention}</table>
 <table><tr><th>Team</th><th>Active</th><th>Spend</th><th>Median days</th></tr>
 ${teams}</table>
+<table><tr><th>Client tool</th><th>People</th><th>Spend</th><th>Share</th></tr>
+${tools}</table>
 
 <h2>Reliability and automation</h2>
 <p>${n.int(s.reliability.apiRequests)} requests,
@@ -2756,8 +2982,10 @@ ${teams}</table>
    ${cur} ${n.currency(s.reliability.automationSpendReporting)}) with no one waiting on it.</p>
 
 <h2>Waste</h2>
-<p>${n.int(s.waste.dormantUserCount)} of ${n.int(s.waste.provisionedUserCount)} provisioned
-   users (${n.pct(s.waste.dormantUserPct)}%) have not used the platform in 60 days.</p>
+<p>${n.int(s.waste.lapsedUsers)} people who used the platform in the previous three
+   months did not use it this month; ${n.int(s.waste.returningUsers)} used it for the first
+   time. LiteLLM holds no seat roster, so this compares observed activity rather than
+   issued licences.</p>
 ${agents}
 <table><tr><th>Model</th><th>Spend</th><th>Share</th></tr>${models}</table>
 
