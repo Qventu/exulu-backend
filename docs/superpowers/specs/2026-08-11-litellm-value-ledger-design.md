@@ -125,7 +125,7 @@ audit bus, and are out of reach under C4.
 | Metric | Definition |
 |---|---|
 | Success / failure rate | `successful_requests` and `failed_requests` from the daily tables |
-| Unattended automation volume | Requests and spend carrying a `routine_id_*` tag |
+| Unattended automation volume | Requests and spend carrying a `routine_id_*` tag. **Currently zero:** Phase 0 found 0 of 112,559 production requests carry this tag, while 8,951 carry `agent_id_*`. Either no scheduled routines run through the gateway, or they do not tag themselves. The report must render this as "no scheduled automation observed" rather than a bare `0`, which reads as a bug |
 | MCP tool calls | From `mcp_namespaced_tool_name`, including results where available |
 | Latency | `request_duration_ms`, and time-to-first-token via `completionStartTime` |
 | Cache efficiency | `cache_hit`, `cache_read_input_tokens` — spend avoided |
