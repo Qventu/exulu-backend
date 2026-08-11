@@ -65,7 +65,6 @@ adoption-and-value-tracker/
 │   └── app/
 │       └── api/jobs/monthly/route.ts  Token-authenticated trigger
 └── tests/
-    ├── fixtures/litellm-rows.ts
     ├── metrics/*.test.ts
     ├── snapshot/*.test.ts
     └── report/*.test.ts
@@ -365,7 +364,7 @@ const VALID = {
   SMTP_PASS: "p",
   SMTP_FROM: "ledger@example.com",
   REPORT_RECIPIENTS: "a@example.com, b@example.com",
-  JOB_TOKEN: "secret",
+  JOB_TOKEN: "secrettoken",   // must satisfy min(8)
 };
 
 describe("parseConfig", () => {
@@ -775,7 +774,6 @@ defines the contract and a fixture implementation so Tasks 7–10 are pure and f
 
 **Files:**
 - Create: `src/litellm/types.ts`, `src/litellm/source-fake.ts`, `src/metrics/types.ts`
-- Create: `tests/fixtures/litellm-rows.ts`
 - Test: `tests/litellm/source-fake.test.ts`
 
 **Interfaces:**
@@ -1193,11 +1191,19 @@ import pg from "pg";
 
 /** Read-only pool (G2). Every connection is pinned read-only at checkout. */
 export function createLiteLLMPool(connectionString: string): pg.Pool {
-  const pool = new pg.Pool({ connectionString, max: 4, statement_timeout: 120_000 });
-  pool.on("connect", (client) => {
-    void client.query("SET default_transaction_read_only = on");
+  return new pg.Pool({
+    connectionString,
+    max: 4,
+    statement_timeout: 120_000,
+    // pg-pool awaits onConnect before handing the client out. The `connect`
+    // EVENT works too — measured, the pin does take effect — but it fires while
+    // pg-pool is mid-dispatch, so the query emits a pg@8 DeprecationWarning and
+    // the behaviour is removed in pg@9. Warnings also break the "pristine test
+    // output" rule.
+    onConnect: async (client) => {
+      await client.query("SET default_transaction_read_only = on");
+    },
   });
-  return pool;
 }
 ```
 
