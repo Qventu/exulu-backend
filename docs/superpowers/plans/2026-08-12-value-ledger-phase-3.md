@@ -1054,9 +1054,20 @@ const classified = [
 const opts = { totalSessions: 100, classifierSpendUsd: 0.42, fxRateUsdToReporting: 0.5, enabled: true };
 
 describe("buildUseCasePanel", () => {
-  it("computes shares over classified sessions", () => {
+  // Denominator is classified.length (all sampled sessions, including unclassified) so
+  // all shares sum to 100%. With 4 sessions: code_change=2→50%, analysis=1→25%,
+  // unclassified=1→25%. Using labelled.length (3) as the denominator would give 66.7%
+  // for code_change and overstate every category by silently excluding unclassified sessions.
+  it("computes shares over all sampled sessions so the sum is 100%", () => {
     const p = buildUseCasePanel(classified, [], opts);
-    expect(p.shares.find((s) => s.label === "code_change")!.sharePct).toBeCloseTo(66.7, 1);
+    expect(p.shares.find((s) => s.label === "code_change")!.sharePct).toBeCloseTo(50, 1);
+    expect(p.shares.find((s) => s.label === "analysis")!.sharePct).toBeCloseTo(25, 1);
+  });
+
+  it("all shares sum to 100% when there is at least one classified session", () => {
+    const p = buildUseCasePanel(classified, [], opts);
+    const total = p.shares.reduce((acc, s) => acc + s.sharePct, 0);
+    expect(total).toBeCloseTo(100, 5);
   });
 
   it("reports unclassified as its own honest bucket, not dropped", () => {
