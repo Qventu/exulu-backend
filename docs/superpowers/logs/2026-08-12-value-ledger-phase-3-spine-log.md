@@ -42,3 +42,17 @@ NOT YET DONE: the spine is computed but NOT rendered — the report does not sho
 NOTE for any re-run: the local restore holds {"x": 1} placeholders for proxy_server_request.
   300 real bodies were patched back in by request_id from /tmp/litellm-restore/sample-rows.tsv
   and they cluster in 2026-06-17..24, so Phase 3 validation must target June, not July.
+SLIM Tasks 6-7 (spine rendering only, classifier out of scope): 4c35d75.
+  UseCasePanel defined in full so Tasks 4-5 need no second type migration; only toolSpine
+  populated, enabled:false.
+BUG caught by the implementer flagging a plan inconsistency and the controller checking it:
+  shares summed to 125% — labelled shares divided by labelled.length while the unclassified
+  share divided by classified.length. My plan's Step 2 test asserted the wrong side (66.7).
+  Fixed to classified.length everywhere (3c11990) + plan corrected (06515be), and a
+  sum-to-100% invariant test added — the assertion that would have caught it.
+Old-snapshot tolerance verified: a snapshot with useCase deleted still renders. This is the
+  Phase 1.5 crash pattern (TypeError on a field older frozen rows lack) and it is handled.
+STATE: 229 tests, tsc clean. The spine is now VISIBLE in the report:
+  "Showing 15 of 20 tools. Bash 152 calls 34.9% · Edit 66 · Read 64 · playwright · figma …"
+  plus a line stating classification is off and no prompt text was read.
+REMAINING in Phase 3: Tasks 4-5, the LLM classifier, gated on the tenant opt-in.
