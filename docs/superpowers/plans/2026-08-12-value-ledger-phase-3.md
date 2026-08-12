@@ -439,7 +439,7 @@ export function buildToolSpine(rows: ToolUseRow[]): ToolSpineRow[] {
 
   for (const r of rows) {
     for (const use of toolUsesFromBody(r.body)) {
-      const key = `${r.sessionId} ${use.id}`;
+      const key = `${r.sessionId}\u0000${use.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
       calls.set(use.name, (calls.get(use.name) ?? 0) + 1);
