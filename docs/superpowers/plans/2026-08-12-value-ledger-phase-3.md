@@ -290,6 +290,22 @@ git add -A && git commit -m "feat: extract first user message and tool uses from
 
 ---
 
+> **SUPERSEDED DURING EXECUTION — read this before Task 2.**
+>
+> Tasks 2 and 3 as written fetch whole request bodies and deduplicate in TypeScript. Task 3
+> ran that against real data and it returned **4,000 bodies and zero tool uses**: the
+> `ORDER BY "startTime" DESC LIMIT n` takes a contiguous recent slice, and the tool-bearing
+> rows sat outside it. Fetching bodies is also the wrong shape — median 10.8 KB across ~22%
+> of rows is hundreds of megabytes a month to extract a few thousand short strings.
+>
+> The shipped design extracts in SQL instead, with `DISTINCT (session_id, use_id)` doing the
+> dedup in Postgres and no bodies transferring at all. See `src/litellm/source-sql.ts`
+> `toolUseRows()`. Measured on real data: **4,105 naive occurrences collapse to 435 distinct
+> calls, 9.4× inflation avoided**, in 968 ms.
+>
+> `toolUsesFromBody` was removed with the body-fetching path; `firstUserMessage` remains and
+> Task 4 still uses it.
+
 ## Task 2: The deterministic tool spine
 
 Tools actually called, per month, with no LLM and no prompt content leaving the process.
