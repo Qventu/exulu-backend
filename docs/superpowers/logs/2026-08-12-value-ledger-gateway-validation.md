@@ -64,3 +64,25 @@ Confidence: min 0.10, median 0.90, max 1.00. Below threshold 4/45. No null resul
 Because of defect 3, these 45 validation calls were tagged to the worker key's user and will
 appear as ordinary usage in any report covering today. Cents, but it is exactly the failure
 the tag was meant to prevent.
+
+## Defect 4 — a month could become permanently undeliverable
+
+Found by Mailpit being down during a real run. `monthly.ts` froze the snapshot at line 51 and
+returned `already_frozen` at line 52, *before* `sendReport` at line 56. So a send failure left
+the month frozen and unsent, and every retry exited early with HTTP 200 — the cron would record
+success while the report never arrived. Recoverable only by manual DB surgery.
+
+Immutability (G3) exists so the numbers cannot change between readings; it was never meant to
+gate delivery. Fixed by separating the two: a nullable `sent_at` column, set only after
+`sendReport` resolves. Frozen-and-unsent re-renders from the **stored** payload (never
+recomputed, so the numbers are identical) and sends; frozen-and-sent stays a no-op.
+
+Verified end-to-end against the real stack: SMTP down → frozen, `sent_at` NULL; SMTP back →
+`resent`; third run → `already_frozen`, exactly one email delivered.
+
+## Scoreboard
+
+Seven defects surfaced this session by *running* the system. The suite grew 288 → 401 tests
+across the same period and caught none of them — every one lived in the seam between "the code
+is correct" and "the deployed system works": environment parsing, a real model's token
+accounting, a proxy's header handling, and process ordering around an I/O failure.
