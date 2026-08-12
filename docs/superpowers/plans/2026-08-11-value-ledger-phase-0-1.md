@@ -1886,16 +1886,22 @@ export async function buildAdoption(
     .map(([cohortMonth, members]) => ({
       cohortMonth,
       cohortSize: members.length,
-      points: Array.from({ length: opts.retentionMonths }, (_, i) => {
-        const offset = i + 1;
-        const target = addMonths(cohortMonth, offset);
-        const retained = members.filter((u) => monthsByUser.get(u)?.has(target)).length;
-        return {
-          monthOffset: offset,
-          retained,
-          pct: members.length > 0 ? (retained / members.length) * 100 : 0,
-        };
-      }),
+      // Only emit points whose target month has actually elapsed. A July report
+      // covering a July cohort cannot know its M+1 yet; emitting 0% there would
+      // read as total churn rather than "not observable", on the very panel the
+      // report's argument rests on. Verified against production: the June cohort
+      // showed M+2 0% purely because the window stopped at the reporting month.
+      points: Array.from({ length: opts.retentionMonths }, (_, i) => i + 1)
+        .filter((offset) => addMonths(cohortMonth, offset) <= opts.month)
+        .map((offset) => {
+          const target = addMonths(cohortMonth, offset);
+          const retained = members.filter((u) => monthsByUser.get(u)?.has(target)).length;
+          return {
+            monthOffset: offset,
+            retained,
+            pct: members.length > 0 ? (retained / members.length) * 100 : 0,
+          };
+        }),
     }));
 
   // Teams. A user may carry more than one team tag (one of 45 did in production), so
@@ -2612,7 +2618,7 @@ export class NumberRegistry {
    * "gemini-2.5-flash" contains one.
    */
   raw(s: string): string {
-    for (const token of s.match(/\d[\d,]*(?:\.\d+)?/g) ?? []) this.seen.add(token);
+    for (const token of s.match(/-?\d[\d,]*(?:\.\d+)?/g) ?? []) this.seen.add(token);
     return s;
   }
 }
@@ -2642,8 +2648,13 @@ export function visibleText(html: string): string {
 }
 
 export function extractNumericTokens(text: string): string[] {
-  // A token is a run of digits with optional , and . separators inside it.
-  return text.match(/\d[\d,]*(?:\.\d+)?/g) ?? [];
+  // A token is a run of digits with optional , and . separators, and an optional
+  // leading minus. The sign matters: without it, pct(-5) registers "-5.0" while the
+  // tokeniser sees "5.0", so the lock throws on its own legitimate output — and worse,
+  // a smuggled "-5.0" passes whenever "5.0" happens to be registered. Both were
+  // reproduced before this was fixed. raw() MUST use the identical regex, or the
+  // registered and checked token sets stop matching for hyphenated strings.
+  return text.match(/-?\d[\d,]*(?:\.\d+)?/g) ?? [];
 }
 
 export class EvidenceLockError extends Error {}
