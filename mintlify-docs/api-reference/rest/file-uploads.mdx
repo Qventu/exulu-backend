@@ -1,0 +1,160 @@
+---
+title: "File uploads"
+description: "Upload files to IMP's S3-compatible storage without ever handling bucket credentials. Presigned single-PUT and multipart flows, plus list/download/delete helpers."
+---
+
+IMP exposes a set of `/s3/*` REST endpoints that let API clients upload, list, download, and delete files against the platform's configured bucket **without needing the underlying MinIO or S3 credentials**. The backend holds the credentials, generates a short-lived presigned URL, and the client uploads directly to the object store.
+
+<Note>
+There is a separate, higher-level flow for **agent session attachments** under `POST /sessions/{sessionId}/files/upload-sign` — see the [REST API introduction](/api-reference/rest/introduction#session-files). Use the endpoints on this page when you need general-purpose storage that isn't tied to a specific chat session.
+</Note>
+
+## Authentication
+
+All endpoints accept the standard API-key header:
+
+```text
+exulu-api-key: sk_<secret>/<keyname>
+```
+
+The alias `x-api-key` also works, and browser clients may authenticate with a NextAuth session JWT via `Authorization: Bearer <token>`. See [Authentication](/api-reference/rest/introduction#authentication) for details.
+
+## Key namespacing
+
+Uploads are automatically scoped to the caller:
+
+| Caller type | Key prefix |
+|---|---|
+| API key | `api/` |
+| User (JWT) | `user_<userId>/` |
+| Header `global: true` present | `global/` (organisation-wide) |
+
+The server-configured `s3prefix` (see [S3 storage](/self-hosting/services/s3-storage)) is prepended on top of that. Clients should not construct their own key paths — the server rewrites the key it returns.
+
+## Simple upload (single PUT)
+
+Use this for files that comfortably fit in a single HTTP request (typical rule of thumb: up to a few hundred MB, depending on your network).
+
+### 1. Request a presigned URL — `POST /s3/sign`
+
+```bash
+curl -X POST https://your-imp-host:9001/s3/sign \
+  -H "exulu-api-key: sk_abc123.../my-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filename": "report.pdf",
+    "type": "application/pdf"
+  }'
+```
+
+Request body:
+
+| Field | Type | Description |
+|---|---|---|
+| `filename` | string | Original filename. A UUID is prepended server-side to guarantee uniqueness. |
+| `type` | string | The MIME type the client will send in the subsequent `PUT` (must match). |
+
+Response:
+
+```json
+{
+  "key": "d4f7a2e1-6c3b-4a9e-8f21-0b5c9d7e3a10-_EXULU_report.pdf",
+  "url": "https://s3.example.com/exulu-uploads/...signed...",
+  "method": "PUT"
+}
+```
+
+The `key` is the object key **without** the user/global and s3prefix segments. Keep it — you'll need it to reference the file later. The presigned URL expires after 24 hours.
+
+### 2. Upload the bytes
+
+```bash
+curl -X PUT "<url from step 1>" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @report.pdf
+```
+
+The `Content-Type` header **must** match the `type` you sent in step 1, or the signature will fail.
+
+<Warning>
+Do not add an `x-amz-checksum-*` header to the PUT — the server intentionally signs the URL without one so it works against both AWS S3 and MinIO. See [S3 storage — AWS SDK checksum gotcha](/self-hosting/services/s3-storage) for the underlying reason.
+</Warning>
+
+## Multipart upload (large files)
+
+Use multipart when the file is too large for a single request or you need parallel/resumable uploads.
+
+### 1. Initiate — `POST /s3/multipart`
+
+```bash
+curl -X POST https://your-imp-host:9001/s3/multipart \
+  -H "exulu-api-key: sk_abc123.../my-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filename": "recording.mp4",
+    "type": "video/mp4",
+    "metadata": { "source": "meeting-recorder" }
+  }'
+```
+
+Response:
+
+```json
+{
+  "key": "exulu-uploads/api/d4f7a2e1-..._EXULU_recording.mp4",
+  "uploadId": "abc123..."
+}
+```
+
+Unlike `/s3/sign`, `key` here is the **full** key including all prefixes — the multipart protocol re-signs each part from this key, so you must pass it back verbatim on subsequent calls.
+
+### 2. Sign each part — `GET /s3/multipart/{uploadId}/{partNumber}?key=<key>`
+
+```bash
+curl "https://your-imp-host:9001/s3/multipart/abc123.../1?key=<full-key>" \
+  -H "exulu-api-key: sk_abc123.../my-key"
+```
+
+Response:
+
+```json
+{ "url": "https://s3.example.com/...signed...", "expires": 86400 }
+```
+
+`partNumber` must be an integer between 1 and 10000. Upload each part with a `PUT` to the returned URL and capture the `ETag` header from the response.
+
+### 3. Complete — `POST /s3/multipart/{uploadId}/complete`
+
+```bash
+curl -X POST "https://your-imp-host:9001/s3/multipart/abc123.../complete?key=<full-key>" \
+  -H "exulu-api-key: sk_abc123.../my-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parts": [
+      { "PartNumber": 1, "ETag": "\"etag-1\"" },
+      { "PartNumber": 2, "ETag": "\"etag-2\"" }
+    ]
+  }'
+```
+
+### Additional multipart endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/s3/multipart/{uploadId}?key=<key>` | List parts already uploaded for a given upload (useful for resuming). |
+| `DELETE` | `/s3/multipart/{uploadId}?key=<key>` | Abort a multipart upload and release the partial parts. |
+
+## Working with uploaded files
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/s3/list?search=<query>&continuationToken=<token>` | List the caller's files under their prefix (pass `global: true` header to list the org-wide `global/` namespace). Paginated. |
+| `GET` | `/s3/download?key=<bucket>/<key>` | Get a short-lived presigned GET URL for a stored object. |
+| `POST` | `/s3/object` | Head an object — returns S3 `HeadObject` metadata for the key passed in the body. |
+| `DELETE` | `/s3/delete?key=<bucket>/<key>` | Delete an object. |
+
+Keys returned by `/s3/list` are prefixed with the bucket name (e.g. `exulu-uploads/api/uuid-_EXULU_report.pdf`) — pass that full string to `/s3/download` and `/s3/delete`.
+
+## Availability
+
+These endpoints are only mounted when the deployment is configured with `COMPANION_S3_*` variables. If file uploads are not configured the backend logs `[EXULU] skipping uppy file upload routes` at startup and every `/s3/*` request will 404. See [S3 storage](/self-hosting/services/s3-storage) for the operator setup.
