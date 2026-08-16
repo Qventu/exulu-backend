@@ -20,7 +20,24 @@ import os
 import json
 import argparse
 
-import fitz  # PyMuPDF — installed as a docling transitive dependency
+# stdout is this script's result channel and the caller does JSON.parse() on it,
+# so nothing else may write there. Our own prints all pass file=sys.stderr, but
+# dependencies do not honour that: PyMuPDF sends its messages to sys.stdout by
+# default, and importing the legacy `fitz` alias emits
+# "warning: The `fitz` API is deprecated ..." — which lands ahead of the payload
+# and fails the caller with "Unexpected token 'w'". PyMuPDF arrives unpinned as
+# a docling transitive dependency, so a routine rebuild is enough to introduce a
+# banner like that. Point sys.stdout at stderr before importing anything and
+# keep a private handle for the result, so any library that prints — now or
+# after a future dependency bump — is shunted to the log channel instead of
+# corrupting the payload.
+_stdout = sys.stdout
+sys.stdout = sys.stderr
+
+try:
+    import pymupdf as fitz  # PyMuPDF >= 1.24.3, where the module was renamed
+except ImportError:  # older releases only ship the legacy `fitz` module
+    import fitz
 
 
 def _write_chunk(
@@ -145,7 +162,7 @@ if __name__ == "__main__":
 
     try:
         chunks = split_pdf(args.input_pdf, args.output_dir, args.chunk_size, max_size_bytes)
-        print(json.dumps(chunks))
+        print(json.dumps(chunks), file=_stdout)
     except Exception as e:
         print(f"[split_pdf] ERROR: {e}", file=sys.stderr)
         sys.exit(1)

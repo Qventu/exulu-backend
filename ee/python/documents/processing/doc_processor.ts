@@ -837,8 +837,20 @@ async function processPdf(
         timeout: 5 * 60 * 1000,
       });
 
-      const pdfChunks: Array<{ path: string; start_page: number; end_page: number }> =
-        JSON.parse(splitResult.stdout);
+      // split_pdf.py contracts to put nothing but the JSON payload on stdout.
+      // If something slips in anyway, the bare SyntaxError only quotes the first
+      // few characters ("Unexpected token 'w'") and names neither the script nor
+      // the offending output — so re-throw with the actual streams attached.
+      let pdfChunks: Array<{ path: string; start_page: number; end_page: number }>;
+      try {
+        pdfChunks = JSON.parse(splitResult.stdout);
+      } catch (err) {
+        throw new Error(
+          `[EXULU] split_pdf.py returned invalid JSON on stdout: ${(err as Error).message}\n` +
+          `stdout: ${splitResult.stdout.slice(0, 500)}\n` +
+          `stderr: ${splitResult.stderr.slice(-1000)}`
+        );
+      }
 
       console.log(`[EXULU] PDF split into ${pdfChunks.length} chunk(s) for OCR (max ${maxPagesPerChunk} pages each)`);
 
