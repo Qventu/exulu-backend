@@ -221,6 +221,7 @@
         { "group": "REST", "openapi": "/openapi/openapi.json", "pages": [
           "api-reference/rest/introduction",
           "api-reference/rest/public-agents",
+          "api-reference/rest/file-uploads",
           "api-reference/rest/gateways-litellm",
           "api-reference/rest/mcp",
           "api-reference/rest/gdpr"
