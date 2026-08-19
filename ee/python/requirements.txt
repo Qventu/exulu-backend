@@ -40,7 +40,7 @@ litellm[proxy]==1.97.0
 # ee/python/transcription/server.py (not just a litellm transitive). Once
 # litellm ships its own ceiling, replace this constrained pin with a bare
 # `fastapi` line — do not delete it entirely.
-fastapi>=0.136.3,<0.140.7
+fastapi>=0.136.3,<0.140.7  # to confirm this pin is still needed: grep -r get_flat_dependant $(pip show litellm | awk '/Location/{print $2}')/litellm/proxy/
 # Prisma Python client — required by LiteLLM proxy whenever a `database_url`
 # is set in config.litellm.yaml (used for user/budget tracking, key
 # management, etc.). NOT included in litellm[proxy] in 1.97.0, hence the
