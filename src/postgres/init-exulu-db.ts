@@ -36,6 +36,7 @@ const {
   transcriptionJobsSchema,
   imageGenerationsSchema,
   sharedArtifactsSchema,
+  otpSendAttemptsSchema,
 } = coreSchemas.get();
 
 const addMissingFields = async (
@@ -132,6 +133,7 @@ const up = async function (knex: Knex) {
     skillsSchema(),
     workflowTemplatesSchema(),
     workflowTriggersSchema(),
+    otpSendAttemptsSchema(),
   ];
 
   const createTable = async (schema: ExuluTableDefinition) => {
