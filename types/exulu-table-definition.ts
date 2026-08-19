@@ -33,7 +33,8 @@ export type ExuluTableDefinition = {
     | "transcription_jobs"
     | "image_generations"
     | "oauth_tokens"
-    | "shared_artifacts";
+    | "shared_artifacts"
+    | "otp_send_attempts";
     id?: string;
     name: {
       plural:
@@ -66,7 +67,8 @@ export type ExuluTableDefinition = {
       | "transcription_jobs"
       | "image_generations"
       | "oauth_tokens"
-      | "shared_artifacts";
+      | "shared_artifacts"
+      | "otp_send_attempts";
       singular:
       | "skill"
       | "context_preset"
@@ -97,7 +99,8 @@ export type ExuluTableDefinition = {
       | "transcription_job"
       | "image_generation"
       | "oauth_token"
-      | "shared_artifact";
+      | "shared_artifact"
+      | "otp_send_attempt";
     };
     processor?: ExuluContextProcessor;
     fields: ExuluContextFieldDefinition[];
