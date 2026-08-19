@@ -507,6 +507,52 @@ const usersSchema: ExuluTableDefinition = {
       name: "project",
       type: "uuid",
     },
+    // ── Lead capture (see lead-capture spec §5) ─────────────────────────────
+    // Consent must be *provable* under Art. 7(1) GDPR: who agreed, when, and
+    // to which wording. Hence a timestamp per consent and a version string
+    // pointing at the exact text that was shown.
+    {
+      // Current state of the optional marketing consent.
+      name: "marketing_consent",
+      type: "boolean",
+      default: false,
+    },
+    {
+      // When marketing consent was GIVEN.
+      name: "marketing_consent_at",
+      type: "date",
+    },
+    {
+      // When marketing consent was WITHDRAWN. Deliberately a separate column:
+      // overwriting marketing_consent_at on withdrawal would destroy the grant
+      // time, and with it the ability to prove the order of events if someone
+      // later claims they were mailed after withdrawing.
+      name: "marketing_consent_withdrawn_at",
+      type: "date",
+    },
+    {
+      // When the mandatory storage/processing consent was given.
+      name: "processing_consent_at",
+      type: "date",
+    },
+    {
+      // When the user asked for erasure (Art. 17). The row survives so the
+      // one-month deadline stays queryable even if the notification mail fails.
+      name: "erasure_requested_at",
+      type: "date",
+    },
+    {
+      // Where the lead came from, e.g. "eu-ai-act-bot".
+      name: "signup_source",
+      type: "text",
+    },
+    {
+      // Version of the consent wording that was actually displayed, e.g.
+      // "2026-08-18". The wording itself lives in the frontend repo under
+      // version control; this column points at it.
+      name: "consent_version",
+      type: "text",
+    },
   ],
 };
 
@@ -820,6 +866,51 @@ export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinitio
   return schema;
 };
 
+/**
+ * Distributed rate-limit counters for the public OTP routes.
+ *
+ * These live in Postgres rather than Redis on purpose: the routes that need
+ * limiting (`/api/public-auth/ensure-user` and NextAuth's
+ * `/api/auth/signin/email`) run inside the Next.js frontend, which has no
+ * Redis client and whose middleware runs on the Edge runtime — no TCP sockets,
+ * so neither `redis` nor `pg` would work there. The frontend does already hold
+ * a managed Postgres pool, shared across replicas.
+ *
+ * The table is declared HERE because the backend owns the schema. The frontend
+ * only reads and writes rows; a second process issuing DDL against the same
+ * database would be a migration source nobody expects.
+ *
+ * `key` is a namespaced counter identity, e.g. "ip:203.0.113.4:15m" or
+ * "email:someone@example.com:1h". Old rows are harmless: a window whose start
+ * has aged out is reset in place on the next write.
+ */
+const otpSendAttemptsSchema: ExuluTableDefinition = {
+  type: "otp_send_attempts",
+  name: {
+    plural: "otp_send_attempts",
+    singular: "otp_send_attempt",
+  },
+  fields: [
+    {
+      name: "key",
+      type: "text",
+      index: true,
+      unique: true,
+      required: true,
+    },
+    {
+      name: "count",
+      type: "number",
+      required: true,
+    },
+    {
+      name: "window_start",
+      type: "date",
+      required: true,
+    },
+  ],
+};
+
 export const coreSchemas = {
   get: () => {
 
@@ -843,6 +934,7 @@ export const coreSchemas = {
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
       imageGenerationsSchema: (): ExuluTableDefinition => addCoreFields(imageGenerationsSchema),
+      otpSendAttemptsSchema: (): ExuluTableDefinition => addCoreFields(otpSendAttemptsSchema),
     }
 
     if (license["agent-feedback"]) {
