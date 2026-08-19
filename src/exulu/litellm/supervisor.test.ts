@@ -155,6 +155,43 @@ describe("startLiteLLMSupervisor", () => {
     }
   });
 
+  test("pins DISABLE_SCHEMA_UPDATE=true so LiteLLM never races db-init.ts's prisma db push", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+    mockExistsSync.mockReturnValue(true);
+    const child = new FakeChild();
+    mockSpawn.mockReturnValue(child);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await startLiteLLMSupervisor({ packageRoot: "/fake/exulu" });
+    const [, , opts] = mockSpawn.mock.calls[0]!;
+    // db-init.ts already syncs this schema with `prisma db push`, which creates
+    // columns without writing migration history. If LiteLLM also runs `prisma
+    // migrate deploy`, every migration whose column already exists fails with
+    // 42701 and the proxy never becomes ready.
+    expect(opts.env.DISABLE_SCHEMA_UPDATE).toBe("true");
+  });
+
+  test("respects an explicit DISABLE_SCHEMA_UPDATE override from the operator", async () => {
+    process.env.EXULU_USE_LITELLM = "true";
+    process.env.LITELLM_MASTER_KEY = "sk-test";
+    process.env.DISABLE_SCHEMA_UPDATE = "false";
+    mockExistsSync.mockReturnValue(true);
+    const child = new FakeChild();
+    mockSpawn.mockReturnValue(child);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    try {
+      await startLiteLLMSupervisor({ packageRoot: "/fake/exulu" });
+      const [, , opts] = mockSpawn.mock.calls[0]!;
+      // Deliberately handing schema ownership back to LiteLLM is a valid
+      // choice; our default must not silently override it.
+      expect(opts.env.DISABLE_SCHEMA_UPDATE).toBe("false");
+    } finally {
+      delete process.env.DISABLE_SCHEMA_UPDATE;
+    }
+  });
+
   test("respects LITELLM_PORT and LITELLM_HOST overrides", async () => {
     process.env.EXULU_USE_LITELLM = "true";
     process.env.LITELLM_MASTER_KEY = "sk-test";
