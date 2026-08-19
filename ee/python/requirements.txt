@@ -24,7 +24,6 @@ pyannote.audio>=3.3.0
 # Belt-and-suspenders: keep huggingface_hub on the 0.x line so pyannote 3.x's
 # `use_auth_token=` calls keep working (1.x removed that kwarg → diarization off).
 huggingface_hub<1.0
-fastapi
 uvicorn
 python-multipart
 requests
@@ -32,6 +31,13 @@ requests
 # the dep is ready when the env var is flipped. Pinned to a tested version;
 # upgrade deliberately.
 litellm[proxy]==1.97.0
+# FastAPI ceiling — NOT cosmetic. litellm 1.97.0 declares fastapi>=0.136.3,<1.0
+# but imports the private `get_flat_dependant` from fastapi.dependencies.utils
+# (proxy/management_endpoints/management_v1/common.py:7), which FastAPI deleted
+# in 0.140.7. Any resolve that picks 0.140.7+ yields a proxy that cannot start:
+# "ImportError: cannot import name 'get_flat_dependant'". 0.140.6 is the last
+# version that still has it. Drop this pin once litellm ships its own ceiling.
+fastapi>=0.136.3,<0.140.7
 # Prisma Python client — required by LiteLLM proxy whenever a `database_url`
 # is set in config.litellm.yaml (used for user/budget tracking, key
 # management, etc.). NOT included in litellm[proxy] in 1.97.0, hence the
