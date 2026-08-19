@@ -65,7 +65,7 @@ general_settings:
 
 litellm_settings:
   drop_params: true
-  request_timeout: 600
+  request_timeout: 600            # per attempt, not total (LiteLLM >= 1.91)
   set_verbose: False
   json_logs: true
 
