@@ -36,7 +36,10 @@ litellm[proxy]==1.97.0
 # (proxy/management_endpoints/management_v1/common.py:7), which FastAPI deleted
 # in 0.140.7. Any resolve that picks 0.140.7+ yields a proxy that cannot start:
 # "ImportError: cannot import name 'get_flat_dependant'". 0.140.6 is the last
-# version that still has it. Drop this pin once litellm ships its own ceiling.
+# version that still has it. NOTE: fastapi is also a first-party dependency of
+# ee/python/transcription/server.py (not just a litellm transitive). Once
+# litellm ships its own ceiling, replace this constrained pin with a bare
+# `fastapi` line — do not delete it entirely.
 fastapi>=0.136.3,<0.140.7
 # Prisma Python client — required by LiteLLM proxy whenever a `database_url`
 # is set in config.litellm.yaml (used for user/budget tracking, key
