@@ -293,9 +293,12 @@ job continues. Total failure sets `status: "failed"` with a reason.
 `processing_notes` always states what was skipped and what budget was used, so a
 guide never silently overstates its coverage.
 
-**Envelope, 2h worst case:** ~500 frames, ~40 vision calls, 15–30 minutes wall
-clock dominated by ffmpeg decode, well under a dollar in tokens. Cost is not the
-binding constraint; wall clock is.
+**Envelope, 2h worst case — superseded by measurement.** The original estimate
+(~500 frames, 15–30 minutes of wall clock) was pessimistic. Measured: decode runs
+at ~60× realtime, so a 2h recording scans in ~100 s, and the chosen threshold
+yields roughly 240 frames, i.e. ~20 vision calls at a batch size of 12. See
+Calibration results below. Neither cost nor wall clock is a binding constraint;
+the vision calls now dominate the runtime, not ffmpeg.
 
 ### B4. Tools
 
@@ -305,7 +308,7 @@ Registered in `src/tools/index.ts`.
 |---|---|---|
 | `list_meeting_recordings` | filters | `false` |
 | `create_training_guide` | `source_recording_item_id`, `description` | `true` |
-| `publish_training_guide` | `item_id`, `rights_mode`, `rbac_roles?`, `rbac_users?` | `true` |
+| `publish_training_guide` | `item_id`, `rights_mode` (`"public"` \| `"private"`) | `true` |
 
 `list_meeting_recordings` uses
 `contexts["transcriptions"].getItems({ filters, fields, user, role })`, filtered
@@ -314,6 +317,20 @@ exists.
 
 `create_training_guide` verifies the caller can read the source recording,
 rejects if a draft already exists for it, creates the draft, returns the job id.
+
+**Audience is public-or-private only** (decided 2026-08-27, revising B2 above).
+`handleRBACUpdate` is not exported from `@exulu/backend`, and
+`context.createItem`/`updateItem` ignore RBAC entirely — there is no `rbac`
+handling anywhere in `context.ts`. A consuming project can set `rights_mode`,
+which is a plain column, but cannot write per-user or per-role rows. Narrower
+audiences are therefore set afterwards using the existing bulk "Set access"
+dialog on `/data`.
+
+This narrows the "inherit from the recording, widen on approval" model: publish
+and audience-scoping become two acts rather than one. Accepted rather than
+exporting an RBAC surface, on the grounds that public-or-private covers the
+common case and the `/data` dialog already exists. If role-scoped guides turn
+out to matter in practice, the fix is an `ExuluRBAC` export mirroring A2.
 
 **On "the tool asks for a description":** a tool cannot ask the user anything —
 it receives arguments and runs. This is implemented as `description` being a
@@ -400,10 +417,20 @@ Fix: add `applyAccessControl(table, query, context.user)` to match
 
 ## Sequencing
 
-1. **Backend** (A ✅ merged to develop, + A2 + C2 + C4) → release `@exulu/backend`
-2. **algikiag** bumps the dependency, adds ffmpeg to `Dockerfile.worker`
-3. **Pipeline** (B) — calibration task included
-4. **Frontend modal** (C3) — independent, can land any time
+1. **Backend** (A ✅, A2 ✅, C2 ✅, C4 ✅ — all merged to develop) → release `@exulu/backend`
+2. **algikiag** bumps the dependency
+3. **B1 — foundations** (windowing, budget, frame selection, ffmpeg, calibration).
+   Needs no release: it touches no `@exulu/backend` API.
+4. **B2 — pipeline and tools** (Training context, processor, map/reduce stages,
+   three tools, ffmpeg in `Dockerfile.worker`). Written *after* B1's calibration,
+   so its frame budget, batch size and cost model come from measurements.
+5. **Frontend modal** (C3) — independent, can land any time
+
+B was split into B1 and B2 on 2026-08-27. Writing B2 before calibration would
+mean inventing the numbers calibration exists to discover: how many scene
+changes a real ALGI recording yields, whether the scene detector fires usefully
+on screen content at all, and what frame width keeps UI text legible. That last
+one constrains the whole cost model, since it sets tokens per frame.
 
 A2 is a hard prerequisite for B, not a nicety: without it the pipeline cannot
 call a model at all. A and A2 ship together so algikiag bumps once.
@@ -434,8 +461,102 @@ real generated guide, not by assertion.
 - Conversational refinement of a draft guide with the agent
 - `audio_mixed` — not needed; the transcript carries the narration
 
+## Calibration results (measured 2026-08-27)
+
+Run against recording `39509d8c-74cf-4362-a546-19d53e50e773` ("KDD-Besprechung",
+2026-08-24, 31.2 min, 140 MB), which carries ~30 minutes of continuous
+screenshare. **ffmpeg 7.1.1**, Apple Silicon. The scene filter's behaviour
+varies across major versions, so these numbers are only valid for 7.x.
+
+| threshold | candidates | /min | after 2s spacing | /min after spacing |
+|---|---|---|---|---|
+| 0.10 | 131 | 4.2 | 62 | 2.0 |
+| 0.20 | 53 | 1.7 | 38 | 1.2 |
+| 0.30 | 38 | 1.2 | 30 | 1.0 |
+
+**Scene detection fires usefully on ALGI screen content.** This was the
+question that could have invalidated approach A; it does not.
+
+**Chosen values: threshold `0.10`, minimum interval `2s`, frame width `1024px`.**
+0.10 gives the most detail while staying inside the 1–5 candidates/min band, and
+under-sampling loses steps that over-sampling merely pays a little more for.
+
+**Decode is ~60× realtime** — 26–32 s for a 31-minute recording, so a 2-hour
+recording scans in roughly 100 s. The spec previously estimated 15–30 minutes of
+wall clock dominated by decode; that was pessimistic by an order of magnitude.
+The 5400 s processor timeout is comfortable, not tight.
+
+**The 600-frame budget is not binding.** 62 frames at the chosen threshold for
+31 minutes extrapolates to ~240 for a 2-hour recording. Budget allocation still
+matters for pathological recordings, but in the normal case every candidate that
+survives spacing is analysed.
+
+**1024px is legible.** Verified by eye on two frames: a Windows Explorer window
+(folder tree, file names, dates, status bar) and an Outlook message whose German
+body text reads cleanly. 1536px was extracted for comparison and is not needed.
+Token cost per frame therefore stays at the low end (~1.1k), so a 2-hour guide's
+map stage is on the order of 250k input tokens.
+
+**Caveat.** This is a *meeting* recording with screenshare, not a dedicated
+process walkthrough. A real process recording — one person, likely a maximised
+application, deliberately clicking through steps — should produce *more* scene
+changes, not fewer. If the first real process recordings come back sparse, lower
+the threshold before questioning the approach.
+
+### A rejected data point, and what it taught us
+
+A second recording (`a2b47a5f`, 14.2 min, 2026-08-27, titled "Test") was also
+calibrated and its numbers **discarded**. It returned a suspiciously flat
+response — 21 frames after spacing at every threshold from 0.10 to 0.30 — which
+looked like reassuring insensitivity. Sampling frames showed why: the recording
+is webcam footage and the bot's own "Company Notetaker" placeholder. The bot's
+`participant_events` put total screenshare at **67.5 s of 851 s — 7.9% of the
+recording**. The 21 "scene changes" were camera motion and view switches, not
+screen content.
+
+Had the flat response been taken at face value it would have supported a
+threshold anywhere in 0.10–0.30 on evidence that contained almost no screen.
+
+**This produces a concrete requirement for B2: a content probe before the
+pipeline commits.** A recording with no screen content must fail with a clear
+message rather than spend the full budget describing somebody's face.
+
+**Not via `screenshare_on` events.** That was the first proposal and it was
+withdrawn (Daniel, 2026-08-27). The Recall docs list `screenshare_on` /
+`screenshare_off` among the participant-event types and say participant events
+are captured by default, but they give **no per-platform guarantee** that
+screenshare transitions are emitted for Zoom, Google Meet, Webex and Teams
+alike. The only platform-specific table in that documentation covers re-join
+behaviour, not screenshare. Every recording in the ALGI workspace is Microsoft
+Teams, so the assumption cannot be tested here either. Building the gate on it
+would mean a guard that silently passes everything on some platform we have
+never tried.
+
+**Instead, measure the thing itself.** Extract four frames at 10/35/60/85% of
+the duration and send them to the vision model in a single call, asking whether
+they show a computer screen with an application or a person/room/placeholder.
+Structured output, roughly:
+
+```
+{ has_screen_content: boolean, screen_fraction: number, note: string }
+```
+
+This is platform-independent, tests what actually matters rather than a proxy
+for it, and costs about one vision call (~5k tokens) against a pipeline that
+spends ~20 calls. It also catches cases an event-based check would miss: a
+shared window that is itself a video call, a "screenshare" that is one static
+photo, or a share so brief the events fire but nothing useful was captured.
+
+On the rejected recording above this probe would have been unambiguous — the
+sampled frames were a black "Company Notetaker" card, an out-of-focus office,
+and a colleague on webcam.
+
+If `screenshare_on` events *are* present they are free corroboration and worth
+recording in `processing_notes`. Nothing may gate on them.
+
 ## Open items
 
-- Scene threshold and minimum interval — set by calibration (see Testing)
 - Confirm post-deploy that an explicit `recording_config` preserves
   `video_mixed_mp4` (see A2)
+- Re-check the threshold against the first genuine process recordings, expected
+  week of 2026-08-31 — the only calibration so far is a meeting with screenshare
