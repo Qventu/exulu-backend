@@ -65,8 +65,9 @@ const addMissingFields = async (
       await knex.schema.alterTable(tableName, (table) => {
         mapType(table, type, sanitizedName, defaultValue, unique);
       });
+    } else {
+      console.log(`[EXULU] Field '${sanitizedName}' already exists in ${tableName} table.`);
     }
-    console.log(`[EXULU] Field '${sanitizedName}' already exists in ${tableName} table.`);
   }
 };
 
