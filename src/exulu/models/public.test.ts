@@ -78,7 +78,7 @@ describe("ExuluModels.providerOptions", () => {
   });
 
   it("accepts a bare model id string", () => {
-    expect(ExuluModels.providerOptions("gemini-3.5-flash" as any)).toEqual({
+    expect(ExuluModels.providerOptions("gemini-3.5-flash")).toEqual({
       litellm: { reasoningEffort: "disable" },
     });
   });

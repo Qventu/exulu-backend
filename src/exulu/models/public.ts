@@ -45,5 +45,5 @@ export const ExuluModels = {
    * token cap returns an empty 200 unless reasoning is disabled. Returns
    * undefined for non-Gemini models.
    */
-  providerOptions: (model: LanguageModel) => microCallProviderOptions(model),
+  providerOptions: (model: LanguageModel | string) => microCallProviderOptions(model),
 };
