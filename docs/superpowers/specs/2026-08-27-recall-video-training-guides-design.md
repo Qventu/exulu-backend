@@ -146,6 +146,49 @@ only correct pattern.
 
 This is what makes link-through usable from a consuming project.
 
+## Sub-project A2 — Backend: export a model surface
+
+Added 2026-08-27 during planning. Not part of the original design; discovered
+while writing Plan B.
+
+**The gap.** B's pipeline makes roughly 40 vision calls per guide and has no
+way to make any of them. `ExuluApp` exposes `tool()`, `agent()`, `context()`,
+`embeddings`, `bullmq` and `queues()` — no model route — and `resolveModel`
+(`src/exulu/resolve-model.ts:141`) is not exported. `src/index.ts` is the
+package's only entry point, so nothing else is reachable. algikiag has never
+hit this because it only calls `ExuluDocumentProcessor.process()`, which
+resolves models internally from its own config.
+
+**Why not just build a provider in algikiag.** It has `PROXY_BASE_URL` and
+`LITELLM_MASTER_KEY` in its environment, so it could construct an
+OpenAI-compatible provider directly. Rejected: `resolveModel` embeds
+caller-identity tags via `getLiteLLMProvider` (`resolve-model.ts:162-172`), and
+those tags are what per-team LiteLLM budgets attribute against. A pipeline
+burning tokens without them is spend nobody can see — the exact blind spot the
+Value Ledger work exists to close.
+
+**The change.** A minimal namespace on `src/index.ts`:
+
+```ts
+ExuluModels.resolve({ modelId, userId? }): Promise<LanguageModel>
+ExuluModels.providerOptions(model): Record<string, Record<string, string>> | undefined
+```
+
+`resolve` takes a `userId` rather than a `User` because that is what a context
+processor actually receives; it loads the row the same way
+`src/exulu/recall/service.ts:553` does. It returns the `LanguageModel` alone —
+the `ModelRow` half of `resolveModel`'s return is synthetic
+(`resolve-model.ts:175-182`) and exporting it would be surface to support for
+no gain.
+
+`providerOptions` re-exports `microCallProviderOptions`
+(`ee/agentic-retrieval/pipeline/micro-call.ts:27`), which returns
+`{ litellm: { reasoningEffort: "disable" } }` for Gemini models. B's map stage
+is a constrained structured-output call, which is exactly the shape that
+returns an empty 200 when thinking tokens eat the output budget.
+
+Ships in the same release as A, so algikiag bumps the dependency once.
+
 ## Sub-project B — algikiag: Alfredo Teacher
 
 ### B1. Training context
@@ -357,10 +400,16 @@ Fix: add `applyAccessControl(table, query, context.user)` to match
 
 ## Sequencing
 
-1. **Backend** (A + C2 + C4) → release `@exulu/backend`
+1. **Backend** (A ✅ merged to develop, + A2 + C2 + C4) → release `@exulu/backend`
 2. **algikiag** bumps the dependency, adds ffmpeg to `Dockerfile.worker`
 3. **Pipeline** (B) — calibration task included
 4. **Frontend modal** (C3) — independent, can land any time
+
+A2 is a hard prerequisite for B, not a nicety: without it the pipeline cannot
+call a model at all. A and A2 ship together so algikiag bumps once.
+
+Live-bot verification of A's `recording_config` (see Open items) is still
+outstanding and can invalidate A2's release timing if it fails.
 
 ## Testing
 

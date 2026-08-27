@@ -62,6 +62,8 @@ export const ExuluJobs = {
   redis: redisClient,
 };
 
+export { ExuluModels } from "./exulu/models/public";
+
 export const ExuluDefaultTools = {
   agentic: {
     retrieval: {
