@@ -400,11 +400,11 @@ export function createSDL(
     }
     // todo add the fields of each table as filter options
     mutationDefs += `
-      ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}CreateOne(input: ${tableNameSingular}Input!, upsert: Boolean, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
       ${tableNamePlural}CopyOneById(id: ID!): ${tableNameSingular}MutationPayload
 
-      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
-      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}UpdateOne(where: [Filter${tableNameSingularUpperCaseFirst}], input: ${tableNameSingular}Input!, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
+      ${tableNamePlural}UpdateOneById(id: ID!, input: ${tableNameSingular}Input!, generateEmbeddings: Boolean): ${tableNameSingular}MutationPayload
       ${tableNamePlural}RemoveOneById(id: ID!): ${tableNameSingular}
       ${tableNamePlural}RemoveOne(where: JSON!): ${tableNameSingular}
     `;
