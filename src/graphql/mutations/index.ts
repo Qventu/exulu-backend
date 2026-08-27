@@ -21,6 +21,7 @@ import { queues as ExuluQueues } from "@EE/queues/queues";
 import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/index.ts";
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
+import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -111,6 +112,8 @@ const postprocessUpdate = async ({
   user,
   role,
   config,
+  operation,
+  generateEmbeddings,
 }: {
   table: ExuluTableDefinition;
   requestedFields: string[];
@@ -120,6 +123,8 @@ const postprocessUpdate = async ({
   user: number;
   role: string;
   config: ExuluConfig;
+  operation: "create" | "update";
+  generateEmbeddings?: boolean;
 }): Promise<{
   result: any;
   job?: string;
@@ -150,10 +155,16 @@ const postprocessUpdate = async ({
         return result;
       }
 
+      // Embedding and processor blocks are mutually exclusive: the embedding block
+      // returns early on success, so a context configured with both an embedder
+      // trigger and a processor trigger will run only the embedder.
+      // This expanded in scope when creates on onInsert contexts began embedding.
       if (
-        context.embedder &&
-        (context.configuration.calculateVectors === "onUpdate" ||
-          context.configuration.calculateVectors === "always")
+        shouldGenerateEmbeddings({
+          calculateVectors: context.configuration.calculateVectors,
+          operation,
+          override: generateEmbeddings,
+        })
       ) {
         const { db } = await postgresClient();
         console.log("[EXULU] Deleting chunks for item", result.id);
@@ -536,6 +547,8 @@ export function createMutations(
         user: context.user.id,
         role: context.user.role?.id,
         config: config,
+        operation: "create",
+        generateEmbeddings: args.generateEmbeddings,
       });
       return {
         // Filter result to only include requested fields
@@ -653,6 +666,8 @@ export function createMutations(
         user: context.user.id,
         role: context.user.role?.id,
         config,
+        operation: "update",
+        generateEmbeddings: args.generateEmbeddings,
       });
       return {
         item: finalizeRequestedFields({
@@ -748,6 +763,8 @@ export function createMutations(
         user: context.user.id,
         role: context.user.role?.id,
         config,
+        operation: "update",
+        generateEmbeddings: args.generateEmbeddings,
       });
       return {
         item: finalizeRequestedFields({
@@ -1095,6 +1112,7 @@ export function createMutations(
       // Generating chunks for the items in the context
       // that match the where clause.
       query = applyFilters(query, args.where, table);
+      query = applyAccessControl(table, query, context.user);
 
       if (args.limit) {
         query = query.limit(args.limit);
