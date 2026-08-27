@@ -155,6 +155,10 @@ const postprocessUpdate = async ({
         return result;
       }
 
+      // Embedding and processor blocks are mutually exclusive: the embedding block
+      // returns early on success (line 188-189), so a context configured with both
+      // an embedder trigger and a processor trigger will run only the embedder.
+      // This expanded in scope when creates on onInsert contexts began embedding.
       if (
         shouldGenerateEmbeddings({
           calculateVectors: context.configuration.calculateVectors,
