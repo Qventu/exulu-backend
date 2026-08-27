@@ -293,9 +293,12 @@ job continues. Total failure sets `status: "failed"` with a reason.
 `processing_notes` always states what was skipped and what budget was used, so a
 guide never silently overstates its coverage.
 
-**Envelope, 2h worst case:** ~500 frames, ~40 vision calls, 15–30 minutes wall
-clock dominated by ffmpeg decode, well under a dollar in tokens. Cost is not the
-binding constraint; wall clock is.
+**Envelope, 2h worst case — superseded by measurement.** The original estimate
+(~500 frames, 15–30 minutes of wall clock) was pessimistic. Measured: decode runs
+at ~60× realtime, so a 2h recording scans in ~100 s, and the chosen threshold
+yields roughly 240 frames, i.e. ~20 vision calls at a batch size of 12. See
+Calibration results below. Neither cost nor wall clock is a binding constraint;
+the vision calls now dominate the runtime, not ffmpeg.
 
 ### B4. Tools
 
@@ -458,8 +461,51 @@ real generated guide, not by assertion.
 - Conversational refinement of a draft guide with the agent
 - `audio_mixed` — not needed; the transcript carries the narration
 
+## Calibration results (measured 2026-08-27)
+
+Run against recording `39509d8c-74cf-4362-a546-19d53e50e773` ("KDD-Besprechung",
+2026-08-24, 31.2 min, 140 MB), which carries ~30 minutes of continuous
+screenshare. **ffmpeg 7.1.1**, Apple Silicon. The scene filter's behaviour
+varies across major versions, so these numbers are only valid for 7.x.
+
+| threshold | candidates | /min | after 2s spacing | /min after spacing |
+|---|---|---|---|---|
+| 0.10 | 131 | 4.2 | 62 | 2.0 |
+| 0.20 | 53 | 1.7 | 38 | 1.2 |
+| 0.30 | 38 | 1.2 | 30 | 1.0 |
+
+**Scene detection fires usefully on ALGI screen content.** This was the
+question that could have invalidated approach A; it does not.
+
+**Chosen values: threshold `0.10`, minimum interval `2s`, frame width `1024px`.**
+0.10 gives the most detail while staying inside the 1–5 candidates/min band, and
+under-sampling loses steps that over-sampling merely pays a little more for.
+
+**Decode is ~60× realtime** — 26–32 s for a 31-minute recording, so a 2-hour
+recording scans in roughly 100 s. The spec previously estimated 15–30 minutes of
+wall clock dominated by decode; that was pessimistic by an order of magnitude.
+The 5400 s processor timeout is comfortable, not tight.
+
+**The 600-frame budget is not binding.** 62 frames at the chosen threshold for
+31 minutes extrapolates to ~240 for a 2-hour recording. Budget allocation still
+matters for pathological recordings, but in the normal case every candidate that
+survives spacing is analysed.
+
+**1024px is legible.** Verified by eye on two frames: a Windows Explorer window
+(folder tree, file names, dates, status bar) and an Outlook message whose German
+body text reads cleanly. 1536px was extracted for comparison and is not needed.
+Token cost per frame therefore stays at the low end (~1.1k), so a 2-hour guide's
+map stage is on the order of 250k input tokens.
+
+**Caveat.** This is a *meeting* recording with screenshare, not a dedicated
+process walkthrough. A real process recording — one person, likely a maximised
+application, deliberately clicking through steps — should produce *more* scene
+changes, not fewer. If the first real process recordings come back sparse, lower
+the threshold before questioning the approach.
+
 ## Open items
 
-- Scene threshold and minimum interval — set by calibration (see Testing)
 - Confirm post-deploy that an explicit `recording_config` preserves
   `video_mixed_mp4` (see A2)
+- Re-check the threshold against the first genuine process recording (see the
+  caveat above)
