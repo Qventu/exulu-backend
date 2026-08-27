@@ -517,14 +517,42 @@ screen content.
 Had the flat response been taken at face value it would have supported a
 threshold anywhere in 0.10–0.30 on evidence that contained almost no screen.
 
-**This produces a concrete requirement for B2's step 0.** Recall exposes
-`screenshare_on` / `screenshare_off` in the bot's `participant_events`, so
-screenshare coverage is computable *before* any frame is extracted or any token
-spent. If coverage is below a threshold (start at ~50% and tune), fail the job
-with a message telling the employee their recording contains little or no screen
-content — rather than spending the full pipeline budget producing a "training
-guide" from footage of somebody's face. Cheap, and it fails in the direction
-that costs nothing.
+**This produces a concrete requirement for B2: a content probe before the
+pipeline commits.** A recording with no screen content must fail with a clear
+message rather than spend the full budget describing somebody's face.
+
+**Not via `screenshare_on` events.** That was the first proposal and it was
+withdrawn (Daniel, 2026-08-27). The Recall docs list `screenshare_on` /
+`screenshare_off` among the participant-event types and say participant events
+are captured by default, but they give **no per-platform guarantee** that
+screenshare transitions are emitted for Zoom, Google Meet, Webex and Teams
+alike. The only platform-specific table in that documentation covers re-join
+behaviour, not screenshare. Every recording in the ALGI workspace is Microsoft
+Teams, so the assumption cannot be tested here either. Building the gate on it
+would mean a guard that silently passes everything on some platform we have
+never tried.
+
+**Instead, measure the thing itself.** Extract four frames at 10/35/60/85% of
+the duration and send them to the vision model in a single call, asking whether
+they show a computer screen with an application or a person/room/placeholder.
+Structured output, roughly:
+
+```
+{ has_screen_content: boolean, screen_fraction: number, note: string }
+```
+
+This is platform-independent, tests what actually matters rather than a proxy
+for it, and costs about one vision call (~5k tokens) against a pipeline that
+spends ~20 calls. It also catches cases an event-based check would miss: a
+shared window that is itself a video call, a "screenshare" that is one static
+photo, or a share so brief the events fire but nothing useful was captured.
+
+On the rejected recording above this probe would have been unambiguous — the
+sampled frames were a black "Company Notetaker" card, an out-of-focus office,
+and a colleague on webcam.
+
+If `screenshare_on` events *are* present they are free corroboration and worth
+recording in `processing_notes`. Nothing may gate on them.
 
 ## Open items
 
