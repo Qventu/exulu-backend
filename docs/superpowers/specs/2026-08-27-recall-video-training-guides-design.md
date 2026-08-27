@@ -305,7 +305,7 @@ Registered in `src/tools/index.ts`.
 |---|---|---|
 | `list_meeting_recordings` | filters | `false` |
 | `create_training_guide` | `source_recording_item_id`, `description` | `true` |
-| `publish_training_guide` | `item_id`, `rights_mode`, `rbac_roles?`, `rbac_users?` | `true` |
+| `publish_training_guide` | `item_id`, `rights_mode` (`"public"` \| `"private"`) | `true` |
 
 `list_meeting_recordings` uses
 `contexts["transcriptions"].getItems({ filters, fields, user, role })`, filtered
@@ -314,6 +314,20 @@ exists.
 
 `create_training_guide` verifies the caller can read the source recording,
 rejects if a draft already exists for it, creates the draft, returns the job id.
+
+**Audience is public-or-private only** (decided 2026-08-27, revising B2 above).
+`handleRBACUpdate` is not exported from `@exulu/backend`, and
+`context.createItem`/`updateItem` ignore RBAC entirely — there is no `rbac`
+handling anywhere in `context.ts`. A consuming project can set `rights_mode`,
+which is a plain column, but cannot write per-user or per-role rows. Narrower
+audiences are therefore set afterwards using the existing bulk "Set access"
+dialog on `/data`.
+
+This narrows the "inherit from the recording, widen on approval" model: publish
+and audience-scoping become two acts rather than one. Accepted rather than
+exporting an RBAC surface, on the grounds that public-or-private covers the
+common case and the `/data` dialog already exists. If role-scoped guides turn
+out to matter in practice, the fix is an `ExuluRBAC` export mirroring A2.
 
 **On "the tool asks for a description":** a tool cannot ask the user anything —
 it receives arguments and runs. This is implemented as `description` being a
@@ -400,10 +414,20 @@ Fix: add `applyAccessControl(table, query, context.user)` to match
 
 ## Sequencing
 
-1. **Backend** (A ✅ merged to develop, + A2 + C2 + C4) → release `@exulu/backend`
-2. **algikiag** bumps the dependency, adds ffmpeg to `Dockerfile.worker`
-3. **Pipeline** (B) — calibration task included
-4. **Frontend modal** (C3) — independent, can land any time
+1. **Backend** (A ✅, A2 ✅, C2 ✅, C4 ✅ — all merged to develop) → release `@exulu/backend`
+2. **algikiag** bumps the dependency
+3. **B1 — foundations** (windowing, budget, frame selection, ffmpeg, calibration).
+   Needs no release: it touches no `@exulu/backend` API.
+4. **B2 — pipeline and tools** (Training context, processor, map/reduce stages,
+   three tools, ffmpeg in `Dockerfile.worker`). Written *after* B1's calibration,
+   so its frame budget, batch size and cost model come from measurements.
+5. **Frontend modal** (C3) — independent, can land any time
+
+B was split into B1 and B2 on 2026-08-27. Writing B2 before calibration would
+mean inventing the numbers calibration exists to discover: how many scene
+changes a real ALGI recording yields, whether the scene detector fires usefully
+on screen content at all, and what frame width keeps UI text legible. That last
+one constrains the whole cost model, since it sets tokens per frame.
 
 A2 is a hard prerequisite for B, not a nicety: without it the pipeline cannot
 call a model at all. A and A2 ship together so algikiag bumps once.
