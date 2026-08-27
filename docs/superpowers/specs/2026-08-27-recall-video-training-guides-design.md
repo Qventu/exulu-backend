@@ -554,9 +554,43 @@ and a colleague on webcam.
 If `screenshare_on` events *are* present they are free corroboration and worth
 recording in `processing_notes`. Nothing may gate on them.
 
+## Verified: `recording_config` merges, it does not replace (2026-08-27)
+
+A2 sent the full config because the docs never said which semantics applied,
+and a retention-only body would have silently disabled video recording under
+replace semantics. Settled empirically after releasing 3.7.0, by creating a bot
+scheduled seven days out with the exact payload `buildCreateBotPayload`
+produces, reading the config Recall echoed back, then deleting it
+(bot `c60ceec9-18db-4a08-a740-1ecf619b97bf`, HTTP 204).
+
+```json
+{
+  "realtime_endpoints": [],
+  "retention": { "type": "timed", "hours": 2160 },
+  "video_mixed_layout": "speaker_view",
+  "video_mixed_mp4": {},
+  "participant_events": {},
+  "meeting_metadata": {},
+  "video_mixed_participant_video_when_screenshare": "overlap",
+  "start_recording_on": "participant_join"
+}
+```
+
+`video_mixed_mp4` survived and retention is the requested 2160 hours, so 3.7.0
+is correct. The stronger evidence is the shape of the response: **five keys were
+sent, eight came back.** `realtime_endpoints`,
+`video_mixed_participant_video_when_screenshare` and `start_recording_on` are
+server defaults that were never in our payload and merged in anyway. Partial
+configs therefore merge — demonstrated, not inferred.
+
+Sending the full config remains the right call. It was correct under either
+semantics, and it pins the two video defaults we depend on against a future
+change to Recall's own defaults.
+
 ## Open items
 
-- Confirm post-deploy that an explicit `recording_config` preserves
-  `video_mixed_mp4` (see A2)
+- Verify `GenerateChunks` access control by hand, both the denied and the
+  permitted case (a fix that locks out legitimate callers passes the first
+  check and fails the point)
 - Re-check the threshold against the first genuine process recordings, expected
   week of 2026-08-31 — the only calibration so far is a meeting with screenshare
