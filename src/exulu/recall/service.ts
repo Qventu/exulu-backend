@@ -404,6 +404,30 @@ export const recallService = {
   },
 
   /**
+   * Fresh signed URL for a recording's mixed MP4, or null when there is no
+   * usable video (still processing, no video artifact, recording expired or
+   * deleted).
+   *
+   * Never cache the result: the URL carries X-Amz-Expires=21600, so it dies
+   * after six hours. Resolve at point of use.
+   */
+  async getRecordingVideoUrl(recordingId: string): Promise<string | null> {
+    try {
+      const recording = await recallClient.retrieveRecording(recordingId);
+      const video = recording?.media_shortcuts?.video_mixed;
+      if (!video) return null;
+      // Absent status means the artifact predates status reporting; treat as ready.
+      if (video.status?.code && video.status.code !== "done") return null;
+      return video.data?.download_url ?? null;
+    } catch (err) {
+      log(
+        `could not resolve video url for recording ${recordingId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  },
+
+  /**
    * Run the selected {prompt, agent} pairs against the transcript and store the
    * results on the row. Idempotent (skips if outputs already exist). Each entry
    * is isolated so one failing prompt does not block the others.

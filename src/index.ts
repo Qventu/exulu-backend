@@ -165,3 +165,4 @@ export const ExuluPython = {
 }
 
 export { CredentialInvalidError } from "./exulu/auth/errors";
+export { ExuluRecall } from "./exulu/recall/public";

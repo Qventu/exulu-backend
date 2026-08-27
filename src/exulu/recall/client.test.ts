@@ -1,4 +1,4 @@
-import { fetch_with_retry } from "./client";
+import { fetch_with_retry, buildCreateBotPayload, RECORDING_RETENTION_HOURS } from "./client";
 
 type FakeHeaders = Record<string, string>;
 const res = (status: number, headers: FakeHeaders = {}) =>
@@ -162,5 +162,60 @@ describe("fetch_with_retry", () => {
       fetch_with_retry({ url: "https://x", options: { method: "POST" } }),
     ).rejects.toThrow("fetch failed");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildCreateBotPayload", () => {
+  const base = {
+    meeting_url: "https://meet.google.com/abc-defg-hij",
+    join_at: "2026-08-27T10:00:00.000Z",
+  };
+
+  it("requests a mixed mp4 explicitly rather than relying on server defaults", () => {
+    const payload = buildCreateBotPayload(base) as any;
+    expect(payload.recording_config.video_mixed_mp4).toEqual({});
+    expect(payload.recording_config.video_mixed_layout).toBe("speaker_view");
+  });
+
+  it("keeps participant events and meeting metadata that the defaults provided", () => {
+    const payload = buildCreateBotPayload(base) as any;
+    expect(payload.recording_config.participant_events).toEqual({});
+    expect(payload.recording_config.meeting_metadata).toEqual({});
+  });
+
+  it("sets a 90 day timed retention", () => {
+    const payload = buildCreateBotPayload(base) as any;
+    expect(RECORDING_RETENTION_HOURS).toBe(2160);
+    expect(payload.recording_config.retention).toEqual({
+      type: "timed",
+      hours: 2160,
+    });
+  });
+
+  it("passes meeting_url and join_at through unchanged", () => {
+    const payload = buildCreateBotPayload(base) as any;
+    expect(payload.meeting_url).toBe(base.meeting_url);
+    expect(payload.join_at).toBe(base.join_at);
+  });
+
+  it("omits bot_name and chat when not requested", () => {
+    const payload = buildCreateBotPayload(base) as any;
+    expect(payload.bot_name).toBeUndefined();
+    expect(payload.chat).toBeUndefined();
+  });
+
+  it("pins an on-join chat notice when requested", () => {
+    const payload = buildCreateBotPayload({
+      ...base,
+      bot_name: "Company Notetaker",
+      notifyChat: { message: "This meeting is being recorded." },
+    }) as any;
+
+    expect(payload.bot_name).toBe("Company Notetaker");
+    expect(payload.chat.on_bot_join).toEqual({
+      send_to: "everyone",
+      message: "This meeting is being recorded.",
+      pin: true,
+    });
   });
 });
