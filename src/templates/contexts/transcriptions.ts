@@ -23,6 +23,10 @@ export const transcriptionsContext = new ExuluContext({
     // [{ prompt_id, agent_id, prompt_name, output, ran_at }]. Recall meeting
     // transcripts only for now.
     { name: "post_processing", type: "json", editable: false },
+    // Link back to the Recall recording so the mixed video stays reachable
+    // (resolve a fresh URL via ExuluRecall.getRecordingVideoUrl — it expires
+    // after six hours). Null for Whisper uploads.
+    { name: "recall_recording_id", type: "text" },
   ],
   sources: [],
   active: true,

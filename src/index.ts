@@ -62,6 +62,8 @@ export const ExuluJobs = {
   redis: redisClient,
 };
 
+export { ExuluModels } from "./exulu/models/public";
+
 export const ExuluDefaultTools = {
   agentic: {
     retrieval: {
@@ -165,3 +167,4 @@ export const ExuluPython = {
 }
 
 export { CredentialInvalidError } from "./exulu/auth/errors";
+export { ExuluRecall } from "./exulu/recall/public";
