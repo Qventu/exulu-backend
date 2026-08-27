@@ -28,6 +28,7 @@ import {
   type WhisperJob,
 } from "./client";
 import { renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
+import { buildTranscriptItemInput } from "./build-transcript-item";
 
 const TABLE = "transcription_jobs";
 
@@ -84,6 +85,8 @@ type JobRow = {
   updatedAt: string;
   // Recall meeting-bot post-processing results, carried into the saved item.
   post_processing_outputs?: unknown[] | null;
+  /** Recall recording id — the handle for the meeting video. Null for Whisper. */
+  recall_recording_id?: string | null;
 };
 
 const log = (msg: string) => console.log(`[EXULU-TRANSCRIPTION] ${msg}`);
@@ -337,21 +340,14 @@ export const transcriptionService = {
 
     const isReSave = row.status === "saved" && !!row.saved_item_id;
 
-    const itemInput: Item = {
-      // Carrying the id on re-save makes context.createItem upsert in place.
-      ...(isReSave && row.saved_item_id ? { id: row.saved_item_id } : {}),
-      name: input.title ?? row.title ?? "Transcript",
-      transcript_text: transcriptText,
-      audio_s3key: row.audio_s3key,
-      language: row.language ?? undefined,
-      duration_seconds: row.duration_seconds ?? undefined,
+    const itemInput: Item = buildTranscriptItemInput({
+      row,
+      title: input.title,
       speakers: input.speakers,
-      raw_segments: row.raw_segments,
-      // Recall meeting-bot post-processing results (null for Whisper jobs).
-      post_processing: row.post_processing_outputs ?? undefined,
-      rights_mode: rightsMode,
-      created_by: row.created_by,
-    };
+      transcriptText,
+      rightsMode,
+      isReSave,
+    });
 
     let item: Item;
     try {

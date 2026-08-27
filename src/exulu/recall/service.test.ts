@@ -875,3 +875,69 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
     );
   });
 });
+
+describe("getRecordingVideoUrl", () => {
+  beforeEach(() => {
+    retrieveRecordingSpy.mockReset();
+  });
+
+  it("returns the video_mixed download url", async () => {
+    retrieveRecordingSpy.mockResolvedValueOnce({
+      id: "rec-1",
+      media_shortcuts: {
+        video_mixed: {
+          id: "vm-1",
+          format: "mp4",
+          status: { code: "done" },
+          data: { download_url: "https://s3/video.mp4?X-Amz-Expires=21600" },
+        },
+      },
+    });
+
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBe(
+      "https://s3/video.mp4?X-Amz-Expires=21600",
+    );
+  });
+
+  it("returns null when the recording carries no video artifact", async () => {
+    retrieveRecordingSpy.mockResolvedValueOnce({
+      id: "rec-1",
+      media_shortcuts: { transcript: { id: "t-1" } },
+    });
+
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBeNull();
+  });
+
+  it("returns null while the video is still processing", async () => {
+    retrieveRecordingSpy.mockResolvedValueOnce({
+      id: "rec-1",
+      media_shortcuts: {
+        video_mixed: { id: "vm-1", status: { code: "processing" }, data: {} },
+      },
+    });
+
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBeNull();
+  });
+
+  it("returns null instead of throwing when the recording is gone", async () => {
+    retrieveRecordingSpy.mockRejectedValueOnce(new Error("Recall API 404"));
+
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBeNull();
+  });
+
+  it("re-resolves on every call — signed urls expire in 6h and must not be cached", async () => {
+    const rec = (url: string) => ({
+      id: "rec-1",
+      media_shortcuts: {
+        video_mixed: { id: "vm-1", status: { code: "done" }, data: { download_url: url } },
+      },
+    });
+    retrieveRecordingSpy
+      .mockResolvedValueOnce(rec("url-1"))
+      .mockResolvedValueOnce(rec("url-2"));
+
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBe("url-1");
+    await expect(recallService.getRecordingVideoUrl("rec-1")).resolves.toBe("url-2");
+    expect(retrieveRecordingSpy).toHaveBeenCalledTimes(2);
+  });
+});

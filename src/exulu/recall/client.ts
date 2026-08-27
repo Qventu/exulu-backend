@@ -146,6 +146,14 @@ export type CreateBotInput = {
   notifyChat?: { message: string };
 };
 
+/** Mixed video artifact. `data.download_url` is a signed S3 URL valid ~6h. */
+export type RecallVideoMixed = {
+  id?: string;
+  format?: string | null;
+  status?: { code?: string | null } | null;
+  data?: { download_url?: string };
+};
+
 export type RecallBot = {
   id: string;
   status_changes?: { code: string }[];
@@ -156,6 +164,7 @@ export type RecallBot = {
     completed_at?: string | null;
     media_shortcuts?: {
       transcript?: { id: string; data?: { download_url?: string } };
+      video_mixed?: RecallVideoMixed;
     };
   }[];
 };
@@ -179,6 +188,7 @@ export type RecallRecording = {
   duration?: number | null;
   media_shortcuts?: {
     transcript?: { id: string; data?: { download_url?: string } };
+    video_mixed?: RecallVideoMixed;
   };
 };
 
@@ -202,6 +212,43 @@ export const recordingDurationSeconds = (
   return null;
 };
 
+/** 90 days. Bounded on purpose — Recall's account default is `forever`. */
+export const RECORDING_RETENTION_HOURS = 2160;
+
+/**
+ * Create Bot request body.
+ *
+ * recording_config is sent in full rather than partially. The Recall docs do
+ * not state whether a partial config merges with or replaces the server-side
+ * defaults; under replace semantics, sending only `retention` would silently
+ * disable video recording. Spelling out the defaults makes the request correct
+ * under either reading. The values here mirror what Recall applied when we
+ * sent no config at all.
+ */
+export const buildCreateBotPayload = (input: CreateBotInput) => ({
+  meeting_url: input.meeting_url,
+  join_at: input.join_at,
+  ...(input.bot_name ? { bot_name: input.bot_name } : {}),
+  recording_config: {
+    video_mixed_mp4: {},
+    video_mixed_layout: "speaker_view",
+    participant_events: {},
+    meeting_metadata: {},
+    retention: { type: "timed", hours: RECORDING_RETENTION_HOURS },
+  },
+  ...(input.notifyChat
+    ? {
+        chat: {
+          on_bot_join: {
+            send_to: "everyone",
+            message: input.notifyChat.message,
+            pin: true,
+          },
+        },
+      }
+    : {}),
+});
+
 export const recallClient = {
   isConfigured: (): boolean =>
     !!recallApiKey() && !!process.env.RECALL_REGION,
@@ -210,22 +257,7 @@ export const recallClient = {
   createBot: (input: CreateBotInput): Promise<RecallBot> =>
     request<RecallBot>("/bot/", {
       method: "POST",
-      body: JSON.stringify({
-        meeting_url: input.meeting_url,
-        join_at: input.join_at,
-        ...(input.bot_name ? { bot_name: input.bot_name } : {}),
-        ...(input.notifyChat
-          ? {
-              chat: {
-                on_bot_join: {
-                  send_to: "everyone",
-                  message: input.notifyChat.message,
-                  pin: true,
-                },
-              },
-            }
-          : {}),
-      }),
+      body: JSON.stringify(buildCreateBotPayload(input)),
     }),
 
   /**
