@@ -7,6 +7,8 @@ import { encryptString, generateApiKey } from "@SRC/auth/generate-key";
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ensureEntityTables } from "@SRC/exulu/entities";
+import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
+import { getTableName } from "@SRC/exulu/table-names";
 
 const {
   agentsSchema,
@@ -319,11 +321,21 @@ const up = async function (knex: Knex) {
 };
 
 const contextDatabases = async (contexts: ExuluContext[]) => {
+  const { db: knex } = await postgresClient();
   for (const context of contexts) {
     const itemsTableExists = await context.tableExists();
     if (!itemsTableExists) {
       console.log("[EXULU] items table does not exist, creating it.");
       await context.createItemsTable();
+    } else {
+      // createItemsTable only runs for absent tables, so a field added to an
+      // existing context would never get its column and the next createItem
+      // would throw. Idempotent: addMissingFields gates on hasColumn.
+      await addMissingFields(
+        knex,
+        getTableName(context.id),
+        contextFieldsForSync(context),
+      );
     }
     const chunksTableExists = await context.chunksTableExists();
     if (!chunksTableExists && context.embedder) {
