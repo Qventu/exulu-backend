@@ -1112,6 +1112,7 @@ export function createMutations(
       // Generating chunks for the items in the context
       // that match the where clause.
       query = applyFilters(query, args.where, table);
+      query = applyAccessControl(table, query, context.user);
 
       if (args.limit) {
         query = query.limit(args.limit);
