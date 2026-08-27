@@ -503,9 +503,32 @@ application, deliberately clicking through steps — should produce *more* scene
 changes, not fewer. If the first real process recordings come back sparse, lower
 the threshold before questioning the approach.
 
+### A rejected data point, and what it taught us
+
+A second recording (`a2b47a5f`, 14.2 min, 2026-08-27, titled "Test") was also
+calibrated and its numbers **discarded**. It returned a suspiciously flat
+response — 21 frames after spacing at every threshold from 0.10 to 0.30 — which
+looked like reassuring insensitivity. Sampling frames showed why: the recording
+is webcam footage and the bot's own "Company Notetaker" placeholder. The bot's
+`participant_events` put total screenshare at **67.5 s of 851 s — 7.9% of the
+recording**. The 21 "scene changes" were camera motion and view switches, not
+screen content.
+
+Had the flat response been taken at face value it would have supported a
+threshold anywhere in 0.10–0.30 on evidence that contained almost no screen.
+
+**This produces a concrete requirement for B2's step 0.** Recall exposes
+`screenshare_on` / `screenshare_off` in the bot's `participant_events`, so
+screenshare coverage is computable *before* any frame is extracted or any token
+spent. If coverage is below a threshold (start at ~50% and tune), fail the job
+with a message telling the employee their recording contains little or no screen
+content — rather than spending the full pipeline budget producing a "training
+guide" from footage of somebody's face. Cheap, and it fails in the direction
+that costs nothing.
+
 ## Open items
 
 - Confirm post-deploy that an explicit `recording_config` preserves
   `video_mixed_mp4` (see A2)
-- Re-check the threshold against the first genuine process recording (see the
-  caveat above)
+- Re-check the threshold against the first genuine process recordings, expected
+  week of 2026-08-31 — the only calibration so far is a meeting with screenshare
