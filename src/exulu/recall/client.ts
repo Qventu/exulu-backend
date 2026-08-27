@@ -146,6 +146,14 @@ export type CreateBotInput = {
   notifyChat?: { message: string };
 };
 
+/** Mixed video artifact. `data.download_url` is a signed S3 URL valid ~6h. */
+export type RecallVideoMixed = {
+  id?: string;
+  format?: string | null;
+  status?: { code?: string | null } | null;
+  data?: { download_url?: string };
+};
+
 export type RecallBot = {
   id: string;
   status_changes?: { code: string }[];
@@ -156,6 +164,7 @@ export type RecallBot = {
     completed_at?: string | null;
     media_shortcuts?: {
       transcript?: { id: string; data?: { download_url?: string } };
+      video_mixed?: RecallVideoMixed;
     };
   }[];
 };
@@ -179,6 +188,7 @@ export type RecallRecording = {
   duration?: number | null;
   media_shortcuts?: {
     transcript?: { id: string; data?: { download_url?: string } };
+    video_mixed?: RecallVideoMixed;
   };
 };
 
