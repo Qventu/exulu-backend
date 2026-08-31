@@ -205,6 +205,17 @@ These variables control the anonymous guest chat feature. All five are optional;
 
 ---
 
+## External user access
+
+These variables control rate limiting for logged-in users with the `external` role (self-registered users invited to chat with specific agents). Both are optional; the backend uses the defaults listed when the variables are absent. Unlike guest rate limiting, this is keyed by user ID rather than IP, since external users are authenticated.
+
+| Variable | Required? | Component | Default | Purpose | Example |
+|---|---|---|---|---|---|
+| `EXULU_EXTERNAL_RATE_PER_MINUTE` | No | Server | `30` | Maximum messages a single external user may send within any rolling one-minute window. Exceeding this returns HTTP 429. | `20` |
+| `EXULU_EXTERNAL_RATE_PER_HOUR` | No | Server | `300` | Maximum messages a single external user may send within any rolling one-hour window. Exceeding this returns HTTP 429. | `500` |
+
+---
+
 ## Frontend-only variables
 
 The following variables are read exclusively by the frontend container. They do not appear in the backend source.
