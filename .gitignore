@@ -24,3 +24,7 @@ ee/python/**/*.egg-info/
 ee/python/documents/processing/build/
 ee/python/documents/processing/dist/
 .superpowers/sdd/
+
+# Sensitive AI.OPEN guide artifacts — must never be committed (history was scrubbed 2026-09-01)
+AI.OPEN*
+ai-open-guide-assets/
