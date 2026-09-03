@@ -602,6 +602,9 @@ export const convertExuluToolsToAiSdkTools = async (
               options,
             );
 
+            // @daniel.jost 
+            // todo evtl. so? if response === typeof AgenticRetrievalResult && user.role === external && agent.external.showSources === false
+
             await updateStatistic({
               name: "count",
               label: cur.name,
