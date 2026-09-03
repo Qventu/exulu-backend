@@ -554,9 +554,104 @@ and a colleague on webcam.
 If `screenshare_on` events *are* present they are free corroboration and worth
 recording in `processing_notes`. Nothing may gate on them.
 
+## Verified: `recording_config` merges, it does not replace (2026-08-27)
+
+A2 sent the full config because the docs never said which semantics applied,
+and a retention-only body would have silently disabled video recording under
+replace semantics. Settled empirically after releasing 3.7.0, by creating a bot
+scheduled seven days out with the exact payload `buildCreateBotPayload`
+produces, reading the config Recall echoed back, then deleting it
+(bot `c60ceec9-18db-4a08-a740-1ecf619b97bf`, HTTP 204).
+
+```json
+{
+  "realtime_endpoints": [],
+  "retention": { "type": "timed", "hours": 2160 },
+  "video_mixed_layout": "speaker_view",
+  "video_mixed_mp4": {},
+  "participant_events": {},
+  "meeting_metadata": {},
+  "video_mixed_participant_video_when_screenshare": "overlap",
+  "start_recording_on": "participant_join"
+}
+```
+
+`video_mixed_mp4` survived and retention is the requested 2160 hours, so 3.7.0
+is correct. The stronger evidence is the shape of the response: **five keys were
+sent, eight came back.** `realtime_endpoints`,
+`video_mixed_participant_video_when_screenshare` and `start_recording_on` are
+server defaults that were never in our payload and merged in anyway. Partial
+configs therefore merge — demonstrated, not inferred.
+
+Sending the full config remains the right call. It was correct under either
+semantics, and it pins the two video defaults we depend on against a future
+change to Recall's own defaults.
+
+## First end-to-end run (2026-08-28)
+
+Both paths executed against real recordings, real ffmpeg and real Vertex.
+
+**Negative path — PASS in 4.4 s.** Recording `a2b47a5f` (webcam plus the bot's
+placeholder card) was rejected by the content probe with `screen_fraction 0.00`:
+*"a blurred background, a man with a headset, and a placeholder image with the
+text 'Company Notetaker' ... none of which depict a computer screen being
+used."* One vision call, stopped before scene detection. The guard that replaced
+the `screenshare_on` proposal works, and it works for the reason it was chosen —
+it looked at the frames rather than trusting platform metadata.
+
+**Positive path — completed in 165 s.** Recording `39509d8c` (31.2 min, ~30 min
+screenshare) with its real 26-segment German transcript. 46 raw action events
+merged to 36 — the dedup fired on real data. Coverage 2 s–1867 s of an 1870 s
+recording, timestamps sorted, 23 of 36 events carrying narration, largest gap
+89 s. Guide 8177 characters, German, four headings.
+
+**The vision model reads the screen accurately at 1024 px.** It extracted
+`elcs ERP Komm. Bericht`, `Foxit PDF Reader`, `Foto mit Zeichnung.pdf`,
+`IMG_2047.jpg`, `Dokumentennavigator_V2`,
+`Steuerung_NEW_26201346_DSW > Auslieferzustand` and `20200402_103534.jpg` —
+genuine filenames and folder paths from a German Windows desktop. The width
+calibration holds.
+
+**The "do not invent" instruction works.** Unprompted, the model wrote *"Es ist
+unklar, warum hier gescrollt wird, wenn die Anwendung anschließend geschlossen
+wird"* and flagged a brief `cmd.exe` open/close as *"möglicherweise ein
+Prüfschritt oder eine unbeabsichtigte Aktion"*. It hedged rather than
+confabulating.
+
+**What the run does NOT prove.** The guide is a narration of UI events — "close
+Word", "scroll down in Outlook", "maximise the Explorer window", "a black screen
+is displayed", "ciao". That is a *faithful* description of the input: three
+people discussing a Kaltleiter problem while clicking around. There was no
+process to document, so the model documented clicking. The machinery is proven;
+guide quality is not, and cannot be until a real process recording exists.
+
+**One signal to watch.** Confidence never fell below 0.5 across all 36 events
+(distinct values: 0.5, 0.8, 0.9, 1.0), so `renderActionLog`'s `(uncertain)`
+hedge never fired. All hedging in the guide came from the model's judgment in
+the reduce step. One of the two hedging mechanisms is currently inert — decide
+on real content whether to tune the map prompt or drop the confidence signal.
+
+**Environment finding, unrelated to this feature.** `config.litellm.yaml`
+hardcoded `vertex_ai_project: "dx-newlift"` in all nine model blocks while the
+service account is `dx-algi`, so every Vertex call failed 403
+`IAM_PERMISSION_DENIED`. Present since the repo was initialised
+(`edf8e7e`, 2026-06-30); `dx-algi` had never appeared in that file. Corrected
+locally to `dx-algi`, which is what made this run possible. **Whether the
+deployed instance also needs it is unverified** — if the deployed
+`vertex-auth.json` is a `dx-newlift` service account, config and credentials
+currently agree in production and changing one without the other would break it.
+
 ## Open items
 
-- Confirm post-deploy that an explicit `recording_config` preserves
-  `video_mixed_mp4` (see A2)
+- **Decide whether the `dx-algi` config fix should be deployed.** Verify what
+  service account the deployed instance actually uses before shipping it.
+- Verify `GenerateChunks` access control by hand, both the denied and the
+  permitted case (a fix that locks out legitimate callers passes the first
+  check and fails the point)
 - Re-check the threshold against the first genuine process recordings, expected
   week of 2026-08-31 — the only calibration so far is a meeting with screenshare
+- Run the guide pipeline against a genuine process recording and judge the
+  output; that is the only remaining question about whether this feature works
+- Exercise the three tools through a real Alfredo Teacher agent (this run drove
+  `runTrainingPipeline` directly, so the tools and the queue processor are still
+  unexercised)
