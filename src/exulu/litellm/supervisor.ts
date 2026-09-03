@@ -136,6 +136,26 @@ const spawnLiteLLM = (cfg: ReturnType<typeof resolveConfig>): ChildProcess => {
     DEBUG: "false",
   };
 
+  // Exulu owns LiteLLM's schema. `initLitellmDb` (see db-init.ts) runs
+  // `prisma db push` at boot, which syncs the schema but does NOT write
+  // migration history. LiteLLM also tries to manage its own schema on startup:
+  // when the prisma CLI is reachable it runs `prisma migrate deploy` over its
+  // ~145 bundled migrations (proxy_cli.py, gated on `should_update_prisma_schema`).
+  //
+  // Run both and they collide. Every migration that adds a column `db push`
+  // already created fails with Postgres 42701 ("column already exists") →
+  // Prisma P3018. LiteLLM self-heals by resolving one failed migration per
+  // startup, but each cycle costs more than READY_TIMEOUT_MS, so the supervisor
+  // kills it first; after MAX_CRASHES it gives up and the proxy never starts.
+  // This took down production on the 1.85.1 → 1.97.0 upgrade.
+  //
+  // Pinning the flag here keeps ownership in code rather than in per-deployment
+  // env config. An operator who explicitly sets the var — deliberately handing
+  // schema ownership back to LiteLLM — still wins.
+  if (!process.env.DISABLE_SCHEMA_UPDATE) {
+    childEnv.DISABLE_SCHEMA_UPDATE = "true";
+  }
+
   // Tell LiteLLM to mount itself under the prefix Exulu reverse-proxies the
   // admin UI from, so its internal asset URLs, redirects, and SSO callbacks
   // all include the path.
