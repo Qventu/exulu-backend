@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { dropEmptyMessages } from "./stored-messages";
 import { generateText, validateUIMessages, type LanguageModel, type UIMessage } from "ai";
 import type { User } from "@EXULU_TYPES/models/user";
 import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
@@ -104,7 +105,9 @@ export const compactSession = async ({
 }): Promise<{ checkpoint: UIMessage; occupancyEstimate: number; originalTokens: number; summaryTokens: number }> => {
   const budget = deriveContextBudget(contextWindow);
   const rows = await getAgentMessages({ session: sessionID, user: user.id });
-  const all = await validateUIMessages({ messages: rows.map((r: { content: string }) => JSON.parse(r.content)) });
+  const all = await validateUIMessages({
+    messages: dropEmptyMessages(rows.map((r: { content: string }) => JSON.parse(r.content))),
+  });
   // Only what the model currently sees is compactable — prior checkpoints
   // already collapsed everything before them.
   const history = sliceHistoryAtCheckpoint(all as UIMessage[]);

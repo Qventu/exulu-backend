@@ -1,4 +1,6 @@
 import type { User } from "@EXULU_TYPES/models/user";
+import { classifyFilePart } from "./file-part";
+import { dropEmptyMessages } from "./stored-messages";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
 import {
@@ -66,24 +68,22 @@ const processFilePartsInMessages = async (
                     }
 
                     console.log(`[EXULU] Processing part`, part);
-                    const { mediaType, url, filename } = part;
+                    const { url } = part;
 
-                    // Check if it's an image file - these are supported as image parts
-                    console.log(`[EXULU] Media type: ${mediaType}`);
-                    console.log(`[EXULU] URL: ${url}`);
-                    console.log(`[EXULU] Filename: ${filename}`);
-                    const imageTypes = [".png", ".jpeg", ".jpg", ".gif", ".webp"];
-                    const imageType = imageTypes.find((type) =>
-                        filename.toLowerCase().includes(type.toLowerCase()),
-                    );
-                    if (imageType) {
-                        console.log(`[EXULU] Converting file part to image part: ${filename} `);
+                    // Persisted parts may lack `filename` (see classifyFilePart), so the
+                    // decision is driven by mediaType with the URL as name fallback.
+                    const classified = classifyFilePart(part);
+                    console.log(`[EXULU] File part classified as ${classified.kind}: ${classified.filename}`);
+                    if (classified.kind === "image") {
                         return {
                             type: "file",
-                            mediaType: `image/${imageType.replace(".", "")}`,
+                            mediaType: classified.mediaType,
                             url: url,
+                            // Keep the name so later turns/steps still know the file.
+                            ...(classified.filename ? { filename: classified.filename } : {}),
                         };
                     }
+                    const filename = classified.filename;
 
                     // For document files, fetch content and extract text using officeparser
                     console.log(`[EXULU] Converting file part to text using officeparser: ${filename}`);
@@ -151,8 +151,10 @@ export const saveChat = async ({
     model?: string;
 }) => {
     const { db } = await postgresClient();
-    // Save messages sequentially to maintain correct createdAt timestamps
-    for (const message of messages) {
+    // Save messages sequentially to maintain correct createdAt timestamps.
+    // Never persist a part-less shell (a failed stream's empty assistant reply):
+    // it would fail validateUIMessages on every later load of the session.
+    for (const message of dropEmptyMessages(messages)) {
         const mutation = db
             .from("agent_messages")
             .insert({
@@ -294,7 +296,7 @@ export const generateSync = async ({
         // validate messages
         messages = await validateUIMessages({
             // append the new message to the previous messages:
-            messages: [...previousMessagesContent, ...messages],
+            messages: dropEmptyMessages([...previousMessagesContent, ...messages]),
         });
         const contextBudget = deriveContextBudget(contextWindow);
         const occupancy = contextOccupancy(messages);
@@ -725,7 +727,7 @@ export const generateStream = async ({
     // validate messages
     messages = await validateUIMessages({
         // append the new message to the previous messages:
-        messages: [...previousMessagesContent, message],
+        messages: dropEmptyMessages([...previousMessagesContent, message]),
     });
 
     const query = message.parts?.[0]?.type === "text" ? message.parts[0].text : undefined;

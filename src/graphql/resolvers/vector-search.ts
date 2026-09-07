@@ -1,4 +1,4 @@
-import { preprocessQuery } from "@SRC/utils/query-preprocessing";
+import { resolveSearchQueryTexts } from "@SRC/utils/query-preprocessing";
 import { applySorting } from "./apply-sorting";
 import type { SearchFilters } from "../types";
 import { applyAccessControl } from "../utilities/access-control";
@@ -230,20 +230,21 @@ export const vectorSearch = async ({
   let _preMs = 0, _statMs = 0, _resolveMs = 0, _embedMs = 0;
   let _embedSource: "computed" | "reused" | "none" = "none";
 
+  // Input for the hybrid search's full-text branch (OR-ed original + stemmed tokens).
+  let hybridOrQuery = "";
+
   if (query) {
-    // Preprocess query with language detection and stemming
     const _tp = Date.now();
-    const { processed: stemmedQuery } = preprocessQuery(query, {
-      enableStemming: true,
-      detectLanguage: true,
-    });
+    // The raw query is embedded (chunks are embedded raw too); the stemmed form only
+    // serves the full-text branches. See resolveSearchQueryTexts for the rationale.
+    const texts = resolveSearchQueryTexts(query);
     _preMs = Date.now() - _tp;
 
-    console.log("[EXULU] Stemmed query:", stemmedQuery);
+    console.log("[EXULU] Search query texts:", texts);
 
-    if (stemmedQuery) {
-      query = stemmedQuery;
-    }
+    const embedText = texts.embedText;
+    hybridOrQuery = texts.hybridOrQuery;
+    query = texts.ftsText;
 
     if (queryEmbedding && queryEmbedding.length) {
       // Caller supplied a precomputed query embedding (e.g. the harness broad-sweep embeds the query
@@ -275,7 +276,7 @@ export const vectorSearch = async ({
       _resolveMs = Date.now() - _tr;
 
       const _te = Date.now();
-      const [queryVector] = await resolved.embed([query], { inputType: "query" });
+      const [queryVector] = await resolved.embed([embedText], { inputType: "query" });
       _embedMs = Date.now() - _te;
 
       if (!queryVector?.length) {
@@ -403,6 +404,9 @@ export const vectorSearch = async ({
       resultChunks = await chunksQuery;
       break;
     case "hybridSearch":
+      // Full-text branch: websearch_to_tsquery over OR-ed tokens. plainto_tsquery AND-ed
+      // every term, so one keyword absent from the corpus (e.g. a pump type read off a
+      // photo) returned zero rows and silently degraded the search to vector-only.
       // Tunables
       const matchCount = Math.min(limit * 2);
       const fullTextWeight = 2.0;
@@ -411,14 +415,14 @@ export const vectorSearch = async ({
 
       // Build multi-language expressions for full text search
       const ftRankExpression = languages
-        .map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`)
+        .map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`)
         .join(", ");
-      const ftRankParams = languages.map(() => query);
+      const ftRankParams = languages.map(() => hybridOrQuery);
 
       const ftMatchExpression = languages
-        .map((lang) => `chunks.fts @@ plainto_tsquery('${lang}', ?)`)
+        .map((lang) => `chunks.fts @@ websearch_to_tsquery('${lang}', ?)`)
         .join(" OR ");
-      const ftMatchParams = languages.map(() => query);
+      const ftMatchParams = languages.map(() => hybridOrQuery);
 
       // Build the full_text CTE subquery
       let fullTextQuery = db(chunksTable + " as chunks")
@@ -483,8 +487,8 @@ export const vectorSearch = async ({
           db.raw('items."updatedAt" as item_updated_at'),
           db.raw('items."createdAt" as item_created_at'),
           db.raw(
-            `GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`).join(", ")}) AS fts_rank`,
-            languages.map(() => query),
+            `GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`).join(", ")}) AS fts_rank`,
+            languages.map(() => hybridOrQuery),
           ),
           db.raw(`(1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance`),
           db.raw(
@@ -515,8 +519,8 @@ export const vectorSearch = async ({
           [rrfK, fullTextWeight, rrfK, semanticWeight, cutoffs?.hybrid || 0],
         )
         .whereRaw(
-          `(chunks.fts IS NULL OR GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, plainto_tsquery('${lang}', ?))`).join(", ")}) > ?)`,
-          [...languages.map(() => query), cutoffs?.tsvector || 0],
+          `(chunks.fts IS NULL OR GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`).join(", ")}) > ?)`,
+          [...languages.map(() => hybridOrQuery), cutoffs?.tsvector || 0],
         )
         .whereRaw(`(chunks.embedding IS NULL OR (1 - (chunks.embedding <=> ${vectorExpr})) >= ?)`, [
           cutoffs?.cosineDistance || 0,
