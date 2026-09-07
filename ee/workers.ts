@@ -3,6 +3,7 @@ import { redisServer } from "@EE/queues/server.ts";
 import { guardRedisStartup, logRedisErrors } from "@EE/queues/redis-startup.ts";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq } from "@SRC/validators/bullmq.ts";
+import { serializeError } from "@SRC/utils/serialize-error.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -1212,7 +1213,8 @@ export const createWorkers = async (
           ])
           .update({
             state: JOB_STATUS_ENUM.failed,
-            error,
+            // A raw Error serialises to "{}" in jsonb — keep message/stack/cause.
+            error: serializeError(error),
           });
 
         // Cap the table as rows become terminal (every Nth, idempotent).
