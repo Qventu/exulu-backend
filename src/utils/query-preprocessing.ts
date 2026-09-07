@@ -81,19 +81,59 @@ function detectQueryLanguage(query: string, minLength: number = 10): string {
 function stemWord(word: string, languageCode: string): string {
   const stemmer = STEMMER_MAP[languageCode] || natural.PorterStemmer;
 
-  // Remove punctuation and normalize
-  const cleaned = word.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  // Trim punctuation that merely surrounds the token (commas, quotes, brackets, …) and
+  // normalise case. Inner characters are kept: they are part of the token's identity.
+  const core = word
+    .replace(/^[^\p{L}\p{N}]+/u, "")
+    .replace(/[^\p{L}\p{N}]+$/u, "")
+    .toLowerCase();
 
-  if (!cleaned) {
+  if (!core) {
     return word;
   }
 
+  // Tokens containing digits or inner punctuation are identifiers, dimensions or
+  // fractions (3/4, 50/95, Zg.60858_0500, AZFR-G), not inflected words. Stemming them
+  // used to strip the punctuation first, turning 3/4 into 34 and 50/95 into 5095 —
+  // which matches nothing in a catalog that stores 3/4". Keep them verbatim.
+  if (!/^\p{L}+$/u.test(core)) {
+    return core;
+  }
+
   try {
-    return stemmer.stem(cleaned);
+    return stemmer.stem(core);
   } catch (error) {
     console.warn(`[EXULU] Error stemming word "${word}":`, error);
-    return cleaned;
+    return core;
   }
+}
+
+/**
+ * Builds the input for `websearch_to_tsquery` used by the hybrid search's full-text branch.
+ *
+ * The tokens of the original query and of its stemmed form are OR-ed together, so a single
+ * keyword that does not occur in the corpus (a pump type read off a photo, say) can no longer
+ * zero out the whole branch the way the AND semantics of `plainto_tsquery` did. Including the
+ * original tokens also makes the branch independent of the JS stemmer's language guess:
+ * Postgres applies its own stemmer per configured language.
+ *
+ * Only the characters `websearch_to_tsquery` treats as operators are removed: double quotes
+ * (phrases), a leading dash (NOT) and the literal word `or`.
+ */
+export function buildFullTextOrQuery(original: string, processed: string): string {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const raw of `${original} ${processed}`.split(/\s+/)) {
+    const token = raw
+      .replace(/["'`]/g, "")
+      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .replace(/[^\p{L}\p{N}]+$/u, "")
+      .toLowerCase();
+    if (!token || token === "or" || seen.has(token)) continue;
+    seen.add(token);
+    tokens.push(token);
+  }
+  return tokens.join(" or ");
 }
 
 /**
@@ -163,5 +203,31 @@ export function preprocessQuery(
     processed,
     language,
     stemmed: true,
+  };
+}
+
+/**
+ * Derives the texts the vector search needs from one user query.
+ *
+ * - `embedText`: the query untouched. Chunks are embedded from their raw content, so the
+ *   query vector must come from the raw query as well — embedding the stemmed form compared
+ *   "pulsationsdämpf 34 zoll" against "Pulsationsdämpfer 3/4"" and lost the match.
+ * - `ftsText`: the stemmed query (kept for the `tsvector` method's keyword extraction).
+ * - `hybridOrQuery`: `websearch_to_tsquery` input for the hybrid search's full-text branch.
+ */
+export function resolveSearchQueryTexts(query: string): {
+  embedText: string;
+  ftsText: string;
+  hybridOrQuery: string;
+} {
+  const { processed } = preprocessQuery(query, {
+    enableStemming: true,
+    detectLanguage: true,
+  });
+  const ftsText = processed || query;
+  return {
+    embedText: query,
+    ftsText,
+    hybridOrQuery: buildFullTextOrQuery(query, ftsText),
   };
 }
