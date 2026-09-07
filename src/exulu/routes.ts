@@ -55,10 +55,11 @@ import { generateSuggestions } from "./suggestions.ts";
 import { resolveModel, ResolveModelError } from "./resolve-model.ts";
 import { isLiteLLMEnabled, waitForLiteLLMReady, LITELLM_UI_PATH } from "./litellm/supervisor.ts";
 import { resolveContextWindow } from "./resolve-context-window.ts";
-import { ContextCompactionRequiredError, mapStreamErrorMessage } from "./context-budget.ts";
+import { mapStreamErrorMessage } from "./context-budget.ts";
 import { markStreamActive, clearStreamActive, isStreamActive } from "./active-streams.ts";
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
+import { describeRequestError } from "./request-error.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -798,13 +799,15 @@ export const createExpressRoutes = async (
           });
         } catch (err) {
           if (headers.session) clearStreamActive(headers.session as string);
-          if (err instanceof ContextCompactionRequiredError) {
-            // Body is the JSON string; the AI SDK transport surfaces it as
-            // err.message on the client.
-            res.status(413).send(err.message);
-            return;
-          }
-          throw err;
+          // Rethrowing here rendered Express' HTML error page in the chat UI. Answer
+          // with a status + plain-text body the AI SDK transport surfaces as err.message.
+          console.error(
+            "[EXULU] chat request failed before streaming.",
+            err instanceof Error ? err.message.slice(0, 500) : err,
+          );
+          const { status, body } = describeRequestError(err);
+          res.status(status).send(body);
+          return;
         }
 
         // consume the stream to ensure it runs to completion & triggers onFinish
@@ -970,11 +973,13 @@ export const createExpressRoutes = async (
             },
           });
         } catch (err) {
-          if (err instanceof ContextCompactionRequiredError) {
-            res.status(413).send(err.message);
-            return;
-          }
-          throw err;
+          console.error(
+            "[EXULU] run request failed.",
+            err instanceof Error ? err.message.slice(0, 500) : err,
+          );
+          const { status, body } = describeRequestError(err);
+          res.status(status).send(body);
+          return;
         }
         res.status(200).json(response);
         return;
@@ -4237,6 +4242,7 @@ export const createExpressRoutes = async (
     ".jpeg": "image/jpeg",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".bmp": "image/bmp",
     ".svg": "image/svg+xml",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
