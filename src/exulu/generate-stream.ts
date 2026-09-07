@@ -1,6 +1,8 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import { classifyFilePart } from "./file-part";
 import { dropEmptyMessages } from "./stored-messages";
+import { resolveFreshFileUrl } from "./stored-file-url";
+import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
 import {
@@ -68,7 +70,17 @@ const processFilePartsInMessages = async (
                     }
 
                     console.log(`[EXULU] Processing part`, part);
-                    const { url } = part;
+                    // Stored URLs are presigned and expire after a day; re-sign so a
+                    // continued session (approval, follow-up, later routine step) can
+                    // still fetch the file. The refreshed URL is what gets persisted.
+                    const uploads = offloadCtx.exuluConfig?.fileUploads;
+                    const url = uploads?.s3Bucket
+                        ? await resolveFreshFileUrl(part.url, {
+                              endpoint: uploads.s3endpoint,
+                              bucket: uploads.s3Bucket,
+                              sign: (bucket, key) => getPresignedUrl(bucket, key, offloadCtx.exuluConfig!),
+                          })
+                        : part.url;
 
                     // Persisted parts may lack `filename` (see classifyFilePart), so the
                     // decision is driven by mediaType with the URL as name fallback.
