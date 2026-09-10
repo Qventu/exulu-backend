@@ -94,3 +94,18 @@ describe("project_search option", () => {
     expect(parsePipelineConfig({ project_search: true }).projectSearch).toBe(true);
   });
 });
+
+describe("show_sources_to_external_users option", () => {
+  it("defaults to true when absent or empty (empty string = backend default)", () => {
+    expect(parsePipelineConfig({}).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig(undefined).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig({ show_sources_to_external_users: "" }).showSourcesToExternalUsers).toBe(true);
+  });
+
+  it("parses explicit values", () => {
+    expect(parsePipelineConfig({ show_sources_to_external_users: "false" }).showSourcesToExternalUsers).toBe(false);
+    expect(parsePipelineConfig({ show_sources_to_external_users: false }).showSourcesToExternalUsers).toBe(false);
+    expect(parsePipelineConfig({ show_sources_to_external_users: "true" }).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig({ show_sources_to_external_users: true }).showSourcesToExternalUsers).toBe(true);
+  });
+});

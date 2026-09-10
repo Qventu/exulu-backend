@@ -71,6 +71,8 @@ export type PipelineConfig = {
   logging: boolean;
   /** Search items attached to the chat's project as an additional source. Default true. */
   projectSearch: boolean;
+  /** Show source references (item names, IDs, chunk info) to external users and guests. When false, sources are hidden. Default true. */
+  showSourcesToExternalUsers: boolean;
   utilityModel: string;
   knowledgeBases: Record<string, KbProfile>;
   routing: z.infer<typeof routingSchema>;
@@ -138,6 +140,10 @@ export function parsePipelineConfig(raw?: Record<string, unknown>): PipelineConf
       r["project_search"] === undefined || r["project_search"] === ""
         ? true
         : boolVal(r["project_search"]),
+    showSourcesToExternalUsers:
+      r["show_sources_to_external_users"] === undefined || r["show_sources_to_external_users"] === ""
+        ? true
+        : boolVal(r["show_sources_to_external_users"]),
     utilityModel: strVal(r["utility_model"], ""),
     knowledgeBases: jsonVal("knowledge_bases", knowledgeBasesSchema, r["knowledge_bases"]),
     routing: jsonVal("routing", routingSchema, r["routing"]),

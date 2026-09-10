@@ -17,6 +17,7 @@ import { rerankResults } from "./rerank";
 import type { AgenticRetrievalOutput, RerankState, ChunkWithScore } from "./types";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { parsePreselectedItems } from "./global-ids";
+import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
 export { parsePreselectedItems } from "./global-ids";
 
 // ---------------------------------------------------------------------------
@@ -37,21 +38,45 @@ function addChunks(result: AgenticRetrievalOutput, chunks: ChunkWithScore[]): vo
 }
 
 /**
+ * Strip source reference fields from a chunk when sources should not be shown.
+ * Removes: item_id, item_name, item_external_id, context, chunk_id, chunk_index.
+ */
+function stripSourceReferences(chunk: ChunkWithScore): Partial<ChunkWithScore> {
+  return {
+    ...chunk,
+    item_id: undefined,
+    item_name: undefined,
+    item_external_id: undefined,
+    context: undefined,
+    chunk_id: undefined,
+    chunk_index: undefined,
+  };
+}
+
+/**
  * Serialize the cumulative output for yielding. Full chunk content lives ONLY in the
  * top-level `chunks` (what the chat UI cites and the calling agent reads); the per-step
  * chunk copies keep ids/names/metadata for counts and traceability but drop
  * `chunk_content` — serializing the same content twice roughly doubled the tool payload
  * and, across a few calls, overflowed the calling agent's context window.
+ *
+ * When hideSources is true, also strips source reference fields (item_id, item_name, etc.)
+ * from all chunks at both the top-level and per-step level.
  */
-function serializeOutput(result: AgenticRetrievalOutput): string {
+function serializeOutput(result: AgenticRetrievalOutput, hideSources: boolean = false): string {
   return JSON.stringify({
     ...result,
+    chunks: hideSources ? result.chunks.map(stripSourceReferences) : result.chunks,
     steps: result.steps.map((step) =>
       step.chunks.length === 0
         ? step
         : {
             ...step,
-            chunks: step.chunks.map((c) => ({ ...c, chunk_content: undefined })),
+            chunks: step.chunks.map((c) =>
+              hideSources
+                ? { ...stripSourceReferences(c), chunk_content: undefined }
+                : { ...c, chunk_content: undefined },
+            ),
           },
     ),
   });
@@ -181,6 +206,12 @@ export function createAgenticRetrievalTool(opts: {
         type: "json",
         default: '{"topK":5,"fallbackThreshold":0.95,"pinBoost":0.15,"identifierBoost":0.15,"pageWindow":1,"maxQueriesPerContext":5}',
       },
+      {
+        name: "show_sources_to_external_users",
+        description: "When disabled, hides source references (item names, IDs, chunk info) from external users and anonymous guests. Sources are stripped from the tool output and the system prompt guidance for citation is omitted.",
+        type: "boolean",
+        default: true,
+      },
     ],
     inputSchema: z.object({
       userQuery: z.string().describe("The original unaltered question from the user"),
@@ -214,6 +245,12 @@ export function createAgenticRetrievalTool(opts: {
       }
 
       const cfg = parsePipelineConfig(toolVariablesConfig);
+
+      // ── Source visibility: strip references for external/anonymous users ──
+      // Only when the admin explicitly turned the flag off; the default (true)
+      // preserves the previous behaviour for every caller.
+      const hideSources =
+        !cfg.showSourcesToExternalUsers && isExternalOrAnonymousUser(user);
 
       // ── Gate: managed context requires preselected items ──────────────────
       if (cfg.managedContext && !preselected?.length) {
@@ -381,7 +418,7 @@ export function createAgenticRetrievalTool(opts: {
       }
       // Memory citable chunks go first (insertion-order dedup)
       addChunks(result, memResult.memoryChunksForAnswer);
-      yield { result: serializeOutput(result) };
+      yield { result: serializeOutput(result, hideSources) };
 
       // ── Preselection-subset guard (yield, not throw) ──────────────────────
       const { mainContexts, fallbackContexts, userPinnedItemIdsByContext, userRequestedPage, hasExplicitDocAndPage } = routResult;
@@ -536,7 +573,7 @@ export function createAgenticRetrievalTool(opts: {
         tokens: 0,
       });
       result.reasoning.push({ text: `Reranking ${mainSearch.chunks.length} chunks`, tools: [] });
-      yield { result: serializeOutput(result) };
+      yield { result: serializeOutput(result, hideSources) };
 
       const mainRerank = await rerankResults({
         chunks: mainSearch.chunks,
@@ -569,7 +606,7 @@ export function createAgenticRetrievalTool(opts: {
 
       // Accumulate main results (dedup by chunk_id, memory chunks already first)
       addChunks(result, mainRerank.limited_results);
-      yield { result: serializeOutput(result) };
+      yield { result: serializeOutput(result, hideSources) };
 
       // ── Literal-lookup short-circuit ──────────────────────────────────────
       const literalLookupSatisfied =
@@ -593,7 +630,7 @@ export function createAgenticRetrievalTool(opts: {
           tokens: 0,
         });
         result.reasoning.push({ text: "Literal lookup satisfied; skipping fallback.", tools: [] });
-        yield { result: serializeOutput(result) };
+        yield { result: serializeOutput(result, hideSources) };
       }
 
       // ── Fallback gate ─────────────────────────────────────────────────────
@@ -612,7 +649,7 @@ export function createAgenticRetrievalTool(opts: {
           tokens: 0,
         });
         result.reasoning.push({ text: `Fallback search in ${fallbackContextsToSearch.join(", ")}`, tools: [] });
-        yield { result: serializeOutput(result) };
+        yield { result: serializeOutput(result, hideSources) };
 
         const fallbackRerank = await rerankResults({
           chunks: speculativeFallbackSearch.chunks,
@@ -636,7 +673,7 @@ export function createAgenticRetrievalTool(opts: {
         });
         result.reasoning.push({ text: "Fallback results reranked", tools: [] });
         addChunks(result, fallbackRerank.limited_results);
-        yield { result: serializeOutput(result) };
+        yield { result: serializeOutput(result, hideSources) };
       }
 
       // ── Phase 4: memory override directive ────────────────────────────────
@@ -664,14 +701,14 @@ export function createAgenticRetrievalTool(opts: {
           tools: [],
         });
         addChunks(result, memoryOverride.chunks);
-        yield { result: serializeOutput(result) };
+        yield { result: serializeOutput(result, hideSources) };
       }
 
       if (cfg.logging) {
         console.log("[EXULU pipeline] final result:", JSON.stringify({ steps: result.steps.length, chunks: result.chunks.length }));
       }
 
-      return { result: serializeOutput(result) };
+      return { result: serializeOutput(result, hideSources) };
       } catch (err) {
         console.warn("[EXULU pipeline] retrieval pipeline failed:", err);
         result.steps.push({
@@ -681,7 +718,7 @@ export function createAgenticRetrievalTool(opts: {
           chunks: [],
           tokens: 0,
         });
-        yield { result: serializeOutput(result) };
+        yield { result: serializeOutput(result, hideSources) };
         return;
       }
     },
