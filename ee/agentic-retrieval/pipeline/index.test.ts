@@ -37,7 +37,8 @@ describe("createAgenticRetrievalTool", () => {
     const names = tool.config.map((c) => c.name).sort();
     expect(names).toEqual([
       "instructions", "knowledge_bases", "logging", "managed_context", "memory",
-      "max_steps", "project_search", "require_preselected_contexts", "reranker", "routing", "tuning", "utility_model", "vocabulary",
+      "max_steps", "project_search", "require_preselected_contexts", "reranker",
+      "routing", "show_sources_to_external_users", "tuning", "utility_model", "vocabulary",
     ].sort());
     expect(tool.config.filter((c) => c.type === "json").map((c) => c.name).sort())
       .toEqual(["knowledge_bases", "memory", "routing", "tuning", "vocabulary"].sort());
@@ -128,6 +129,72 @@ describe("payload deduplication", () => {
     const topLevel = last.chunks.find((c: any) => c.chunk_id === "m1");
     expect(topLevel).toBeDefined();
     expect(topLevel.chunk_content).toBe("FULL MEMORY CONTENT");
+  });
+});
+
+describe("source visibility for external / anonymous users", () => {
+  const SOURCE_FIELDS = ["item_id", "item_name", "item_external_id", "context", "chunk_id", "chunk_index"];
+  const richChunk = {
+    chunk_id: "c1", chunk_index: 3, chunk_content: "SECRET PASSAGE",
+    item_id: "i1", item_name: "Handbook.pdf", item_external_id: "ext-1", context: "docs",
+  };
+  const internalUser = { id: "u1", role: { name: "admin" } } as any;
+  const externalUser = { id: "u2", role: { name: "external" } } as any;
+
+  /** Seed the memory phase so both top-level chunks and a step carry a fully-populated chunk. */
+  const seedRichChunk = () => {
+    jest.requireMock("./memory").runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [richChunk],
+      memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q", updatedKeywords: ["k"],
+      updatedImportantKeyword: "k",
+      steps: [{ text: "memory step", chunks: [richChunk] }],
+    });
+  };
+
+  const lastPayload = async (config: Record<string, unknown>, user: any) => {
+    seedRichChunk();
+    const out = await drain(makeTool(config, { user })(inputs));
+    return JSON.parse(out[out.length - 1].result);
+  };
+
+  it("strips source references for an external user when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, externalUser);
+    const topLevel = last.chunks[0];
+    expect(topLevel).toBeDefined();
+    for (const f of SOURCE_FIELDS) expect(topLevel[f]).toBeUndefined();
+    // the passage text itself still reaches the model — only the attribution is removed
+    expect(topLevel.chunk_content).toBe("SECRET PASSAGE");
+    const stepChunk = last.steps.find((s: any) => s.chunks?.length > 0).chunks[0];
+    for (const f of SOURCE_FIELDS) expect(stepChunk[f]).toBeUndefined();
+  });
+
+  it("strips source references for an anonymous guest when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, undefined);
+    for (const f of SOURCE_FIELDS) expect(last.chunks[0][f]).toBeUndefined();
+  });
+
+  it("keeps source references for an internal user even when the flag is off", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, internalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+    expect(last.chunks[0].chunk_id).toBe("c1");
+  });
+
+  it("keeps source references for external users when the flag is on", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: true }, externalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+  });
+
+  it("defaults to showing sources when the flag is unset (backward compatible)", async () => {
+    const last = await lastPayload({}, externalUser);
+    expect(last.chunks[0].item_name).toBe("Handbook.pdf");
+    expect(last.chunks[0].chunk_id).toBe("c1");
+  });
+
+  it("still strips chunk_content from step chunks when sources are hidden", async () => {
+    const last = await lastPayload({ show_sources_to_external_users: false }, externalUser);
+    const stepChunk = last.steps.find((s: any) => s.chunks?.length > 0).chunks[0];
+    expect(stepChunk.chunk_content).toBeUndefined();
   });
 });
 

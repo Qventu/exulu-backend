@@ -32,7 +32,7 @@ import { credentialGuardrailBlock } from "./auth/guardrail";
 import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts";
 import type { Request } from "express";
 import { sanitizeAuthPayloadsInUiMessages } from "./auth/sanitize-ui-messages";
-import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard, shouldShowSourcesToUser } from "./resolve-max-steps";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { imageAttachmentGuard } from "./tool-image-attachments";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
@@ -454,7 +454,7 @@ export const generateSync = async ({
     console.log("[EXULU] Current tools: " + currentTools?.map((tool) => tool.name).join("\n"));
     console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
 
-    if (includesContextSearchTool) {
+    if (includesContextSearchTool && shouldShowSourcesToUser(toolConfigs, user)) {
         system +=
             "\n\n" +
             `
@@ -990,7 +990,7 @@ ${skillsList}
     console.log("[EXULU] Includes context search tool: " + includesContextSearchTool);
     console.log("[EXULU] Includes web search tool: " + includesWebSearchTool);
 
-    if (includesContextSearchTool) {
+    if (includesContextSearchTool && shouldShowSourcesToUser(toolConfigs, user)) {
         system +=
             "\n\n" +
             `

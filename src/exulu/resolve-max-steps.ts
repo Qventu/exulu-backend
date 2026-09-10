@@ -1,4 +1,5 @@
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config";
+import type { User } from "@EXULU_TYPES/models/user";
 import type { PrepareStepFn } from "./context-guard";
 
 /**
@@ -7,6 +8,14 @@ import type { PrepareStepFn } from "./context-guard";
  * steps on tool calls alone, leaving no room for the final text answer.
  */
 export const DEFAULT_MAX_STEPS = 10;
+
+/**
+ * Check if a user should be considered "external" (i.e., unable to view sources).
+ * Returns true if the user is external (user.role.name === "external") OR anonymous (!user?.id).
+ */
+export function isExternalOrAnonymousUser(user?: User | null): boolean {
+  return !user?.id || user?.role?.name === "external";
+}
 
 /**
  * Read the `max_steps` option from the agentic retrieval tool's saved config.
@@ -29,6 +38,37 @@ export function resolveRetrievalCallBudget(
   const n = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
 }
+
+/**
+ * Determine whether to show source references to the current user based on the
+ * `show_sources_to_external_users` config flag and the user's role.
+ *
+ * Returns true if sources should be shown, false if they should be hidden.
+ * Defaults to true if the flag is unset (backward compatible).
+ *
+ * Sources are hidden when:
+ * - The flag is explicitly set to false, AND
+ * - The user is external (role.name === "external") OR there is no authenticated user (anonymous guest)
+ */
+export function shouldShowSourcesToUser(
+  toolConfigs: ExuluAgentToolConfig[] | undefined,
+  user?: User | null,
+): boolean {
+  // Default: show sources
+  const agentic = toolConfigs?.find((t) => t.id === "agentic_context_search");
+  if (!agentic?.config) return true;
+  const entry = agentic.config.find((c) => c.name === "show_sources_to_external_users");
+  if (!entry) return true;
+  const raw = (entry as { value?: unknown }).value ?? entry.variable;
+  const flagValue = raw === true || raw === "true" || raw === 1;
+
+  // If flag is true (show sources), always show them
+  if (flagValue) return true;
+
+  // Flag is false (hide sources). Check if user is external or anonymous.
+  return !isExternalOrAnonymousUser(user);
+}
+
 
 /**
  * The per-turn step budget for ALL tools (bash, files, retrieval,
