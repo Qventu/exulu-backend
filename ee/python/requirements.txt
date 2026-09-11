@@ -52,3 +52,8 @@ prisma==0.15.0
 # NOT included in litellm[proxy]; without it, requests to Vertex models
 # fail with "No module named 'vertexai'".
 google-cloud-aiplatform>=1.38
+
+# Skill runtime dependencies — the session sandbox puts this venv's bin dir on PATH so
+# skill scripts (e.g. the built-in docx-manipulation skill) find their libraries without
+# creating a venv per session (which mirrored thousands of files into the tool result).
+python-docx>=1.1

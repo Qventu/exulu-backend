@@ -284,10 +284,12 @@ export const generateSync = async ({
 
     let project: string | undefined;
     let sessionItems: string[] | undefined;
+    let sessionOwnerId: number | string | undefined;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         sessionItems = sessionData.session_items;
         project = sessionData.project;
+        sessionOwnerId = sessionData.user ?? undefined;
     }
 
     const model = languageModel;
@@ -424,6 +426,7 @@ export const generateSync = async ({
         memoryItems,
         contextWindow,
         disabledTools,
+        sessionOwnerId,
     );
 
     // The retrieval budget matches tool calls by their REGISTERED key
@@ -717,10 +720,12 @@ export const generateStream = async ({
     // load the previous messages from the server:
     let project: string | undefined;
     let sessionItems: string[] | undefined;
+    let sessionOwnerId: number | string | undefined;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         project = sessionData.project;
         sessionItems = sessionData.session_items;
+        sessionOwnerId = sessionData.user ?? undefined;
 
         console.log("[EXULU] loading previous messages from session: " + session);
         const previousMessages = await getAgentMessages({
@@ -970,6 +975,7 @@ ${skillsList}
         memoryItems,
         contextWindow,
         disabledTools,
+        sessionOwnerId,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
