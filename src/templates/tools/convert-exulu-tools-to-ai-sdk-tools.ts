@@ -183,6 +183,8 @@ export const convertExuluToolsToAiSdkTools = async (
   memoryItems?: VectorSearchChunkResult[],
   contextWindow?: number,
   disabledTools?: string[],
+  /** Owner of the session — session files are namespaced by owner, not by the speaker. */
+  sessionOwnerId?: number | string,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -212,7 +214,7 @@ export const convertExuluToolsToAiSdkTools = async (
         sessionID,
         currentSkills || [],
         exuluConfig,
-        user?.id,
+        sessionOwnerId ?? user?.id,
       );
     } catch (err) {
       console.error(
@@ -293,17 +295,17 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig });
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }
