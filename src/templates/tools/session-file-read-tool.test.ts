@@ -82,3 +82,9 @@ describe("createSessionFileReadTool", () => {
     expect(result.totalLines).toBe(500);
   });
 });
+
+it("addresses the session file under the session owner's prefix when an owner is given", async () => {
+  const tool = createSessionFileReadTool({ sessionID: "s1", user, exuluConfig, ownerId: 11 })!;
+  await (tool.tool!.execute as (i: unknown) => Promise<unknown>)({ filename: "notes.txt" });
+  expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/user_11/sessions/s1/notes.txt", exuluConfig);
+});

@@ -132,3 +132,22 @@ it("rejects degenerate page ranges", async () => {
   expect((await runTool({ filename: "report.pdf", pages: "3-1" })).error).toMatch(/not greater than the end/);
   expect((await runTool({ filename: "report.pdf", pages: "9-12" })).error).toMatch(/only 4 pages/);
 });
+
+it("flags a PDF whose text layer comes out glyph-shifted (digits become control characters) as unreadable", async () => {
+  // Real-world sample: every character code is offset by 29, so "Technische Daten"
+  // extracts as "7HFKQLVFKH 'DWHQ" and the digits of "7000" become \x1a\x13\x13\x13.
+  const shifted = (s: string) => Array.from(s, (c) => (c === "\n" || c === " " ? c : String.fromCharCode(c.charCodeAt(0) - 29))).join("");
+  const page = shifted("Leistungsverzeichnis Modernisierung Aufzugsanlagen\nTechnische Daten\nTragkraft kg 7000\nFahrkorbgewicht kg 4500\nFoerderhoehe m 13.5\n");
+  pdfToText.mockResolvedValue(page + "\f" + page + "\f");
+  const result = await runTool({ filename: "1200_LV-Auszug.pdf" });
+  expect(result.content).toBeUndefined();
+  expect(result.error).toMatch(/text layer.*unreadable|unreadable.*text layer/i);
+  expect(result.error).toMatch(/view_document_page/);
+});
+
+it("addresses the session file under the session owner's prefix when an owner is given", async () => {
+  pdfToText.mockResolvedValue("Some perfectly readable page content with enough characters.\f");
+  const tool = createParseDocumentTool({ sessionID: "s1", user, exuluConfig, ownerId: 11 })!;
+  await (tool.tool!.execute as (i: unknown) => Promise<ParseResult>)({ filename: "Anfrage 04072.pdf" });
+  expect(getPresignedUrl).toHaveBeenCalledWith("bucket", "exulu/user_11/sessions/s1/Anfrage 04072.pdf", exuluConfig);
+});

@@ -6,6 +6,7 @@ import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 import { pdfToText } from "./document-render-helpers";
+import { sessionFilePrefix } from "@SRC/exulu/session-files";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -13,6 +14,26 @@ const MAX_CONTENT_CHARS = 16_000;
  * effectively scanned — its text layer is useless and OCR-class processing
  * (knowledge base with a processor) or view_document_page is the way in. */
 const MIN_CHARS_PER_PAGE = 20;
+
+/**
+ * Some PDFs carry a text layer whose font subset has no usable ToUnicode map: every
+ * glyph extracts offset by a constant ("Technische Daten" → "7HFKQLVFKH 'DWHQ"), and
+ * digits fall below 0x20 and vanish. Such text passes the empty-layer check but is worse
+ * than nothing, because the model silently guesses the numbers. Flag it when control
+ * characters (other than whitespace) make up a noticeable share of the text.
+ */
+export function looksLikeGarbledTextLayer(text: string): boolean {
+  let control = 0;
+  let visible = 0;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code === 9 || code === 10 || code === 12 || code === 13 || code === 32) continue;
+    visible++;
+    if (code < 32 || code === 127) control++;
+  }
+  if (visible < 40) return false;
+  return control / visible > 0.01;
+}
 
 // No .csv here — CSV is plain text; read_session_file already covers it.
 const OFFICE_EXTENSIONS = new Set([
@@ -25,10 +46,13 @@ export const createParseDocumentTool = ({
   sessionID,
   user,
   exuluConfig,
+  ownerId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
+  /** Session owner — files are namespaced by owner, not by the current speaker. */
+  ownerId?: number | string;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -61,8 +85,7 @@ export const createParseDocumentTool = ({
     }
 
     const uploads = exuluConfig.fileUploads!;
-    const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
-    const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
+    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
     try {
       const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
       const res = await fetch(url);
@@ -78,6 +101,15 @@ export const createParseDocumentTool = ({
         const pageTexts = raw.replace(/\f$/, "").split("\f");
         totalPages = pageTexts.length;
         const nonWhitespace = raw.replace(/\s/g, "").length;
+        if (looksLikeGarbledTextLayer(raw)) {
+          return {
+            error:
+              `"${safeName}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
+              "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
+              "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
+              "the document to a knowledge base with a document processor for full OCR.",
+          };
+        }
         if (nonWhitespace < totalPages * MIN_CHARS_PER_PAGE) {
           return {
             error:
