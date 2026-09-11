@@ -131,6 +131,15 @@ function getVenvPath(packageRoot: string): string {
  * Note: This only checks if the venv exists, not if packages are installed.
  * Use validatePythonEnvironment() for a more thorough check.
  */
+/**
+ * Absolute path of the @exulu/backend Python venv when it is set up, else undefined.
+ * Skill scripts run in the session sandbox expect this venv's packages (python-docx …).
+ */
+export function getPythonVenvPath(packageRoot?: string): string | undefined {
+  const root = packageRoot ?? getPackageRoot();
+  return isPythonEnvironmentSetup(root) ? getVenvPath(root) : undefined;
+}
+
 export function isPythonEnvironmentSetup(packageRoot?: string): boolean {
   const root = packageRoot ?? getPackageRoot();
   const venvPath = getVenvPath(root);
