@@ -1,4 +1,4 @@
-import { resolveRetrievalCallBudget, resolveTurnStepBudget, finalAnswerGuard, DEFAULT_MAX_STEPS, retrievalBudgetGuard } from "./resolve-max-steps";
+import { resolveRetrievalCallBudget, resolveTurnStepBudget, finalAnswerGuard, DEFAULT_MAX_STEPS, retrievalBudgetGuard, isExternalOrAnonymousUser, shouldShowSourcesToUser } from "./resolve-max-steps";
 import { composePrepareSteps } from "./context-guard";
 
 const cfg = (entries: { name: string; variable: any; type: string }[]) =>
@@ -168,6 +168,61 @@ describe("flattenToolHistory", () => {
     ]) as any[];
     expect(r[0].content).toBe("(searching)");
     expect(r[1]).toEqual({ role: "user", content: "(tool results)" });
+  });
+});
+
+describe("isExternalOrAnonymousUser", () => {
+  it("treats a missing user or user without an id as anonymous", () => {
+    expect(isExternalOrAnonymousUser(undefined)).toBe(true);
+    expect(isExternalOrAnonymousUser(null)).toBe(true);
+    expect(isExternalOrAnonymousUser({} as any)).toBe(true);
+  });
+
+  it("treats users with role.name 'external' as external", () => {
+    expect(isExternalOrAnonymousUser({ id: "u1", role: { name: "external" } } as any)).toBe(true);
+  });
+
+  it("treats internal, authenticated users as neither", () => {
+    expect(isExternalOrAnonymousUser({ id: "u1", role: { name: "admin" } } as any)).toBe(false);
+    expect(isExternalOrAnonymousUser({ id: "u1", role: { name: "member" } } as any)).toBe(false);
+  });
+});
+
+describe("shouldShowSourcesToUser", () => {
+  const internalUser = { id: "u1", role: { name: "admin" } } as any;
+  const externalUser = { id: "u2", role: { name: "external" } } as any;
+  const anonymousUser = undefined;
+
+  it("defaults to showing sources when the tool config is missing entirely", () => {
+    expect(shouldShowSourcesToUser(undefined, externalUser)).toBe(true);
+    expect(shouldShowSourcesToUser([], externalUser)).toBe(true);
+  });
+
+  it("defaults to showing sources when the flag entry is absent (backward compatible)", () => {
+    expect(shouldShowSourcesToUser(cfg([]), externalUser)).toBe(true);
+  });
+
+  it("shows sources to everyone when the flag is explicitly true", () => {
+    const configs = cfg([{ name: "show_sources_to_external_users", variable: "true", type: "boolean" }]);
+    expect(shouldShowSourcesToUser(configs, internalUser)).toBe(true);
+    expect(shouldShowSourcesToUser(configs, externalUser)).toBe(true);
+    expect(shouldShowSourcesToUser(configs, anonymousUser)).toBe(true);
+  });
+
+  it("hides sources from external and anonymous users when the flag is false", () => {
+    const configs = cfg([{ name: "show_sources_to_external_users", variable: "false", type: "boolean" }]);
+    expect(shouldShowSourcesToUser(configs, externalUser)).toBe(false);
+    expect(shouldShowSourcesToUser(configs, anonymousUser)).toBe(false);
+  });
+
+  it("still shows sources to internal users when the flag is false", () => {
+    const configs = cfg([{ name: "show_sources_to_external_users", variable: "false", type: "boolean" }]);
+    expect(shouldShowSourcesToUser(configs, internalUser)).toBe(true);
+  });
+
+  it("ignores other tools' configs (defaults to showing sources)", () => {
+    const configs = [{ id: "other_tool", type: "function", name: "x", config: [{ name: "show_sources_to_external_users", variable: "false", type: "boolean" }] }] as any;
+    expect(shouldShowSourcesToUser(configs, externalUser)).toBe(true);
   });
 });
 
