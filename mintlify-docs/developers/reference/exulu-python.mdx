@@ -65,10 +65,10 @@ ExuluPython.validate(
 ): Promise<{ valid: boolean; message: string }>
 ```
 
-Verifies that the virtual environment exists, that the Python executable works, and (when `checkPackages` is `true`) that the critical packages `docling` and `transformers` can be imported.
+Verifies that the virtual environment exists, that the Python executable works, and (when `checkPackages` is `true`) that the critical packages `pypdf` and `transformers` can be imported.
 
 <ParamField path="checkPackages" type="boolean" default="true">
-  Whether to import-check `docling` and `transformers` in addition to checking the executable.
+  Whether to import-check `pypdf` and `transformers` in addition to checking the executable.
 </ParamField>
 
 ---
@@ -112,7 +112,7 @@ if (!valid) {
 | Python version | 3.10 or higher |
 | pip | Must be available |
 | venv | `python3-venv` or equivalent |
-| Disk | ~2 GB for `docling` + `transformers` models on first run |
+| Disk | ~2 GB for `transformers` models on first run |
 
 Install Python on common platforms:
 

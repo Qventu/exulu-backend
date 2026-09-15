@@ -1,12 +1,15 @@
-docling
 # transformers <5: the 5.x line requires huggingface_hub>=1.0, which removed the
 # `use_auth_token` kwarg that pyannote.audio 3.x still passes to hf_hub_download()
 # (→ "unexpected keyword argument 'use_auth_token'", diarization silently
 # disabled). whisperx only needs transformers>=4.48, so the 4.x line is fine.
 transformers>=4.48,<5
 pyinstaller
-docling-hierarchical-pdf
 defusedxml
+# PDF page-range splitting for the "mistral" OCR processor (split_pdf.py).
+# BSD-3-Clause, no dependencies. Replaced PyMuPDF, which is AGPL-3.0 or a paid
+# Artifex commercial licence; see split_pdf.py. Do not reintroduce a PDF library
+# without checking its licence.
+pypdf>=6.1
 # Whisper transcription server. Used by `npx @exulu/backend exulu-start-whisper`.
 #
 # Notes on the pins:
@@ -30,6 +33,11 @@ requests
 # LiteLLM proxy — only used when EXULU_USE_LITELLM=true. Always installed so
 # the dep is ready when the env var is flipped. Pinned to a tested version;
 # upgrade deliberately.
+# NOTE: the [proxy] extra hard-requires litellm-enterprise, which is NOT MIT —
+# it carries the proprietary BerriAI Enterprise License. setup.sh step 6.4
+# uninstalls it right after this file is installed; see the comment there. Keep
+# the extra (we need its other 29 packages) and keep that uninstall step
+# together.
 litellm[proxy]==1.97.0
 # FastAPI ceiling — NOT cosmetic. litellm 1.97.0 declares fastapi>=0.136.3,<1.0
 # but imports the private `get_flat_dependant` from fastapi.dependencies.utils
@@ -57,3 +65,5 @@ google-cloud-aiplatform>=1.38
 # skill scripts (e.g. the built-in docx-manipulation skill) find their libraries without
 # creating a venv per session (which mirrored thousands of files into the tool result).
 python-docx>=1.1
+python-pptx>=1.0
+openpyxl>=3.1

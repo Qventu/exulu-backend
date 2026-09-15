@@ -7,7 +7,7 @@ import { EditionBadge } from "/snippets/edition-badge.mdx"
 
 <EditionBadge edition="ee" />
 
-`ExuluDocumentProcessor` converts documents to structured markdown for ingestion into knowledge contexts. It supports multiple processor backends — `docling` (Python, best for complex PDFs), `liteparse` (JS, broad format support), `mistral` (OCR via LiteLLM proxy), and `officeparser` (JS, Office formats) — and optionally validates and corrects each page using a VLM pass.
+`ExuluDocumentProcessor` converts documents to structured markdown for ingestion into knowledge contexts. It supports multiple processor backends — `mistral` (OCR via the LiteLLM proxy, best for complex PDFs), `liteparse` (JS, broad format support), and `officeparser` (JS, Office formats) — and optionally validates and corrects each page using a VLM pass.
 
 The `advanced-document-processing` EE entitlement is checked at runtime; calling `process` without a valid license throws immediately.
 
@@ -33,7 +33,7 @@ Processes a document and returns an array of per-page objects with the extracted
   The file name including extension (e.g. `"report.pdf"`). The extension determines which code path handles the file; it is required even when `file` is a `Buffer`.
 </ParamField>
 
-<ParamField path="config.processor.name" type='"docling" | "liteparse" | "mistral" | "officeparser"' required>
+<ParamField path="config.processor.name" type='"liteparse" | "mistral" | "officeparser"' required>
   The processing backend to use.
 </ParamField>
 
@@ -48,7 +48,7 @@ Processes a document and returns an array of per-page objects with the extracted
 </ParamField>
 
 <ParamField path="config.vlm.model" type="string">
-  LiteLLM `model_name` for the optional VLM validation pass (e.g. `"vertex-gemini-2.5-flash"`). Only supported when `processor.name` is `"docling"`. When set, pages containing tables or images are re-validated and corrected by the VLM.
+  LiteLLM `model_name` for the optional VLM validation pass (e.g. `"vertex-gemini-2.5-flash"`). Applies to every processor backend. When set, pages containing tables or images are re-validated and corrected by the VLM.
 </ParamField>
 
 <ParamField path="config.vlm.concurrency" type="number">
@@ -73,7 +73,6 @@ Processes a document and returns an array of per-page objects with the extracted
 
 | Processor | Supported extensions |
 |---|---|
-| `docling` | `.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp` |
 | `liteparse` | `.pdf`, `.doc`, `.docx`, `.docm`, `.odt`, `.rtf`, `.ppt`, `.pptx`, `.pptm`, `.odp`, `.xls`, `.xlsx`, `.xlsm`, `.ods`, `.csv`, `.tsv` |
 | `mistral` | `.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp` |
 | `officeparser` | `.docx`, `.pptx`, `.xlsx`, `.odt`, `.odp`, `.ods`, `.pdf`, `.rtf`, `.csv`, `.md`, `.html` |
@@ -90,7 +89,7 @@ const pages = await ExuluDocumentProcessor.process({
   file: buffer,
   name: "technical-manual.pdf",
   config: {
-    processor: { name: "docling" },
+    processor: { name: "mistral" },
     vlm: {
       model: "vertex-gemini-2.5-flash",
       concurrency: 5,
@@ -106,11 +105,10 @@ if (pages) {
 
 ## Notes
 
-- The `docling` backend runs Python and sets up a virtual environment automatically on first use via `ExuluPython.setup`. Python 3.10+ is required.
 - Pages are separated by `<!-- END_OF_PAGE -->` comments in the markdown stream written to disk, but the returned `ProcessedDocument` array already splits them per page.
 - Temporary files are created under `<cwd>/temp/<uuid>/` and deleted after each call unless `debugging.deleteTempFiles` is `false`.
 
 ## Related
 
-- [ExuluPython](/developers/reference/exulu-python): manage the Python environment required by `docling`.
+- [ExuluPython](/developers/reference/exulu-python): manage the Python environment required by the `mistral` processor's PDF splitting and the Whisper transcription server.
 - [Knowledge — pipeline](/building/knowledge/pipeline): how processed documents feed into knowledge contexts.
