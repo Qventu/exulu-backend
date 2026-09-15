@@ -5,7 +5,7 @@ Certain peripheral components of Exulu are subject to
 commercial licensing and governed by this Enterprise License.
 For clarity, this license does not cover the core of Exulu
 as defined in the license located at "/LICENSE" (distinct from
-this file at "ee/LICENSE"), which may be used and operated
+this file at "ee/LICENSE.md"), which may be used and operated
 without violating this license or its licensed materials.
 
 Additionally, any functionality within the software that is
