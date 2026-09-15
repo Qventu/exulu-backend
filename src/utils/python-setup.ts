@@ -336,7 +336,7 @@ export async function validatePythonEnvironment(
 
   // Verify critical packages are installed if requested
   if (checkPackages) {
-    const criticalPackages = ['docling', 'transformers'];
+    const criticalPackages = ['pypdf', 'transformers'];
     const missingPackages: string[] = [];
 
     for (const pkg of criticalPackages) {

@@ -105,3 +105,62 @@ describe("runMemoryPhase", () => {
     expect(r.updatedQuestion).toBe(baseOpts.question);
   });
 });
+
+describe("recallMemoryByKeywords — fetching the chunks of keyword-matched memory items", () => {
+  const { singleSearch } = jest.requireMock("./multi-query") as { singleSearch: jest.Mock };
+  const { recallMemoryByKeywords, clearMemoryItemCache } = jest.requireActual("./memory") as typeof import("./memory");
+
+  it("uses the full-text method, not the hybrid one: the items are already chosen by keyword, so an embedding call would only add latency", async () => {
+    clearMemoryItemCache();
+    singleSearch.mockClear();
+    const memoryContext = {
+      id: "memory-ctx",
+      getItems: async () => [{ id: "item-1", name: "CBM2 Version", description: "Hinweis zur CBM2 Firmware", information: "" }],
+    };
+    await recallMemoryByKeywords({ keywords: ["CBM2"], importantKeyword: "CBM2", user: {}, role: {}, memoryContext });
+    expect(singleSearch).toHaveBeenCalledTimes(1);
+    expect(singleSearch.mock.calls[0][0].config.method).toBe("tsvector");
+    expect(singleSearch.mock.calls[0][0].pinnedItemIds).toEqual(["item-1"]);
+  });
+});
+
+describe("runMemoryPhase with mergedCall (engine v2)", () => {
+  const merged = (over: Partial<any> = {}) => ({ output: {
+    relevantChunkIds: ["1"],
+    override: { overrides: true, confidence: "high", authoritativeChunkIds: ["1"], reason: "direct answer" },
+    filePrioritization: { shouldPrioritizeFiles: false, fileNameHints: [] },
+    augmentation: { updatedUserQuestion: baseOpts.question + " (Türkontakt)", updatedRelevantKeywords: ["türkontakt"], updatedImportantKeyword: "FST-2XT" },
+    ...over,
+  } });
+
+  it("asks the model once and produces the same result shape as the four v1 hops", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(merged());
+    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint"), memChunk("2", "other")],
+      memoryContext: undefined, memoryConfig: allOn });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(r.memoryChunksForAnswer.map((c) => c.chunk_id)).toEqual(["1"]);
+    expect(r.memoryOverride).toMatchObject({ active: true, reason: "direct answer" });
+    expect(r.memoryOverride.chunks.map((c) => c.chunk_id)).toEqual(["1"]);
+    expect(r.updatedQuestion).toBe(baseOpts.question + " (Türkontakt)");
+    expect(r.updatedKeywords).toEqual(["door", "türkontakt"]);
+    expect(r.updatedImportantKeyword).toBe("FST-2XT"); // original always preserved
+  });
+
+  it("ignores override/file/augmentation parts of the answer when those features are off", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(merged());
+    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")], memoryContext: undefined,
+      memoryConfig: { enabled: true, override: false, filePrioritization: false, queryAugmentation: false } });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(r.memoryOverride.active).toBe(false);
+    expect(r.updatedQuestion).toBe(baseOpts.question);
+    expect(r.updatedKeywords).toEqual(["door"]);
+  });
+
+  it("treats no relevant chunks as a neutral result even if the model filled the other parts", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(merged({ relevantChunkIds: [] }));
+    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")], memoryContext: undefined, memoryConfig: allOn });
+    expect(r.memoryChunksForAnswer).toEqual([]);
+    expect(r.memoryOverride.active).toBe(false);
+    expect(r.updatedQuestion).toBe(baseOpts.question);
+  });
+});

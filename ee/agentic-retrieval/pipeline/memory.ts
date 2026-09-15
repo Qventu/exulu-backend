@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { microCall } from "./micro-call";
+import { withTiming } from "./timing";
 import { singleSearch } from "./multi-query";
 import { fuzzyPrefilter } from "./prefilter";
 import { deriveKeywordVariants, normalizeFileName, stripSeparators } from "./text-utils";
@@ -45,18 +46,20 @@ async function loadMemoryItems(context: {
 // Keyword recall (ported from newton-memory.ts:91-169)
 // ---------------------------------------------------------------------------
 
-async function recallMemoryByKeywords({
+export async function recallMemoryByKeywords({
   keywords,
   importantKeyword,
   user,
   role,
   memoryContext,
+  timings,
 }: {
   keywords: string[];
   importantKeyword: string;
   user: any;
   role: any;
   memoryContext: { id: string; getItems: (o: any) => Promise<MemoryItem[]> };
+  timings?: Record<string, number>;
 }): Promise<Chunk[]> {
   const allKeywords = [
     ...new Set(
@@ -77,7 +80,7 @@ async function recallMemoryByKeywords({
   ].filter((v) => v.length >= 4);
   if (!allVariants.length) return [];
 
-  const items = await loadMemoryItems(memoryContext);
+  const items = await withTiming(timings, "memory.keywordRecall.itemsMs", () => loadMemoryItems(memoryContext));
 
   type Scored = { id: string; hits: number; importantHit: boolean; name: string };
   const scored: Scored[] = [];
@@ -104,14 +107,17 @@ async function recallMemoryByKeywords({
     topMatches.map((s) => `${s.name} (hits=${s.hits}, important=${s.importantHit})`),
   );
 
-  const chunks = await singleSearch({
+  // Full-text only: the items were already selected by keyword above, so this
+  // call just ranks their chunks. The hybrid method would add an embedding
+  // round trip (0.5-1.2 s, up to 5 s cold) on the memory phase's critical path.
+  const chunks = await withTiming(timings, "memory.keywordRecall.searchMs", () => singleSearch({
     query: allKeywords.join(", "),
-    config: { method: "hybridSearch", cutoffs: undefined, limit: 50 },
+    config: { method: "tsvector", cutoffs: undefined, limit: 50 },
     user,
     role,
     pinnedItemIds: topMatches.map((s) => s.id),
     context: memoryContext,
-  });
+  }));
 
   return chunks;
 }
@@ -138,10 +144,151 @@ function neutralResult(
 }
 
 // ---------------------------------------------------------------------------
+// engine v2: one structured call for the whole memory phase
+// ---------------------------------------------------------------------------
+
+type MergedMemoryOutput = {
+  relevantChunkIds: string[];
+  override: { overrides: boolean; confidence: "high" | "medium" | "low"; authoritativeChunkIds: string[]; reason: string };
+  filePrioritization: { shouldPrioritizeFiles: boolean; fileNameHints?: string[] };
+  augmentation: { updatedUserQuestion: string; updatedRelevantKeywords: string[]; updatedImportantKeyword: string };
+};
+
+/**
+ * The v1 flow spends two sequential LLM hops on memory (relevance, then override +
+ * file prioritization + augmentation in parallel), ~3 s on the phase-1 critical path.
+ * The merged call answers all four questions from the same chunk list at once. The
+ * instructions are the v1 prompts, so each judgement keeps its rules; disabled features
+ * are still asked for (a stable schema) but their answers are ignored by mergedFollowups.
+ */
+async function runMergedMemoryCall({
+  model,
+  retrievedMemory,
+  question,
+  keywords,
+  importantKeyword,
+  memoryConfig,
+  glossary,
+}: {
+  model: any;
+  retrievedMemory: Chunk[];
+  question: string;
+  keywords: string[];
+  importantKeyword: string;
+  memoryConfig: { override: boolean; filePrioritization: boolean; queryAugmentation: boolean };
+  glossary: { term: string; meaning: string }[];
+}): Promise<MergedMemoryOutput> {
+  const glossaryText =
+    glossary.length > 0
+      ? `\nThe organization's documents use the following abbreviations/terms:\n${glossary.map((g) => `${g.term} : ${g.meaning}`).join("\n")}`
+      : "";
+  const system = `
+    You review the shared company memory for the user's question and answer FOUR questions in one go.
+
+    1. RELEVANCE (relevantChunkIds): return the chunk_ids of chunks containing information relevant to the
+    question, or an empty array. Be generous: include chunks that are topically related, share key
+    terminology, describe the same symptom from a different angle, or could plausibly help diagnose the
+    issue — even if they don't answer the question directly. Memory entries are deliberately broad,
+    hand-curated hints written by domain experts; the user's wording will rarely match the memory verbatim.
+    When in doubt, include the chunk.
+
+    2. OVERRIDE (override): decide whether ONE of the relevant chunks should become the AUTHORITATIVE basis
+    of the answer, taking precedence over the official documentation even if the documents state something
+    different. This is a deliberately STRICT check. Set overrides=true ONLY if a single chunk, on its own,
+    contains a DIRECT and SUFFICIENT answer to exactly what the user asked. Being topically related, sharing
+    terminology, describing the same component, or only partially addressing the question is NOT sufficient:
+    then set overrides=false. When in doubt, set overrides=false. Memory entries may capture field experience
+    that the manuals get wrong, so a confident, direct match is meant to win over the documents.
+    ${memoryConfig.override ? "" : "(Override is disabled for this agent: return overrides=false.)"}
+
+    3. FILE PRIORITIZATION (filePrioritization): set shouldPrioritizeFiles=true only if a relevant memory
+    entry explicitly says to look in, prioritize, prefer, or always search a particular document, file, or
+    file family (for example "When asked about X, always search in Y-Dateien first"). General background
+    facts, glossaries, or synonyms are NOT a file prioritization instruction. When true, return
+    fileNameHints exactly as referenced in the memory, bare names without folder paths.
+    ${memoryConfig.filePrioritization ? "" : "(File prioritization is disabled for this agent: return false.)"}
+
+    4. QUERY AUGMENTATION (augmentation): if, and only if, the relevant memory (or the glossary below)
+    contains synonyms or similar terms for what the user asked, return the user question and keywords
+    updated to include those synonyms — always keeping the original wording as well. Otherwise return the
+    original question, keywords and important keyword unchanged.
+    ${memoryConfig.queryAugmentation ? "" : "(Query augmentation is disabled for this agent: return the originals.)"}
+
+    <memory_chunks>
+    ${retrievedMemory.map((chunk) => `- ${chunk.chunk_id}: ${chunk.item_name} - ${chunk.chunk_content}`).join("\n")}
+    </memory_chunks>
+    ${glossaryText}
+  `;
+  const { output } = await microCall({
+    model,
+    system,
+    messages: [
+      {
+        role: "user",
+        content: `
+        <user_question>${question}</user_question>
+        <relevant_keywords>${keywords.join(", ")}</relevant_keywords>
+        <important_keyword>${importantKeyword}</important_keyword>
+        `,
+      },
+    ],
+    schema: z.object({
+      relevantChunkIds: z
+        .array(z.string())
+        .describe("chunk_ids (UUIDs at the start of each bullet) of relevant chunks; empty array if none."),
+      override: z.object({
+        overrides: z.boolean().describe("True ONLY if a chunk directly and sufficiently answers the question."),
+        confidence: z.enum(["high", "medium", "low"]),
+        authoritativeChunkIds: z.array(z.string()).describe("chunk_ids that directly answer the question; empty if overrides is false."),
+        reason: z.string().describe("One short sentence."),
+      }),
+      filePrioritization: z.object({
+        shouldPrioritizeFiles: z.boolean(),
+        fileNameHints: z.array(z.string()).optional(),
+      }),
+      augmentation: z.object({
+        updatedUserQuestion: z.string(),
+        updatedRelevantKeywords: z.array(z.string()),
+        updatedImportantKeyword: z.string(),
+      }),
+    }),
+  });
+  return output;
+}
+
+/** Shape the merged answer like the three v1 follow-up results, honouring the feature toggles. */
+function mergedFollowups(
+  merged: MergedMemoryOutput,
+  memoryConfig: { override: boolean; filePrioritization: boolean; queryAugmentation: boolean },
+  hasAugmentationContent: boolean,
+  question: string,
+  importantKeyword: string,
+) {
+  const overrideResult = {
+    output: memoryConfig.override
+      ? merged.override
+      : { overrides: false, confidence: "low" as const, authoritativeChunkIds: [] as string[], reason: "" },
+  };
+  const fileResult = {
+    output: memoryConfig.filePrioritization
+      ? merged.filePrioritization
+      : { shouldPrioritizeFiles: false, fileNameHints: [] as string[] },
+  };
+  const queryResult = {
+    output:
+      memoryConfig.queryAugmentation && hasAugmentationContent
+        ? merged.augmentation
+        : { updatedUserQuestion: question, updatedRelevantKeywords: [] as string[], updatedImportantKeyword: importantKeyword },
+  };
+  return [overrideResult, fileResult, queryResult] as const;
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
 export async function runMemoryPhase({
+  timings,
   memoryChunks,
   memoryContext,
   question,
@@ -153,6 +300,7 @@ export async function runMemoryPhase({
   memoryConfig,
   glossary,
   documentContexts,
+  mergedCall = false,
 }: {
   memoryChunks: Chunk[];
   memoryContext?: any;
@@ -170,6 +318,9 @@ export async function runMemoryPhase({
   };
   glossary: { term: string; meaning: string }[];
   documentContexts: any[];
+  timings?: Record<string, number>;
+  /** engine v2: answer relevance, override, file prioritization and augmentation in ONE call. */
+  mergedCall?: boolean;
 }): Promise<MemoryPhaseResult> {
   try {
     // Short-circuit: disabled, or nothing to work with
@@ -183,13 +334,14 @@ export async function runMemoryPhase({
     // Keyword recall: extend memory with items that match the user's keywords
     if (memoryContext) {
       try {
-        const keywordMatched = await recallMemoryByKeywords({
+        const keywordMatched = await withTiming(timings, "memory.keywordRecallMs", () => recallMemoryByKeywords({
           keywords,
           importantKeyword,
           user,
           role,
           memoryContext,
-        });
+          timings,
+        }));
         if (keywordMatched.length > 0) {
           const seen = new Set(retrieved_memory.map((c) => c.chunk_id));
           const additions = keywordMatched.filter((c) => !seen.has(c.chunk_id));
@@ -217,8 +369,24 @@ export async function runMemoryPhase({
     `;
 
     let relevantMemoryChunks: Chunk[] = [];
+    let mergedOutput: MergedMemoryOutput | undefined;
     try {
-      const { output: output_relevant_memory } = await microCall({
+      if (mergedCall) {
+        mergedOutput = await withTiming(timings, "memory.mergedMs", () =>
+          runMergedMemoryCall({
+            model,
+            retrievedMemory: retrieved_memory,
+            question,
+            keywords,
+            importantKeyword,
+            memoryConfig,
+            glossary,
+          }),
+        );
+      }
+      const { output: output_relevant_memory } = mergedOutput
+        ? { output: { relevantChunkIds: mergedOutput.relevantChunkIds } }
+        : await withTiming(timings, "memory.relevanceMs", () => microCall({
         model,
         system: CHECK_MEMORIES_FOR_RELEVANT_INFORMATION,
         messages: [
@@ -238,7 +406,7 @@ export async function runMemoryPhase({
               "The chunk_ids (UUIDs at the start of each bullet) of chunks containing information relevant to the user's question. Empty array if none are relevant.",
             ),
         }),
-      });
+      }));
 
       const ids = new Set(output_relevant_memory?.relevantChunkIds ?? []);
       relevantMemoryChunks =
@@ -348,7 +516,9 @@ export async function runMemoryPhase({
       Otherwise, return the original user question, relevant keywords and important keyword.
       `;
 
-      const [overrideResult, fileResult, queryResult] = await Promise.all([
+      const [overrideResult, fileResult, queryResult] = mergedOutput
+        ? mergedFollowups(mergedOutput, memoryConfig, hasAugmentationContent, question, importantKeyword)
+        : await withTiming(timings, "memory.followupsMs", () => Promise.all([
         // Override check: strict gate to decide if memory should be authoritative
         memoryConfig.override
           ? microCall({
@@ -447,7 +617,7 @@ export async function runMemoryPhase({
                 updatedImportantKeyword: importantKeyword,
               },
             }),
-      ]);
+      ]));
 
       // Override gate (STRICT: only active when overrides===true && confidence==="high" && authoritativeChunks.length > 0)
       const overrideIds = new Set(overrideResult.output?.authoritativeChunkIds ?? []);

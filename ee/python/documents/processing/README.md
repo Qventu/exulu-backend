@@ -126,14 +126,13 @@ IMAGE_RESOLUTION_SCALE = 2.0  # Image resolution multiplier
 
 This script requires the following Python packages (installed via `npm run python:setup`):
 
-- `docling` - Document conversion
-- `docling-hierarchical-pdf` - Hierarchical heading processing
+- `pypdf` - PDF page-range splitting for the `mistral` OCR processor
 - `transformers` - ML-based text processing
 - `PIL` - Image handling
 
 ### Troubleshooting
 
-**Issue: ImportError for docling**
+**Issue: ImportError for pypdf**
 ```bash
 npm run python:install
 ```

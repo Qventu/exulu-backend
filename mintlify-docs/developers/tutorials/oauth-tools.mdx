@@ -98,10 +98,11 @@ export const calendarEventsTool = new ExuluTool({
     extraAuthParams:  { access_type: "offline", prompt: "consent" },
   },
 
-  execute: async ({ days = 7, calendar_id, oauth }, options) => {
-    // oauth is injected by the framework when a valid token exists.
-    // If no token exists, IMP never reaches execute — it returns the auth URL instead.
-    const apiBase = options?.config?.calendar_api_base_url
+  execute: async ({ days = 7, calendar_id, oauth, toolVariablesConfig }) => {
+    // oauth and toolVariablesConfig are both injected by the framework onto the
+    // FIRST argument. If no token exists, IMP never reaches execute — it returns
+    // the auth URL instead.
+    const apiBase = toolVariablesConfig.calendar_api_base_url
       ?? "https://api.example-calendar.com/v1";
 
     const now = new Date();

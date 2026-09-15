@@ -74,9 +74,34 @@ TRANSCRIPTION_SERVER=http://<whisper-host>:9876
 | `WHISPER_MODEL` | `large-v3` | Model ID. Smaller models (`medium`, `small`, `base`) are faster but less accurate. |
 | `WHISPER_DEVICE` | `auto` | `auto`, `cuda`, or `cpu`. `auto` picks CUDA when available. |
 | `WHISPER_BATCH_SIZE` | `4` | Inference batch size. Reduce if you run out of VRAM. |
+| `EXULU_ALIGN_MODEL_<LANG>` | — | Override the forced-alignment model for one language, e.g. `EXULU_ALIGN_MODEL_VI`. Five languages (vi, hr, he, hi, da) have no licence-cleared default and skip word-level alignment unless this is set. |
 | `WHISPER_PORT` | `9876` | Published host port. |
 | `HF_CACHE_DIR` | `~/.cache/huggingface` | Host path for the model cache. Set to an absolute path when running compose under `sudo`. |
 | `EXULU_VERSION` | `latest` | Pin the `@exulu/backend` version to match the rest of your deployment. |
+
+### Word-level alignment and model licensing
+
+After transcribing, WhisperX runs a second pass called forced alignment to refine
+timestamps to word level. It picks a per-language model from its own table, based on the
+language Whisper detected.
+
+Five of those default models are not licence-cleared for commercial use: Vietnamese
+(CC-BY-NC-4.0), Croatian, Hebrew and Hindi (no licence stated), and Danish (terms not
+reviewed). For audio in these languages the server **skips alignment and logs a warning**.
+The model is neither downloaded nor used.
+
+The transcript, its segment-level timestamps and its speaker labels are all still produced.
+Only word-level timing precision is lost. Diarization is unaffected.
+
+To re-enable alignment for one of these languages, point `EXULU_ALIGN_MODEL_<LANG>` at a
+model you have licensed:
+
+```bash
+EXULU_ALIGN_MODEL_VI=my-org/licensed-vi-aligner
+```
+
+The same variable overrides the default for any other language too.
+
 
 ## Docker image details
 

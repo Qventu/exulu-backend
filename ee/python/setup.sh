@@ -240,6 +240,39 @@ pip install -r "$REQUIREMENTS_FILE"
 
 print_success "All dependencies installed successfully"
 
+# Step 6.4: Remove the proprietary litellm-enterprise package.
+#
+# requirements.txt pins `litellm[proxy]`, and that extra hard-requires
+# litellm-enterprise. We need the other 29 packages the extra brings in
+# (gunicorn, fastapi, apscheduler, boto3, mcp, litellm-proxy-extras, …) but not
+# this one: it is NOT MIT like litellm itself. It carries the BerriAI Enterprise
+# License, which permits production use only with a paid per-seat subscription
+# and forbids redistributing the package. Exulu ships ee/ (including this script
+# and requirements.txt) inside the public npm package, so leaving it installed
+# would put a proprietary dependency on every customer's machine.
+#
+# Removing it is safe. Every one of litellm's 36 `litellm_enterprise` import
+# sites is wrapped in `try/except ImportError`; with the package absent the
+# proxy imports cleanly, `enterprise_proxy_config` falls back to None and the
+# route table is unchanged. Exulu never sets LITELLM_LICENSE, so `premium_user`
+# is False and no enterprise feature was reachable in the first place.
+#
+# If you DO hold a BerriAI Enterprise subscription and want the enterprise
+# callbacks, set EXULU_KEEP_LITELLM_ENTERPRISE=true to skip this step.
+echo ""
+if [ "${EXULU_KEEP_LITELLM_ENTERPRISE:-false}" = "true" ]; then
+    print_warning "EXULU_KEEP_LITELLM_ENTERPRISE=true — keeping litellm-enterprise (proprietary; requires a BerriAI subscription for production use)."
+elif pip show litellm-enterprise > /dev/null 2>&1; then
+    print_info "Removing litellm-enterprise (proprietary BerriAI package pulled in by litellm[proxy])..."
+    if pip uninstall -y litellm-enterprise > /dev/null 2>&1; then
+        print_success "litellm-enterprise removed; LiteLLM proxy runs on the MIT-licensed core"
+    else
+        print_warning "Could not remove litellm-enterprise. It is proprietary (BerriAI Enterprise License) and production use requires a paid subscription — remove it manually with 'pip uninstall -y litellm-enterprise' or set EXULU_KEEP_LITELLM_ENTERPRISE=true if you hold one."
+    fi
+else
+    print_info "litellm-enterprise not present — nothing to remove"
+fi
+
 # Step 6.5: Generate Prisma client for LiteLLM database mode.
 # LiteLLM's PrismaClient does `from prisma import Prisma`, which only works
 # after `prisma generate` has materialized the Python client against
@@ -259,7 +292,7 @@ echo "Step 7: Validating installation..."
 
 # Test critical imports
 print_info "Testing critical imports..."
-$PYTHON_CMD -c "import docling" 2>/dev/null && print_success "docling imported successfully" || print_error "Failed to import docling"
+$PYTHON_CMD -c "import pypdf" 2>/dev/null && print_success "pypdf imported successfully" || print_error "Failed to import pypdf"
 $PYTHON_CMD -c "import transformers" 2>/dev/null && print_success "transformers imported successfully" || print_error "Failed to import transformers"
 
 # Whisper transcription server imports — non-fatal: only needed for
@@ -268,6 +301,12 @@ $PYTHON_CMD -c "import transformers" 2>/dev/null && print_success "transformers 
 $PYTHON_CMD -c "import whisperx" 2>/dev/null && print_success "whisperx imported successfully" || print_warning "whisperx not importable (transcription server will not start)"
 $PYTHON_CMD -c "import pyannote.audio" 2>/dev/null && print_success "pyannote.audio imported successfully" || print_warning "pyannote.audio not importable (diarization will be disabled even with HF_AUTH_TOKEN)"
 $PYTHON_CMD -c "import fastapi, uvicorn" 2>/dev/null && print_success "fastapi/uvicorn imported successfully" || print_warning "fastapi/uvicorn not importable (transcription server will not start)"
+
+# litellm must still import after litellm-enterprise was removed in step 6.4.
+# Cheap check on purpose: `import litellm` takes ~2s, while importing
+# litellm.proxy.proxy_server takes ~15s and would eat into the npm postinstall
+# timeout that the CUDA torch download already strains.
+$PYTHON_CMD -c "import litellm" 2>/dev/null && print_success "litellm imported successfully" || print_warning "litellm not importable (LiteLLM proxy will not start; only needed when EXULU_USE_LITELLM=true)"
 
 # Step 8: Display summary
 echo ""

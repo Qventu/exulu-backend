@@ -12,7 +12,6 @@ import WordExtractor from 'word-extractor';
 import { parseOfficeAsync } from "officeparser";
 import { checkLicense } from '@EE/entitlements';
 import { executePythonScript } from '@SRC/utils/python-executor';
-import { setupPythonEnvironment, validatePythonEnvironment } from '@SRC/utils/python-setup';
 import { LiteParse } from '@llamaindex/liteparse';
 import { resolveOcr } from '@SRC/exulu/resolve-ocr';
 import type { ResolveOcrInput } from '@SRC/exulu/resolve-ocr';
@@ -31,7 +30,7 @@ type DocumentProcessorConfig = {
     concurrency: number;
   },
   processor: {
-    name: "docling" | "liteparse" | "mistral" | "officeparser"
+    name: "liteparse" | "mistral" | "officeparser"
     /**
      * LiteLLM model_name for the "mistral" OCR processor (declared in
      * config.litellm.yaml). Defaults to "mistral-ocr". OCR is routed through
@@ -534,7 +533,7 @@ async function validateWithVLM(
   verbose: boolean = false,
   concurrency: number = 10
 ): Promise<ProcessedDocument> {
-  console.log(`[EXULU] Starting VLM validation for docling output, ${document.length} pages...`);
+  console.log(`[EXULU] Starting VLM validation for processor output, ${document.length} pages...`);
   console.log(`[EXULU] Concurrency limit: ${concurrency}`);
 
   // Create a concurrency limiter
@@ -683,7 +682,7 @@ async function processDocument(
   /* 
   tempDir/
     uuid/
-      docling.json
+      processed.json
       images/
   */
   const paths: ProcessingPaths = {
@@ -751,56 +750,7 @@ async function processPdf(
   try {
     let json: ProcessedDocument = [];
     // Call the PDF processor script
-    if (config?.processor.name === "docling") {
-
-      // Validate Python environment and setup if needed
-      console.log(`[EXULU] Validating Python environment...`);
-      const validation = await validatePythonEnvironment(undefined, true);
-
-      if (!validation.valid) {
-        console.log(`[EXULU] Python environment not ready, setting up automatically...`);
-        console.log(`[EXULU] Reason: ${validation.message}`);
-
-        const setupResult = await setupPythonEnvironment({
-          verbose: true,
-          force: false, // Only setup if not already done
-        });
-
-        if (!setupResult.success) {
-          throw new Error(`Failed to setup Python environment: ${setupResult.message}\n\n${setupResult.output || ''}`);
-        }
-
-        console.log(`[EXULU] Python environment setup completed successfully`);
-      } else {
-        console.log(`[EXULU] Python environment is valid`);
-      }
-
-      console.log(`[EXULU] Processing document with document_to_markdown.py`);
-
-      const result = await executePythonScript({
-        scriptPath: 'ee/python/documents/processing/document_to_markdown.py',
-        args: [
-          paths.source,
-          '-o', paths.json,
-          '--images-dir', paths.images
-        ],
-        timeout: 30 * 60 * 1000, // 30 minutes for large documents
-      });
-
-      // Log processing info from stderr
-      if (result.stderr) {
-        console.log('Processing info:', result.stderr.trim());
-      }
-
-      if (!result.success) {
-        throw new Error(`Document processing failed: ${result.stderr}`);
-      }
-
-      // Read the generated JSON file
-      const jsonContent = await fs.promises.readFile(paths.json, 'utf-8');
-      json = JSON.parse(jsonContent);
-
-    } else if (config?.processor.name === "officeparser") {
+    if (config?.processor.name === "officeparser") {
       const text = await parseOfficeAsync(buffer, {
         outputErrorToConsole: false,
         newlineDelimiter: "\n",
@@ -934,15 +884,28 @@ async function processPdf(
       }));
 
       fs.writeFileSync(paths.json, JSON.stringify(json, null, 2));
+    } else {
+      // Without this the if/else chain fell through leaving `json` empty, and
+      // the document was stored as zero pages with no error anywhere — a silent
+      // data-loss path. "docling" in particular used to be a valid value here.
+      // Every member of the union is handled above, so TypeScript narrows
+      // `processor.name` to `never` here. At runtime a caller can still pass
+      // anything, because these configs are routinely built from plain JS or
+      // from database rows. String() widens it back for the message.
+      const configured = String(config?.processor?.name ?? '');
+      throw new Error(
+        configured === ''
+          ? '[EXULU] No document processor configured. Set processor.name to one of: mistral, liteparse, officeparser.'
+          : `[EXULU] Unknown document processor "${configured}". Supported processors are: mistral, liteparse, officeparser.` +
+            (configured === 'docling'
+              ? ' The "docling" processor was removed: it depended on PyMuPDF, which is AGPL-licensed. Use "mistral" for PDF OCR.'
+              : '')
+      );
     }
 
     console.log(`[EXULU] \n✓ Document processing completed successfully`);
     console.log(`[EXULU] Total pages: ${json.length}`);
     console.log(`[EXULU] Output file: ${paths.json}`);
-
-    if (config?.vlm?.model) {
-      console.error('[EXULU] VLM validation is only supported when docling is enabled, skipping validation.');
-    }
 
     // Apply VLM validation if enabled
     const vlmModel = config?.vlm?.model ? await resolveVlmModel(config) : undefined;
@@ -1121,9 +1084,6 @@ export async function documentProcessor({
 
     let supportedTypes: string[] = [];
     switch (config?.processor.name) {
-      case "docling":
-        supportedTypes = ['pdf', 'docx', 'doc', 'txt', 'md', 'jpg', 'jpeg', 'png', 'gif', 'webp'];
-        break;
       case "officeparser":
         supportedTypes = ['docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods', 'pdf', 'rtf', 'csv', 'md', 'html'];
         break;

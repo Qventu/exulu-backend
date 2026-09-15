@@ -51,6 +51,8 @@ export type RetrievalStep = {
   tokens: number;
 };
 export type AgenticRetrievalOutput = {
+  /** Phase durations in ms (memoryRoutingMs, pinsMs, searchMs, rerankMs, fallbackRerankMs, totalMs). */
+  timings?: Record<string, number>;
   steps: RetrievalStep[];
   reasoning: { text: string; tools: unknown[] }[];
   chunks: ChunkWithScore[];

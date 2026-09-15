@@ -60,6 +60,7 @@ import { markStreamActive, clearStreamActive, isStreamActive } from "./active-st
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
+import { finishTurnMetadata } from "./turn-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
@@ -776,6 +777,7 @@ export const createExpressRoutes = async (
           : agent.instructions;
 
         if (headers.session) markStreamActive(headers.session as string);
+        const turnStartedAt = Date.now();
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
           result = await generateStream({
@@ -827,13 +829,7 @@ export const createExpressRoutes = async (
               };
             }
             if (part.type === "finish") {
-              return {
-                totalTokens: part.totalUsage.totalTokens,
-                reasoningTokens: part.totalUsage.reasoningTokens,
-                inputTokens: part.totalUsage.inputTokens,
-                outputTokens: part.totalUsage.outputTokens,
-                cachedInputTokens: part.totalUsage.cachedInputTokens,
-              };
+              return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt });
             }
             return undefined;
           },

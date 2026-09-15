@@ -2,6 +2,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import { classifyFilePart } from "./file-part";
 import { dropEmptyMessages } from "./stored-messages";
 import { resolveFreshFileUrl } from "./stored-file-url";
+import { loadSessionFileListing } from "./session-file-listing";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
 import type { ExuluAgentToolConfig } from "@EXULU_TYPES/models/exulu-agent-tool-config.ts";
@@ -33,6 +34,8 @@ import { convertExuluToolsToAiSdkTools } from "@SRC/templates/tools/convert-exul
 import type { Request } from "express";
 import { sanitizeAuthPayloadsInUiMessages } from "./auth/sanitize-ui-messages";
 import { resolveRetrievalCallBudget, finalAnswerGuard, resolveTurnStepBudget, retrievalBudgetGuard } from "./resolve-max-steps";
+import { resolveProviderOptions } from "./resolve-reasoning-effort";
+import { onChatStreamError } from "./stream-error";
 import { sanitizeToolName } from "@SRC/utils/sanitize-tool-name";
 import { imageAttachmentGuard } from "./tool-image-attachments";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
@@ -187,6 +190,17 @@ export const saveChat = async ({
 // — sessions past 50 messages sent an arbitrary heap-ordered subset to the
 // model. Compaction (sliceHistoryAtCheckpoint) keeps the assembled prompt
 // bounded, so loading the full session is safe.
+/** Timestamp of the newest stored message — files newer than this are flagged as new in the prompt. */
+const lastMessageTime = (rows: Array<{ createdAt?: string | Date }>): Date | undefined => {
+    let latest: Date | undefined;
+    for (const row of rows) {
+        if (!row.createdAt) continue;
+        const d = new Date(row.createdAt);
+        if (!latest || d > latest) latest = d;
+    }
+    return latest;
+};
+
 export const getAgentMessages = async ({
     session,
     user,
@@ -285,6 +299,7 @@ export const generateSync = async ({
     let project: string | undefined;
     let sessionItems: string[] | undefined;
     let sessionOwnerId: number | string | undefined;
+    let lastTurnAt: Date | undefined;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         sessionItems = sessionData.session_items;
@@ -303,6 +318,7 @@ export const generateSync = async ({
             session,
             user: user.id,
         });
+        lastTurnAt = lastMessageTime(previousMessages);
 
         const previousMessagesContent = previousMessages.map((message) =>
             JSON.parse(message.content),
@@ -511,6 +527,15 @@ export const generateSync = async ({
         commands like \`node create_doc.js\`) live in the same place. These files are scoped to
         this single session; they are NOT visible in other sessions, projects, or knowledge bases.
       `
+    if (session) {
+        const listing = await loadSessionFileListing({
+            sessionID: session,
+            ownerId: sessionOwnerId ?? user?.id ?? "api",
+            exuluConfig,
+            lastTurnAt,
+        });
+        if (listing) system += "\n\n" + listing;
+    }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
@@ -721,6 +746,7 @@ export const generateStream = async ({
     let project: string | undefined;
     let sessionItems: string[] | undefined;
     let sessionOwnerId: number | string | undefined;
+    let lastTurnAt: Date | undefined;
     if (session) {
         const sessionData = await getSession({ sessionID: session });
         project = sessionData.project;
@@ -737,6 +763,7 @@ export const generateStream = async ({
             includeAllUsers: isRunSessionMetadata(sessionData.metadata),
         });
         previousMessagesContent = previousMessages.map((message) => JSON.parse(message.content));
+        lastTurnAt = lastMessageTime(previousMessages);
     }
 
     const model = languageModel;
@@ -945,6 +972,15 @@ ${skillsList}
         truncation notice, e.g. tool-output-*.txt). Use the read_session_file tool with offset/limit
         to page through it — do not ask the user to re-upload.
       `
+    if (session) {
+        const listing = await loadSessionFileListing({
+            sessionID: session,
+            ownerId: sessionOwnerId ?? user?.id ?? "api",
+            exuluConfig,
+            lastTurnAt,
+        });
+        if (listing) system += "\n\n" + listing;
+    }
 
     system += "\n\n" + `When a tool execution is not approved by the user, do not retry it unless explicitly asked by the user. ' +
     'Inform the user that the action was not performed.`
@@ -1059,18 +1095,12 @@ ${skillsList}
         // for the first step or change other parameters.
         system,
         maxRetries: 2,
-        providerOptions: {
-            openai: {
-                reasoningSummary: "auto",
-            },
-        },
+        // OpenAI reasoning summaries + the agent's optional thinking budget
+        // (agents.reasoning_effort → LiteLLM reasoning_effort).
+        providerOptions: resolveProviderOptions(agent),
         tools: tools,
-        onError: (error) => {
-            console.error("[EXULU] chat stream error.", error);
-            throw new Error(
-                `Chat stream error: ${error instanceof Error ? error.message : JSON.stringify(error)}`,
-            );
-        },
+        // Log only — throwing here crashed the process (see stream-error.ts).
+        onError: onChatStreamError,
         // todo allow configuring the step budget per skill
         prepareStep: composePrepareSteps(contextGuard(contextWindow), retrievalGuard, finalAnswerGuard(turnBudget), imageAttachmentGuard()) as never,
         stopWhen: [stepCountIs(turnBudget), hasToolCall("image_generation")],

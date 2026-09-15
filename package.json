@@ -1,6 +1,6 @@
 {
   "name": "@exulu/backend",
-  "author": "Qventu Bv.",
+  "author": "Qventu B.V.",
   "version": "0.3.13-development",
   "main": "./dist/index.js",
   "private": false,
@@ -48,7 +48,7 @@
     "start:whisper": "node ./dist/cli/start-whisper.cjs",
     "python:setup": "cd ee/python && ./setup.sh",
     "python:install": "source ee/python/.venv/bin/activate && pip install -r ee/python/requirements.txt",
-    "python:validate": "source ee/python/.venv/bin/activate && python -c 'import docling; import transformers; print(\"✓ Python environment is working correctly\")'",
+    "python:validate": "source ee/python/.venv/bin/activate && python -c 'import pypdf; import transformers; print(\"✓ Python environment is working correctly\")'",
     "python:clean": "rm -rf ee/python/.venv ee/python/__pycache__ ee/python/**/__pycache__ ee/python/**/*.pyc",
     "python:rebuild": "npm run python:clean && npm run python:setup"
   },
@@ -143,7 +143,6 @@
     "jose": "^6.0.10",
     "json-schema-to-zod": "^2.6.1",
     "jsonwebtoken": "^9.0.2",
-    "just-bash": "^2.14.0",
     "knex": "^3.1.0",
     "link": "^2.1.1",
     "mailparser": "^3.9.14",

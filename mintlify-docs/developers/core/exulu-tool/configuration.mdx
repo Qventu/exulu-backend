@@ -146,6 +146,33 @@ config: [
 ]
 ```
 
+### Reading config values at runtime
+
+Configured values arrive as **`toolVariablesConfig`, a field on your `execute` function's
+first argument** — alongside your `inputSchema` fields. They are *not* on the second
+(`options`) argument.
+
+```typescript
+execute: async ({ orderId, toolVariablesConfig }) => {
+  const endpoint = toolVariablesConfig.api_endpoint;  // "string" param
+  const apiKey   = toolVariablesConfig.api_key;       // "variable" param — already decrypted
+  // ...
+}
+```
+
+The object is keyed by each param's `name`. Values are hydrated before `execute` is
+called: `"variable"` params are looked up in the `variables` table and decrypted, so your
+code receives the secret **value**, never the variable's name. `"json"` params arrive
+parsed.
+
+<Warning>
+  When an administrator has not configured this tool on the agent, `toolVariablesConfig`
+  is `{}` and every key reads as `undefined`. A tool that needs a config value to behave
+  correctly must check for it and fail explicitly — otherwise it silently falls back to
+  whatever default is in the code, which in a multi-tenant deployment can mean serving
+  another tenant's data.
+</Warning>
+
 ## Approval
 
 <ParamField path="needsApproval" type="boolean" default="true">
@@ -322,7 +349,7 @@ Both `authType` arms validate their configuration when the `ExuluTool` is constr
 ## Execute function
 
 <ParamField path="execute" type="function" required>
-  The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields (for example `oauth` when an OAuth authentication config is present, or `credentials` when a user-credentials config is present). `options` carries AI-SDK context such as `toolCallId` and `messages` — ignore it if you don't need it.
+  The function that implements the tool's logic. Receives `(inputs, options?)` where `inputs` matches your `inputSchema` plus any framework-injected fields — `toolVariablesConfig` (the admin-configured [config values](#reading-config-values-at-runtime)), `oauth` when an OAuth authentication config is present, `credentials` when a user-credentials config is present, and platform context such as `user`, `contexts`, `sessionID` and `exuluConfig`. `options` carries only AI-SDK context — `toolCallId` and `messages` — and never your config; ignore it if you don't need it.
 </ParamField>
 
 The return value can be a `Promise` or an `AsyncGenerator` yielding the same shape:
