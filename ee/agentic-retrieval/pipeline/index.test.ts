@@ -223,3 +223,76 @@ describe("projectScope execute-level wiring", () => {
     expect(rerankCall.state.pinnedItemIds.has("item1")).toBe(true);
   });
 });
+
+describe("phase timings", () => {
+  it("records how long the retrieval phases took as a step, so latency can be read from the stored tool result", async () => {
+    const run = makeTool({});
+    const out = await drain(run(inputs));
+    const last = JSON.parse(out[out.length - 1].result);
+    const timing = last.steps.find((s: any) => typeof s.text === "string" && s.text.startsWith("Timing:"));
+    expect(timing).toBeDefined();
+    expect(timing.text).toMatch(/memory\+routing \d+ms/);
+    expect(timing.text).toMatch(/search \d+ms/);
+    expect(timing.text).toMatch(/rerank \d+ms/);
+    expect(timing.text).toMatch(/total \d+ms/);
+    expect(last.timings).toEqual(expect.objectContaining({ totalMs: expect.any(Number), searchMs: expect.any(Number) }));
+  });
+});
+
+describe("engine v2 — identifier pins run alongside memory and routing", () => {
+  it("resolves pins on the original question in parallel, and only once when memory leaves the question unchanged", async () => {
+    const { resolveIdentifierPins } = jest.requireMock("./prefilter");
+    resolveIdentifierPins.mockClear();
+    const run = makeTool({ tuning: '{"engine": "v2"}' });
+    await drain(run(inputs));
+    expect(resolveIdentifierPins).toHaveBeenCalledTimes(1);
+    expect(resolveIdentifierPins.mock.calls[0][0].question).toBe("q");
+  });
+
+  it("keeps the parallel pins when memory only added synonyms to the question", async () => {
+    const { resolveIdentifierPins } = jest.requireMock("./prefilter");
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    resolveIdentifierPins.mockClear();
+    runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [], memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q plus synonym", updatedKeywords: ["k"],
+      updatedImportantKeyword: "k", steps: [] });
+    const run = makeTool({ tuning: '{"engine": "v2"}' });
+    await drain(run(inputs));
+    expect(resolveIdentifierPins).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-resolves pins on the memory-augmented question when it introduces a new designation (v1 fidelity)", async () => {
+    const { resolveIdentifierPins } = jest.requireMock("./prefilter");
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    resolveIdentifierPins.mockClear();
+    runMemoryPhase.mockResolvedValueOnce({
+      memoryChunksForAnswer: [], memoryOverride: { active: false, chunks: [], reason: "" },
+      memoryPinnedItemIdsByContext: new Map(), updatedQuestion: "q plus FST-2XT", updatedKeywords: ["k"],
+      updatedImportantKeyword: "k", steps: [] });
+    const run = makeTool({ tuning: '{"engine": "v2"}' });
+    await drain(run(inputs));
+    expect(resolveIdentifierPins).toHaveBeenCalledTimes(2);
+    expect(resolveIdentifierPins.mock.calls[1][0].question).toBe("q plus FST-2XT");
+  });
+
+  it("passes the merged-call flags to the memory and routing phases", async () => {
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    const { runRoutingPhase } = jest.requireMock("./routing");
+    runMemoryPhase.mockClear(); runRoutingPhase.mockClear();
+    const run = makeTool({ tuning: '{"engine": "v2", "v2": {"mergedRoutingCall": false}}' });
+    await drain(run(inputs));
+    expect(runMemoryPhase.mock.calls[0][0].mergedCall).toBe(true);
+    expect(runRoutingPhase.mock.calls[0][0].mergedCall).toBe(false);
+  });
+
+  it("keeps v1 sequential pins by default", async () => {
+    const { resolveIdentifierPins } = jest.requireMock("./prefilter");
+    const { runMemoryPhase } = jest.requireMock("./memory");
+    resolveIdentifierPins.mockClear(); runMemoryPhase.mockClear();
+    const run = makeTool({});
+    await drain(run(inputs));
+    expect(resolveIdentifierPins).toHaveBeenCalledTimes(1);
+    expect(runMemoryPhase.mock.calls[0][0].mergedCall).toBeFalsy();
+  });
+});

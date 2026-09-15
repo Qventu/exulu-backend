@@ -1,4 +1,4 @@
-import { preprocessQuery, buildFullTextOrQuery, resolveSearchQueryTexts } from "./query-preprocessing";
+import { preprocessQuery, buildFullTextOrQuery, resolveSearchQueryTexts, chooseFullTextQuery } from "./query-preprocessing";
 
 describe("preprocessQuery — tokens carrying digits or punctuation are identifiers, not words", () => {
   it("keeps a fraction like 3/4 intact instead of collapsing it to 34", () => {
@@ -57,5 +57,23 @@ describe("resolveSearchQueryTexts — what the vector search embeds vs. what it 
     const { ftsText, hybridOrQuery } = resolveSearchQueryTexts("Pulsationsdämpfer 3/4 Zoll");
     expect(ftsText).toBe("pulsationsdämpf 3/4 zoll");
     expect(hybridOrQuery).toBe("pulsationsdämpfer or 3/4 or zoll or pulsationsdämpf");
+  });
+});
+
+describe("chooseFullTextQuery — strict AND first, lenient OR only when nothing matches", () => {
+  it("uses the strict (AND) form when the corpus has strict matches", () => {
+    expect(chooseFullTextQuery({ strictMatches: true, strictText: "pulsationsdämpf 3/4", orText: "pulsationsdämpfer or 3/4" })).toEqual({ fn: "plainto_tsquery", text: "pulsationsdämpf 3/4" });
+  });
+  it("falls back to the lenient (OR) form when the strict query matches nothing", () => {
+    expect(chooseFullTextQuery({ strictMatches: false, strictText: "pulsationsdämpf 34 azh", orText: "pulsationsdämpfer or 3/4 or azh" })).toEqual({ fn: "websearch_to_tsquery", text: "pulsationsdämpfer or 3/4 or azh" });
+  });
+  it("keeps the strict form for long queries (HyDE passages): a 50-term OR query cost 6.3 s on a 97k-chunk corpus", () => {
+    const words = Array.from({ length: 30 }, (_, i) => `wort${i}`);
+    const orText = words.join(" or ");
+    expect(chooseFullTextQuery({ strictMatches: false, strictText: words.join(" "), orText })).toEqual({ fn: "plainto_tsquery", text: words.join(" ") });
+  });
+  it("still uses the OR form for short queries up to the term cap", () => {
+    const words = Array.from({ length: 12 }, (_, i) => `wort${i}`);
+    expect(chooseFullTextQuery({ strictMatches: false, strictText: words.join(" "), orText: words.join(" or ") }).fn).toBe("websearch_to_tsquery");
   });
 });

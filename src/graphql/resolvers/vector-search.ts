@@ -1,4 +1,5 @@
-import { resolveSearchQueryTexts } from "@SRC/utils/query-preprocessing";
+import { resolveSearchQueryTexts, chooseFullTextQuery } from "@SRC/utils/query-preprocessing";
+import { planNeighbourFetch, mergeNeighbours, type NeighbourRow } from "./expand-neighbours";
 import { applySorting } from "./apply-sorting";
 import type { SearchFilters } from "../types";
 import { applyAccessControl } from "../utilities/access-control";
@@ -12,6 +13,7 @@ import type { User } from "@EXULU_TYPES/models/user";
 import type { STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "@SRC/exulu/statistics";
 import { resolveEmbedder } from "@SRC/exulu/resolve-embedder";
+import { needsQueryEmbedding, boostsWithQueryEntities } from "./query-embedding-policy";
 import {
   applyEntityFilter,
   buildEntityInsights,
@@ -246,7 +248,10 @@ export const vectorSearch = async ({
     hybridOrQuery = texts.hybridOrQuery;
     query = texts.ftsText;
 
-    if (queryEmbedding && queryEmbedding.length) {
+    if (!needsQueryEmbedding(method)) {
+      // Full-text only: no branch below reads the vector (query-embedding-policy.ts).
+      _embedSource = "none";
+    } else if (queryEmbedding && queryEmbedding.length) {
       // Caller supplied a precomputed query embedding (e.g. the harness broad-sweep embeds the query
       // once and reuses it across every context). Skip the embedder round-trip entirely — no
       // resolveEmbedder, no embedder API call, no EMBEDDER_GENERATE stat write.
@@ -285,8 +290,10 @@ export const vectorSearch = async ({
       vector = queryVector;
       _embedSource = "computed";
     }
-    vectorStr = `ARRAY[${vector.join(",")}]`;
-    vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
+    if (vector.length) {
+      vectorStr = `ARRAY[${vector.join(",")}]`;
+      vectorExpr = `${vectorStr}::vector`; // => ARRAY[0.1,0.2,0.3]::vector
+    }
   }
 
   let keywordsQuery: string[] = [];
@@ -403,10 +410,22 @@ export const vectorSearch = async ({
 
       resultChunks = await chunksQuery;
       break;
-    case "hybridSearch":
-      // Full-text branch: websearch_to_tsquery over OR-ed tokens. plainto_tsquery AND-ed
-      // every term, so one keyword absent from the corpus (e.g. a pump type read off a
-      // photo) returned zero rows and silently degraded the search to vector-only.
+    case "hybridSearch": {
+      // Full-text branch: the strict AND query (plainto_tsquery over the stemmed text) is
+      // cheap and precise; the lenient OR query (websearch_to_tsquery over all tokens)
+      // rescues cases where one keyword absent from the corpus zeroed the branch, but is
+      // expensive on large corpora. Probe for strict matches first (one indexed EXISTS).
+      let strictMatches = false;
+      if (query && hybridOrQuery) {
+        const probe = await db(chunksTable + " as chunks")
+          .select(db.raw("1"))
+          .whereRaw(`(${languages.map((lang) => `chunks.fts @@ plainto_tsquery('${lang}', ?)`).join(" OR ")})`, languages.map(() => query))
+          .first();
+        strictMatches = Boolean(probe);
+      }
+      const fullText = chooseFullTextQuery({ strictMatches, strictText: query ?? "", orText: hybridOrQuery });
+      const ftsFn = fullText.fn;
+      hybridOrQuery = fullText.text;
       // Tunables
       const matchCount = Math.min(limit * 2);
       const fullTextWeight = 2.0;
@@ -415,12 +434,12 @@ export const vectorSearch = async ({
 
       // Build multi-language expressions for full text search
       const ftRankExpression = languages
-        .map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`)
+        .map((lang) => `ts_rank(chunks.fts, ${ftsFn}('${lang}', ?))`)
         .join(", ");
       const ftRankParams = languages.map(() => hybridOrQuery);
 
       const ftMatchExpression = languages
-        .map((lang) => `chunks.fts @@ websearch_to_tsquery('${lang}', ?)`)
+        .map((lang) => `chunks.fts @@ ${ftsFn}('${lang}', ?)`)
         .join(" OR ");
       const ftMatchParams = languages.map(() => hybridOrQuery);
 
@@ -487,7 +506,7 @@ export const vectorSearch = async ({
           db.raw('items."updatedAt" as item_updated_at'),
           db.raw('items."createdAt" as item_created_at'),
           db.raw(
-            `GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`).join(", ")}) AS fts_rank`,
+            `GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, ${ftsFn}('${lang}', ?))`).join(", ")}) AS fts_rank`,
             languages.map(() => hybridOrQuery),
           ),
           db.raw(`(1 - (chunks.embedding <=> ${vectorExpr})) AS cosine_distance`),
@@ -519,7 +538,7 @@ export const vectorSearch = async ({
           [rrfK, fullTextWeight, rrfK, semanticWeight, cutoffs?.hybrid || 0],
         )
         .whereRaw(
-          `(chunks.fts IS NULL OR GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`).join(", ")}) > ?)`,
+          `(chunks.fts IS NULL OR GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, ${ftsFn}('${lang}', ?))`).join(", ")}) > ?)`,
           [...languages.map(() => hybridOrQuery), cutoffs?.tsvector || 0],
         )
         .whereRaw(`(chunks.embedding IS NULL OR (1 - (chunks.embedding <=> ${vectorExpr})) >= ?)`, [
@@ -533,6 +552,8 @@ export const vectorSearch = async ({
       // and the "items" table reference is not available in the outer query context with CTEs
 
       resultChunks = await hybridQuery;
+      break;
+    }
   }
 
   if (process.env.EXULU_VS_TIMING) {
@@ -622,7 +643,7 @@ export const vectorSearch = async ({
   // shared-entity term into the min-max-normalized base score. Best-effort.
   let queryEntities: EntityRow[] = [];
   let entityInsights: EntityInsights | undefined;
-  if (entitiesOn && rawQuery) {
+  if (entitiesOn && rawQuery && boostsWithQueryEntities(method)) {
     try {
       const types = await hydrateEntityTypes(context);
       const { mentions: queryMentions } = await extractEntitiesForItem({
@@ -672,122 +693,23 @@ export const vectorSearch = async ({
   // it fetches the chunks with index 1 and 3, and adds them to the result set
 
   if (expand?.before || expand?.after) {
-    const expandedMap = new Map<string, VectorSearchChunkResult>();
-
-    // First, add all original results to the map
-    for (const chunk of results) {
-      expandedMap.set(`${chunk.item_id}-${chunk.chunk_index}`, chunk);
+    // One batched fetch for all neighbours instead of one query per neighbour chunk
+    // (see expand-neighbours.ts for the latency story).
+    const plan = planNeighbourFetch(results, expand);
+    if (plan.size > 0) {
+      const itemIds = Array.from(plan.keys());
+      const indices = Array.from(new Set(Array.from(plan.values()).flatMap((s) => Array.from(s))));
+      const rows: NeighbourRow[] = await db(chunksTable)
+        .select(["id", "source", "chunk_index", "content", "metadata", "createdAt", "updatedAt"])
+        .whereIn("source", itemIds)
+        .whereIn("chunk_index", indices);
+      results = mergeNeighbours(results, rows, plan, { name: table.name.singular, id: table.id || "" });
     }
-
-    if (expand?.before) {
-      for (const chunk of results) {
-        // Create an array of indices to fetch: [chunk_index -
-        // expand.before, ..., chunk_index - 1]
-        const indicesToFetch = Array.from(
-          { length: expand.before },
-          (_, i) => chunk.chunk_index - expand.before! + i,
-        ).filter((index) => index >= 0); // Only fetch non-negative indices
-
-        await Promise.all(
-          indicesToFetch.map(async (index) => {
-            if (expandedMap.has(`${chunk.item_id}-${index}`)) {
-              return;
-            }
-            const expandedChunk = await db(chunksTable)
-              .where({
-                source: chunk.item_id,
-                chunk_index: index,
-              })
-              .first();
-            if (expandedChunk) {
-              if (expandedChunk) {
-                expandedMap.set(`${chunk.item_id}-${index}`, {
-                  chunk_content: expandedChunk.content,
-                  chunk_index: expandedChunk.chunk_index,
-                  chunk_id: expandedChunk.id,
-                  chunk_source: expandedChunk.source,
-                  chunk_metadata: expandedChunk.metadata,
-                  chunk_created_at: expandedChunk.createdAt,
-                  chunk_updated_at: expandedChunk.updatedAt,
-                  item_updated_at: chunk.item_updated_at,
-                  item_created_at: chunk.item_created_at,
-                  item_id: chunk.item_id,
-                  item_external_id: chunk.item_external_id,
-                  item_name: chunk.item_name,
-                  chunk_cosine_distance: 0,
-                  chunk_fts_rank: 0,
-                  chunk_hybrid_score: 0,
-                  context: {
-                    name: table.name.singular,
-                    id: table.id || "",
-                  },
-                });
-              }
-            }
-          }),
-        );
-      }
-    }
-    if (expand?.after) {
-      for (const chunk of results) {
-        // Create an array of indices to fetch: [chunk_index + 1,
-        // ..., chunk_index + expand.after]
-        const indicesToFetch = Array.from(
-          { length: expand.after },
-          (_, i) => chunk.chunk_index + i + 1,
-        );
-
-        await Promise.all(
-          indicesToFetch.map(async (index) => {
-            if (expandedMap.has(`${chunk.item_id}-${index}`)) {
-              return;
-            }
-            const expandedChunk = await db(chunksTable)
-              .where({
-                source: chunk.item_id,
-                chunk_index: index,
-              })
-              .first();
-            if (expandedChunk) {
-              expandedMap.set(`${chunk.item_id}-${index}`, {
-                chunk_content: expandedChunk.content,
-                chunk_index: expandedChunk.chunk_index,
-                chunk_id: expandedChunk.id,
-                chunk_source: expandedChunk.source,
-                chunk_metadata: expandedChunk.metadata,
-                chunk_created_at: expandedChunk.createdAt,
-                chunk_updated_at: expandedChunk.updatedAt,
-                item_updated_at: chunk.item_updated_at,
-                item_created_at: chunk.item_created_at,
-                item_id: chunk.item_id,
-                item_external_id: chunk.item_external_id,
-                item_name: chunk.item_name,
-                chunk_cosine_distance: 0,
-                chunk_fts_rank: 0,
-                chunk_hybrid_score: 0,
-                context: {
-                  name: table.name.singular,
-                  id: table.id || "",
-                },
-              });
-            }
-          }),
-        );
-      }
-    }
-
-    // Convert map values back to array
-    results = Array.from(expandedMap.values());
-
-    // Sort by item_id first, then by chunk_index within each item
     results = results.sort((a, b) => {
       if (a.item_id !== b.item_id) {
         return a.item_id.localeCompare(b.item_id);
       }
-      // Ensure chunk_index is treated as a number for proper sorting
-      const aIndex = Number(a.chunk_index);
-      const bIndex = Number(b.chunk_index);
-      return aIndex - bIndex;
+      return Number(a.chunk_index) - Number(b.chunk_index);
     });
   }
 
