@@ -109,6 +109,20 @@ A few points about this tool:
 - **`needsApproval: false`** — read-only, reversible operations should not block the user. Set `true` (the default) for any action that modifies data or has side effects.
 - **Return shape** — `{ result: string }` is the standard return for tools that produce a text or JSON response. Always `JSON.stringify` objects before returning — agents parse JSON automatically.
 
+<Warning>
+  **Always set `needsApproval` explicitly on a read-only tool.** It defaults to
+  `true`, so omitting it makes a plain read prompt the user — and the cost is
+  worse than one extra click, because models fan reads out in parallel. A single
+  turn that reads twenty records issues twenty tool calls in one step, each with
+  its own approval prompt, and the run cannot continue until every one has been
+  answered individually. "Allow for this chat" does not rescue it: approval is
+  evaluated for all twenty calls before the first prompt reaches the browser.
+
+  Write the flag on every tool, both ways. `needsApproval: true` on a tool that
+  writes documents the intent; `needsApproval: false` on a tool that reads
+  documents that the default was considered rather than inherited.
+</Warning>
+
 </Step>
 
 <Step title="Build a streaming tool">
