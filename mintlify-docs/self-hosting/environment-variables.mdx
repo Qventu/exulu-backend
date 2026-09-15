@@ -235,3 +235,4 @@ These variables are read by the source but are not intended for operator configu
 | `SERVER_ROOT_PATH` | Server | Root path prefix when the backend is served under a subpath. Not required for standard deployments. |
 | `PUBLIC_API_BASE_URL` | Server | Alias for `BACKEND`, used in Recall callback URL resolution when `BACKEND` is absent. Prefer `BACKEND`. |
 | `NEXT_PUBLIC_AGENT_VISUALIZATION` | Server | Feature flag for agent visualization UI. Set to `true` to enable. |
+| `EXULU_KEEP_NODE_LIBLZMA` | `false` | Keep the optional `node-liblzma` package (LGPL-3.0), which the postinstall hook otherwise removes. Enables `xz` compression inside the skill sandbox. |
