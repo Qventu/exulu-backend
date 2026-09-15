@@ -4,6 +4,7 @@ import { guardRedisStartup, logRedisErrors } from "@EE/queues/redis-startup.ts";
 import { Job, Worker, type JobState } from "bullmq";
 import { bullmq } from "@SRC/validators/bullmq.ts";
 import { serializeError } from "@SRC/utils/serialize-error.ts";
+import { finishTurnMetadata } from "@SRC/exulu/turn-metadata.ts";
 import { getEnabledTools } from "@SRC/utils/enabled-tools.ts";
 import { ExuluStorage } from "@SRC/exulu/storage.ts";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts";
@@ -1702,13 +1703,7 @@ export const processUiMessagesFlow = async ({
               messageMetadata: ({ part }) => {
                 console.log("[EXULU] part", part.type);
                 if (part.type === "finish") {
-                  return {
-                    totalTokens: part.totalUsage.totalTokens,
-                    reasoningTokens: part.totalUsage.reasoningTokens,
-                    inputTokens: part.totalUsage.inputTokens,
-                    outputTokens: part.totalUsage.outputTokens,
-                    cachedInputTokens: part.totalUsage.cachedInputTokens,
-                  };
+                  return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: startTime });
                 }
                 return undefined;
               },

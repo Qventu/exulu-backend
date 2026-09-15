@@ -296,6 +296,14 @@ const agentsSchema: ExuluTableDefinition = {
       type: "number",
     },
     {
+      // Thinking budget of the answer model, forwarded as LiteLLM's
+      // reasoning_effort ("none" | "disable" | "minimal" | "low" | "medium" |
+      // "high"). null = provider default. See resolve-reasoning-effort.ts.
+      // Auto-ALTERed on boot.
+      name: "reasoning_effort",
+      type: "text",
+    },
+    {
       name: "guest_access",
       type: "boolean",
       default: false,

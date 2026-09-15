@@ -51,12 +51,18 @@ export function resolveTurnStepBudget(
   return DEFAULT_MAX_STEPS;
 }
 
+/** Upper bound for a flattened tool-call input on the final step (was 300). */
+const TOOL_INPUT_FLATTEN_CHARS = 6000;
+
 /** Render one structured message part as plain text for the final-answer step. */
 function flattenPart(part: unknown): string {
   const p = part as { type?: string; text?: string; toolName?: string; input?: unknown; output?: { value?: unknown } };
   if (p?.type === "text") return p.text ?? "";
   if (p?.type === "tool-call") {
-    return `Earlier, the assistant ran the "${p.toolName}" tool with input: ${JSON.stringify(p.input ?? {}).slice(0, 300)}`;
+    // Keep the input generously: a writeFile/bash input often IS the data the model extracted
+    // (e.g. a script holding the values read off page images). A 300-char cap dropped it and
+    // the final answer was written from memory — with invented numbers.
+    return `Earlier, the assistant ran the "${p.toolName}" tool with input: ${JSON.stringify(p.input ?? {}).slice(0, TOOL_INPUT_FLATTEN_CHARS)}`;
   }
   if (p?.type === "tool-result") {
     const out = p.output?.value ?? p.output;
@@ -93,6 +99,7 @@ export function flattenToolHistory(messages: unknown[]): unknown[] {
 
 const FINAL_ANSWER_INSTRUCTION =
   "This is your last step for this turn. Answer the user's original question now, in plain text, using only the information gathered above. " +
+  "Do not invent, estimate or \"fill in\" values that were not actually gathered: report only what the tools returned or what you wrote down, and name explicitly what is missing. " +
   "If you could not finish the task, tell the user you reached the maximum number of tool steps, summarize what you found and did so far, and say what remains — they can ask you to continue. " +
   "Do not attempt any further tool calls. Write your answer as normal prose for the user: do not output tool-call syntax, JSON commands, or bracketed lines such as \"[called tool ...]\" — describe anything you did or still plan to do in plain language.";
 

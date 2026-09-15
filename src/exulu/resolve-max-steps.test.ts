@@ -213,3 +213,29 @@ describe("retrievalBudgetGuard", () => {
     expect(((await composed({ stepNumber: 4, steps: spent })) as { activeTools: string[] }).activeTools).toEqual([]);
   });
 });
+
+describe("finalAnswerGuard — the flattened history must keep what the model already gathered", () => {
+  it("does not truncate a tool-call input that carries the extracted data (writeFile script with values)", () => {
+    const guard = finalAnswerGuard(3);
+    const header = "from openpyxl import Workbook\n" + "# ".repeat(200) + "\n";
+    const script = header + 'rows = [["1200", "18035", 7000, 8600], ["1500", "16709", 5000, 3600]]\n';
+    const messages = [
+      { role: "user", content: "Tabelle bitte" },
+      { role: "assistant", content: [{ type: "tool-call", toolName: "writeFile", input: { path: "create_excel.py", content: script } }] },
+      { role: "tool", content: [{ type: "tool-result", toolName: "writeFile", output: { value: { success: true } } }] },
+    ];
+    const r = guard({ stepNumber: 2, messages }) as any;
+    const texts = (r.messages as any[]).map((m) => String(m.content)).join("\n");
+    expect(script.length).toBeGreaterThan(300);
+    expect(texts).toContain("7000, 8600");
+    expect(texts).toContain("5000, 3600");
+  });
+
+  it("tells the model not to invent values it did not gather and to name what is missing", () => {
+    const guard = finalAnswerGuard(3);
+    const r = guard({ stepNumber: 2, messages: [{ role: "user", content: "x" }] }) as any;
+    const instruction = (r.messages as any[]).at(-1).content as string;
+    expect(instruction).toMatch(/do not invent|never invent|must not invent/i);
+    expect(instruction).toMatch(/missing|could not (be )?(gathered|determined)/i);
+  });
+});
