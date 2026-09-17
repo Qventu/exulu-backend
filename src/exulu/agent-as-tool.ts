@@ -9,6 +9,7 @@ import { updateStatistic } from "./statistics";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
 import type { ExuluContext } from "./context";
 import { generateSync } from "./generate-stream";
+import { withGlossary } from "../utils/agent-glossary";
 
 export const createAgentTool = async (
     instance: string,
@@ -94,7 +95,7 @@ export const createAgentTool = async (
         const response = await generateSync({
           agent: agent,
           contexts: contexts,
-          instructions: agent.instructions,
+          instructions: withGlossary(agent.instructions, agent.tools),
           prompt:
             "The user has asked the following question: " +
             prompt +

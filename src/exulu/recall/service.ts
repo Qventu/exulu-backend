@@ -31,6 +31,7 @@ import {
   recordingMonthlyLimitSeconds,
 } from "./env";
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
+import { withGlossary } from "@SRC/utils/agent-glossary";
 
 const TABLE = "transcription_jobs";
 const DEFAULT_BOT_NAME = "Company Notetaker";
@@ -589,7 +590,7 @@ export const recallService = {
 
       const { text } = await generateText({
         model: resolved.languageModel,
-        system: agent.instructions || undefined,
+        system: withGlossary(agent.instructions, agent.tools) || undefined,
         prompt: `${prompt.content}\n\n---\nMeeting transcript:\n\n${transcriptText}`,
         maxRetries: 3,
         abortSignal: AbortSignal.timeout(POST_PROCESSING_PROMPT_TIMEOUT_MS),
