@@ -29,6 +29,7 @@ import { extractBundleToS3, extractBundleToVersion, BundleValidationError } from
 import { parseSkillFrontmatter } from "../skills/frontmatter.ts";
 import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
 import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
+import { withGlossary } from "../utils/agent-glossary.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -772,9 +773,10 @@ export const createExpressRoutes = async (
             : JSON.stringify(req.body.customInstructions)
           : "";
 
-        const instructions = customInstructions
-          ? `${agent.instructions}\n\n${customInstructions}`
-          : agent.instructions;
+        const instructions = withGlossary(
+          customInstructions ? `${agent.instructions}\n\n${customInstructions}` : agent.instructions,
+          agent.tools,
+        );
 
         if (headers.session) markStreamActive(headers.session as string);
         const turnStartedAt = Date.now();
@@ -939,9 +941,10 @@ export const createExpressRoutes = async (
             : JSON.stringify(req.body.customInstructions)
           : "";
 
-        const instructions = customInstructions
-          ? `${agent.instructions}\n\n${customInstructions}`
-          : agent.instructions;
+        const instructions = withGlossary(
+          customInstructions ? `${agent.instructions}\n\n${customInstructions}` : agent.instructions,
+          agent.tools,
+        );
 
         let response: Awaited<ReturnType<typeof generateSync>>;
         try {
