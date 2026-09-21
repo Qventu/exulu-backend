@@ -8,6 +8,8 @@ jest.mock("@SRC/uppy", () => ({
 jest.mock("./document-render-helpers", () => ({
   pdfToText: jest.fn(),
   renderPdfPageToPng: jest.fn(),
+  isLegacyOfficeFormat: jest.requireActual("./document-render-helpers").isLegacyOfficeFormat,
+  convertLegacyOfficeToModern: jest.fn(),
 }));
 jest.mock("officeparser", () => ({
   parseOfficeAsync: jest.fn(),
@@ -15,7 +17,10 @@ jest.mock("officeparser", () => ({
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getPresignedUrl } = require("@SRC/uppy") as { getPresignedUrl: jest.Mock };
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { pdfToText } = require("./document-render-helpers") as { pdfToText: jest.Mock };
+const { pdfToText, convertLegacyOfficeToModern } = require("./document-render-helpers") as {
+  pdfToText: jest.Mock;
+  convertLegacyOfficeToModern: jest.Mock;
+};
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parseOfficeAsync } = require("officeparser") as { parseOfficeAsync: jest.Mock };
 
@@ -96,6 +101,23 @@ it("extracts office documents via officeparser (no page markers)", async () => {
   const result = await runTool({ filename: "notes.docx" });
   expect(result.content).toBe("word document body");
   expect(result.totalPages).toBeUndefined();
+  // .docx is already a modern format — no LibreOffice round-trip needed.
+  expect(convertLegacyOfficeToModern).not.toHaveBeenCalled();
+});
+
+it("converts legacy .xls/.doc/.ppt/.rtf via LibreOffice before handing bytes to officeparser", async () => {
+  // officeparser's own dispatch has no case for these extensions and would
+  // otherwise fail with "add support for cfb files" — this is the fix for
+  // the reported "xls Dateien lassen sich nicht öffnen" feedback.
+  const convertedBytes = Buffer.from("converted xlsx bytes");
+  convertLegacyOfficeToModern.mockResolvedValue(convertedBytes);
+  parseOfficeAsync.mockResolvedValue("price list body");
+
+  const result = await runTool({ filename: "FU_Preise.xls" });
+
+  expect(convertLegacyOfficeToModern).toHaveBeenCalledWith(expect.any(Buffer), ".xls");
+  expect(parseOfficeAsync).toHaveBeenCalledWith(convertedBytes, expect.anything());
+  expect(result.content).toBe("price list body");
 });
 
 it("rejects the pages option for non-PDF formats", async () => {

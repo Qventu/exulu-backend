@@ -5,7 +5,7 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
-import { pdfToText } from "./document-render-helpers";
+import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { sessionFilePrefix } from "@SRC/exulu/session-files";
 
 const DEFAULT_LIMIT = 250;
@@ -136,7 +136,12 @@ export const createParseDocumentTool = ({
           .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
           .join("\n");
       } else {
-        const extracted = await parseOfficeAsync(bytes, {
+        // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
+        // need converting first even though OFFICE_EXTENSIONS accepts them.
+        const officeBytes = isLegacyOfficeFormat(ext)
+          ? await convertLegacyOfficeToModern(bytes, ext)
+          : bytes;
+        const extracted = await parseOfficeAsync(officeBytes, {
           outputErrorToConsole: false,
           newlineDelimiter: "\n",
         });
