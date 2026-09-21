@@ -181,17 +181,25 @@ export async function setupPythonEnvironment(
     timeout = 600000, // 10 minutes
   } = options;
 
-  // Check if already set up (unless force is true)
-  if (!force && isPythonEnvironmentSetup(packageRoot)) {
-    if (verbose) {
-      console.log('✓ Python environment already set up');
-    }
-
-    return {
-      success: true,
-      message: 'Python environment already exists',
-      alreadyExists: true,
-    };
+  // We deliberately do NOT return early just because the venv directory and a
+  // `python` binary already exist (isPythonEnvironmentSetup only checks that
+  // much, not that the packages inside are complete). ee/python/setup.sh is
+  // itself idempotent — it only skips *recreating* the venv, never skips
+  // `pip install -r requirements.txt` — so always invoking it is cheap when
+  // nothing is missing (a few seconds) and is the only way to guarantee a
+  // venv created before a new requirement was added (e.g. python-docx,
+  // 2026-09-11) actually gets it installed. A prior version of this function
+  // skipped the script entirely whenever the venv folder was merely present,
+  // which silently left newly-added dependencies uninstalled indefinitely
+  // across deploys that reused an older venv — see the docx-manipulation
+  // skill incident on dx-algi, 2026-09-21.
+  const alreadyExisted = isPythonEnvironmentSetup(packageRoot);
+  if (verbose) {
+    console.log(
+      alreadyExisted
+        ? 'Python environment already exists — verifying and installing any missing dependencies...'
+        : 'Setting up Python environment...',
+    );
   }
 
   // Find setup script
@@ -207,10 +215,6 @@ export async function setupPythonEnvironment(
 
   // Run setup script
   try {
-    if (verbose) {
-      console.log('Setting up Python environment...');
-    }
-
     const { stdout, stderr } = await execAsync(`bash "${setupScriptPath}"`, {
       cwd: packageRoot,
       timeout,
@@ -234,8 +238,10 @@ export async function setupPythonEnvironment(
 
     return {
       success: true,
-      message: 'Python environment set up successfully',
-      alreadyExists: false,
+      message: alreadyExisted
+        ? 'Python environment verified (dependencies were already installed or have been updated)'
+        : 'Python environment set up successfully',
+      alreadyExists: alreadyExisted,
       pythonVersion,
       output,
     };
@@ -245,7 +251,7 @@ export async function setupPythonEnvironment(
     return {
       success: false,
       message: `Setup failed: ${error.message}`,
-      alreadyExists: false,
+      alreadyExists: alreadyExisted,
       output: errorOutput,
     };
   }
@@ -336,7 +342,7 @@ export async function validatePythonEnvironment(
 
   // Verify critical packages are installed if requested
   if (checkPackages) {
-    const criticalPackages = ['pypdf', 'transformers'];
+    const criticalPackages = ['pypdf', 'transformers', 'docx'];
     const missingPackages: string[] = [];
 
     for (const pkg of criticalPackages) {

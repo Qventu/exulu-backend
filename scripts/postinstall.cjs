@@ -156,15 +156,21 @@ async function main() {
     return;
   }
 
-  // Check if already exists
+  // We deliberately do NOT skip running setup.sh just because the venv
+  // directory and a `python` binary already exist (pythonEnvironmentExists()
+  // only checks that much, not that requirements.txt is fully installed).
+  // ee/python/setup.sh is itself idempotent — it only skips *recreating* the
+  // venv, never skips `pip install -r requirements.txt` — so always invoking
+  // it is cheap when nothing is missing (a few seconds) and is the only way
+  // to guarantee a venv created before a new requirement was added (e.g.
+  // python-docx, 2026-09-11) actually gets it installed. This used to return
+  // early here whenever the venv folder was merely present, which silently
+  // left newly-added dependencies uninstalled across any install that reused
+  // an older venv — see the docx-manipulation skill incident on dx-algi,
+  // 2026-09-21.
   if (pythonEnvironmentExists()) {
-    console.log(`${colors.green}✓${colors.reset} Python environment already set up`);
+    console.log(`${colors.blue}ℹ${colors.reset} Python environment directory already exists — verifying and installing any missing dependencies...`);
     console.log('');
-    console.log('To rebuild, run:');
-    console.log(`  ${colors.green}import { setupPythonEnvironment } from '@exulu/backend';${colors.reset}`);
-    console.log(`  ${colors.green}await setupPythonEnvironment({ force: true });${colors.reset}`);
-    console.log('');
-    return;
   }
 
   // Run setup
