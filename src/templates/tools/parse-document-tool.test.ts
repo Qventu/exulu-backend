@@ -1,4 +1,4 @@
-import { createParseDocumentTool } from "./parse-document-tool";
+import { createParseDocumentTool, binaryDocumentBashHint } from "./parse-document-tool";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
 
@@ -165,6 +165,47 @@ it("flags a PDF whose text layer comes out glyph-shifted (digits become control 
   expect(result.content).toBeUndefined();
   expect(result.error).toMatch(/text layer.*unreadable|unreadable.*text layer/i);
   expect(result.error).toMatch(/view_document_page/);
+});
+
+describe("binaryDocumentBashHint — nudges agents off grep/cat against binary documents", () => {
+  // Real incident, 2026-09-14 (job 40a1f12d): ALFREDO_2 grepped a PDF directly for
+  // "Schelle" ~25 times in a row (each grep silently returning nothing, since the
+  // file is compressed binary, not plain text), ballooning the turn to 1.4M tokens
+  // and failing CONTEXT_COMPACTION_REQUIRED. The agent had already successfully
+  // extracted the same PDF's text via parse_document earlier in the same turn.
+  it("hints when grep against a PDF returns nothing", () => {
+    const hint = binaryDocumentBashHint(
+      'grep -i "Schelle" Auftrag_23206780_Schindler_20260911125129.371_X.pdf',
+      "",
+      "",
+    );
+    expect(hint).toMatch(/Auftrag_23206780_Schindler_20260911125129\.371_X\.pdf/);
+    expect(hint).toMatch(/parse_document/);
+  });
+
+  it("hints when cat against a .docx returns garbled binary content", () => {
+    const garbled = "PK\x03\x04\x14\x00\x00\x00\x08\x00" + "\x01\x02\x03".repeat(30);
+    const hint = binaryDocumentBashHint("cat notes.docx", garbled, "");
+    expect(hint).toMatch(/notes\.docx/);
+  });
+
+  it("does not hint when the command has no binary-document filename", () => {
+    expect(binaryDocumentBashHint('grep -i "Schelle" notes.txt', "", "")).toBeUndefined();
+  });
+
+  it("does not hint when the search actually found readable text", () => {
+    const hint = binaryDocumentBashHint(
+      "grep -i Schelle extracted_text.pdf.txt",
+      "Position 3.2 Schelle 48-52 mm",
+      "",
+    );
+    expect(hint).toBeUndefined();
+  });
+
+  it("does not hint when a PDF command returns real output (e.g. ls -la)", () => {
+    const hint = binaryDocumentBashHint("ls -la report.pdf", "-rw-r--r-- 1 user user 48213 report.pdf", "");
+    expect(hint).toBeUndefined();
+  });
 });
 
 it("addresses the session file under the session owner's prefix when an owner is given", async () => {
