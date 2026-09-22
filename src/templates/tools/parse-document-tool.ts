@@ -5,7 +5,7 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
-import { pdfToText } from "./document-render-helpers";
+import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
 import { sessionFilePrefix } from "@SRC/exulu/session-files";
 
 const DEFAULT_LIMIT = 250;
@@ -41,6 +41,35 @@ const OFFICE_EXTENSIONS = new Set([
 ]);
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
+
+const BINARY_DOCUMENT_EXTENSION_PATTERN = new RegExp(
+  `([^\\s"'\`]+\\.(?:pdf|${[...OFFICE_EXTENSIONS].map((ext) => ext.slice(1)).join("|")}))\\b`,
+  "i",
+);
+
+/**
+ * bash/grep/cat against PDF or Office files can't find text inside them — the bytes
+ * are compressed or otherwise non-plain-text, so a search silently returns nothing
+ * (or binary garbage) and the agent has no signal to explain why. Real incident,
+ * 2026-09-14 (job 40a1f12d): ALFREDO_2 grepped a PDF ~25 times in a row for the same
+ * term before giving up, ballooning the turn to 1.4M tokens and failing
+ * CONTEXT_COMPACTION_REQUIRED — even though it had already extracted the same PDF's
+ * text via parse_document earlier in the same turn. Returns a hint to redirect the
+ * agent to parse_document, or undefined when the command looks unrelated (no binary
+ * document referenced, or the command already produced real, readable output).
+ */
+export function binaryDocumentBashHint(command: string, stdout: string, stderr: string): string | undefined {
+  const match = command.match(BINARY_DOCUMENT_EXTENSION_PATTERN);
+  if (!match) return undefined;
+  const silent = !stdout.trim() && !stderr.trim();
+  if (!silent && !looksLikeGarbledTextLayer(stdout)) return undefined;
+  const [, file] = match;
+  return (
+    `Note: "${file}" is a binary document — grep/cat/text tools cannot read the text inside it, so a silent or ` +
+    "garbled result does not mean the content isn't there. Use parse_document to extract its text first, then " +
+    "search or read within that extracted text instead of the original file."
+  );
+}
 
 export const createParseDocumentTool = ({
   sessionID,
@@ -136,7 +165,12 @@ export const createParseDocumentTool = ({
           .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
           .join("\n");
       } else {
-        const extracted = await parseOfficeAsync(bytes, {
+        // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
+        // need converting first even though OFFICE_EXTENSIONS accepts them.
+        const officeBytes = isLegacyOfficeFormat(ext)
+          ? await convertLegacyOfficeToModern(bytes, ext)
+          : bytes;
+        const extracted = await parseOfficeAsync(officeBytes, {
           outputErrorToConsole: false,
           newlineDelimiter: "\n",
         });

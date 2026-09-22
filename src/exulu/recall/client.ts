@@ -18,6 +18,7 @@ import {
   recallApiBaseUrl,
   recallApiKey,
   assertRecallConfigured,
+  recallRecordingRetentionHours,
 } from "./env";
 
 export class RecallApiError extends Error {
@@ -212,9 +213,6 @@ export const recordingDurationSeconds = (
   return null;
 };
 
-/** 90 days. Bounded on purpose — Recall's account default is `forever`. */
-export const RECORDING_RETENTION_HOURS = 2160;
-
 /**
  * Create Bot request body.
  *
@@ -234,7 +232,7 @@ export const buildCreateBotPayload = (input: CreateBotInput) => ({
     video_mixed_layout: "speaker_view",
     participant_events: {},
     meeting_metadata: {},
-    retention: { type: "timed", hours: RECORDING_RETENTION_HOURS },
+    retention: { type: "timed", hours: recallRecordingRetentionHours() },
   },
   ...(input.notifyChat
     ? {

@@ -1,4 +1,5 @@
-import { fetch_with_retry, buildCreateBotPayload, RECORDING_RETENTION_HOURS } from "./client";
+import { fetch_with_retry, buildCreateBotPayload } from "./client";
+import { RECALL_RECORDING_RETENTION_DEFAULT_HOURS } from "./env";
 
 type FakeHeaders = Record<string, string>;
 const res = (status: number, headers: FakeHeaders = {}) =>
@@ -183,13 +184,27 @@ describe("buildCreateBotPayload", () => {
     expect(payload.recording_config.meeting_metadata).toEqual({});
   });
 
-  it("sets a 90 day timed retention", () => {
+  it("sets a 90 day timed retention by default", () => {
     const payload = buildCreateBotPayload(base) as any;
-    expect(RECORDING_RETENTION_HOURS).toBe(2160);
+    expect(RECALL_RECORDING_RETENTION_DEFAULT_HOURS).toBe(2160);
     expect(payload.recording_config.retention).toEqual({
       type: "timed",
       hours: 2160,
     });
+  });
+
+  it("honors a configured RECALL_RECORDING_RETENTION_HOURS override", () => {
+    const original = process.env.RECALL_RECORDING_RETENTION_HOURS;
+    process.env.RECALL_RECORDING_RETENTION_HOURS = "1";
+    try {
+      const payload = buildCreateBotPayload(base) as any;
+      expect(payload.recording_config.retention).toEqual({
+        type: "timed",
+        hours: 1,
+      });
+    } finally {
+      process.env.RECALL_RECORDING_RETENTION_HOURS = original;
+    }
   });
 
   it("passes meeting_url and join_at through unchanged", () => {

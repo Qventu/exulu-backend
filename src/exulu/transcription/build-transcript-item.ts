@@ -36,6 +36,9 @@ export const buildTranscriptItemInput = ({
   post_processing: row.post_processing_outputs ?? undefined,
   // Handle for the meeting video; null for Whisper uploads.
   recall_recording_id: row.recall_recording_id ?? undefined,
+  // Permanent local copy of the video, only present when
+  // RECALL_STORE_VIDEO_LOCALLY was on at recording time.
+  video_s3key: row.video_s3key ?? undefined,
   rights_mode: rightsMode,
   created_by: row.created_by,
 });

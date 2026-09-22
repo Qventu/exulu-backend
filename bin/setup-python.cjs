@@ -98,20 +98,24 @@ async function main() {
   console.log(`${colors.blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
   console.log('');
 
-  // Check if already exists (and not forcing)
-  if (pythonEnvironmentExists() && !force) {
-    console.log(`${colors.green}✓${colors.reset} Python environment already set up`);
-    console.log('');
-    console.log('To rebuild the environment, run:');
-    console.log(`  ${colors.green}npx @exulu/backend setup-python --force${colors.reset}`);
-    console.log('');
-    console.log(`${colors.blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
-    console.log('');
-    return;
-  }
-
-  if (force && pythonEnvironmentExists()) {
-    console.log(`${colors.yellow}⚠${colors.reset} Rebuilding Python environment (--force flag detected)`);
+  // We deliberately do NOT skip running setup.sh just because the venv
+  // directory and a `python` binary already exist (pythonEnvironmentExists()
+  // only checks that much, not that requirements.txt is fully installed).
+  // ee/python/setup.sh is itself idempotent — it only skips *recreating* the
+  // venv, never skips `pip install -r requirements.txt` — so always invoking
+  // it is cheap when nothing is missing (a few seconds) and is the only way
+  // to guarantee a venv created before a new requirement was added (e.g.
+  // python-docx, 2026-09-11) actually gets it installed. This used to return
+  // early here whenever the venv folder was merely present, which silently
+  // left newly-added dependencies uninstalled across any deploy that reused
+  // an older venv — see the docx-manipulation skill incident on dx-algi,
+  // 2026-09-21.
+  if (pythonEnvironmentExists()) {
+    console.log(
+      force
+        ? `${colors.yellow}⚠${colors.reset} Rebuilding Python environment (--force flag detected)`
+        : `${colors.blue}ℹ${colors.reset} Python environment directory already exists — verifying and installing any missing dependencies...`,
+    );
     console.log('');
   }
 
