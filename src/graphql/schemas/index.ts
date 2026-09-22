@@ -831,6 +831,13 @@ type PageInfo {
    meetingRecordingUsage: MeetingRecordingUsage
     `;
 
+  // On-demand fallback for a job that never got a permanent local copy
+  // (RECALL_STORE_VIDEO_LOCALLY off): resolves a fresh signed URL straight
+  // from Recall. Expires in ~6h — never cache it client-side.
+  typeDefs += `
+   recordingVideoUrl(job_id: ID!): String
+    `;
+
   typeDefs += `
    workflowTriggers(workflow: ID!): [WorkflowTrigger!]!
     `;
@@ -2071,6 +2078,23 @@ type LiteLLMModel {
   resolvers.Query["meetingRecordingUsage"] = async (_, __, context) => {
     if (!context.user) throw new Error("Authentication required");
     return recallService.getUsage();
+  };
+
+  // Authorization mirrors assertOwnsTranscriptionJob above (creator/admin/public
+  // only) — the transcription_jobs row is the sole authorization surface here,
+  // same as the other custom transcription resolvers in this file. If a saved
+  // item's RBAC later grants a non-creator read access to the transcript, this
+  // endpoint does not yet honor that broader grant.
+  resolvers.Query["recordingVideoUrl"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.job_id, context);
+    const { db } = context;
+    const row = await db
+      .from("transcription_jobs")
+      .select(["recall_recording_id"])
+      .where({ id: args.job_id })
+      .first();
+    if (!row?.recall_recording_id) return null;
+    return recallService.getRecordingVideoUrl(row.recall_recording_id);
   };
 
   resolvers.Query["evals"] = async (_, args, context, info) => {

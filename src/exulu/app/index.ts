@@ -605,6 +605,12 @@ export class ExuluApp {
     return this._audit ?? getAuditLogger(this._config ?? {});
   }
 
+  /** The deployment's ExuluConfig, for background/webhook code paths that
+   *  have no request to read it off (e.g. the Recall webhook handler). */
+  public get config(): ExuluConfig {
+    return this._config ?? ({} as ExuluConfig);
+  }
+
   public embeddings = {
     generate: {
       one: async ({ context: contextId, item: itemId }: { context: string; item: string }) => {

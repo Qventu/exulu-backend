@@ -23,6 +23,7 @@ jest.mock("@SRC/exulu/app/singleton", () => ({
   exuluApp: {
     get: () => ({
       agent: (...args: any[]) => agentSpy(...args),
+      config: { fileUploads: { s3Bucket: "bucket" } },
     }),
   },
 }));
@@ -33,10 +34,18 @@ jest.mock("@SRC/exulu/resolve-model", () => ({
 }));
 
 const recallEnabledSpy = jest.fn(() => true);
+const recallStoreVideoLocallySpy = jest.fn(() => false);
 jest.mock("./env", () => ({
   recallEnabled: () => recallEnabledSpy(),
   RecallNotConfiguredError: class RecallNotConfiguredError extends Error {},
   recordingMonthlyLimitSeconds: () => null,
+  recallStoreVideoLocally: () => recallStoreVideoLocallySpy(),
+}));
+
+const downloadAndStoreRecordingVideoSpy = jest.fn<Promise<string | null>, any[]>();
+jest.mock("./video-storage", () => ({
+  downloadAndStoreRecordingVideo: (...args: any[]) =>
+    downloadAndStoreRecordingVideoSpy(...args),
 }));
 
 const createBotSpy = jest.fn<Promise<any>, any[]>(async () => ({ id: "bot-1" }));
@@ -129,6 +138,7 @@ const resetAll = () => {
   }
   jest.clearAllMocks();
   recallEnabledSpy.mockReturnValue(true);
+  recallStoreVideoLocallySpy.mockReturnValue(false);
 };
 
 beforeEach(resetAll);
@@ -500,6 +510,67 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
         }),
       ]),
     );
+  });
+
+  test("stores a local video copy when RECALL_STORE_VIDEO_LOCALLY is on, alongside the transcript", async () => {
+    recallStoreVideoLocallySpy.mockReturnValue(true);
+    const row = jobRow({
+      status: "transcribing",
+      recall_recording_id: "rec-1",
+      recall_transcript_id: "tr-1",
+    });
+    selectResults[JOBS] = [[row], []];
+    retrieveTranscriptSpy.mockResolvedValue({
+      id: "tr-1",
+      data: { download_url: "https://s3.example/t.json" },
+    });
+    downloadTranscriptSpy.mockResolvedValue(RAW_TRANSCRIPT);
+    const recording = { id: "rec-1", duration: 1234 };
+    retrieveRecordingSpy.mockResolvedValue(recording);
+    downloadAndStoreRecordingVideoSpy.mockResolvedValue(
+      "bucket/recall-videos/job-1.mp4",
+    );
+    firstResults[JOBS] = [{ ...row }, { ...row }];
+
+    const acted = await recallService.reconcileOnce();
+
+    expect(acted).toBe(1);
+    expect(downloadAndStoreRecordingVideoSpy).toHaveBeenCalledWith(
+      recording,
+      "job-1",
+      expect.anything(),
+    );
+    expect(updatePayloads()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "awaiting_review",
+          video_s3key: "bucket/recall-videos/job-1.mp4",
+        }),
+      ]),
+    );
+  });
+
+  test("does not attempt video storage when RECALL_STORE_VIDEO_LOCALLY is off (the default)", async () => {
+    const row = jobRow({
+      status: "transcribing",
+      recall_recording_id: "rec-1",
+      recall_transcript_id: "tr-1",
+    });
+    selectResults[JOBS] = [[row], []];
+    retrieveTranscriptSpy.mockResolvedValue({
+      id: "tr-1",
+      data: { download_url: "https://s3.example/t.json" },
+    });
+    downloadTranscriptSpy.mockResolvedValue(RAW_TRANSCRIPT);
+    retrieveRecordingSpy.mockResolvedValue({ id: "rec-1", duration: 1234 });
+    firstResults[JOBS] = [{ ...row }, { ...row }];
+
+    await recallService.reconcileOnce();
+
+    expect(downloadAndStoreRecordingVideoSpy).not.toHaveBeenCalled();
+    for (const payload of updatePayloads()) {
+      expect(payload).not.toHaveProperty("video_s3key");
+    }
   });
 
   test("re-requests the transcript when the claim crashed before createAsyncTranscript", async () => {

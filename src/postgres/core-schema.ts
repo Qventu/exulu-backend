@@ -731,6 +731,11 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "post_processing_prompts", type: "json" },
     // Results: [{ prompt_id, agent_id, prompt_name, status, output, error, ran_at }].
     { name: "post_processing_outputs", type: "json" },
+    // Permanent local copy of the meeting's mixed MP4, downloaded from Recall
+    // when RECALL_STORE_VIDEO_LOCALLY=true. Null when that flag is off (the
+    // video then stays reachable only via ExuluRecall.getRecordingVideoUrl,
+    // for as long as Recall itself retains it) or for Whisper upload jobs.
+    { name: "video", type: "file" },
   ],
 };
 

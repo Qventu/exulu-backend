@@ -11,6 +11,7 @@ const row = (over: Partial<any> = {}): any => ({
   saved_item_id: null,
   created_by: 7,
   recall_recording_id: null,
+  video_s3key: null,
   post_processing_outputs: null,
   ...over,
 });
@@ -36,6 +37,18 @@ describe("buildTranscriptItemInput", () => {
   it("omits recall_recording_id for a whisper upload", () => {
     const item = buildTranscriptItemInput(args());
     expect(item.recall_recording_id).toBeUndefined();
+  });
+
+  it("carries video_s3key through when a local copy was stored", () => {
+    const item = buildTranscriptItemInput(
+      args({ row: row({ video_s3key: "bucket/recall-videos/job-1.mp4" }) }),
+    );
+    expect(item.video_s3key).toBe("bucket/recall-videos/job-1.mp4");
+  });
+
+  it("omits video_s3key when no local copy was stored", () => {
+    const item = buildTranscriptItemInput(args());
+    expect(item.video_s3key).toBeUndefined();
   });
 
   it("carries the id on re-save too", () => {
