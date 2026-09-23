@@ -50,11 +50,32 @@ export class TranscriptionError extends Error {
 
 type TranscribeArgs = {
   file: { buffer: Buffer; originalname: string; mimetype: string };
-  // ISO-639-1 language code (e.g. "de", "en"). When omitted the model
-  // auto-detects, which is unreliable on short clips — pass the user's UI
-  // locale from the client whenever possible.
+  // ISO-639-1 language code (e.g. "de", "en"). Whisper path only — the Gemini
+  // path deliberately ignores it (see transcribeViaChat).
   language?: string;
+  /**
+   * Live recordings: the tail of the previous chunk's transcript. Gemini path:
+   * appended to the user turn as a continuity hint (clipped to
+   * PRIOR_TEXT_MAX_CHARS); whisper path: sent as the `prompt` hint field.
+   */
+  priorText?: string;
+  /** LiteLLM spend-attribution tags (buildTags). Gemini path only (metadata.tags). */
+  tags?: string[];
 };
+
+export const PRIOR_TEXT_MAX_CHARS = 300;
+
+/** User-turn text for the Gemini path; with a prior tail it becomes a continuity instruction. */
+export function buildTranscribeUserText(priorText?: string): string {
+  const tail = (priorText ?? "").trim();
+  if (!tail) return "Transcribe this audio.";
+  const clipped = tail.length > PRIOR_TEXT_MAX_CHARS ? tail.slice(-PRIOR_TEXT_MAX_CHARS) : tail;
+  return (
+    "Transcribe this audio. It is one part of a longer recording. " +
+    `The previous part ended with: «${clipped}». ` +
+    "Continue from there — do not repeat that text, do not summarise, do not add speaker labels."
+  );
+}
 
 /**
  * Transcribe an audio upload via LiteLLM. Routes on the configured
@@ -89,6 +110,7 @@ async function transcribeViaAudioEndpoint(
   );
   form.append("model", model);
   if (args.language) form.append("language", args.language);
+  if (args.priorText?.trim()) form.append("prompt", args.priorText.trim().slice(-PRIOR_TEXT_MAX_CHARS));
 
   const res = await fetch(`${target.baseUrl}/v1/audio/transcriptions`, {
     method: "POST",
@@ -135,7 +157,7 @@ async function transcribeViaChat(
       {
         role: "user",
         content: [
-          { type: "text", text: "Transcribe this audio." },
+          { type: "text", text: buildTranscribeUserText(args.priorText) },
           {
             type: "input_audio",
             input_audio: { data: args.file.buffer.toString("base64"), format },
@@ -143,6 +165,10 @@ async function transcribeViaChat(
         ],
       },
     ],
+    // LiteLLM reads metadata.tags for tag-based spend tracking (same mechanism
+    // as resolve-ocr.ts). Omitted entirely when empty so the composer's body is
+    // byte-for-byte unchanged.
+    ...(args.tags && args.tags.length > 0 ? { metadata: { tags: args.tags } } : {}),
   };
 
   const res = await fetch(`${target.baseUrl}/v1/chat/completions`, {
