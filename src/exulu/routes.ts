@@ -1,4 +1,4 @@
-import { type Express, type Request, type Response } from "express";
+import { type Express, type Request, type Response, type NextFunction } from "express";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
@@ -64,6 +64,9 @@ import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
+import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
+import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
+import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
   generateImage,
@@ -1228,23 +1231,23 @@ export const createExpressRoutes = async (
     limits: { fileSize: MAX_TRANSCRIBE_BYTES },
   });
 
+  // Shared by /transcribe and /transcription-jobs/:id/chunks: parses the
+  // single "file" field and maps multer's size error to a 413.
+  const transcribeUploadMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    transcribeUpload.single("file")(req, res, (err: unknown) => {
+      if (!err) return next();
+      const code = (err as { code?: string })?.code;
+      if (code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ detail: "Recording too large. Please record a shorter clip." });
+        return;
+      }
+      res.status(400).json({ detail: err instanceof Error ? err.message : "Upload failed." });
+    });
+  };
+
   app.post(
     "/transcribe",
-    (req: Request, res: Response, next) => {
-      transcribeUpload.single("file")(req, res, (err: unknown) => {
-        if (!err) return next();
-        const code = (err as { code?: string })?.code;
-        if (code === "LIMIT_FILE_SIZE") {
-          res
-            .status(413)
-            .json({ detail: "Recording too large. Please record a shorter clip." });
-          return;
-        }
-        res
-          .status(400)
-          .json({ detail: err instanceof Error ? err.message : "Upload failed." });
-      });
-    },
+    transcribeUploadMiddleware,
     async (req: Request, res: Response) => {
       if (!isLiteLLMEnabled() || !process.env.TRANSCRIPTION_MODEL) {
         res.status(503).json({
@@ -1312,6 +1315,21 @@ export const createExpressRoutes = async (
       }
     },
   );
+
+  // Live (browser microphone) recordings: one audio chunk per request,
+  // appended to the job's raw_segments. Same gate/limits as /transcribe.
+  // Design doc: docs/superpowers/specs/2026-09-23-live-recording-transcription-design.md §3.4
+  registerLiveRecordingChunkRoute(app, {
+    upload: transcribeUploadMiddleware,
+    enabled: liveRecordingEnabled,
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    assertOwns: assertOwnsTranscriptionJob,
+    waitForLiteLLMReady,
+    buildTags,
+    transcribe: transcribeAudio,
+    service: liveRecordingService,
+  });
 
   // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
   // /v1/audio/speech endpoint with the model from TTS_MODEL and the optional
