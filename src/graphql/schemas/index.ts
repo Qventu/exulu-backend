@@ -44,6 +44,7 @@ import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
+import { assertOwnsTranscriptionJob as assertOwnsTranscriptionJobShared } from "@SRC/exulu/transcription/authorize";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
@@ -1985,24 +1986,8 @@ type LiteLLMModel {
   // checks the auto-CRUD does in createMutations.validateWriteAccess for RBAC
   // tables — required because the three custom transcription mutations bypass
   // the generated CRUD path.
-  const assertOwnsTranscriptionJob = async (id: string, context: any) => {
-    const { db, user } = context;
-    if (!user) throw new Error("Authentication required");
-    if (user.super_admin === true) return;
-    const row = await db
-      .from("transcription_jobs")
-      .select(["created_by", "rights_mode"])
-      .where({ id })
-      .first();
-    if (!row) throw new Error(`transcription_job ${id} not found`);
-    if (row.rights_mode === "public") return;
-    // `created_by` is a text column while `user.id` is an integer SERIAL, so
-    // compare as strings — a raw `===` fails for the legitimate creator
-    // ("1" === 1 → false). Matches utils/check-record-access.ts and the
-    // auto-CRUD validateWriteAccess check.
-    if (row.created_by != null && String(row.created_by) === String(user.id)) return;
-    throw new Error("Not authorized to act on this transcription job");
-  };
+  const assertOwnsTranscriptionJob = async (id: string, context: any) =>
+    assertOwnsTranscriptionJobShared(context.db, context.user, id);
 
   resolvers.Mutation["transcriptionJobStart"] = async (_, args, context) => {
     const { user } = context;
