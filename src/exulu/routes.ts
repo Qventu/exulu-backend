@@ -63,6 +63,7 @@ import { compactSession, CompactionInsufficientError } from "./compact-session.t
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
+import { transcriptionClient } from "./transcription/client.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
   generateImage,
@@ -579,6 +580,12 @@ export const createExpressRoutes = async (
       },
       recall: {
         enabled: recallEnabled(),
+      },
+      // Whisper upload transcription (TRANSCRIPTION_SERVER). The Transcripts
+      // page gates its "Upload a file" mode on this — previously it was gated
+      // on the composer-mic flag and showed an upload mode that could not work.
+      whisper: {
+        enabled: transcriptionClient.isConfigured(),
       },
     });
   });

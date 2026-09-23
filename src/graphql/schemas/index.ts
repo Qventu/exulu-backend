@@ -45,6 +45,11 @@ import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
 import { assertOwnsTranscriptionJob as assertOwnsTranscriptionJobShared } from "@SRC/exulu/transcription/authorize";
+import {
+  liveRecordingService,
+  liveRecordingEnabled,
+  LIVE_RECORDING_DISABLED_MESSAGE,
+} from "@SRC/exulu/transcription/live-recording";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
@@ -725,6 +730,8 @@ type PageInfo {
     transcriptionJobCancel(id: ID!): transcription_job
     meetingBotStart(input: MeetingBotStartInput!): transcription_job
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
+    liveRecordingStart(input: LiveRecordingStartInput!): transcription_job
+    liveRecordingStop(id: ID!, input: LiveRecordingStopInput): transcription_job
     `;
 
   mutationDefs += `
@@ -780,6 +787,21 @@ type PageInfo {
     input PostProcessingPromptInput {
       prompt_id: ID!
       agent_id: ID!
+    }
+
+    input LiveRecordingStartInput {
+      title: String
+      language: String
+      project_id: ID
+      target_rights_mode: String
+      target_rbac_users: [RBACUserInput!]
+      target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
+    }
+
+    input LiveRecordingStopInput {
+      audio_s3key: String
+      duration_seconds: Float
     }
 
     type MeetingRecordingUsage {
@@ -2058,6 +2080,34 @@ type LiteLLMModel {
     await recallService.runOnePostProcessing(args.id, args.prompt_id, args.agent_id);
     const { db } = context;
     return db.from("transcription_jobs").where({ id: args.id }).first();
+  };
+
+  // Live (browser microphone) recordings — spec 2026-09-23. Gate mirrors the
+  // composer mic (/transcribe); the frontend hides the mode on the same flag.
+  resolvers.Mutation["liveRecordingStart"] = async (_, args, context) => {
+    const { user } = context;
+    if (!user) throw new Error("Authentication required");
+    if (!liveRecordingEnabled()) {
+      throw new Error(`LIVE_RECORDING_DISABLED: ${LIVE_RECORDING_DISABLED_MESSAGE}`);
+    }
+    return liveRecordingService.start({
+      userId: user.id,
+      title: args.input.title ?? null,
+      language: args.input.language ?? null,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? null,
+      target_rbac_roles: args.input.target_rbac_roles ?? null,
+      post_processing_prompts: args.input.post_processing_prompts ?? null,
+    });
+  };
+
+  resolvers.Mutation["liveRecordingStop"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    return liveRecordingService.stop(args.id, {
+      audio_s3key: args.input?.audio_s3key ?? null,
+      duration_seconds: args.input?.duration_seconds ?? null,
+    });
   };
 
   resolvers.Query["meetingRecordingUsage"] = async (_, __, context) => {

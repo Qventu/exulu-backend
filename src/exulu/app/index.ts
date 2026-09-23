@@ -38,6 +38,7 @@ import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { builtInContexts } from "@SRC/templates/contexts";
 import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
+import { liveRecordingEnabled } from "@SRC/exulu/transcription/live-recording";
 import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
 import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 import type { AuditConfig } from "../audit/config";
@@ -353,6 +354,12 @@ export class ExuluApp {
         "The /transcribe endpoint will return 503 until LiteLLM is enabled.",
       );
     }
+
+    console.log(
+      `[EXULU] Live recording (Transcripts page): ${liveRecordingEnabled() ? "enabled" : "disabled"} ` +
+      `(EXULU_USE_LITELLM=${process.env.EXULU_USE_LITELLM ?? "unset"}, ` +
+      `TRANSCRIPTION_MODEL=${process.env.TRANSCRIPTION_MODEL ? "set" : "unset"})`,
+    );
 
     if (process.env.TTS_MODEL && !isLiteLLMEnabled()) {
       console.warn(
