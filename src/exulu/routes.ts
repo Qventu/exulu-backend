@@ -3441,6 +3441,7 @@ export const createExpressRoutes = async (
         const history = Array.isArray(existing.history) ? existing.history : [];
         await db("skills").where({ id: existing.id }).update({
           current_version: nextVersion,
+          updatedAt: new Date().toISOString(),
           history: JSON.stringify([
             ...history,
             { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
@@ -3578,6 +3579,7 @@ export const createExpressRoutes = async (
     await db("skills").where({ id: skillId }).update({
       s3folder: `skills/${skillId}`,
       current_version: 1,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify([
         { version: 1, created_at: new Date().toISOString(), label: "Initial" },
       ]),
@@ -3738,6 +3740,7 @@ export const createExpressRoutes = async (
     await db("skills").where({ id: skillId }).update({
       s3folder: `skills/${skillId}`,
       current_version: 1,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify([
         { version: 1, created_at: new Date().toISOString(), label: "Uploaded bundle" },
       ]),
@@ -4076,6 +4079,7 @@ export const createExpressRoutes = async (
 
     await db("skills").where({ id: skillId }).update({
       current_version: newVersion,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify(newHistory),
     });
 
