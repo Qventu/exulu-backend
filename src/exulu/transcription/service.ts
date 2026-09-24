@@ -35,6 +35,7 @@ const TABLE = "transcription_jobs";
 export type JobStatus =
   | "queued"
   | "transcribing"
+  | "recording" // live browser recording in progress (chunks arriving)
   | "awaiting_review"
   | "saved"
   | "failed"
@@ -87,6 +88,12 @@ type JobRow = {
   post_processing_outputs?: unknown[] | null;
   /** Recall recording id — the handle for the meeting video. Null for Whisper. */
   recall_recording_id?: string | null;
+  /** "whisper" | "recall" | "live" — which pipeline drives the row. */
+  source?: string | null;
+  /** Live recordings: next expected chunk seq (CAS target for the chunk route). */
+  chunk_count?: number | null;
+  /** Live recordings: when the last chunk was accepted. */
+  last_chunk_at?: string | null;
 };
 
 const log = (msg: string) => console.log(`[EXULU-TRANSCRIPTION] ${msg}`);

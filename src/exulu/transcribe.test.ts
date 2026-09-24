@@ -138,4 +138,63 @@ describe("transcribeAudio routing", () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(body.messages[1].content[1].input_audio.format).toBe("webm");
   });
+
+  it("keeps today's exact chat body when neither priorText nor tags are given (composer regression lock)", async () => {
+    findLiteLLMModel.mockResolvedValue({ upstream_model: "vertex_ai/gemini-2.5-flash" });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "x" } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await transcribeAudio(audioArgs());
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(Object.keys(body).sort()).toEqual(["messages", "model", "reasoning_effort", "temperature"]);
+    expect(body.messages[1].content[0]).toEqual({ type: "text", text: "Transcribe this audio." });
+  });
+
+  it("appends the prior-text continuity hint (clipped to the last 300 chars) on the chat path", async () => {
+    findLiteLLMModel.mockResolvedValue({ upstream_model: "vertex_ai/gemini-2.5-flash" });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "x" } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const prior = "a".repeat(250) + "b".repeat(100); // 350 chars → last 300 = 200 a's + 100 b's
+
+    await transcribeAudio({ ...audioArgs(), priorText: prior });
+
+    const text: string = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+      .messages[1].content[0].text;
+    expect(text).toMatch(/^Transcribe this audio\. It is one part of a longer recording\./);
+    expect(text).toContain("«" + "a".repeat(200) + "b".repeat(100) + "»");
+    expect(text).not.toContain("a".repeat(201));
+    expect(text).toMatch(/do not repeat that text/);
+  });
+
+  it("sends tags as metadata.tags on the chat path", async () => {
+    findLiteLLMModel.mockResolvedValue({ upstream_model: "vertex_ai/gemini-2.5-flash" });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "x" } }] }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await transcribeAudio({ ...audioArgs(), tags: ["user_id_7", "project_id_p1"] });
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.metadata).toEqual({ tags: ["user_id_7", "project_id_p1"] });
+  });
+
+  it("passes priorText as the whisper `prompt` form field on the audio path", async () => {
+    findLiteLLMModel.mockResolvedValue({ upstream_model: "whisper-1" });
+    const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ text: "hallo" }) });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await transcribeAudio({ ...audioArgs(), priorText: "wir sprachen über" });
+
+    const form = (fetchMock.mock.calls[0][1] as RequestInit).body as FormData;
+    expect(form.get("prompt")).toBe("wir sprachen über");
+  });
 });
