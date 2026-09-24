@@ -736,6 +736,13 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     // video then stays reachable only via ExuluRecall.getRecordingVideoUrl,
     // for as long as Recall itself retains it) or for Whisper upload jobs.
     { name: "video", type: "file" },
+    // Live (browser-microphone) recordings — spec
+    // docs/superpowers/specs/2026-09-23-live-recording-transcription-design.md §2.
+    // chunk_count is the NEXT expected chunk seq; the chunk route appends with
+    // a compare-and-swap on it, so retries and duplicates can never double-append.
+    { name: "chunk_count", type: "number", default: 0 },
+    // Heartbeat of the last accepted chunk; shown in the queue row.
+    { name: "last_chunk_at", type: "date" },
   ],
 };
 
