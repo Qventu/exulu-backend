@@ -1735,11 +1735,11 @@ cd /Users/daniel.claessen/Desktop/Projects/newlkiag && git branch --show-current
 ls -la node_modules/@exulu/backend            # symlink → must point at the WORKTREE for this eval
 rm node_modules/@exulu/backend && ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory node_modules/@exulu/backend
 (cd /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory && npm run build)
-grep -n "^POSTGRES_DB_\|^LITELLM_BASE_URL\|^LITELLM_MASTER_KEY\|^EXULU_API_KEY\|^PORT" .env | sed 's/=.*/=…/'
+grep -n "^POSTGRES_DB_\|^LITELLM_BASE_URL\|^LITELLM_MASTER_KEY\|^EVAL_API_KEY\|^PORT" .env | sed 's/=.*/=…/'
 mkdir -p scripts/memory-eval/out && grep -q "scripts/memory-eval/out" .gitignore || echo "scripts/memory-eval/out/" >> .gitignore
 ```
 
-Expected: the symlink now targets the worktree (note the previous target in the README so it can be restored: it was `/Users/daniel.claessen/Desktop/Projects/exulu/backend`); the env keys exist. If there is no `EXULU_API_KEY`, create an organisation API key in the newlkiag admin UI (Administration → API keys, scoped to the Newton agent) and put it in `.env` as `EXULU_API_KEY`. Start the dev server in a second terminal (`npm run dev`, note the port, default from `PORT`) and confirm `curl -s localhost:$PORT/health` answers.
+Expected: the symlink now targets the worktree (note the previous target in the README so it can be restored: it was `/Users/daniel.claessen/Desktop/Projects/exulu/backend`); the env keys exist. `EVAL_API_KEY` is already in the gitignored `.env` (a temporary Newton key named `temporary_eval_key`, provided by Daniel on 2026-09-29; the scripts prefer it over `EXULU_API_KEY`; never commit or print it — revoke it in the admin UI when the eval is done). Start the dev server in a second terminal (`npm run dev`, note the port, default from `PORT`) and confirm `curl -s localhost:$PORT/health` answers.
 
 - [ ] **Step 2: Extract the cases**
 
@@ -1783,8 +1783,10 @@ async function main() {
     database: process.env.POSTGRES_DB_NAME, ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : undefined,
   });
   await client.connect();
+  // Latest 60 positive cases (Daniel, 2026-09-29) — the memory subset is added below regardless of age.
+  const LATEST = Number(process.env.EVAL_LATEST ?? 60);
   const fb = await client.query(
-    `select id, session, "user", "createdAt" from feedback where score = 1 and agent = $1 order by "createdAt"`, [AGENT_ID]);
+    `select id, session, "user", "createdAt" from feedback where score = 1 and agent = $1 order by "createdAt" desc`, [AGENT_ID]);
   const cases: Case[] = [];
   for (const row of fb.rows) {
     const msgs = await client.query<Msg>(
@@ -1806,14 +1808,18 @@ async function main() {
       priorUserTurns, question, verifiedAnswer, usedMemoryIds, memorySubset: usedMemoryIds.length > 0 });
   }
   await client.end();
-  writeFileSync("scripts/memory-eval/out/cases.json", JSON.stringify(cases, null, 2));
-  console.log(`cases: ${cases.length}, memory subset: ${cases.filter((c) => c.memorySubset).length}`);
+  // Keep the LATEST newest cases plus every memory-subset case (the gate's population), newest first.
+  const latest = cases.slice(0, LATEST);
+  const extraSubset = cases.slice(LATEST).filter((c) => c.memorySubset);
+  const selected = [...latest, ...extraSubset];
+  writeFileSync("scripts/memory-eval/out/cases.json", JSON.stringify(selected, null, 2));
+  console.log(`all positive: ${cases.length}; selected: ${selected.length} (latest ${latest.length} + ${extraSubset.length} older memory cases); memory subset: ${selected.filter((c) => c.memorySubset).length}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
 ```
 
 Run: `npx tsx scripts/memory-eval/extract-cases.ts`
-Expected: `cases: ~275, memory subset: ~17` (numbers may have grown since planning). Spot-check two memory-subset cases in `out/cases.json`: the question reads like a technician question and the used memory ids exist in `newton_memory_context_items`.
+Expected: `all positive: ~275; selected: 60 + <older memory cases>; memory subset: ~17`. Spot-check two memory-subset cases in `out/cases.json`: the question reads like a technician question and the used memory ids exist in `newton_memory_context_items`.
 
 - [ ] **Step 3: Replay the cases through the run endpoint**
 
@@ -1823,8 +1829,9 @@ Expected: `cases: ~275, memory subset: ~17` (numbers may have grown since planni
 /**
  * Replays cases through the real run endpoint (stream: true) and records the
  * recalledMemories metadata plus the answer text for each. --subset limits to
- * the memory subset; --sample N adds N random non-memory cases; --limit-override
- * is NOT a thing: change Newton's memory_config in the workbench between runs.
+ * the memory subset; without it every selected case runs (latest 60 + memory
+ * subset); --sample N caps the non-memory cases at N. Newton's limit is not
+ * overridable here: change memory_config in the workbench between runs.
  */
 import "dotenv/config";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -1832,10 +1839,10 @@ import { randomUUID } from "node:crypto";
 
 const BASE = process.env.EVAL_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
 const AGENT_ID = process.env.EVAL_AGENT_ID ?? "48ae3121-7ac7-42b1-94d7-77467b1f8be7";
-const API_KEY = process.env.EXULU_API_KEY!;
+const API_KEY = process.env.EVAL_API_KEY ?? process.env.EXULU_API_KEY!;
 const subsetOnly = process.argv.includes("--subset");
 const sampleArg = process.argv.indexOf("--sample");
-const sampleN = sampleArg > -1 ? Number(process.argv[sampleArg + 1]) : 0;
+const sampleN = sampleArg > -1 ? Number(process.argv[sampleArg + 1]) : Number.MAX_SAFE_INTEGER;
 const tag = process.argv.includes("--tag") ? process.argv[process.argv.indexOf("--tag") + 1] : "new";
 
 type Recalled = { id: string; title: string; rights_mode: string; createdBy: { id: number; name: string } | null };
@@ -1868,7 +1875,7 @@ async function turn(session: string, text: string): Promise<{ answer: string; re
 async function main() {
   const cases = JSON.parse(readFileSync("scripts/memory-eval/out/cases.json", "utf8")) as any[];
   const subset = cases.filter((c) => c.memorySubset);
-  const rest = cases.filter((c) => !c.memorySubset).sort(() => Math.random() - 0.5).slice(0, sampleN);
+  const rest = cases.filter((c) => !c.memorySubset).slice(0, sampleN); // cases.json is newest first
   const selected = subsetOnly ? subset : [...subset, ...rest];
   const results: any[] = [];
   for (const c of selected) {
@@ -1966,7 +1973,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 Run:
 
 ```bash
-npx tsx scripts/memory-eval/run-cases.ts --sample 30 --tag new      # full run: subset + 30 random
+npx tsx scripts/memory-eval/run-cases.ts --tag new      # full run: latest 60 + the memory subset
 npx tsx scripts/memory-eval/report.ts --tag new
 ```
 
@@ -1984,7 +1991,7 @@ cat > scripts/memory-eval/README.md <<'EOF'
 Replays Newlift's positively rated answers through the run endpoint and checks (1) the memories the verified
 answer used are recalled, (2) an LLM judge scores the new answer against the verified one.
 Prereqs: DB tunnel on 127.0.0.1:5433, dev server on $PORT with the @exulu/backend build under test,
-EXULU_API_KEY (agent-scoped org key), LITELLM_BASE_URL + LITELLM_MASTER_KEY.
+EVAL_API_KEY (agent-scoped org key for Newton; falls back to EXULU_API_KEY), LITELLM_BASE_URL + LITELLM_MASTER_KEY.
 Steps: extract-cases → run-cases [--subset | --sample N] [--tag t] → report [--tag t]. Output in out/ (gitignored).
 Note: the @exulu/backend symlink normally points at ../exulu/backend; point it at the worktree only for the eval.
 EOF

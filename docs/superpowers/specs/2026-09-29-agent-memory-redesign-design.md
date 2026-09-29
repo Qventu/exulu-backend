@@ -346,10 +346,11 @@ A standalone script, not the platform's eval feature. It runs from the newlkiag 
 `@exulu/backend` to the worktree build and owns the `newton_memory_context` definition and LiteLLM access)
 against the Newlift database over the local tunnel (`127.0.0.1:5433`, database `exulu-test`, IAM user).
 
-- **Cases**: every `feedback` row with `score = 1` for the production Newton agent (275 at planning time).
-  For each: the assistant message closest before the feedback time in that session, the user question
-  before it, the prior turns as text, and the memory item ids the answer actually used (tool outputs carry
-  `chunk_id: "memory:<item_id>"`). 17 answers in 15 sessions used memory; those form the **memory subset**.
+- **Cases**: the latest 60 `feedback` rows with `score = 1` for the production Newton agent (275 exist at
+  planning time), plus every older positive case whose answer used memory. For each: the assistant message
+  closest before the feedback time in that session, the user question before it, the prior turns as text,
+  and the memory item ids the answer actually used (tool outputs carry `chunk_id: "memory:<item_id>"`).
+  17 answers in 15 sessions used memory; those form the **memory subset**.
 - **How cases are replayed**: through the real run endpoint (`POST /agents/litellm/run/<agent>` with
   `stream: true`) of the newlkiag dev server running the worktree build, one fresh session per case, prior
   user turns replayed in order (max 4), then the question. The stream's message metadata carries
@@ -359,7 +360,7 @@ against the Newlift database over the local tunnel (`127.0.0.1:5433`, database `
   answer used must appear in `recalledMemories`. Report hit rate, per-case misses with the memory titles.
   Gate: ≥ 95 % at Newton's limit (10); if lower, re-run at limit 25 and, if that passes, set Newton's limit
   to 25; if still lower, add the keyword-variant expansion (§3.1) and re-run.
-- **Stage 2, answer quality (model-judged, memory subset plus a 30-case random sample of the rest)**: score
+- **Stage 2, answer quality (model-judged, all selected cases)**: score
   each new answer against the verified answer with an LLM-as-judge prompt (0–100) on Newton's own model via
   LiteLLM. Gate: mean ≥ 70 and no memory-subset case below 50. Optionally the same cases are run against
   the current `develop` build on a second port for a side-by-side mean.
