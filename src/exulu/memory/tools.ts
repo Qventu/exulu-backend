@@ -13,7 +13,8 @@ import { canEditMemory } from "./access";
 import { displayName, loadVisibleMemoryRows, type MemoryItemRow } from "./recall-collector";
 
 export type MemoryToolOutput =
-  | { type: "memory_saved" | "memory_updated"; contextId: string; itemId: string; title: string; information: string; memoryType?: string; rights_mode: ExuluRightsMode; result: string }
+  | { type: "memory_saved"; contextId: string; itemId: string; title: string; information: string; memoryType?: string; rights_mode: ExuluRightsMode; warning?: string; result: string }
+  | { type: "memory_updated"; contextId: string; itemId: string; title: string; information: string; memoryType?: string; rights_mode: ExuluRightsMode; result: string }
   | { type: "memory_forgotten"; contextId: string; itemId: string; title: string; result: string }
   | { type: "memory_no_access"; contextId: string; itemId: string; title: string | null; createdBy: { id: number; name: string } | null; result: string }
   | { type: "memory_error"; message: string; result: string };
@@ -76,21 +77,40 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
       const type = resolveType(context, d?.type ?? params.type);
       const rights_mode: ExuluRightsMode | undefined =
         d?.rights_mode ?? (params.visibility === "public" ? "public" : params.visibility === "private" ? "private" : undefined);
+      // createItem and the rbac grant apply are deliberately separate
+      // try/catches: once the item exists, a grant failure must not surface
+      // as memory_error (which would tell the model the save failed and
+      // invite a retry that duplicates the memory) — the row is already
+      // there, just possibly without the intended sharing.
+      let created: { id?: string; rights_mode?: string; [key: string]: any };
       try {
         const { item } = await context.createItem(
           { name: title, information, ...(type ? { type } : {}), description: String(params.whySaved ?? ""), ...(rights_mode ? { rights_mode } : {}) },
           exuluConfig, u.id, u.role?.id, false,
         );
-        if (!item?.id) return err("The memory could not be created.");
-        if (d?.rbac && (d.rbac.users?.length || d.rbac.roles?.length || d.rbac.teams?.length)) {
-          const { db } = await postgresClient();
-          await handleRBACUpdate(db, convertContextToTableDefinition(context).name.singular, item.id, d.rbac, []);
-        }
-        const mode = (item.rights_mode ?? rights_mode ?? "private") as ExuluRightsMode;
-        return { type: "memory_saved", contextId: context.id, itemId: item.id, title, information, ...(type ? { memoryType: type } : {}), rights_mode: mode, result: `Saved memory "${title}" (${mode}).` };
+        created = item;
       } catch (e) {
         return err(e instanceof Error ? e.message : String(e));
       }
+      if (!created?.id) return err("The memory could not be created.");
+      const mode = (created.rights_mode ?? rights_mode ?? "private") as ExuluRightsMode;
+
+      let warning: string | undefined;
+      if (d?.rbac && (d.rbac.users?.length || d.rbac.roles?.length || d.rbac.teams?.length)) {
+        try {
+          const { db } = await postgresClient();
+          await handleRBACUpdate(db, convertContextToTableDefinition(context).name.singular, created.id, d.rbac, []);
+        } catch (e) {
+          warning = `Access grants could not be applied: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+      return {
+        type: "memory_saved", contextId: context.id, itemId: created.id, title, information,
+        ...(type ? { memoryType: type } : {}), rights_mode: mode, ...(warning ? { warning } : {}),
+        result: warning
+          ? `Saved memory "${title}" (${mode}). ${warning} — the memory was saved; do not retry.`
+          : `Saved memory "${title}" (${mode}).`,
+      };
     },
   });
 

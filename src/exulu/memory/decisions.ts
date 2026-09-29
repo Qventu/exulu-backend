@@ -22,6 +22,38 @@ export type MemoryDecision =
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 const optString = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+const isValidRbacGrant = (v: unknown): v is RbacGrant =>
+  isRecord(v) &&
+  (v.rights === "read" || v.rights === "write") &&
+  (typeof v.id === "number" || (typeof v.id === "string" && v.id.length > 0));
+
+const normalizeRbacList = (raw: unknown): RbacGrant[] | undefined => {
+  if (!Array.isArray(raw)) return undefined;
+  const valid = raw.filter(isValidRbacGrant);
+  return valid.length > 0 ? valid : undefined;
+};
+
+/**
+ * Model-authored `rbac` blobs are untrusted input carried through JSON in an
+ * approval's `reason` string — only "is an object" was checked before this,
+ * so a non-array `users`/`roles`/`teams` (or a junk entry inside one) reached
+ * handleRBACUpdate raw, where a non-array throws on `.map` and a malformed
+ * entry is inserted as-is. Keeps only well-shaped grants; drops an empty or
+ * entirely-invalid key; returns undefined when nothing valid survives so
+ * callers can treat "no rbac" and "malformed rbac" identically.
+ */
+export function normalizeRbac(raw: unknown): MemoryRbacInput | undefined {
+  if (!isRecord(raw)) return undefined;
+  const out: MemoryRbacInput = {};
+  const users = normalizeRbacList(raw.users);
+  const roles = normalizeRbacList(raw.roles);
+  const teams = normalizeRbacList(raw.teams);
+  if (users) out.users = users;
+  if (roles) out.roles = roles;
+  if (teams) out.teams = teams;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function parseMemoryDecision(reason: unknown): MemoryDecision | undefined {
   if (typeof reason !== "string") return undefined;
   let parsed: unknown;
@@ -35,7 +67,7 @@ export function parseMemoryDecision(reason: unknown): MemoryDecision | undefined
       const rights_mode = optString(parsed.rights_mode);
       if (title === undefined || information === undefined || type === undefined) return undefined;
       if (!rights_mode || !(VALID_RIGHTS_MODES as readonly string[]).includes(rights_mode)) return undefined;
-      const rbac = isRecord(parsed.rbac) ? (parsed.rbac as MemoryRbacInput) : undefined;
+      const rbac = normalizeRbac(parsed.rbac);
       return { v: 1, kind: "remember", title, information, type, rights_mode: rights_mode as ExuluRightsMode, ...(rbac ? { rbac } : {}) };
     }
     case "update": {

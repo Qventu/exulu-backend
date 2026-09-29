@@ -71,6 +71,14 @@ describe("memory_remember", () => {
     expect(createItem.mock.calls[0][0].type).toBe("FACT");
   });
 
+  it("saves the memory even when applying rbac grants fails, and warns instead of erroring", async () => {
+    const decision = { v: 1, kind: "remember", title: "T", information: "I", type: "FACT", rights_mode: "users", rbac: { users: [{ id: 5, rights: "read" }] } };
+    (handleRBACUpdate as jest.Mock).mockRejectedValueOnce(new Error("rbac fail"));
+    const out: any = await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {}, memoryDecision: decision } as any, {} as any);
+    expect(createItem).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ type: "memory_saved", itemId: "new-1", warning: expect.stringContaining("rbac fail") });
+  });
+
   it("refuses without a signed-in user and reports write failures as memory_error", async () => {
     const guest: any = await tools().memory_remember.tool.execute!({ ...base, exuluConfig: {} } as any, {} as any);
     expect(guest.type).toBe("memory_error");

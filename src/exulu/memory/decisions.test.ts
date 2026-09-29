@@ -20,6 +20,19 @@ describe("parseMemoryDecision", () => {
     expect(parseMemoryDecision(JSON.stringify({ v: 1, kind: "update", information: "new" }))).toEqual({ v: 1, kind: "update", information: "new" });
     expect(parseMemoryDecision(JSON.stringify({ v: 1, kind: "forget" }))).toEqual({ v: 1, kind: "forget" });
   });
+  it("drops malformed rbac entries and keeps only well-shaped grants", () => {
+    const decision = {
+      ...remember,
+      rbac: { users: [{ id: 5, rights: "read" }, { id: "x", rights: "admin" }, "junk"], roles: "not-an-array" },
+    };
+    expect(parseMemoryDecision(JSON.stringify(decision))).toEqual({ ...remember, rbac: { users: [{ id: 5, rights: "read" }] } });
+  });
+  it("drops an rbac key whose lists are all empty", () => {
+    expect(parseMemoryDecision(JSON.stringify({ ...remember, rbac: { users: [] } }))).toEqual(remember);
+  });
+  it("drops a non-object rbac value", () => {
+    expect(parseMemoryDecision(JSON.stringify({ ...remember, rbac: "nope" }))).toEqual(remember);
+  });
 });
 
 describe("isMemoryToolPartType", () => {
