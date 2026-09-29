@@ -100,3 +100,78 @@ export function buildTranscriptMarkdown(
 
   return `${sections.join("\n\n")}\n`;
 }
+
+/** "hh:mm:ss" from the start of the recording — the CSV time format. */
+const formatCsvTime = (seconds: number): string => {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = String(Math.floor(total / 3600)).padStart(2, "0");
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const s = String(total % 60).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+};
+
+/** "hh:mm:ss,mmm" — the SRT cue format (comma before milliseconds). */
+const formatSrtTime = (seconds: number): string => {
+  const clamped = Math.max(0, seconds);
+  const ms = String(Math.round((clamped % 1) * 1000)).padStart(3, "0");
+  return `${formatCsvTime(clamped)},${ms}`;
+};
+
+/**
+ * RFC 4180: a field containing a quote, comma, CR or LF is wrapped in
+ * quotes with its own quotes doubled. Skipping this turns one segment
+ * containing a comma into two broken columns.
+ */
+const csvField = (value: string, isTextField: boolean = false): string => {
+  const needsQuote = /["\n\r,]/.test(value) || isTextField;
+  return needsQuote ? `"${value.replace(/"/g, '""')}"` : value;
+};
+
+const resolveLabel = (
+  item: TranscriptExportItem,
+  rawSpeaker: string,
+  useSpeakerNames: boolean,
+): string => {
+  const raw = rawSpeaker || "unknown";
+  return useSpeakerNames ? ((item.speakers ?? {})[raw] ?? raw) : raw;
+};
+
+export function buildTranscriptCsv(
+  item: TranscriptExportItem,
+  options: TranscriptExportOptions,
+): string {
+  const header = options.timestamps
+    ? "start,end,speaker,text"
+    : "speaker,text";
+  const rows = effectiveSegments(item.raw_segments, item.corrected_segments)
+    .filter((segment) => (segment.text ?? "").trim().length > 0)
+    .map((segment) => {
+      const label = resolveLabel(item, segment.speaker, options.speakers);
+      const text = (segment.text ?? "").trim();
+      const cells = options.timestamps
+        ? [formatCsvTime(segment.start), formatCsvTime(segment.end), label, text]
+        : [label, text];
+      return cells
+        .map((value, i) => csvField(value, i === cells.length - 1))
+        .join(",");
+    });
+  return [header, ...rows].join("\n") + "\n";
+}
+
+export function buildTranscriptSrt(
+  item: TranscriptExportItem,
+  options: TranscriptExportOptions,
+): string {
+  const cues = effectiveSegments(item.raw_segments, item.corrected_segments)
+    .filter((segment) => (segment.text ?? "").trim().length > 0)
+    .map((segment, index) => {
+      const label = resolveLabel(item, segment.speaker, options.speakers);
+      const text = (segment.text ?? "").trim();
+      return (
+        `${index + 1}\n` +
+        `${formatSrtTime(segment.start)} --> ${formatSrtTime(segment.end)}\n` +
+        `${label}: ${text}\n`
+      );
+    });
+  return cues.length === 0 ? "" : cues.join("\n");
+}

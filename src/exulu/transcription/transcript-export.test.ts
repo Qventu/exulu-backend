@@ -1,4 +1,9 @@
-import { buildTranscriptMarkdown, type TranscriptExportItem } from "./transcript-export";
+import {
+  buildTranscriptMarkdown,
+  buildTranscriptCsv,
+  buildTranscriptSrt,
+  type TranscriptExportItem,
+} from "./transcript-export";
 
 const item = (over: Partial<TranscriptExportItem> = {}): TranscriptExportItem => ({
   name: "Kick-off Comfort-Line",
@@ -89,5 +94,100 @@ describe("buildTranscriptMarkdown", () => {
   it("names an untitled transcript rather than emitting an empty heading", () => {
     const md = buildTranscriptMarkdown(item({ name: null }), all);
     expect(md).toMatch(/^# Transcript\n/);
+  });
+
+  it("collapses consecutive same-speaker segments and keeps the first start time", () => {
+    // Guards toBlocks: a regression that overwrote `start` during the merge,
+    // or failed to merge at all, would duplicate speaker headings in every
+    // exported document.
+    const md = buildTranscriptMarkdown(
+      item({
+        raw_segments: [
+          { start: 60, end: 65, text: "One.", speaker: "SPEAKER_00" },
+          { start: 65, end: 70, text: "Two.", speaker: "SPEAKER_00" },
+          { start: 71, end: 75, text: "Three.", speaker: "SPEAKER_01" },
+        ],
+      }),
+      all,
+    );
+    expect(md).toContain("**Anja Keller** [01:00]\n\nOne. Two.");
+    expect(md).not.toContain("[01:05]");
+    expect(md).toContain("**Marco Schulz** [01:11]\n\nThree.");
+  });
+});
+
+describe("buildTranscriptCsv", () => {
+  it("writes a header row and hh:mm:ss times", () => {
+    const lines = buildTranscriptCsv(item(), all).trimEnd().split("\n");
+    expect(lines[0]).toBe("start,end,speaker,text");
+    expect(lines[1]).toBe(
+      '00:21:18,00:21:39,Anja Keller,"Then let\'s fix the dates."',
+    );
+  });
+
+  it("escapes a quote, a comma and a newline so the row stays four columns", () => {
+    // RFC 4180: double the quote, wrap the field. A naive join would turn
+    // this one segment into three broken rows.
+    const csv = buildTranscriptCsv(
+      item({
+        raw_segments: [
+          {
+            start: 0,
+            end: 1,
+            text: 'He said "yes, absolutely".\nThen he left.',
+            speaker: "SPEAKER_00",
+          },
+        ],
+      }),
+      all,
+    );
+    const body = csv.trimEnd().split("\n").slice(1).join("\n");
+    expect(body).toBe(
+      '00:00:00,00:00:01,Anja Keller,"He said ""yes, absolutely"".\nThen he left."',
+    );
+  });
+
+  it("drops the time columns when timestamps are off", () => {
+    const lines = buildTranscriptCsv(item(), { ...all, timestamps: false })
+      .trimEnd()
+      .split("\n");
+    expect(lines[0]).toBe("speaker,text");
+  });
+
+  it("falls back to raw labels when speaker names are off", () => {
+    expect(buildTranscriptCsv(item(), { ...all, speakers: false })).toContain("SPEAKER_00");
+  });
+
+  it("emits a header-only file for a transcript with no segments", () => {
+    const csv = buildTranscriptCsv(item({ raw_segments: [], corrected_segments: null }), all);
+    expect(csv).toBe("start,end,speaker,text\n");
+  });
+});
+
+describe("buildTranscriptSrt", () => {
+  it("numbers cues from 1 and uses comma-separated milliseconds", () => {
+    expect(buildTranscriptSrt(item(), all)).toBe(
+      "1\n00:21:18,000 --> 00:21:39,000\nAnja Keller: Then let's fix the dates.\n\n" +
+        "2\n00:21:40,000 --> 00:22:04,000\nMarco Schulz: Week 46 works for us.\n",
+    );
+  });
+
+  it("keeps fractional seconds as milliseconds", () => {
+    const srt = buildTranscriptSrt(
+      item({
+        raw_segments: [{ start: 1.25, end: 2.5, text: "Hi", speaker: "SPEAKER_00" }],
+      }),
+      all,
+    );
+    expect(srt).toContain("00:00:01,250 --> 00:00:02,500");
+  });
+
+  it("omits the speaker prefix when speaker names are off and labels are raw", () => {
+    const srt = buildTranscriptSrt(item(), { ...all, speakers: false });
+    expect(srt).toContain("SPEAKER_00: Then let's fix the dates.");
+  });
+
+  it("returns an empty string for a transcript with no segments", () => {
+    expect(buildTranscriptSrt(item({ raw_segments: [], corrected_segments: null }), all)).toBe("");
   });
 });
