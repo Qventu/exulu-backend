@@ -283,3 +283,68 @@ describe("knowledge base write tool injection", () => {
     expect(Object.keys(tools)).toEqual(expect.arrayContaining(["Update_Products_item"]));
   });
 });
+
+describe("memory tool registration", () => {
+  const memoryContext = {
+    id: "newton_memory_context", name: "Newton memory",
+    fields: [{ name: "information", type: "text" }, { name: "type", type: "enum", enumValues: ["FACT"] }],
+  } as never;
+  const agent = { id: "a1", name: "Newton", memory: "newton_memory_context" } as never;
+  const user = { id: 4, role: { id: "r1" } } as never;
+  const callWith = (opts: { user?: unknown; agent?: unknown; contexts?: unknown[]; decisions?: Map<string, unknown> }) =>
+    convertExuluToolsToAiSdkTools(
+      [] as never, [], [], [], [],
+      (opts.contexts ?? [memoryContext]) as never, opts.user as never, undefined, undefined, undefined,
+      undefined, undefined, model, (opts.agent ?? agent) as never, undefined, undefined,
+      undefined, undefined, opts.decisions as never,
+    );
+
+  it("registers remember/update/forget for a signed-in user on a valid memory base", async () => {
+    const tools = await callWith({ user });
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["Remember", "Update_memory", "Forget_memory"]));
+    expect((tools as any).Remember.needsApproval).toBe(true);
+    expect(typeof (tools as any).Update_memory.needsApproval).toBe("function");
+  });
+
+  it("registers nothing for guests (no user id) and for a context failing the contract", async () => {
+    expect(Object.keys(await callWith({}))).toEqual([]);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bad = { id: "newton_memory_context", name: "x", fields: [{ name: "body", type: "text" }] } as never;
+    expect(Object.keys(await callWith({ user, contexts: [bad] }))).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("not a valid memory base"));
+    warn.mockRestore();
+  });
+
+  it("warns instead of throwing when the configured memory context is missing", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(callWith({ user, contexts: [docsContext] })).resolves.toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("was not found"));
+    warn.mockRestore();
+  });
+
+  it("never applies the pre-approval shortcut to memory tools", async () => {
+    const tools = await convertExuluToolsToAiSdkTools(
+      [] as never, [], ["tool-Remember", "tool-memory_remember"], [], [],
+      [memoryContext] as never, user, undefined, undefined, undefined,
+      undefined, undefined, model, agent, undefined, undefined, undefined,
+    );
+    expect((tools as any).Remember.needsApproval).toBe(true);
+  });
+
+  it("hands the matching decision to the wrapped execute by toolCallId", async () => {
+    const seen: any[] = [];
+    const fake = {
+      id: "memory_forget", name: "Forget memory", description: "d", type: "function", category: "m", needsApproval: true, config: [],
+      tool: { execute: jest.fn(async (p: any) => { seen.push(p); return { type: "memory_forgotten" }; }) },
+    } as never;
+    const decisions = new Map([["call-1", { v: 1, kind: "forget" }]]);
+    const tools = await convertExuluToolsToAiSdkTools(
+      [fake] as never, [], [], [], [], [] as never, user, undefined, undefined, undefined,
+      undefined, undefined, model, agent, undefined, undefined, undefined, undefined, decisions as never,
+    );
+    // The wrapper's execute is an async generator — drain it.
+    for await (const _chunk of (tools as any).Forget_memory.execute({ memoryId: "m1" }, { toolCallId: "call-1", messages: [] })) { /* drain */ }
+    expect(seen[0].memoryDecision).toEqual({ v: 1, kind: "forget" });
+    expect(seen[0].user).toBe(user);
+  });
+});

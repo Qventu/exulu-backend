@@ -109,7 +109,13 @@ describe("createAgenticRetrievalTool", () => {
 
 describe("payload deduplication", () => {
   it("strips chunk_content from step chunks in the serialized payload; top-level keeps it", async () => {
+    // Memory chunks are no longer copied into the top-level `chunks` (spec §3.1,
+    // "recall once" — the model already holds them via the system prompt), so the
+    // memory step here only exercises the per-step content-stripping half of
+    // dedup; the top-level-keeps-content half is exercised via a main search
+    // chunk, whose path into result.chunks is unchanged.
     const { runMemoryPhase } = jest.requireMock("./memory");
+    const { rerankResults } = jest.requireMock("./rerank");
     const memChunk = { chunk_id: "m1", chunk_content: "FULL MEMORY CONTENT", item_id: "i1", item_name: "Mem" };
     runMemoryPhase.mockResolvedValueOnce({
       memoryChunksForAnswer: [memChunk],
@@ -118,6 +124,12 @@ describe("payload deduplication", () => {
       updatedImportantKeyword: "k",
       steps: [{ text: "memory step", chunks: [memChunk] }],
     });
+    const mainChunk = { chunk_id: "r1", chunk_content: "FULL MAIN CONTENT", item_id: "i2", item_name: "Doc" };
+    rerankResults.mockResolvedValueOnce({
+      limited_results: [mainChunk],
+      sorted_reranked_results: [],
+      rerank_score_max_genuine: 1,
+    });
     const run = makeTool({});
     const out = await drain(run(inputs));
     const last = JSON.parse(out[out.length - 1].result);
@@ -125,9 +137,11 @@ describe("payload deduplication", () => {
     expect(stepWithChunks).toBeDefined();
     expect(stepWithChunks.chunks[0].chunk_content).toBeUndefined();
     expect(stepWithChunks.chunks[0].item_name).toBe("Mem");
-    const topLevel = last.chunks.find((c: any) => c.chunk_id === "m1");
+    const topLevel = last.chunks.find((c: any) => c.chunk_id === "r1");
     expect(topLevel).toBeDefined();
-    expect(topLevel.chunk_content).toBe("FULL MEMORY CONTENT");
+    expect(topLevel.chunk_content).toBe("FULL MAIN CONTENT");
+    // Memory chunks no longer reach the top-level chunk list on their own.
+    expect(last.chunks.find((c: any) => c.chunk_id === "m1")).toBeUndefined();
   });
 });
 

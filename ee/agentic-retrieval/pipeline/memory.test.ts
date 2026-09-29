@@ -1,5 +1,5 @@
 // ee/agentic-retrieval/pipeline/memory.test.ts
-import { runMemoryPhase, clearMemoryItemCache } from "./memory";
+import { runMemoryPhase } from "./memory";
 
 jest.mock("ai", () => ({
   ...jest.requireActual("ai"),
@@ -22,11 +22,11 @@ const baseOpts = {
 };
 const allOn = { enabled: true, override: true, filePrioritization: true, queryAugmentation: true };
 
-beforeEach(() => { clearMemoryItemCache(); (generateText as jest.Mock).mockReset(); });
+beforeEach(() => { (generateText as jest.Mock).mockReset(); });
 
 describe("runMemoryPhase", () => {
   it("returns a neutral result when memory is disabled", async () => {
-    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")], memoryContext: undefined,
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")],
       memoryConfig: { ...allOn, enabled: false } });
     expect(r.memoryChunksForAnswer).toEqual([]);
     expect(r.updatedQuestion).toBe(baseOpts.question);
@@ -40,7 +40,7 @@ describe("runMemoryPhase", () => {
       .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: false, fileNameHints: [] } })
       .mockResolvedValueOnce({ output: { updatedUserQuestion: baseOpts.question, updatedRelevantKeywords: [], updatedImportantKeyword: "FST-2XT" } });
     const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "hint"), memChunk("2", "other")],
-      memoryContext: undefined, memoryConfig: allOn });
+      memoryConfig: allOn });
     expect(r.memoryChunksForAnswer).toHaveLength(1);
     expect(r.memoryChunksForAnswer[0]).toMatchObject({ chunk_id: "1", rerank_score: 1, context: { id: "memory" } });
   });
@@ -51,13 +51,13 @@ describe("runMemoryPhase", () => {
       .mockResolvedValueOnce({ output: { overrides: true, confidence: "medium", authoritativeChunkIds: ["1"], reason: "r" } })
       .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: false } })
       .mockResolvedValueOnce({ output: { updatedUserQuestion: baseOpts.question, updatedRelevantKeywords: [], updatedImportantKeyword: "FST-2XT" } });
-    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")], memoryContext: undefined, memoryConfig: allOn });
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")], memoryConfig: allOn });
     expect(r.memoryOverride.active).toBe(false); // medium confidence blocks it
   });
 
   it("skips override/file/augmentation LLM calls when those features are off", async () => {
     (generateText as jest.Mock).mockResolvedValueOnce({ output: { relevantChunkIds: ["1"] } });
-    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")], memoryContext: undefined,
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")],
       memoryConfig: { enabled: true, override: false, filePrioritization: false, queryAugmentation: false } });
     expect(generateText).toHaveBeenCalledTimes(1); // relevance only
     expect(r.memoryOverride.active).toBe(false);
@@ -67,7 +67,7 @@ describe("runMemoryPhase", () => {
     (generateText as jest.Mock)
       .mockResolvedValueOnce({ output: { relevantChunkIds: ["1"] } })
       .mockResolvedValueOnce({ output: { updatedUserQuestion: "expanded q", updatedRelevantKeywords: ["Feldbussteuerung"], updatedImportantKeyword: "SOMETHING-ELSE" } });
-    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")], memoryContext: undefined,
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "x")],
       memoryConfig: { enabled: true, override: false, filePrioritization: false, queryAugmentation: true } });
     expect(r.updatedQuestion).toBe("expanded q");
     expect(r.updatedKeywords).toEqual(expect.arrayContaining(["door", "feldbussteuerung"]));
@@ -80,7 +80,7 @@ describe("runMemoryPhase", () => {
       .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: true, fileNameHints: ["PROJECT_NOTES"] } });
     (fuzzyPrefilter as jest.Mock).mockResolvedValue([{ id: "d1", name: "Project Notes", key: "k" }]);
     const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "always check PROJECT_NOTES")],
-      memoryContext: undefined, documentContexts: [{ id: "docs" }],
+      documentContexts: [{ id: "docs" }],
       memoryConfig: { enabled: true, override: false, filePrioritization: true, queryAugmentation: false } });
     // Pins are keyed by the context they were resolved in, so a consumer can apply them
     // only to that context (no cross-context leak). See search.ts rule 2b.
@@ -98,29 +98,23 @@ describe("runMemoryPhase", () => {
       .mockResolvedValueOnce({ output: { updatedUserQuestion: baseOpts.question, updatedRelevantKeywords: [{ bad: "object" } as any], updatedImportantKeyword: "FST-2XT" } });
 
     // This should resolve without throwing, returning a neutral result despite the runtime error in keyword merge
-    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "test")], memoryContext: undefined, memoryConfig: allOn });
+    const r = await runMemoryPhase({ ...baseOpts, memoryChunks: [memChunk("1", "test")], memoryConfig: allOn });
 
     // Verify it returns a neutral result (original question preserved, no crash)
     expect(r).toBeDefined();
     expect(r.updatedQuestion).toBe(baseOpts.question);
   });
-});
 
-describe("recallMemoryByKeywords — fetching the chunks of keyword-matched memory items", () => {
-  const { singleSearch } = jest.requireMock("./multi-query") as { singleSearch: jest.Mock };
-  const { recallMemoryByKeywords, clearMemoryItemCache } = jest.requireActual("./memory") as typeof import("./memory");
-
-  it("uses the full-text method, not the hybrid one: the items are already chosen by keyword, so an embedding call would only add latency", async () => {
-    clearMemoryItemCache();
-    singleSearch.mockClear();
-    const memoryContext = {
-      id: "memory-ctx",
-      getItems: async () => [{ id: "item-1", name: "CBM2 Version", description: "Hinweis zur CBM2 Firmware", information: "" }],
-    };
-    await recallMemoryByKeywords({ keywords: ["CBM2"], importantKeyword: "CBM2", user: {}, role: {}, memoryContext });
-    expect(singleSearch).toHaveBeenCalledTimes(1);
-    expect(singleSearch.mock.calls[0][0].config.method).toBe("tsvector");
-    expect(singleSearch.mock.calls[0][0].pinnedItemIds).toEqual(["item-1"]);
+  it("runMemoryPhase judges only the chunks it is given and never searches", async () => {
+    const search = jest.fn();
+    const r = await runMemoryPhase({
+      memoryChunks: [], question: "q", keywords: ["k"], importantKeyword: "k", user: { id: 1 }, role: "r",
+      model: {} as never, memoryConfig: { enabled: true, override: true, filePrioritization: true, queryAugmentation: true },
+      glossary: [], documentContexts: [{ id: "docs", search } as never],
+    });
+    expect(search).not.toHaveBeenCalled();
+    expect(r.memoryChunksForAnswer).toEqual([]);
+    expect(r.memoryOverride.active).toBe(false);
   });
 });
 
@@ -136,7 +130,7 @@ describe("runMemoryPhase with mergedCall (engine v2)", () => {
   it("asks the model once and produces the same result shape as the four v1 hops", async () => {
     (generateText as jest.Mock).mockResolvedValueOnce(merged());
     const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint"), memChunk("2", "other")],
-      memoryContext: undefined, memoryConfig: allOn });
+      memoryConfig: allOn });
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(r.memoryChunksForAnswer.map((c) => c.chunk_id)).toEqual(["1"]);
     expect(r.memoryOverride).toMatchObject({ active: true, reason: "direct answer" });
@@ -148,7 +142,7 @@ describe("runMemoryPhase with mergedCall (engine v2)", () => {
 
   it("ignores override/file/augmentation parts of the answer when those features are off", async () => {
     (generateText as jest.Mock).mockResolvedValueOnce(merged());
-    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")], memoryContext: undefined,
+    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")],
       memoryConfig: { enabled: true, override: false, filePrioritization: false, queryAugmentation: false } });
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(r.memoryOverride.active).toBe(false);
@@ -158,7 +152,7 @@ describe("runMemoryPhase with mergedCall (engine v2)", () => {
 
   it("treats no relevant chunks as a neutral result even if the model filled the other parts", async () => {
     (generateText as jest.Mock).mockResolvedValueOnce(merged({ relevantChunkIds: [] }));
-    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")], memoryContext: undefined, memoryConfig: allOn });
+    const r = await runMemoryPhase({ ...baseOpts, mergedCall: true, memoryChunks: [memChunk("1", "hint")], memoryConfig: allOn });
     expect(r.memoryChunksForAnswer).toEqual([]);
     expect(r.memoryOverride.active).toBe(false);
     expect(r.updatedQuestion).toBe(baseOpts.question);
