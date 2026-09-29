@@ -86,8 +86,9 @@ export class RecallCollector {
 export async function loadVisibleMemoryRows(context: ExuluContext, ids: string[], user: User | undefined, db: any): Promise<MemoryItemRow[]> {
   if (ids.length === 0) return [];
   const table = convertContextToTableDefinition(context);
-  const query = db(getTableName(context.id)).whereIn("id", ids).whereNot("archived", true).select(MEMORY_ITEM_FIELDS);
-  return applyAccessControl(table, query, user);
+  const query = db(getTableName(context.id)).whereIn("id", ids).whereNot("archived", true);
+  const withAccess = applyAccessControl(table, query, user);
+  return withAccess.select(MEMORY_ITEM_FIELDS);
 }
 
 /** Binds the collector to a context with the user's RBAC and a users lookup. */

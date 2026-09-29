@@ -1,4 +1,15 @@
-import { RecallCollector, buildMemoryPromptBlock, displayName, type MemoryItemRow } from "./recall-collector";
+jest.mock("@SRC/graphql/utilities/access-control");
+jest.mock("@SRC/exulu/table-names");
+jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition");
+
+import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
+import { getTableName } from "@SRC/exulu/table-names";
+import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import { RecallCollector, buildMemoryPromptBlock, createRecallCollector, displayName, loadVisibleMemoryRows, MEMORY_ITEM_FIELDS, type MemoryItemRow } from "./recall-collector";
+
+// Configure mocks
+(applyAccessControl as jest.Mock).mockImplementation((_t: unknown, q: unknown) => q);
+(convertContextToTableDefinition as jest.Mock).mockImplementation((context: any) => ({ RBAC: true, id: context.id, ...context }));
 
 const row = (id: string, extra: Partial<MemoryItemRow> = {}): MemoryItemRow => ({
   id, name: `Title ${id}`, information: `Fact ${id}`, type: "FACT", rights_mode: "public",
@@ -58,5 +69,100 @@ describe("displayName", () => {
     expect(displayName({ id: 1, firstname: "A", lastname: "B" })).toBe("A B");
     expect(displayName({ id: 1, email: "a@b.c" })).toBe("a@b.c");
     expect(displayName({ id: 1 })).toBe("User 1");
+  });
+});
+
+describe("loadVisibleMemoryRows", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getTableName as jest.Mock).mockReturnValue("memory_items");
+  });
+
+  it("calls db with the memory table name, filters archived, and applies access control", async () => {
+    const chain: any = { whereIn: jest.fn(() => chain), whereNot: jest.fn(() => chain), select: jest.fn(async () => [row("a")]) };
+    const db = jest.fn(() => chain);
+    const context = { id: "mem", name: "Memory", fields: [] } as any;
+    const user = { id: 1, firstname: "Test", lastname: "User" } as any;
+
+    const result = await loadVisibleMemoryRows(context, ["a"], user, db);
+
+    expect(db).toHaveBeenCalledWith("memory_items");
+    expect(chain.whereIn).toHaveBeenCalledWith("id", ["a"]);
+    expect(chain.whereNot).toHaveBeenCalledWith("archived", true);
+    expect(chain.select).toHaveBeenCalledWith(MEMORY_ITEM_FIELDS);
+    expect(applyAccessControl).toHaveBeenCalledWith(
+      expect.objectContaining({ RBAC: true }),
+      chain,
+      user
+    );
+    expect(result).toEqual([row("a")]);
+  });
+
+  it("applies access control with undefined user for guest access", async () => {
+    const chain: any = { whereIn: jest.fn(() => chain), whereNot: jest.fn(() => chain), select: jest.fn(async () => []) };
+    const db = jest.fn(() => chain);
+    const context = { id: "mem", name: "Memory", fields: [] } as any;
+
+    await loadVisibleMemoryRows(context, ["a"], undefined, db);
+
+    expect(applyAccessControl).toHaveBeenCalledWith(
+      expect.objectContaining({ RBAC: true }),
+      chain,
+      undefined
+    );
+  });
+
+  it("returns empty array for empty ids without calling db", async () => {
+    const db = jest.fn();
+    const context = { id: "mem", name: "Memory", fields: [] } as any;
+
+    const result = await loadVisibleMemoryRows(context, [], undefined, db);
+
+    expect(db).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
+  });
+});
+
+describe("createRecallCollector", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (getTableName as jest.Mock).mockReturnValue("memory_items");
+    (convertContextToTableDefinition as jest.Mock).mockImplementation((context: any) => ({ RBAC: true, id: context.id, ...context }));
+  });
+
+  it("uses the RBAC-scoped loader and resolves creators, proving access control is applied", async () => {
+    const memChain: any = {
+      whereIn: jest.fn(() => memChain),
+      whereNot: jest.fn(() => memChain),
+      select: jest.fn(async () => [row("a")])
+    };
+    const usersChain: any = {
+      whereIn: jest.fn(() => usersChain),
+      select: jest.fn(async () => [{ id: 7, firstname: "Sara", lastname: "Kraus", email: "s@x.de" }])
+    };
+    const db = jest.fn(function (table: string) {
+      return table === "users" ? usersChain : memChain;
+    });
+    const context = { id: "mem", name: "Memory", fields: [] } as any;
+    const user = { id: 1, firstname: "Test", lastname: "User" } as any;
+
+    const collector = createRecallCollector(context, user, db);
+    await collector.addFromChunks([chunk("a")], "prefetch");
+
+    // Verify applyAccessControl was called (RBAC enforcement)
+    expect(applyAccessControl).toHaveBeenCalled();
+    // Verify db was called for memory table
+    expect(db).toHaveBeenCalledWith("memory_items");
+    // Verify db was called for users table
+    expect(db).toHaveBeenCalledWith("users");
+    // Verify the users chain received whereIn for creator id
+    expect(usersChain.whereIn).toHaveBeenCalledWith("id", [7]);
+
+    const list = collector.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({
+      id: "a",
+      createdBy: { id: 7, name: "Sara Kraus" }
+    });
   });
 });
