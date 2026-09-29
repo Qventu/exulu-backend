@@ -664,6 +664,8 @@ git commit -m "feat(memory): request-scoped recall collector and citation prompt
 ### Task 4: Memory tools (remember, update, forget)
 
 **Files:**
+- Create: `src/exulu/memory/access.ts`
+- Create: `src/exulu/memory/access.test.ts`
 - Create: `src/exulu/memory/tools.ts`
 - Create: `src/exulu/memory/tools.test.ts`
 - Modify: `src/exulu/tool.ts:42` (add `needsApprovalFn` property) and `:75-90` (constructor option)
@@ -671,8 +673,8 @@ git commit -m "feat(memory): request-scoped recall collector and citation prompt
 - Delete: `src/templates/tools/memory-tool.ts`, `src/templates/tools/memory-tool.test.ts`
 
 **Interfaces:**
-- Consumes: `checkMemoryBase`, `memoryTypeValues` (Task 1); `MemoryDecision`, `MEMORY_TOOL_IDS` (Task 2); `loadVisibleMemoryRows`, `displayName`, `MEMORY_ITEM_FIELDS` (Task 3); `context.createItem(item, config, userId, roleId, upsert)`, `context.updateItem(item, config, userId, roleId)`, `context.deleteItem(item, userId, roleId)`; `checkItemWriteAccess(context, record, user)`; `handleRBACUpdate(db, entitySingular, resourceId, rbac, existing)`.
-- Produces: `createMemoryTools({ agent, context, user }): ExuluTool[]`; tool outputs `MemoryToolOutput` (`memory_saved` | `memory_updated` | `memory_forgotten` | `memory_no_access` | `memory_error`); execute reads `params.memoryDecision` (injected in Task 5); `ExuluTool.needsApprovalFn?: (input, options) => Promise<boolean>`.
+- Consumes: `checkMemoryBase`, `memoryTypeValues` (Task 1); `MemoryDecision`, `MEMORY_TOOL_IDS` (Task 2); `loadVisibleMemoryRows`, `displayName`, `MEMORY_ITEM_FIELDS` (Task 3); `context.createItem(item, config, userId, roleId, upsert)`, `context.updateItem(item, config, userId, roleId)`, `context.deleteItem(item, userId, roleId)`; `handleRBACUpdate(db, entitySingular, resourceId, rbac, existing)`; the `rbac` table (`entity`, `target_resource_id`, `access_type` User|Role|Team, `user_id`, `role_id`, `team_id`, `rights`).
+- Produces: `canEditMemory(context, row, user, db): Promise<boolean>` — the memory write rule (creator, super admin, or an explicit `write` grant; **public means readable by everyone, never writable by everyone** — this deliberately differs from `checkItemWriteAccess`, which treats public items as writable; ruling 2026-09-29, spec decision "Access on save"); `createMemoryTools({ agent, context, user }): ExuluTool[]`; tool outputs `MemoryToolOutput` (`memory_saved` | `memory_updated` | `memory_forgotten` | `memory_no_access` | `memory_error`); execute reads `params.memoryDecision` (injected in Task 5); `ExuluTool.needsApprovalFn?: (input, options) => Promise<boolean>`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -690,7 +692,16 @@ import { handleRBACUpdate } from "@EE/rbac-update.ts";
 import { createMemoryTools } from "./tools";
 import { loadVisibleMemoryRows } from "./recall-collector";
 
-const mockDb: any = Object.assign(jest.fn(() => mockDb), { whereIn: jest.fn(() => mockDb), select: jest.fn(async () => [{ id: 9, firstname: "Sara", lastname: "Kraus" }]) });
+// Table-aware knex fake: users → creator lookup, rbac → write grants (set per test).
+const mockRbacRows: any[] = [];
+const mockChain = (table: string) => {
+  const c: any = {
+    where: () => c, whereIn: () => c,
+    select: async () => (table === "users" ? [{ id: 9, firstname: "Sara", lastname: "Kraus" }] : table === "rbac" ? mockRbacRows : []),
+  };
+  return c;
+};
+const mockDb: any = jest.fn((table: string) => mockChain(table));
 
 const createItem = jest.fn(async (item: any) => ({ item: { id: "new-1", ...item }, job: undefined }));
 const updateItem = jest.fn(async (item: any) => ({ item, job: undefined }));
@@ -708,7 +719,7 @@ const visible = loadVisibleMemoryRows as jest.Mock;
 const tools = () => Object.fromEntries(createMemoryTools({ agent, context, user: me }).map((t) => [t.id, t]));
 const base = { title: "Encoder first", information: "Check X12 before valves", type: "fact", whySaved: "Question about AZFR" };
 
-beforeEach(() => { createItem.mockClear(); updateItem.mockClear(); deleteItem.mockClear(); (handleRBACUpdate as jest.Mock).mockClear(); visible.mockReset(); });
+beforeEach(() => { createItem.mockClear(); updateItem.mockClear(); deleteItem.mockClear(); (handleRBACUpdate as jest.Mock).mockClear(); visible.mockReset(); mockRbacRows.length = 0; });
 
 describe("memory_remember", () => {
   it("registers three approval-gated tools with fixed ids", () => {
@@ -772,11 +783,20 @@ describe("memory_update / memory_forget", () => {
     expect(out).toMatchObject({ type: "memory_updated", itemId: "m1", information: "User wording" });
   });
 
-  it("update on someone else's public memory returns memory_no_access with the creator, and never writes", async () => {
+  it("update on someone else's PUBLIC memory returns memory_no_access with the creator, and never writes (public = read for everyone)", async () => {
     visible.mockResolvedValue([theirs]);
     const out: any = await tools().memory_update.tool.execute!({ memoryId: "m2", information: "x", reason: "r", user: me, exuluConfig: {} } as any, {} as any);
     expect(updateItem).not.toHaveBeenCalled();
     expect(out).toMatchObject({ type: "memory_no_access", itemId: "m2", createdBy: { id: 9, name: "Sara Kraus" } });
+  });
+
+  it("an explicit write grant on someone else's memory allows the update", async () => {
+    visible.mockResolvedValue([theirs]);
+    mockRbacRows.push({ access_type: "User", user_id: 4, rights: "write" });
+    expect(await tools().memory_update.needsApprovalFn!({ memoryId: "m2" }, { toolCallId: "c", messages: [] })).toBe(true);
+    const out: any = await tools().memory_update.tool.execute!({ memoryId: "m2", information: "granted edit", reason: "r", user: me, exuluConfig: {} } as any, {} as any);
+    expect(updateItem).toHaveBeenCalledWith({ id: "m2", information: "granted edit" }, {}, 4, "r1");
+    expect(out.type).toBe("memory_updated");
   });
 
   it("update on an invisible memory returns memory_no_access without wording or creator", async () => {
@@ -797,12 +817,73 @@ describe("memory_update / memory_forget", () => {
 });
 ```
 
+Also `src/exulu/memory/access.test.ts`:
+
+```ts
+import { canEditMemory } from "./access";
+
+const context: any = { id: "mem", name: "Memory", fields: [] };
+const dbWith = (grants: any[]) => jest.fn(() => ({ where: () => ({ select: async () => grants }) }));
+const row: any = { id: "m1", created_by: 9, rights_mode: "public" };
+
+describe("canEditMemory", () => {
+  it("allows the creator and super admins without touching rbac", async () => {
+    const db = dbWith([]);
+    expect(await canEditMemory(context, row, { id: 9 } as any, db)).toBe(true);
+    expect(await canEditMemory(context, row, { id: 1, super_admin: true } as any, db)).toBe(true);
+    expect(db).not.toHaveBeenCalled();
+  });
+  it("denies everyone else on public and private items unless a write grant matches them", async () => {
+    expect(await canEditMemory(context, row, { id: 4 } as any, dbWith([]))).toBe(false);
+    expect(await canEditMemory(context, { ...row, rights_mode: "private" }, { id: 4 } as any, dbWith([]))).toBe(false);
+    expect(await canEditMemory(context, row, { id: 4 } as any, dbWith([{ access_type: "User", user_id: 4 }]))).toBe(true);
+    expect(await canEditMemory(context, row, { id: 4, role: { id: "r1" } } as any, dbWith([{ access_type: "Role", role_id: "r1" }]))).toBe(true);
+    expect(await canEditMemory(context, row, { id: 4, team: { id: "t1" } } as any, dbWith([{ access_type: "Team", team_id: "t9" }]))).toBe(false);
+    expect(await canEditMemory(context, row, undefined, dbWith([]))).toBe(false);
+  });
+});
+```
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `npx jest src/exulu/memory/tools -v`
+Run: `npx jest src/exulu/memory/tools src/exulu/memory/access -v`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Extend `ExuluTool` and export the enum helper**
+- [ ] **Step 3: Extend `ExuluTool`, export the enum helper, write the access rule**
+
+`src/exulu/memory/access.ts`:
+
+```ts
+import type { User } from "@EXULU_TYPES/models/user";
+import type { ExuluContext } from "@SRC/exulu/context";
+import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import type { MemoryItemRow } from "./recall-collector";
+
+type Grant = { access_type: string; user_id?: number | null; role_id?: string | null; team_id?: string | null };
+
+/**
+ * Who may change a memory (spec decision "Access on save"): the creator, a
+ * super admin, or a holder of an explicit `write` grant on the item. `public`
+ * means readable by everyone — never writable by everyone. This deliberately
+ * differs from checkItemWriteAccess (generic KB tools), which treats public
+ * items as writable.
+ */
+export async function canEditMemory(context: ExuluContext, row: MemoryItemRow, user: User | undefined, db: any): Promise<boolean> {
+  if (!user?.id) return false;
+  if (user.super_admin === true) return true;
+  if (typeof row.created_by === "number" && row.created_by === user.id) return true;
+  const entity = convertContextToTableDefinition(context).name.singular;
+  const grants: Grant[] = await db("rbac")
+    .where({ entity, target_resource_id: row.id, rights: "write" })
+    .select("access_type", "user_id", "role_id", "team_id");
+  return grants.some(
+    (g) =>
+      (g.access_type === "User" && g.user_id === user.id) ||
+      (g.access_type === "Role" && !!user.role?.id && g.role_id === user.role.id) ||
+      (g.access_type === "Team" && !!(user as { team?: { id?: string } }).team?.id && g.team_id === (user as { team?: { id?: string } }).team!.id),
+  );
+}
+```
 
 In `src/exulu/tool.ts`:
 - After `public needsApproval: boolean;` (line 42) add:
@@ -830,11 +911,11 @@ import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { postgresClient } from "@SRC/postgres/client";
-import { checkItemWriteAccess } from "@SRC/utils/check-item-write-access";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
 import { memoryTypeValues } from "./memory-base";
 import type { MemoryDecision } from "./decisions";
+import { canEditMemory } from "./access";
 import { displayName, loadVisibleMemoryRows, type MemoryItemRow } from "./recall-collector";
 
 export type MemoryToolOutput =
@@ -922,8 +1003,8 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
   const needsWriteApproval = async (input: unknown): Promise<boolean> => {
     const id = typeof (input as any)?.memoryId === "string" ? (input as any).memoryId : "";
     if (!id || !user?.id) return false;
-    const { row } = await findVisible(context, id, user);
-    return !!row && (await checkItemWriteAccess(context, row, user));
+    const { row, db } = await findVisible(context, id, user);
+    return !!row && (await canEditMemory(context, row, user, db));
   };
 
   const noAccess = async (id: string, row: MemoryItemRow | undefined, db: any): Promise<MemoryToolOutput> => {
@@ -958,7 +1039,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
       if (!u?.id) return err("Memory requires a signed-in user.");
       const id = String(params.memoryId ?? "");
       const { row, db } = await findVisible(context, id, u);
-      if (!row || !(await checkItemWriteAccess(context, row, u))) return noAccess(id, row, db);
+      if (!row || !(await canEditMemory(context, row, u, db))) return noAccess(id, row, db);
       const d = memoryDecision?.kind === "update" ? memoryDecision : undefined;
       const patch: Record<string, unknown> = { id };
       const information = d?.information ?? params.information;
@@ -999,7 +1080,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
       if (!u?.id) return err("Memory requires a signed-in user.");
       const id = String(params.memoryId ?? "");
       const { row, db } = await findVisible(context, id, u);
-      if (!row || !(await checkItemWriteAccess(context, row, u))) return noAccess(id, row, db);
+      if (!row || !(await canEditMemory(context, row, u, db))) return noAccess(id, row, db);
       try {
         await context.deleteItem({ id }, u.id, u.role?.id);
         return { type: "memory_forgotten", contextId: context.id, itemId: id, title: row.name ?? "", result: `Forgot memory "${row.name ?? id}".` };
@@ -1025,8 +1106,8 @@ Expected: PASS. (`convert-exulu-tools-to-ai-sdk-tools.ts` still imports the dele
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/exulu/memory/tools.ts src/exulu/memory/tools.test.ts src/exulu/tool.ts src/templates/tools/context-write-tools.ts
-git commit -m "feat(memory): remember/update/forget tools with approval-driven writes"
+git add src/exulu/memory/access.ts src/exulu/memory/access.test.ts src/exulu/memory/tools.ts src/exulu/memory/tools.test.ts src/exulu/tool.ts src/templates/tools/context-write-tools.ts
+git commit -m "feat(memory): remember/update/forget tools with approval-driven writes and the memory write rule"
 ```
 
 ---
@@ -1614,13 +1695,12 @@ export async function memoryBaseStats({ context, user, db }: { context: ExuluCon
   const tableName = getTableName(context.id);
   const scoped = () => applyAccessControl(table, db(tableName).whereNot("archived", true), user);
 
-  const [[totalRow], [publicRow], [privateRow], [contribRow], last] = await Promise.all([
-    scoped().count("id as c"),
-    scoped().where("rights_mode", "public").count("id as c"),
-    scoped().where("rights_mode", "private").count("id as c"),
-    scoped().countDistinct("created_by as c"),
-    scoped().orderBy("createdAt", "desc").select("createdAt", "created_by").first(),
-  ]);
+  // Sequential on purpose: five cheap counts, and it keeps the query builder usage trivially testable.
+  const [totalRow] = await scoped().count("id as c");
+  const [publicRow] = await scoped().where("rights_mode", "public").count("id as c");
+  const [privateRow] = await scoped().where("rights_mode", "private").count("id as c");
+  const [contribRow] = await scoped().countDistinct("created_by as c");
+  const last = await scoped().orderBy("createdAt", "desc").select("createdAt", "created_by").first();
 
   let lastSavedBy: MemoryBaseStats["lastSavedBy"] = null;
   if (last && typeof last.created_by === "number") {
