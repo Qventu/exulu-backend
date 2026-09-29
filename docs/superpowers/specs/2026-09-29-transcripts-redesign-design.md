@@ -373,9 +373,11 @@ it", not "never otherwise".
 - **Union list partial failure** — if the items query fails the jobs half still renders, with an inline
   error row for the missing half, and vice versa. A transcripts page that shows nothing because one of two
   queries failed is worse than a half list.
-- **Missing item for a saved job** — a job with `status = saved` but a deleted item renders in the
-  in-progress strip as a failed row with "The saved transcript was deleted" and a Dismiss action, instead of
-  disappearing from both halves of the union.
+- **Missing item for a saved job** — not handled, on purpose. The jobs query only asks for
+  `ACTIVE_STATUSES`, so a saved job never reaches the list, and the items half is paginated: a saved job
+  whose item sits on an unloaded page is indistinguishable from one whose item was deleted. Detecting the
+  orphan would need a third query per page render to answer a question the user cannot currently ask.
+  Deleting a transcript deletes its item; the job row is already invisible.
 
 ## 7. Testing
 
