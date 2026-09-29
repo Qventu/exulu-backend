@@ -60,11 +60,11 @@ const agenticEntry = {
   tool: { execute: jest.fn() },
 } as never;
 
-const call = (currentTools: unknown[], opts?: { project?: string; disabledTools?: string[] }) =>
+const call = (currentTools: unknown[], opts?: { project?: string; disabledTools?: string[]; agent?: unknown; user?: unknown }) =>
   convertExuluToolsToAiSdkTools(
-    currentTools as never, [], [], [], [], undefined,
-    [docsContext, otherContext] as never, undefined, undefined, undefined, undefined,
-    opts?.project, undefined, model, undefined, undefined, undefined,
+    currentTools as never, [], [], [], [],
+    [docsContext, otherContext] as never, opts?.user as never, undefined, undefined, undefined,
+    opts?.project, undefined, model, opts?.agent as never, undefined, undefined,
     opts?.disabledTools,
   );
 
