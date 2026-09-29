@@ -2,6 +2,7 @@ import { type Express, type Request, type Response, type NextFunction } from "ex
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
+import { exportContentType, exportFilename, exportMarkdown, type ExportFormat } from "./markdown-export.ts";
 import express from "express";
 import { ApolloServer } from '@apollo/server';
 import cors from "cors";
@@ -2335,6 +2336,80 @@ export const createExpressRoutes = async (
       } else {
         res.end();
       }
+    }
+  });
+
+  /**
+   * GET /contexts/:contextId/items/:itemId/export?field=<name>&format=docx|pdf
+   * Generic "download as Word/PDF" for any ExuluContext field of type
+   * "markdown" (e.g. a training guide's `guide` field) — works for any
+   * context, not just one specific one, since it only needs the field's
+   * declared type. Access to the item itself still goes through the
+   * context's own getItems(), so the same RBAC rules apply as everywhere
+   * else the item is readable.
+   */
+  app.get("/contexts/:contextId/items/:itemId/export", async (req: Request, res: Response) => {
+    const authenticationResult = await requestValidators.authenticate(req);
+    if (!authenticationResult.user?.id) {
+      res.status(authenticationResult.code || 401).json({ detail: authenticationResult.message });
+      return;
+    }
+    const user = authenticationResult.user;
+
+    const formatParam = req.query.format;
+    const format: ExportFormat | null =
+      formatParam === "docx" || formatParam === "pdf" ? formatParam : null;
+    if (!format) {
+      res.status(400).json({ detail: "Query param 'format' must be 'docx' or 'pdf'." });
+      return;
+    }
+
+    const context = contexts?.find((c) => c.id === req.params.contextId);
+    if (!context) {
+      res.status(404).json({ detail: "Context not found." });
+      return;
+    }
+
+    const fieldName = typeof req.query.field === "string" ? req.query.field : undefined;
+    const field = fieldName
+      ? context.fields?.find((f) => f.name === fieldName)
+      : undefined;
+    if (!field || field.type !== "markdown") {
+      res.status(400).json({
+        detail: "Query param 'field' must name a field of type 'markdown' on this context.",
+      });
+      return;
+    }
+
+    const [item] = await context.getItems({
+      filters: [{ id: { eq: req.params.itemId } }],
+      fields: ["name", fieldName as string],
+      user,
+      role: user.role?.id,
+    });
+    if (!item) {
+      res.status(404).json({ detail: "Item not found, or you do not have access to it." });
+      return;
+    }
+
+    const markdown = item[fieldName as string];
+    if (!markdown || typeof markdown !== "string") {
+      res.status(404).json({ detail: `Field '${fieldName}' is empty for this item.` });
+      return;
+    }
+
+    try {
+      const bytes = await exportMarkdown(markdown, format);
+      const filename = exportFilename(item.name ?? "export", field.name, format);
+      res.setHeader("Content-Type", exportContentType(format));
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(filename)}"`,
+      );
+      res.send(bytes);
+    } catch (err) {
+      console.error("[EXULU] markdown export failed", err);
+      res.status(500).json({ detail: "Export failed." });
     }
   });
 
