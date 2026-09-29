@@ -170,7 +170,6 @@ describe("document tool registration", () => {
     createViewDocumentPageTool.mockClear();
     await convertExuluToolsToAiSdkTools(
       [], [], [], [], [], undefined,
-      undefined,
       { id: 7 } as never,           // user
       { fileUploads: { s3Bucket: "b" } } as never, // exuluConfig
       "session-1",                  // sessionID
@@ -225,7 +224,6 @@ describe("knowledge base write tool injection", () => {
       [],
       [],
       (kbAgent as any).tools,
-      undefined,
       [kbContext],
       { id: 7 } as never,
       {} as never,
@@ -248,7 +246,6 @@ describe("knowledge base write tool injection", () => {
       [],
       [],
       [],
-      undefined,
       [kbContext],
       { id: 7 } as never,
       {} as never,
@@ -269,7 +266,6 @@ describe("knowledge base write tool injection", () => {
       [],
       [],
       (kbAgent as any).tools,
-      undefined,
       [kbContext],
       { id: 7 } as never,
       {} as never,
