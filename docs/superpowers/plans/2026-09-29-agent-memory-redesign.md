@@ -4,7 +4,7 @@
 
 **Goal:** Make agent memory visible and editable in chat and governable in the workbench, reusing the AI SDK approval flow as the save card, with zero new tables.
 
-**Architecture:** Memory bases stay code-defined `ExuluContext`s that satisfy a small field contract. Three agent tools (`memory_remember`, `memory_update`, `memory_forget`) require approval; the chat renders a memory-specific approval card whose Save carries the user's edits (wording, type, access) in the approval reason, which the backend hands to the tool. Retrieval is user-scoped and limit-driven by a new `agents.memory_config` json column; recalled memories travel to the UI as message metadata.
+**Architecture:** Memory bases stay code-defined `ExuluContext`s that satisfy a small field contract. Three agent tools (`memory_remember`, `memory_update`, `memory_forget`) require approval; the chat renders a memory-specific approval card whose Save carries the user's edits (wording, type, access) in the approval reason, which the backend hands to the tool. Memories are recalled **once per turn** (user-scoped, limit from the new `agents.memory_config` json column), injected once into the system prompt, shown to the user as message metadata, and handed to the knowledge-search tool, which no longer fetches memories itself. A standalone Newlift regression eval (Task 8b) gates the recall change.
 
 **Tech Stack:** Backend: TypeScript, Express, AI SDK 6 (`ai` 6.0.49), knex/Postgres, GraphQL (schema generated from `core-schema.ts`), jest (ts-jest, aliases `@SRC`, `@EE`, `@EXULU_TYPES`). Frontend: Next.js app router, shadcn/ui, Apollo, next-intl (en/de), vitest for pure modules.
 
@@ -1031,16 +1031,17 @@ git commit -m "feat(memory): remember/update/forget tools with approval-driven w
 
 ---
 
-### Task 5: Register the memory tools, pass decisions and the collector through the tool wrapper
+### Task 5: Register the memory tools, pass decisions through the tool wrapper, make knowledge search consume the recalled set
 
 **Files:**
 - Modify: `src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts:23` (import), `:168-186` (signature), `:256-273` (registration block), `:316-360` (both `createAgenticRetrievalTool` calls), `:469-478` (needsApproval), `:591-600` (execute params)
-- Modify: `ee/agentic-retrieval/pipeline/index.ts:66-90` (`recall` option) and `:416` (add memory chunks to the collector)
+- Modify: `ee/agentic-retrieval/pipeline/index.ts:371` (stop passing `memoryContext` to the memory phase) and `:416` (stop re-appending memory chunks to the tool result)
+- Modify: `ee/agentic-retrieval/pipeline/memory.ts` (remove the keyword recall and the item cache; the phase judges the recalled set only) and `ee/agentic-retrieval/pipeline/memory.test.ts`
 - Modify: `src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.test.ts:63-69` (fix the misaligned helper) and append new tests
 
 **Interfaces:**
-- Consumes: `createMemoryTools` (Task 4), `checkMemoryBase` (Task 1), `MemoryDecision`, `isMemoryToolId` (Task 2), `RecallCollector` (Task 3).
-- Produces: two new trailing parameters on `convertExuluToolsToAiSdkTools(..., sessionOwnerId?, memoryDecisions?: Map<string, MemoryDecision>, recall?: RecallCollector)`; `params.memoryDecision` inside every tool `execute`; `createAgenticRetrievalTool({ ..., recall? })`.
+- Consumes: `createMemoryTools` (Task 4), `checkMemoryBase` (Task 1), `MemoryDecision`, `isMemoryToolId` (Task 2).
+- Produces: one new trailing parameter on `convertExuluToolsToAiSdkTools(..., sessionOwnerId?, memoryDecisions?: Map<string, MemoryDecision>)`; `params.memoryDecision` inside every tool `execute`; the pipeline's memory phase consumes only the recalled `memoryItems` it already receives (spec §3.1 "recall once").
 
 - [ ] **Step 1: Repair the pre-existing test baseline**
 
@@ -1148,7 +1149,6 @@ In `convert-exulu-tools-to-ai-sdk-tools.ts`:
 import { createMemoryTools } from "@SRC/exulu/memory/tools";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { isMemoryToolId, type MemoryDecision } from "@SRC/exulu/memory/decisions";
-import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
 ```
 
 2. Extend the signature after `sessionOwnerId?: number | string,` (line 186):
@@ -1156,8 +1156,6 @@ import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
 ```ts
   /** Approved memory cards → edits keyed by toolCallId (spec §3.2). */
   memoryDecisions?: Map<string, MemoryDecision>,
-  /** Request-scoped recall collector; the knowledge-search memory phase adds to it. */
-  recall?: RecallCollector,
 ```
 
 3. Replace the block at lines 256-273 (`if (agent?.memory && contexts?.length) { … createNewMemoryTool … }`) with:
@@ -1187,7 +1185,7 @@ import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
   }
 ```
 
-4. In both `createAgenticRetrievalTool({ … memoryItems, … })` calls (around lines 316-360) add `recall,` next to `memoryItems`.
+4. The two `createAgenticRetrievalTool({ … memoryItems, … })` calls (around lines 316-360) stay as they are: `memoryItems` is the recalled set and keeps flowing into the pipeline.
 
 5. Replace the `needsApproval:` line (478) with:
 
@@ -1205,17 +1203,37 @@ import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";
                 memoryDecision: memoryDecisions?.get(options?.toolCallId ?? ""),
 ```
 
-- [ ] **Step 4: Let the knowledge-search memory phase report to the collector**
+- [ ] **Step 4: Make the knowledge-search memory phase consume the recalled set only**
 
-In `ee/agentic-retrieval/pipeline/index.ts`:
-- Add `recall?: RecallCollector;` to the `createAgenticRetrievalTool` options (after `memoryItems?`), destructure it, and import the type: `import type { RecallCollector } from "@SRC/exulu/memory/recall-collector";`
-- At line 416, directly after `addChunks(result, memResult.memoryChunksForAnswer);` add:
+Write the failing pipeline tests first. In `ee/agentic-retrieval/pipeline/memory.test.ts` delete every test that exercises `recallMemoryByKeywords`, `loadMemoryItems` or `clearMemoryItemCache` (grep the file for those names), and add:
 
 ```ts
-      if (recall && memResult.memoryChunksForAnswer.length > 0) {
-        await recall.addFromChunks(memResult.memoryChunksForAnswer as never, "knowledge_search");
-      }
+it("runMemoryPhase judges only the chunks it is given and never searches", async () => {
+  const search = jest.fn();
+  const r = await runMemoryPhase({
+    memoryChunks: [], question: "q", keywords: ["k"], importantKeyword: "k", user: { id: 1 }, role: "r",
+    model: {} as never, memoryConfig: { enabled: true, override: true, filePrioritization: true, queryAugmentation: true },
+    glossary: [], documentContexts: [{ id: "docs", search } as never],
+  });
+  expect(search).not.toHaveBeenCalled();
+  expect(r.memoryChunksForAnswer).toEqual([]);
+  expect(r.memoryOverride.active).toBe(false);
+});
 ```
+
+Run: `npx jest ee/agentic-retrieval/pipeline/memory.test.ts` → the new test FAILS on the type error (`memoryContext` is still expected) or on the removed exports.
+
+Then in `ee/agentic-retrieval/pipeline/memory.ts`:
+- Delete `memoryItemCache`, `clearMemoryItemCache`, `loadMemoryItems`, `recallMemoryByKeywords` and the `ITEM_CACHE_TTL_MS` constant, plus the now-unused imports (`singleSearch`, `deriveKeywordVariants`, `normalizeFileName`, `stripSeparators` — keep any that other functions in the file still use).
+- In `runMemoryPhase`: remove the `memoryContext` parameter from the signature and its type, change the early return to `if (!memoryConfig.enabled || memoryChunks.length === 0) return neutralResult(question, keywords, importantKeyword);`, and delete the whole `if (memoryContext) { … keywordMatched … }` block so `retrieved_memory` is just `[...memoryChunks]`.
+
+In `ee/agentic-retrieval/pipeline/index.ts`:
+- Line 371: remove `memoryContext,` from the `runMemoryPhase({ … })` call (the `memoryContext` option of `createAgenticRetrievalTool` stays, since `convert-exulu-tools` still uses it to exclude the memory context from the searchable set).
+- Line 415-416: delete the comment `// Memory citable chunks go first (insertion-order dedup)` and the line `addChunks(result, memResult.memoryChunksForAnswer);`. The model already holds these memories with citation ids from the system prompt; the override directive (line ~680) is unchanged.
+
+Search the repo for other callers: `grep -rn "recallMemoryByKeywords\|clearMemoryItemCache\|memoryContext:" ee src --include="*.ts"` — remove or adjust each (tests that reset the cache in `beforeEach` drop that line).
+
+Run: `npx jest ee/agentic-retrieval -v` → PASS.
 
 - [ ] **Step 5: Run the tests and typecheck**
 
@@ -1225,29 +1243,29 @@ Expected: PASS; the only remaining type error is `generate-stream.ts` (the two c
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.test.ts ee/agentic-retrieval/pipeline/index.ts
-git commit -m "feat(memory): register memory tools, route decisions and recall through the tool wrapper"
+git add src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.ts src/templates/tools/convert-exulu-tools-to-ai-sdk-tools.test.ts ee/agentic-retrieval/pipeline/index.ts ee/agentic-retrieval/pipeline/memory.ts ee/agentic-retrieval/pipeline/memory.test.ts
+git commit -m "feat(memory): register memory tools, route decisions, and make knowledge search consume the recalled set only"
 ```
 
 ---
 
-### Task 6: User-scoped memory prefetch, prompt block and decisions in generate-stream
+### Task 6: Recall once — user-scoped memory recall, prompt block and decisions in generate-stream
 
 **Files:**
-- Create: `src/exulu/memory/prefetch.ts`
-- Create: `src/exulu/memory/prefetch.test.ts`
+- Create: `src/exulu/memory/recall.ts`
+- Create: `src/exulu/memory/recall.test.ts`
 - Modify: `src/exulu/generate-stream.ts:356-395` and `:420-423` (generateSync), `:788-830` and `:897-899` (generateStream), `:440-445` and `:1010-1015` (convert calls), `:1109-1113` (return)
 
 **Interfaces:**
 - Consumes: `resolveMemoryConfig` (Task 1), `createRecallCollector`, `buildMemoryPromptBlock` (Task 3), `collectMemoryDecisions` (Task 2).
-- Produces: `prefetchMemories({ agent, contexts, query, user, db }): Promise<PrefetchResult>` with `{ collector?: RecallCollector; memoryItems?: VectorSearchChunkResult[]; promptBlock: string }`; `generateStream` returns `{ stream, originalMessages, previousMessages, recall }`.
+- Produces: `recallMemories({ agent, contexts, query, user, db }): Promise<RecallResult>` with `{ collector?: RecallCollector; memoryItems?: VectorSearchChunkResult[]; promptBlock: string }`; `generateStream` returns `{ stream, originalMessages, previousMessages, recall }`.
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/exulu/memory/prefetch.test.ts`:
+`src/exulu/memory/recall.test.ts`:
 
 ```ts
-import { prefetchMemories } from "./prefetch";
+import { recallMemories } from "./recall";
 
 const chunk = { item_id: "m1", item_name: "T", chunk_content: "c" } as any;
 const rows = [{ id: "m1", name: "T", information: "Fact", type: "FACT", rights_mode: "private", created_by: 4, createdAt: "2026-09-01", updatedAt: "2026-09-01" }];
@@ -1263,9 +1281,9 @@ const user: any = { id: 4, role: { id: "r1" } };
 
 beforeEach(() => search.mockClear());
 
-describe("prefetchMemories", () => {
+describe("recallMemories", () => {
   it("searches with the user, role and configured limit, and builds the prompt block", async () => {
-    const r = await prefetchMemories({ agent: { id: "a", memory: "mem", memory_config: { retrieval: { limit: 3 } } } as any, contexts: [context], query: "q", user, db: dbFor() });
+    const r = await recallMemories({ agent: { id: "a", memory: "mem", memory_config: { retrieval: { limit: 3 } } } as any, contexts: [context], query: "q", user, db: dbFor() });
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: "q", user, role: "r1", limit: 3, method: "hybridSearch" }));
     expect(r.memoryItems).toEqual([chunk]);
     expect(r.promptBlock).toContain('item_id: "m1"');
@@ -1273,7 +1291,7 @@ describe("prefetchMemories", () => {
   });
 
   it("skips the search when retrieval is disabled but still returns a collector", async () => {
-    const r = await prefetchMemories({ agent: { id: "a", memory: "mem", memory_config: { retrieval: { enabled: false } } } as any, contexts: [context], query: "q", user, db: dbFor() });
+    const r = await recallMemories({ agent: { id: "a", memory: "mem", memory_config: { retrieval: { enabled: false } } } as any, contexts: [context], query: "q", user, db: dbFor() });
     expect(search).not.toHaveBeenCalled();
     expect(r.promptBlock).toBe("");
     expect(r.collector).toBeDefined();
@@ -1281,16 +1299,16 @@ describe("prefetchMemories", () => {
 
   it("warns and returns empty when the memory context is missing, and does nothing without agent.memory or query", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
-    const r = await prefetchMemories({ agent: { id: "a", memory: "gone" } as any, contexts: [context], query: "q", user, db: dbFor() });
+    const r = await recallMemories({ agent: { id: "a", memory: "gone" } as any, contexts: [context], query: "q", user, db: dbFor() });
     expect(r).toEqual({ collector: undefined, memoryItems: undefined, promptBlock: "" });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("gone"));
     warn.mockRestore();
-    expect(await prefetchMemories({ agent: { id: "a" } as any, contexts: [context], query: "q", user, db: dbFor() })).toEqual({ collector: undefined, memoryItems: undefined, promptBlock: "" });
+    expect(await recallMemories({ agent: { id: "a" } as any, contexts: [context], query: "q", user, db: dbFor() })).toEqual({ collector: undefined, memoryItems: undefined, promptBlock: "" });
     expect(search).not.toHaveBeenCalled();
   });
 
   it("passes no user for guests (public-only search)", async () => {
-    await prefetchMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "q", user: undefined, db: dbFor() });
+    await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "q", user: undefined, db: dbFor() });
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined, role: undefined, limit: 10 }));
   });
 });
@@ -1298,12 +1316,12 @@ describe("prefetchMemories", () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `npx jest src/exulu/memory/prefetch -v`
+Run: `npx jest src/exulu/memory/recall -v`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the prefetch helper**
+- [ ] **Step 3: Implement the recall step**
 
-`src/exulu/memory/prefetch.ts`:
+`src/exulu/memory/recall.ts`:
 
 ```ts
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
@@ -1313,26 +1331,26 @@ import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-sear
 import { resolveMemoryConfig } from "./config";
 import { buildMemoryPromptBlock, createRecallCollector, type RecallCollector } from "./recall-collector";
 
-export type PrefetchResult = {
+export type RecallResult = {
   collector: RecallCollector | undefined;
   memoryItems: VectorSearchChunkResult[] | undefined;
   promptBlock: string;
 };
 
-const EMPTY: PrefetchResult = { collector: undefined, memoryItems: undefined, promptBlock: "" };
+const EMPTY: RecallResult = { collector: undefined, memoryItems: undefined, promptBlock: "" };
 
 /**
  * Memory pre-fetch shared by generateSync and generateStream (spec §3.1):
  * user-scoped hybrid search over the agent's memory context, limited by
  * memory_config, feeding the recall collector and the model-visible block.
  */
-export async function prefetchMemories({ agent, contexts, query, user, db }: {
+export async function recallMemories({ agent, contexts, query, user, db }: {
   agent: ExuluAgent | undefined;
   contexts: ExuluContext[] | undefined;
   query: string | undefined;
   user: User | undefined;
   db: any;
-}): Promise<PrefetchResult> {
+}): Promise<RecallResult> {
   if (!agent?.memory || !query) return { ...EMPTY };
   const context = contexts?.find((c) => c.id === agent.memory);
   if (!context) {
@@ -1369,7 +1387,7 @@ In `src/exulu/generate-stream.ts`:
 1. Add imports after line 43:
 
 ```ts
-import { prefetchMemories } from "./memory/prefetch";
+import { recallMemories } from "./memory/recall";
 import { collectMemoryDecisions } from "./memory/decisions";
 ```
 
@@ -1377,9 +1395,9 @@ import { collectMemoryDecisions } from "./memory/decisions";
 
 ```ts
     const { db: memoryDb } = await postgresClient();
-    const memoryPrefetch = await prefetchMemories({ agent, contexts, query, user, db: memoryDb });
-    const memoryContext = memoryPrefetch.promptBlock;
-    const memoryItems = memoryPrefetch.memoryItems;
+    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb });
+    const memoryContext = memoryRecall.promptBlock;
+    const memoryItems = memoryRecall.memoryItems;
 ```
 
    Keep lines 420-423 (`if (memoryContext) { system += … }`) unchanged.
@@ -1398,7 +1416,9 @@ import { collectMemoryDecisions } from "./memory/decisions";
     const memoryDecisions = collectMemoryDecisions(messages);
 ```
 
-   and append two arguments to that call after `sessionOwnerId,`: `memoryDecisions, memoryPrefetch.collector,`. In `generateSync`'s call (line ~440) append `undefined, memoryPrefetch.collector,`.
+   and append one argument to that call after `sessionOwnerId,`: `memoryDecisions,`. `generateSync`'s call (line ~440) is unchanged.
+
+6. Export the recall step from the package so the Newlift eval (Task 8b) can call it: in `src/index.ts` next to `export { postgresClient } from "./postgres/client";` add `export { recallMemories } from "./exulu/memory/recall";` and `export { checkMemoryBase } from "./exulu/memory/memory-base";`.
 
 5. Replace the return at 1109-1113 with:
 
@@ -1407,7 +1427,7 @@ import { collectMemoryDecisions } from "./memory/decisions";
         stream: result,
         originalMessages: messages,
         previousMessages: previousMessagesContent,
-        recall: memoryPrefetch.collector,
+        recall: memoryRecall.collector,
     };
 ```
 
@@ -1419,8 +1439,8 @@ Expected: PASS, no type errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/exulu/memory/prefetch.ts src/exulu/memory/prefetch.test.ts src/exulu/generate-stream.ts
-git commit -m "fix(memory): user-scoped, limit-driven memory prefetch with citations on both generation paths"
+git add src/exulu/memory/recall.ts src/exulu/memory/recall.test.ts src/exulu/generate-stream.ts src/index.ts
+git commit -m "fix(memory): recall memories once per turn, user-scoped and limit-driven, injected with citations on both generation paths"
 ```
 
 ---
@@ -1687,6 +1707,293 @@ Expected: PASS, no type errors.
 git add src/graphql/resolvers/memory-base-stats.ts src/graphql/resolvers/memory-base-stats.test.ts src/graphql/schemas/index.ts src/graphql/resolvers/field-allow-list.ts
 git commit -m "feat(memory): memoryBase contract on Context and memoryBaseStats query"
 ```
+
+---
+
+### Task 8b: Newlift regression eval (acceptance gate for "recall once")
+
+**Files (newlkiag repo, `/Users/daniel.claessen/Desktop/Projects/newlkiag`, branch `develop`):**
+- Create: `scripts/memory-eval/extract-cases.ts`
+- Create: `scripts/memory-eval/run-cases.ts`
+- Create: `scripts/memory-eval/report.ts`
+- Create: `scripts/memory-eval/README.md`
+- Output (gitignored): `scripts/memory-eval/out/`
+
+**Files (backend worktree):**
+- Create: `docs/superpowers/evals/2026-09-29-newlift-memory-recall.md` (the report)
+
+**Interfaces:**
+- Consumes: the Newlift database over the local tunnel (`POSTGRES_DB_HOST=127.0.0.1`, `POSTGRES_DB_PORT=5433`, `POSTGRES_DB_USER=newton-sql-test-sa@dx-newlift.iam`, empty password, `POSTGRES_DB_NAME=exulu-test`, from newlkiag `.env`); the newlkiag dev server running the worktree build; the run endpoint `POST /agents/litellm/run/<agentId>` (`x-api-key`, `stream: true`, `session` header, body `{ message: UIMessage }`); `recalledMemories` message metadata (Task 7); LiteLLM chat completions (`LITELLM_BASE_URL`, `LITELLM_MASTER_KEY` from newlkiag `.env`) for the judge.
+- Produces: `out/cases.json`, `out/results.json`, the markdown report and a go/no-go on the recall change.
+
+Facts established at planning time (2026-09-29): 275 `feedback` rows with `score = 1`, all for agent `48ae3121-7ac7-42b1-94d7-77467b1f8be7` ("Newton v1.0 [PRODUCTION]", memory context `newton_memory_context`); 17 of those answers (15 sessions) carried memory chunks (`"chunk_id":"memory:<item_id>"` inside the search tool output); the memory base holds 113 public and 2 private items; Newton's model id is `vertex-gemini-3.8-flash`; Newton's knowledge-search memory config is `{enabled, override, filePrioritization, queryAugmentation}` all true with `topK 10`.
+
+- [ ] **Step 1: Prepare the newlkiag side**
+
+```bash
+cd /Users/daniel.claessen/Desktop/Projects/newlkiag && git branch --show-current
+ls -la node_modules/@exulu/backend            # symlink → must point at the WORKTREE for this eval
+rm node_modules/@exulu/backend && ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory node_modules/@exulu/backend
+(cd /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory && npm run build)
+grep -n "^POSTGRES_DB_\|^LITELLM_BASE_URL\|^LITELLM_MASTER_KEY\|^EXULU_API_KEY\|^PORT" .env | sed 's/=.*/=…/'
+mkdir -p scripts/memory-eval/out && grep -q "scripts/memory-eval/out" .gitignore || echo "scripts/memory-eval/out/" >> .gitignore
+```
+
+Expected: the symlink now targets the worktree (note the previous target in the README so it can be restored: it was `/Users/daniel.claessen/Desktop/Projects/exulu/backend`); the env keys exist. If there is no `EXULU_API_KEY`, create an organisation API key in the newlkiag admin UI (Administration → API keys, scoped to the Newton agent) and put it in `.env` as `EXULU_API_KEY`. Start the dev server in a second terminal (`npm run dev`, note the port, default from `PORT`) and confirm `curl -s localhost:$PORT/health` answers.
+
+- [ ] **Step 2: Extract the cases**
+
+`scripts/memory-eval/extract-cases.ts`:
+
+```ts
+/**
+ * Builds out/cases.json from Newlift's positive feedback: for every feedback
+ * row with score = 1 on the production Newton agent, the assistant message
+ * closest before the feedback time, the user question before it, up to four
+ * earlier user turns, and the memory item ids that answer actually used.
+ */
+import "dotenv/config";
+import { Client } from "pg";
+import { writeFileSync } from "node:fs";
+
+const AGENT_ID = process.env.EVAL_AGENT_ID ?? "48ae3121-7ac7-42b1-94d7-77467b1f8be7";
+const MEMORY_CONTEXT = "newton_memory_context";
+
+type Msg = { id: string; createdAt: string; content: any };
+type Case = {
+  id: string; session: string; feedbackAt: string; user: number;
+  priorUserTurns: string[]; question: string; verifiedAnswer: string;
+  usedMemoryIds: string[]; memorySubset: boolean;
+};
+
+const textOf = (m: any): string =>
+  (m?.parts ?? []).filter((p: any) => p?.type === "text").map((p: any) => p.text).join("\n").trim();
+
+function memoryIdsIn(content: string): string[] {
+  const ids = new Set<string>();
+  for (const m of content.matchAll(/memory:([0-9a-f-]{36})/g)) ids.add(m[1]!);
+  for (const m of content.matchAll(new RegExp(`item_id[\\\\"\\s:]+([0-9a-f-]{36})[^}]*${MEMORY_CONTEXT}`, "g"))) ids.add(m[1]!);
+  return [...ids];
+}
+
+async function main() {
+  const client = new Client({
+    host: process.env.POSTGRES_DB_HOST, port: Number(process.env.POSTGRES_DB_PORT ?? 5433),
+    user: process.env.POSTGRES_DB_USER, password: process.env.POSTGRES_DB_PASSWORD ?? "",
+    database: process.env.POSTGRES_DB_NAME, ssl: process.env.POSTGRES_DB_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+  });
+  await client.connect();
+  const fb = await client.query(
+    `select id, session, "user", "createdAt" from feedback where score = 1 and agent = $1 order by "createdAt"`, [AGENT_ID]);
+  const cases: Case[] = [];
+  for (const row of fb.rows) {
+    const msgs = await client.query<Msg>(
+      `select id, "createdAt", content::jsonb as content from agent_messages where session = $1 and "createdAt" <= $2 order by "createdAt"`,
+      [String(row.session), row.createdAt]);
+    const list = msgs.rows;
+    let aIdx = -1;
+    for (let i = list.length - 1; i >= 0; i--) if (list[i]!.content?.role === "assistant") { aIdx = i; break; }
+    if (aIdx < 1) continue;
+    let qIdx = -1;
+    for (let i = aIdx - 1; i >= 0; i--) if (list[i]!.content?.role === "user") { qIdx = i; break; }
+    if (qIdx < 0) continue;
+    const question = textOf(list[qIdx]!.content);
+    const verifiedAnswer = textOf(list[aIdx]!.content);
+    if (!question || !verifiedAnswer) continue;
+    const priorUserTurns = list.slice(0, qIdx).filter((m) => m.content?.role === "user").map((m) => textOf(m.content)).filter(Boolean).slice(-4);
+    const usedMemoryIds = memoryIdsIn(JSON.stringify(list[aIdx]!.content));
+    cases.push({ id: row.id, session: String(row.session), feedbackAt: row.createdAt, user: row.user,
+      priorUserTurns, question, verifiedAnswer, usedMemoryIds, memorySubset: usedMemoryIds.length > 0 });
+  }
+  await client.end();
+  writeFileSync("scripts/memory-eval/out/cases.json", JSON.stringify(cases, null, 2));
+  console.log(`cases: ${cases.length}, memory subset: ${cases.filter((c) => c.memorySubset).length}`);
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+Run: `npx tsx scripts/memory-eval/extract-cases.ts`
+Expected: `cases: ~275, memory subset: ~17` (numbers may have grown since planning). Spot-check two memory-subset cases in `out/cases.json`: the question reads like a technician question and the used memory ids exist in `newton_memory_context_items`.
+
+- [ ] **Step 3: Replay the cases through the run endpoint**
+
+`scripts/memory-eval/run-cases.ts`:
+
+```ts
+/**
+ * Replays cases through the real run endpoint (stream: true) and records the
+ * recalledMemories metadata plus the answer text for each. --subset limits to
+ * the memory subset; --sample N adds N random non-memory cases; --limit-override
+ * is NOT a thing: change Newton's memory_config in the workbench between runs.
+ */
+import "dotenv/config";
+import { readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+
+const BASE = process.env.EVAL_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+const AGENT_ID = process.env.EVAL_AGENT_ID ?? "48ae3121-7ac7-42b1-94d7-77467b1f8be7";
+const API_KEY = process.env.EXULU_API_KEY!;
+const subsetOnly = process.argv.includes("--subset");
+const sampleArg = process.argv.indexOf("--sample");
+const sampleN = sampleArg > -1 ? Number(process.argv[sampleArg + 1]) : 0;
+const tag = process.argv.includes("--tag") ? process.argv[process.argv.indexOf("--tag") + 1] : "new";
+
+type Recalled = { id: string; title: string; rights_mode: string; createdBy: { id: number; name: string } | null };
+
+async function turn(session: string, text: string): Promise<{ answer: string; recalled: Recalled[] }> {
+  const res = await fetch(`${BASE}/agents/litellm/run/${AGENT_ID}`, {
+    method: "POST",
+    headers: { "x-api-key": API_KEY, "content-type": "application/json", stream: "true", session },
+    body: JSON.stringify({ message: { id: `msg_${randomUUID().slice(0, 12)}`, role: "user", parts: [{ type: "text", text }] } }),
+  });
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  let answer = ""; let recalled: Recalled[] = [];
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split("\n"); buf = lines.pop() ?? "";
+    for (const line of lines) {
+      const payload = line.startsWith("data:") ? line.slice(5).trim() : line.replace(/^[0-9a-z]:/, "").trim();
+      if (!payload || payload === "[DONE]") continue;
+      let ev: any; try { ev = JSON.parse(payload); } catch { continue; }
+      if (ev.type === "text-delta") answer += ev.delta ?? ev.textDelta ?? "";
+      const meta = ev.messageMetadata ?? (ev.type === "message-metadata" ? ev.messageMetadata : undefined);
+      if (Array.isArray(meta?.recalledMemories)) recalled = meta.recalledMemories;
+    }
+  }
+  return { answer: answer.trim(), recalled };
+}
+
+async function main() {
+  const cases = JSON.parse(readFileSync("scripts/memory-eval/out/cases.json", "utf8")) as any[];
+  const subset = cases.filter((c) => c.memorySubset);
+  const rest = cases.filter((c) => !c.memorySubset).sort(() => Math.random() - 0.5).slice(0, sampleN);
+  const selected = subsetOnly ? subset : [...subset, ...rest];
+  const results: any[] = [];
+  for (const c of selected) {
+    const session = randomUUID();
+    try {
+      for (const prior of c.priorUserTurns) await turn(session, prior);
+      const { answer, recalled } = await turn(session, c.question);
+      const recalledIds = recalled.map((r) => r.id);
+      const missing = c.usedMemoryIds.filter((id: string) => !recalledIds.includes(id));
+      results.push({ caseId: c.id, memorySubset: c.memorySubset, question: c.question, verifiedAnswer: c.verifiedAnswer,
+        answer, recalled, usedMemoryIds: c.usedMemoryIds, missing, hit: missing.length === 0 });
+      console.log(`${c.memorySubset ? "M" : "-"} ${c.id.slice(0, 8)} recalled=${recalledIds.length} missing=${missing.length}`);
+    } catch (e) {
+      results.push({ caseId: c.id, memorySubset: c.memorySubset, error: e instanceof Error ? e.message : String(e) });
+      console.error(`x ${c.id.slice(0, 8)}`, e);
+    }
+  }
+  writeFileSync(`scripts/memory-eval/out/results-${tag}.json`, JSON.stringify(results, null, 2));
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+Run (memory subset first, cheap): `npx tsx scripts/memory-eval/run-cases.ts --subset --tag new`
+Expected: one line per case; no `x` lines. If every case shows `recalled=0`, the agent's memory or `memory_config.retrieval.enabled` is off, or the metadata is not emitted — fix before continuing (check the server log for `[EXULU] memory:` warnings).
+
+- [ ] **Step 4: Judge and report**
+
+`scripts/memory-eval/report.ts`:
+
+```ts
+/**
+ * Stage 1: recall hit rate over the memory subset. Stage 2: LLM-as-judge score
+ * of each new answer against the verified answer (0–100) on Newton's model via
+ * LiteLLM. Writes the markdown report.
+ */
+import "dotenv/config";
+import { readFileSync, writeFileSync } from "node:fs";
+
+const tag = process.argv.includes("--tag") ? process.argv[process.argv.indexOf("--tag") + 1] : "new";
+const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "vertex-gemini-3.8-flash";
+const LITELLM = process.env.LITELLM_BASE_URL!;
+const KEY = process.env.LITELLM_MASTER_KEY!;
+
+const PROMPT = `You compare two answers from a service assistant for elevator technicians.
+Score how well the ACTUAL answer preserves the correctness, completeness and the concrete guidance
+(part names, menu paths, checks, order of steps) of the VERIFIED answer that a technician rated positively.
+100 = same guidance and facts; 70 = same guidance with minor omissions or extra text; 50 = partly right;
+0 = contradicts or misses the guidance. Output JSON only: {"score": <0-100>, "reason": "<one sentence>"}.
+
+VERIFIED answer:
+{expected_output}
+
+ACTUAL answer:
+{actual_output}`;
+
+async function judge(expected: string, actual: string): Promise<{ score: number; reason: string }> {
+  const res = await fetch(`${LITELLM}/v1/chat/completions`, {
+    method: "POST", headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: JUDGE_MODEL, temperature: 0, response_format: { type: "json_object" },
+      messages: [{ role: "user", content: PROMPT.replace("{expected_output}", expected).replace("{actual_output}", actual) }] }),
+  });
+  const json: any = await res.json();
+  const text = json.choices?.[0]?.message?.content ?? "{}";
+  try { const p = JSON.parse(text); return { score: Number(p.score) || 0, reason: String(p.reason ?? "") }; }
+  catch { return { score: 0, reason: `unparseable: ${text.slice(0, 80)}` }; }
+}
+
+async function main() {
+  const results = JSON.parse(readFileSync(`scripts/memory-eval/out/results-${tag}.json`, "utf8")) as any[];
+  const ok = results.filter((r) => !r.error);
+  const subset = ok.filter((r) => r.memorySubset);
+  const hits = subset.filter((r) => r.hit).length;
+  const hitRate = subset.length ? hits / subset.length : 1;
+  for (const r of ok) r.judge = await judge(r.verifiedAnswer, r.answer);
+  const mean = ok.length ? ok.reduce((s, r) => s + r.judge.score, 0) / ok.length : 0;
+  const lowSubset = subset.filter((r) => r.judge.score < 50);
+  const lines = [
+    `# Newlift memory regression eval (${tag})`, "",
+    `Date: ${new Date().toISOString().slice(0, 10)} · cases: ${ok.length} (memory subset ${subset.length}, errors ${results.length - ok.length}) · judge: ${JUDGE_MODEL}`, "",
+    `## Stage 1 — recall hit rate`, "",
+    `Hit rate: **${(hitRate * 100).toFixed(1)} %** (${hits}/${subset.length}). Gate ≥ 95 %: ${hitRate >= 0.95 ? "PASS" : "FAIL"}`, "",
+    ...subset.filter((r) => !r.hit).map((r) => `- MISS ${r.caseId}: missing ${r.missing.join(", ")} · recalled ${r.recalled.map((m: any) => m.title).join(" | ")}`),
+    "", `## Stage 2 — answer quality vs verified answers`, "",
+    `Mean score: **${mean.toFixed(1)}** (gate ≥ 70: ${mean >= 70 ? "PASS" : "FAIL"}) · memory-subset cases below 50: ${lowSubset.length} (gate 0: ${lowSubset.length === 0 ? "PASS" : "FAIL"})`, "",
+    `| case | subset | hit | score | reason |`, `| --- | --- | --- | --- | --- |`,
+    ...ok.map((r) => `| ${r.caseId.slice(0, 8)} | ${r.memorySubset ? "M" : ""} | ${r.hit ? "✓" : "✗"} | ${r.judge.score} | ${r.judge.reason.replace(/\|/g, "/")} |`),
+    "", `## Decision`, "", `${hitRate >= 0.95 && mean >= 70 && lowSubset.length === 0 ? "GO" : "NO-GO"} — see gates above.`,
+  ];
+  writeFileSync(`scripts/memory-eval/out/report-${tag}.md`, lines.join("\n"));
+  console.log(lines.slice(0, 12).join("\n"));
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+Run:
+
+```bash
+npx tsx scripts/memory-eval/run-cases.ts --sample 30 --tag new      # full run: subset + 30 random
+npx tsx scripts/memory-eval/report.ts --tag new
+```
+
+Expected: Stage 1 PASS at Newton's current limit. If FAIL: set Newton's "Memories per answer" to 25 in the workbench, rerun both commands with `--tag new-25`; if still FAIL, implement the keyword-variant expansion in `src/exulu/memory/recall.ts` (spec §3.1: derive variants of the question tokens with `deriveKeywordVariants` from `ee/agentic-retrieval/pipeline/text-utils.ts`, run a second `tsvector` search with them, merge before the cap), rebuild, restart, rerun.
+
+Optional baseline: check out the primary backend checkout's `develop` build on another port (`PORT=3101` with the primary `node_modules/@exulu/backend` symlink restored) and run `run-cases.ts --sample 30 --tag develop` with `EVAL_BASE_URL=http://localhost:3101`, then `report.ts --tag develop` for a side-by-side mean.
+
+- [ ] **Step 5: File the report and restore the symlink**
+
+```bash
+mkdir -p /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory/docs/superpowers/evals
+cp scripts/memory-eval/out/report-new.md /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory/docs/superpowers/evals/2026-09-29-newlift-memory-recall.md
+cat > scripts/memory-eval/README.md <<'EOF'
+# Memory regression eval
+Replays Newlift's positively rated answers through the run endpoint and checks (1) the memories the verified
+answer used are recalled, (2) an LLM judge scores the new answer against the verified one.
+Prereqs: DB tunnel on 127.0.0.1:5433, dev server on $PORT with the @exulu/backend build under test,
+EXULU_API_KEY (agent-scoped org key), LITELLM_BASE_URL + LITELLM_MASTER_KEY.
+Steps: extract-cases → run-cases [--subset | --sample N] [--tag t] → report [--tag t]. Output in out/ (gitignored).
+Note: the @exulu/backend symlink normally points at ../exulu/backend; point it at the worktree only for the eval.
+EOF
+rm node_modules/@exulu/backend && ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend node_modules/@exulu/backend
+git add scripts/memory-eval .gitignore && git -c commit.gpgsign=false commit -m "chore(eval): memory regression eval scripts against positive-feedback cases"
+cd /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory && git add docs/superpowers/evals && git -c commit.gpgsign=false commit -m "docs(evals): Newlift memory recall regression report"
+```
+
+Expected: both commits land (newlkiag on `develop`, backend on `feat/agent-memory`); the symlink points back at the primary checkout. The report's Decision line is the gate for the rest of this plan: on NO-GO, stop and report to Daniel before starting the frontend tasks.
 
 ---
 
@@ -3080,6 +3387,9 @@ en, new block `agents.editor.memory` (next to `editor.knowledge`, line 454):
         "augmentLabel": "Widen searches with terms people taught it",
         "augmentHint": "Adds synonyms from memories and the glossary so documents are found under either name.",
         "searchOff": "Turn on Knowledge search above to use this.",
+        "recallOff": "Turn on “Look up memories before every answer” to use this.",
+        "nestedTitle": "When knowledge search runs, recalled memories may also…",
+        "limitUnit": "per answer",
         "rulesTitle": "Sharing rules",
         "visibilityLabel": "Visibility question",
         "visibilityHint": "Users can still change it on the save card.",
@@ -3140,6 +3450,9 @@ de, same keys:
         "augmentLabel": "Suchen mit gelernten Begriffen erweitern",
         "augmentHint": "Ergänzt Synonyme aus Erinnerungen und Glossar, damit Dokumente unter beiden Namen gefunden werden.",
         "searchOff": "Schalte oben die Wissenssuche ein, um das zu nutzen.",
+        "recallOff": "Schalte „Vor jeder Antwort Erinnerungen nachschlagen“ ein, um das zu nutzen.",
+        "nestedTitle": "Wenn die Wissenssuche läuft, dürfen genutzte Erinnerungen außerdem…",
+        "limitUnit": "pro Antwort",
         "rulesTitle": "Freigaberegeln",
         "visibilityLabel": "Frage nach Sichtbarkeit",
         "visibilityHint": "Nutzer können sie auf der Speicherkarte weiterhin ändern.",
@@ -3312,17 +3625,32 @@ export function MemorySection({ editor, refs }: EditorSectionProps) {
         <p className="text-sm font-medium">{t("editor.memory.howTitle", { agent: agentName })}</p>
         <p className="text-xs text-muted-foreground">{t("editor.memory.howHint")}</p>
       </div>
+      {/* Primary switch: the ONE place memory retrieval is turned on (spec §3.1 "recall once"). */}
       <SettingRow label={t("editor.memory.retrievalLabel")} description={t("editor.memory.retrievalHint", { agent: agentName })}>
-        <Switch checked={cfg.retrieval.enabled} onCheckedChange={(v) => setCfg({ retrieval: { ...cfg.retrieval, enabled: v } })} />
+        <div className="flex items-center gap-3">
+          <Input id="memory-limit" aria-label={t("editor.memory.limitLabel")} type="number" min={MEMORY_LIMIT_MIN} max={MEMORY_LIMIT_MAX} className="w-20"
+            disabled={!cfg.retrieval.enabled} value={cfg.retrieval.limit}
+            onChange={(e) => setCfg({ retrieval: { ...cfg.retrieval, limit: Math.min(MEMORY_LIMIT_MAX, Math.max(MEMORY_LIMIT_MIN, Number(e.target.value) || MEMORY_LIMIT_MIN)) } })} />
+          <span className="text-xs text-muted-foreground">{t("editor.memory.limitUnit")}</span>
+          <Switch checked={cfg.retrieval.enabled} onCheckedChange={(v) => setCfg({ retrieval: { ...cfg.retrieval, enabled: v } })} />
+        </div>
       </SettingRow>
-      {([["override", "overrideLabel", "overrideHint"], ["filePrioritization", "fileLabel", "fileHint"], ["queryAugmentation", "augmentLabel", "augmentHint"]] as const).map(([key, label, hint]) => (
-        <SettingRow key={key} label={t(`editor.memory.${label}`)} description={searchOn ? t(`editor.memory.${hint}`, { agent: agentName }) : t("editor.memory.searchOff")}>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="font-normal">{t("editor.memory.usesSearch")}</Badge>
-            <Switch disabled={!searchOn} checked={searchOn && wizardCfg.memory[key]} onCheckedChange={(v) => setSearchMemory({ [key]: v })} />
-          </div>
-        </SettingRow>
-      ))}
+      {/* Nested: what knowledge search may additionally do with the recalled set. */}
+      <div className={cn("ml-4 space-y-1 border-l pl-4", (!cfg.retrieval.enabled || !searchOn) && "opacity-60")}>
+        <p className="text-xs font-medium text-muted-foreground">{t("editor.memory.nestedTitle")}</p>
+        {([["override", "overrideLabel", "overrideHint"], ["filePrioritization", "fileLabel", "fileHint"], ["queryAugmentation", "augmentLabel", "augmentHint"]] as const).map(([key, label, hint]) => {
+          const nestedDisabled = !cfg.retrieval.enabled || !searchOn;
+          const description = !cfg.retrieval.enabled ? t("editor.memory.recallOff") : !searchOn ? t("editor.memory.searchOff") : t(`editor.memory.${hint}`, { agent: agentName });
+          return (
+            <SettingRow key={key} label={t(`editor.memory.${label}`)} description={description}>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="font-normal">{t("editor.memory.usesSearch")}</Badge>
+                <Switch disabled={nestedDisabled} checked={!nestedDisabled && wizardCfg.memory[key]} onCheckedChange={(v) => setSearchMemory({ [key]: v })} />
+              </div>
+            </SettingRow>
+          );
+        })}
+      </div>
 
       <p className="text-sm font-medium">{t("editor.memory.rulesTitle")}</p>
       <SettingRow label={t("editor.memory.visibilityLabel")} description={t("editor.memory.visibilityHint")}>
@@ -3330,10 +3658,6 @@ export function MemorySection({ editor, refs }: EditorSectionProps) {
           <ToggleGroupItem value="ask">{t("editor.memory.askEveryTime")}</ToggleGroupItem>
           <ToggleGroupItem value="preselect_private">{t("editor.memory.preselectPrivate")}</ToggleGroupItem>
         </ToggleGroup>
-      </SettingRow>
-      <SettingRow label={t("editor.memory.limitLabel")} description={t("editor.memory.limitHint")} htmlFor="memory-limit">
-        <Input id="memory-limit" type="number" min={MEMORY_LIMIT_MIN} max={MEMORY_LIMIT_MAX} className="w-24" value={cfg.retrieval.limit}
-          onChange={(e) => setCfg({ retrieval: { ...cfg.retrieval, limit: Math.min(MEMORY_LIMIT_MAX, Math.max(MEMORY_LIMIT_MIN, Number(e.target.value) || MEMORY_LIMIT_MIN)) } })} />
       </SettingRow>
       <SettingRow label={t("editor.memory.guestsLabel")} description={t("editor.memory.guestsHint")}>
         <div className="flex items-center gap-2 text-sm"><span>{t("editor.memory.guestsShow")}</span><Switch checked={cfg.guests.showRecalled} onCheckedChange={(v) => setCfg({ guests: { showRecalled: v } })} /></div>
@@ -3392,7 +3716,7 @@ export function MemoryStep({ onOpenSection }: { onOpenSection: () => void }) {
 ```bash
 npx vitest run "app/(application)/agents" && npx tsc --noEmit && npx eslint "app/(application)/agents/edit" --max-warnings 0
 ```
-Manual: agent without memory → Off state, picker lists valid bases first with "used by …", invalid ones greyed with the missing-fields hint and not selectable; Turn on memory → On state with stats (counts match `/data/<ctx>`), the four toggles (three disabled with hint when knowledge search is off), sharing rules; Save changes persists `memory` and `memory_config` (check the agent query); Turn off → ConfirmDialog → Off state; Change store → ConfirmDialog with the picker. Wizard's Memory step shows the pointer.
+Manual: agent without memory → Off state, picker lists valid bases first with "used by …", invalid ones greyed with the missing-fields hint and not selectable; Turn on memory → On state with stats (counts match `/data/<ctx>`), the primary switch with the limit field, the three nested switches (disabled with the "recall off" hint when the primary switch is off, with the "knowledge search off" hint when search is off), sharing rules; Save changes persists `memory` and `memory_config` (check the agent query); Turn off → ConfirmDialog → Off state; Change store → ConfirmDialog with the picker. Wizard's Memory step shows the pointer.
 
 - [ ] **Step 9: Commit**
 
@@ -3437,4 +3761,4 @@ Expected: only the pre-existing `nav-config` single-right test fails; build clea
 
 - [ ] **Step 4: Report**
 
-Summarise per repo: commits on `feat/agent-memory`, test totals, the pre-existing failures left untouched, and the UAT results. Do not push or merge; Daniel decides.
+Summarise per repo: commits on `feat/agent-memory`, test totals, the pre-existing failures left untouched, the UAT results, and the Newlift eval verdict from Task 8b (link the report). Do not push or merge; Daniel decides.

@@ -42,9 +42,11 @@ write-access check. The only schema change is one json column on `agents`. **Zer
 | Editing and forgetting | Same mechanism: `memory_update` and `memory_forget` tools whose approval step is a diff or forget card. Rejected: flags, curators, corrections queue. Showing who created a memory is enough; a user without write rights asks the creator or an admin. |
 | Access on save | The card embeds the existing **RBACControl** (private, users, roles, teams, public, with read/write per subject). Default is the context's `defaultRightsMode` (read for that mode) or the agent's preselect. |
 | Guests | **Use versus show.** The server keeps using memories for guest sessions (they only ever match public items). A per-agent switch decides whether recalled memories are shown to guests. Guests never get the remember/update/forget tools, because a memory needs an owner. |
+| Recall once, use by reference | One recall step per turn owns memory retrieval. Its output is injected once into the system prompt, shown as "Recalled N memories", and handed to the knowledge-search tool, whose memory phase no longer retrieves anything and no longer appends memory chunks to its result. Nothing reaches the model twice. (Decided 2026-09-29 after finding the streaming path had injection disabled and the search tool re-fetching.) |
 | Recalled memories | Delivered as **message metadata** (`recalledMemories`). Metadata is persisted with the message and never reaches the model (the SDK's message conversion reads parts only), so it costs no context tokens. |
+| Newlift regression eval | Acceptance gate for the recall change: a standalone script replays Newlift's positive-feedback answers (275, of which 17 used memory) against the new recall over the tunnelled Newlift database and reports memory hit rate and answer quality (§6.1). No platform eval feature involved. |
 | Retrieval bug | The pre-fetch in `generateSync`/`generateStream` searches without a user, so `applyAccessControl` returns only public rows and private memories are never used on the plain chat path. Fixed here by passing user and role. |
-| Retrieval toggles | The four knowledge-search memory toggles stay in the `agentic_context_search` tool config; the workbench reads and writes them from the memory section, and the wizard's Memory step becomes a link there. Retrieval on/off and the per-answer limit are new agent config. |
+| Retrieval toggles | "Look up memories before every answer" (recall on/off plus the per-answer limit) is new agent config and is the single switch. The three knowledge-search memory behaviours (override, file hints, query widening) stay in the `agentic_context_search` tool config, are shown nested under that switch as "when knowledge search runs, recalled memories may also …", and are disabled when recall is off. The wizard's Memory step becomes a link. |
 | Destructive actions | Forget, turn memory off, change store, and dismiss all confirm through the shared `ConfirmDialog`. |
 | Picker | Contexts that fail the memory-base contract are listed **disabled** with the hint "Not configured correctly for memory, must include the fields …". |
 
@@ -77,6 +79,8 @@ write-access check. The only schema change is one json column on `agents`. **Zer
   them (the card is the consent).
 - Message metadata is UI-only. The model only ever sees the memory block injected for the current turn and
   its own citation markers.
+- Memory is recalled **once** per turn, before the model runs. Every consumer (system prompt, UI, knowledge
+  search) works from that one set; no component fetches memories on its own.
 
 ## 2. Data model
 
@@ -150,11 +154,26 @@ existing usage metadata. Omitted for guest sessions when `guests.showRecalled` i
 
 ## 3. Backend
 
-### 3.1 Retrieval (`generateSync`, `generateStream`)
+### 3.1 Recall, once per turn (`generateSync`, `generateStream`)
 
-- Skip the pre-fetch when `memory_config.retrieval.enabled === false`.
-- `context.search({ ..., user, role: user?.role?.id, limit: memory_config.retrieval.limit })` in both paths.
-  Guests (no user) keep today's behaviour: public items only.
+Today the streaming path runs the memory search but has the injection commented out, and the
+knowledge-search tool's memory phase re-fetches (keyword recall over the whole base) and appends memory
+chunks to its result. This design replaces both with one recall step, `recallMemories()` in
+`src/exulu/memory/recall.ts`, called at the start of both generation paths:
+
+- Skip entirely when `memory_config.retrieval.enabled === false` (then no memories reach the model at all,
+  not even through knowledge search).
+- `context.search({ ..., user, role: user?.role?.id, method: "hybridSearch", limit: memory_config.retrieval.limit })`.
+  Hybrid search covers semantic and full-text matching of the question; the pipeline's separate keyword-variant
+  recall is dropped. Guests (no user) keep today's behaviour: public items only. If the Newlift eval (§6.1)
+  shows verified memories missing, a keyword-variant expansion of the question is added to this same step —
+  never a second retrieval elsewhere.
+- The result is the turn's memory set. It is (1) injected once into the system prompt as the block below,
+  (2) emitted as `recalledMemories` metadata, and (3) passed to the knowledge-search tool as its memory
+  chunks. The pipeline's memory phase keeps its model-side judgement (relevance filter, override, file
+  hints, query widening) on that set but performs no retrieval of its own and does not add memory chunks
+  to the tool result; the override directive still quotes the authoritative memory because that is a
+  distinct instruction, not a second copy.
 - Injected block (system prompt, current turn only):
 
   ```
@@ -167,11 +186,10 @@ existing usage metadata. Omitted for guest sessions when `guests.showRecalled` i
   (`components/message-renderer.tsx`, "flexibleCitationRegex"; chunk fields optional), so the existing
   inline citation badges render for memories with no frontend change. Memory item ids in the block are what
   `memory_update` / `memory_forget` receive.
-- `RecallCollector` (`src/exulu/memory/recall-collector.ts`): request-scoped; `add(items, source)`,
-  `list()` (de-duplicated by item id), `resolveCreators(db)` (one users query at finish). The pre-fetch adds
-  its hits; the knowledge-search memory phase adds `memoryChunksForAnswer` (the pipeline receives the
-  collector through tool params next to today's `memory: memoryItems`). `generateStream` returns the
-  collector; `routes.ts` reads it in `messageMetadata` on the `finish` part.
+- `RecallCollector` (`src/exulu/memory/recall-collector.ts`): request-scoped, filled by the recall step
+  before the model runs (item rows loaded with the user's RBAC, creator names resolved in one query).
+  `list()` is the turn's set. `generateStream` returns the collector; `routes.ts` reads it in
+  `messageMetadata` on the `finish` part. Nothing adds to it later.
 
 ### 3.2 Tools (`src/exulu/memory/tools.ts`, replaces `src/templates/tools/memory-tool.ts`)
 
@@ -215,7 +233,11 @@ Pre-approval: the wrapper never applies the `approvedTools` shortcut to memory t
 - The old tool id `create_<ctx>_memory_item` disappears; `disabledTools` or pre-approval entries that name it
   become inert. Existing memory items are not touched; new items store `description` without the old
   "Description: … Surrounding Context: …" prefixes.
-- `ee/agentic-retrieval/pipeline/memory.ts`: only adds to the collector; behaviour unchanged.
+- `ee/agentic-retrieval/pipeline/memory.ts` / `index.ts`: the memory phase no longer receives the memory
+  context (so `recallMemoryByKeywords` and the 5-minute item cache are unused and removed) and the pipeline
+  no longer appends `memoryChunksForAnswer` to the tool result. Override, file hints and query widening work
+  on the recalled set exactly as before. Newton (Newlift) is the reference deployment for this change; the
+  regression eval in §6.1 gates the merge.
 
 ## 4. Frontend
 
@@ -275,9 +297,11 @@ is absent. Deviation from the mockup: no numbered pills in the text, no mobile b
   `memory` and default `memory_config`.
 - **On**: header "Memory · On · Stored in <context>" (link to `/data/<ctx>`), **Change store** and **Turn
   off** (both ConfirmDialog). Three stat cards from `memoryBaseStats` (memories with public/private split,
-  contributors of N users, last saved by …). "How <agent> uses memories": toggle 1 = `retrieval.enabled`;
-  toggles 2–4 = the existing `memory` entry of the knowledge-search config (override, filePrioritization,
-  queryAugmentation), disabled with a hint when knowledge search is off. "Sharing rules": visibility
+  contributors of N users, last saved by …). "How <agent> uses memories": one primary switch, "Look up memories
+  before every answer" (`retrieval.enabled`) with the per-answer limit beside it; nested under it, indented
+  and titled "When knowledge search runs, recalled memories may also…", the three existing `memory` entries
+  of the knowledge-search config (override, filePrioritization, queryAugmentation). The nested three are
+  disabled when the primary switch is off or knowledge search is off, each with a hint saying which. "Sharing rules": visibility
   question (Ask every time / Preselect private), memories per answer (1–50), show recalled memories to
   guests. Warning banner when the configured context fails the contract or no longer exists.
 - The wizard's Memory step is replaced by a note linking to the section. Dropped for now: flagged card,
@@ -315,6 +339,32 @@ No violet accents; existing palette.
 - `generate-stream` unit: decisions parsed from incoming messages; pre-fetch passes user/role and limit;
   disabled retrieval skips the search.
 - `memoryBaseStats` resolver: counts respect RBAC; contributors distinct.
+
+### 6.1 Newlift regression eval (acceptance gate for the recall change)
+
+A standalone script, not the platform's eval feature. It runs from the newlkiag repo (which links
+`@exulu/backend` to the worktree build and owns the `newton_memory_context` definition and LiteLLM access)
+against the Newlift database over the local tunnel (`127.0.0.1:5433`, database `exulu-test`, IAM user).
+
+- **Cases**: every `feedback` row with `score = 1` for the production Newton agent (275 at planning time).
+  For each: the assistant message closest before the feedback time in that session, the user question
+  before it, the prior turns as text, and the memory item ids the answer actually used (tool outputs carry
+  `chunk_id: "memory:<item_id>"`). 17 answers in 15 sessions used memory; those form the **memory subset**.
+- **How cases are replayed**: through the real run endpoint (`POST /agents/litellm/run/<agent>` with
+  `stream: true`) of the newlkiag dev server running the worktree build, one fresh session per case, prior
+  user turns replayed in order (max 4), then the question. The stream's message metadata carries
+  `recalledMemories` (the exact set the model was given) and the text deltas carry the answer, so one call
+  per case yields both measurements with no script-side bootstrapping of the app.
+- **Stage 1, recall hit rate (deterministic)**: for each memory-subset case, every memory id the verified
+  answer used must appear in `recalledMemories`. Report hit rate, per-case misses with the memory titles.
+  Gate: ≥ 95 % at Newton's limit (10); if lower, re-run at limit 25 and, if that passes, set Newton's limit
+  to 25; if still lower, add the keyword-variant expansion (§3.1) and re-run.
+- **Stage 2, answer quality (model-judged, memory subset plus a 30-case random sample of the rest)**: score
+  each new answer against the verified answer with an LLM-as-judge prompt (0–100) on Newton's own model via
+  LiteLLM. Gate: mean ≥ 70 and no memory-subset case below 50. Optionally the same cases are run against
+  the current `develop` build on a second port for a side-by-side mean.
+- Output: a markdown report committed under `docs/superpowers/evals/2026-09-29-newlift-memory-recall.md`
+  with counts, hit rate, misses, judge scores and the decision.
 
 **Frontend (vitest, pure modules)**
 - `memory-card-data.test.ts`: part detection, decision encoding, resolved-state mapping from outputs.
