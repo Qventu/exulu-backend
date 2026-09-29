@@ -102,7 +102,7 @@ for the columns themselves.
 
 | Field | Type | Why |
 |---|---|---|
-| `source` | text | row meta ("Upload · / Teams · / Recorded on phone ·") and the Source filter |
+| `recording_source` | text | row meta ("Upload · / Teams · / Recorded on phone ·") and the Source filter. **Not** `source`: `convertContextToTableDefinition` already injects a `source` column on every context (the ingestion source), so that name would collide |
 | `job_id` | uuid | back-link to the pipeline row (audio, video, re-review) |
 | `recorded_at` | date | when it *happened*, so This week / Earlier groups correctly — `updatedAt` moves on every correction |
 | `speaker_count` | number | "5 people" / "3 speakers" without parsing `raw_segments` per row |
@@ -114,7 +114,8 @@ meeting jobs, otherwise the job's `createdAt`.
 
 **Backfill.** One new hand-written block in `src/postgres/init-exulu-db.ts`, after `contextDatabases` has
 added the columns, fills existing rows from `transcription_jobs` joined on `saved_item_id`. Idempotent:
-`WHERE transcriptions_items.source IS NULL`, which matches zero rows on every boot after the first.
+`WHERE transcriptions_items.recording_source IS NULL`, which matches zero rows on every boot after the
+first.
 
 ### 2.2 `corrected_segments` (stage 2)
 
@@ -229,7 +230,7 @@ A pure `mergeTranscriptRows(jobs, items)` in `types.ts` maps both onto one `Tran
 |---|---|
 | "N in progress" collapsed row, failed jobs with a recovery action | jobs (`recording`, `queued`, `transcribing`, `failed`) |
 | Needs review tab and amber count | jobs (`awaiting_review`) |
-| All / Mine / Shared with me, search, Source / Project / Date filters | items |
+| All / Mine / Shared with me, search, Source / Project / Date filters | items (`created_by` and `rights_mode` are auto-added to every RBAC'd context by `addCoreFields`, so the tabs need no new column) |
 | Rows grouped This week / Earlier | both, merged |
 
 **The People filter is deferred.** The design's Filter button offers Source, Project, Date and People, but
