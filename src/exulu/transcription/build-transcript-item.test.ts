@@ -89,3 +89,65 @@ describe("buildTranscriptItemInput", () => {
     });
   });
 });
+
+describe("buildTranscriptItemInput — denormalised list columns", () => {
+  it("carries the pipeline source and the job id", () => {
+    const item = buildTranscriptItemInput(
+      args({ row: row({ id: "job-42", source: "recall" }) }),
+    );
+    expect(item.recording_source).toBe("recall");
+    expect(item.job_id).toBe("job-42");
+  });
+
+  it("defaults the source to whisper when the row predates the column", () => {
+    const item = buildTranscriptItemInput(args({ row: row({ source: null }) }));
+    expect(item.recording_source).toBe("whisper");
+  });
+
+  it("uses join_at as recorded_at for a scheduled meeting", () => {
+    const item = buildTranscriptItemInput(
+      args({
+        row: row({
+          source: "recall",
+          join_at: "2026-09-10T07:00:00.000Z",
+          createdAt: "2026-09-10T09:31:00.000Z",
+        }),
+      }),
+    );
+    expect(item.recorded_at).toBe("2026-09-10T07:00:00.000Z");
+  });
+
+  it("falls back to the job's createdAt when there is no join_at", () => {
+    const item = buildTranscriptItemInput(
+      args({ row: row({ join_at: null, createdAt: "2026-09-21T12:00:00.000Z" }) }),
+    );
+    expect(item.recorded_at).toBe("2026-09-21T12:00:00.000Z");
+  });
+
+  it("counts distinct speaker labels, not segments", () => {
+    const item = buildTranscriptItemInput(
+      args({
+        row: row({
+          raw_segments: [
+            { start: 0, end: 1, text: "a", speaker: "SPEAKER_00" },
+            { start: 1, end: 2, text: "b", speaker: "SPEAKER_01" },
+            { start: 2, end: 3, text: "c", speaker: "SPEAKER_00" },
+          ],
+        }),
+      }),
+    );
+    expect(item.speaker_count).toBe(2);
+  });
+
+  it("reports zero speakers when there are no segments", () => {
+    const item = buildTranscriptItemInput(args({ row: row({ raw_segments: [] }) }));
+    expect(item.speaker_count).toBe(0);
+  });
+
+  it("carries the project id so the row meta and filter need no join", () => {
+    const item = buildTranscriptItemInput(
+      args({ row: row({ project_id: "proj-7" }) }),
+    );
+    expect(item.project_id).toBe("proj-7");
+  });
+});

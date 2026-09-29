@@ -41,4 +41,12 @@ export const buildTranscriptItemInput = ({
   video_s3key: row.video_s3key ?? undefined,
   rights_mode: rightsMode,
   created_by: row.created_by,
+  // Denormalised list columns (spec §2.1).
+  recording_source: row.source ?? "whisper",
+  job_id: row.id,
+  recorded_at: row.join_at ?? row.createdAt,
+  speaker_count: new Set(
+    (row.raw_segments ?? []).map((segment: { speaker: string }) => segment.speaker),
+  ).size,
+  project_id: row.project_id ?? undefined,
 });

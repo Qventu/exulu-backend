@@ -354,6 +354,30 @@ export const execute = async ({ contexts }: { contexts: ExuluContext[] }) => {
   console.log("[EXULU] Checking Exulu IMP database status.");
   await up(db);
   await contextDatabases(contexts);
+  // One-time backfill of the Transcripts home list columns (spec
+  // 2026-09-29 §2.1). addMissingFields has just added the columns as NULL;
+  // it cannot populate them from another table. Idempotent: matches zero
+  // rows on every boot after the first.
+  if (
+    (await db.schema.hasTable("transcriptions_items")) &&
+    (await db.schema.hasColumn("transcriptions_items", "recording_source"))
+  ) {
+    const backfilled = await db.raw(
+      `UPDATE transcriptions_items AS i
+          SET recording_source = COALESCE(j.source, 'whisper'),
+              job_id           = j.id,
+              recorded_at      = COALESCE(j.join_at, j."createdAt"),
+              project_id       = j.project_id
+         FROM transcription_jobs AS j
+        WHERE j.saved_item_id = i.id
+          AND i.recording_source IS NULL`,
+    );
+    if (backfilled?.rowCount) {
+      console.log(
+        `[EXULU] Backfilled transcripts list columns on ${backfilled.rowCount} rows.`,
+      );
+    }
+  }
   console.log("[EXULU] Inserting default user and admin role.");
   const existingAdminRole = await db.from("roles").where({ name: "admin" }).first();
   const existingDefaultRole = await db.from("roles").where({ name: "default" }).first();
