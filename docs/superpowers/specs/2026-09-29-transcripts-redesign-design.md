@@ -82,16 +82,23 @@ redirects to `/transcriptions/review/<jobId>` on mount so existing links and boo
 
 ## 2. Data model
 
-No new tables. Two existing tables gain columns, both through idempotent blocks in
-`src/postgres/init-exulu-db.ts` — **context tables are create-if-absent only**, `addMissingFields` never runs
-for an existing context, so the `post_processing` migration at `init-exulu-db.ts:267` is the precedent to
-follow.
+No new tables. Two existing tables gain columns.
+
+**Columns migrate themselves.** `contextDatabases` calls `addMissingFields(knex, getTableName(context.id),
+contextFieldsForSync(context))` for every context whose table already exists
+(`src/postgres/init-exulu-db.ts:334-339`, added by `19df2fd` "add missing columns to existing context tables
+on boot"), and `initExuluDb` does the same for core tables from `coreSchemas` (`:160`). So declaring a field
+on `transcriptionsContext` or on `transcriptionJobsSchema` is sufficient — the column appears on the next
+boot, on new and existing databases alike. The hand-written `post_processing` block at `:267` predates
+`19df2fd` and is **not** the pattern to copy.
+
+What still needs a hand-written block is the **backfill**: `addMissingFields` adds a null column, it cannot
+populate it from another table.
 
 ### 2.1 `transcriptions_items` — five denormalised columns (stage 1)
 
-Added to `transcriptionsContext.fields` in `src/templates/contexts/transcriptions.ts` **and** to the
-migration block. New installs get them from the field definition; existing databases get them from the
-migration.
+Declared on `transcriptionsContext.fields` in `src/templates/contexts/transcriptions.ts`. No migration block
+for the columns themselves.
 
 | Field | Type | Why |
 |---|---|---|
@@ -105,14 +112,16 @@ migration.
 row. `speaker_count` is the count of distinct labels in `raw_segments`; `recorded_at` is `join_at` for
 meeting jobs, otherwise the job's `createdAt`.
 
-**Backfill.** The same migration block backfills existing rows by joining `transcription_jobs` on
-`saved_item_id`. Idempotent: `WHERE transcriptions_items.source IS NULL`.
+**Backfill.** One new hand-written block in `src/postgres/init-exulu-db.ts`, after `contextDatabases` has
+added the columns, fills existing rows from `transcription_jobs` joined on `saved_item_id`. Idempotent:
+`WHERE transcriptions_items.source IS NULL`, which matches zero rows on every boot after the first.
 
 ### 2.2 `corrected_segments` (stage 2)
 
-One `json` column on **both** `transcription_jobs` (`core-schema.ts`, picked up by `addMissingFields`, which
-*does* run for core tables) and `transcriptions_items` (context field + migration block). Null means
-"never corrected".
+One `json` column on **both** `transcription_jobs` (declared on `transcriptionJobsSchema` in
+`core-schema.ts`) and `transcriptions_items` (declared on `transcriptionsContext.fields`). Both migrate
+themselves on boot per §2. No backfill — null means "never corrected", which is the correct value for every
+existing row.
 
 Shape is the existing `RawSegment[]`: `{ start, end, text, speaker }`. Corrections only ever change `text`;
 start/end/speaker stay, which is what makes "Timestamps stay in place" true and lets the audio ribbon and
