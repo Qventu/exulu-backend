@@ -40,11 +40,18 @@ beforeEach(() => { createItem.mockClear(); updateItem.mockClear(); deleteItem.mo
 
 describe("memory_remember", () => {
   it("registers three approval-gated tools with fixed ids", () => {
-    const ids = createMemoryTools({ agent, context, user: me }).map((t) => t.id);
+    const created = createMemoryTools({ agent, context, user: me });
+    const ids = created.map((t) => t.id);
     expect(ids).toEqual(["memory_remember", "memory_update", "memory_forget"]);
     expect(tools().memory_remember.needsApproval).toBe(true);
     expect(typeof tools().memory_update.needsApprovalFn).toBe("function");
     expect(typeof tools().memory_forget.needsApprovalFn).toBe("function");
+  });
+
+  it("names every tool with its id, so the AI SDK's sanitized-name keying (which drops the display name) still routes to tool-memory_*", () => {
+    for (const t of createMemoryTools({ agent, context, user: me })) {
+      expect(t.name).toBe(t.id);
+    }
   });
 
   it("writes the decision's wording, type and rights over the model input and applies rbac grants", async () => {
@@ -65,10 +72,10 @@ describe("memory_remember", () => {
     expect(out.type).toBe("memory_saved");
   });
 
-  it("re-validates a stale decision type against the current enum (falls back to the first value)", async () => {
+  it("re-validates a stale decision type against the current enum (drops it, letting the column default apply)", async () => {
     const decision = { v: 1, kind: "remember", title: "T", information: "I", type: "DECISION", rights_mode: "private" };
     await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {}, memoryDecision: decision } as any, {} as any);
-    expect(createItem.mock.calls[0][0].type).toBe("FACT");
+    expect(createItem.mock.calls[0][0]).not.toHaveProperty("type");
   });
 
   it("saves the memory even when applying rbac grants fails, and warns instead of erroring", async () => {
@@ -101,11 +108,27 @@ describe("memory_update / memory_forget", () => {
     expect(await tools().memory_forget.needsApprovalFn!({ memoryId: "nope" }, { toolCallId: "c", messages: [] })).toBe(false);
   });
 
+  it("resolves needsApproval to false (not throw) when the visibility lookup rejects", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    visible.mockRejectedValueOnce(new Error("db down"));
+    await expect(tools().memory_update.needsApprovalFn!({ memoryId: "m1" }, { toolCallId: "c", messages: [] })).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("m1"), expect.anything());
+    warn.mockRestore();
+  });
+
   it("update merges the decision over the input and patches through updateItem", async () => {
     visible.mockResolvedValue([mine]);
     const out: any = await tools().memory_update.tool.execute!({ memoryId: "m1", information: "Model wording", reason: "user corrected", user: me, exuluConfig: {}, memoryDecision: { v: 1, kind: "update", information: "User wording" } } as any, {} as any);
     expect(updateItem).toHaveBeenCalledWith({ id: "m1", information: "User wording" }, {}, 4, "r1");
     expect(out).toMatchObject({ type: "memory_updated", itemId: "m1", information: "User wording" });
+  });
+
+  it("update leaves the type unchanged when the requested type no longer matches the enum", async () => {
+    visible.mockResolvedValue([mine]);
+    const out: any = await tools().memory_update.tool.execute!({ memoryId: "m1", information: "still valid", reason: "r", type: "DECISION", user: me, exuluConfig: {} } as any, {} as any);
+    expect(updateItem).toHaveBeenCalledWith({ id: "m1", information: "still valid" }, {}, 4, "r1");
+    expect(updateItem.mock.calls[0][0]).not.toHaveProperty("type");
+    expect(out.type).toBe("memory_updated");
   });
 
   it("update on someone else's PUBLIC memory returns memory_no_access with the creator, and never writes (public = read for everyone)", async () => {

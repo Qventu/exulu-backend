@@ -23,12 +23,22 @@ type ToolParams = Record<string, any> & { user?: User; exuluConfig?: any; memory
 
 const err = (message: string): MemoryToolOutput => ({ type: "memory_error", message, result: `Memory operation failed: ${message}` });
 
-/** Case-insensitive match against the context's type enum; first value when unknown. */
+/**
+ * Case-insensitive match against the context's type enum; drop unknown values
+ * rather than silently coercing to the first enum entry. `memory_remember`
+ * then omits `type` (the column default applies) and `memory_update` leaves
+ * the existing type unchanged when the model or a stale decision sends
+ * something that no longer matches the current enum.
+ *
+ * `canonicalizeEnumFields` (context-write-tools.ts) is not reused here: its
+ * contract is to return an error string for an unrecognized value, whereas
+ * memory writes must degrade gracefully (drop, don't fail the whole call).
+ */
 const resolveType = (context: ExuluContext, raw: unknown): string | undefined => {
   const values = memoryTypeValues(context);
   if (values.length === 0) return undefined;
   const wanted = String(raw ?? "").toUpperCase();
-  return values.find((v) => v.toUpperCase() === wanted) ?? values[0];
+  return values.find((v) => v.toUpperCase() === wanted);
 };
 
 async function creatorOf(row: MemoryItemRow, db: any): Promise<{ id: number; name: string } | null> {
@@ -50,7 +60,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
 
   const remember = new ExuluTool({
     id: "memory_remember",
-    name: "Remember",
+    name: "memory_remember",
     category,
     type: "function",
     config: [],
@@ -117,8 +127,16 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
   const needsWriteApproval = async (input: unknown): Promise<boolean> => {
     const id = typeof (input as any)?.memoryId === "string" ? (input as any).memoryId : "";
     if (!id || !user?.id) return false;
-    const { row, db } = await findVisible(context, id, user);
-    return !!row && (await canEditMemory(context, row, user, db));
+    try {
+      const { row, db } = await findVisible(context, id, user);
+      return !!row && (await canEditMemory(context, row, user, db));
+    } catch (e) {
+      // A DB failure here must not surface as a needsApproval crash — fail
+      // to "no approval needed", which routes the execute() call itself to
+      // memory_no_access rather than a broken confirmation prompt.
+      console.warn(`[EXULU] memory: needsApproval check failed for "${id}":`, e instanceof Error ? e.message : e);
+      return false;
+    }
   };
 
   const noAccess = async (id: string, row: MemoryItemRow | undefined, db: any): Promise<MemoryToolOutput> => {
@@ -132,7 +150,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
 
   const update = new ExuluTool({
     id: "memory_update",
-    name: "Update memory",
+    name: "memory_update",
     category,
     type: "function",
     config: [],
@@ -177,7 +195,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
 
   const forget = new ExuluTool({
     id: "memory_forget",
-    name: "Forget memory",
+    name: "memory_forget",
     category,
     type: "function",
     config: [],

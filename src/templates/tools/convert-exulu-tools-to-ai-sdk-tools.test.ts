@@ -301,9 +301,9 @@ describe("memory tool registration", () => {
 
   it("registers remember/update/forget for a signed-in user on a valid memory base", async () => {
     const tools = await callWith({ user });
-    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["Remember", "Update_memory", "Forget_memory"]));
-    expect((tools as any).Remember.needsApproval).toBe(true);
-    expect(typeof (tools as any).Update_memory.needsApproval).toBe("function");
+    expect(Object.keys(tools)).toEqual(expect.arrayContaining(["memory_remember", "memory_update", "memory_forget"]));
+    expect((tools as any).memory_remember.needsApproval).toBe(true);
+    expect(typeof (tools as any).memory_update.needsApproval).toBe("function");
   });
 
   it("registers nothing for guests (no user id) and for a context failing the contract", async () => {
@@ -324,17 +324,17 @@ describe("memory tool registration", () => {
 
   it("never applies the pre-approval shortcut to memory tools", async () => {
     const tools = await convertExuluToolsToAiSdkTools(
-      [] as never, [], ["tool-Remember", "tool-memory_remember"], [], [],
+      [] as never, [], ["tool-memory_remember"], [], [],
       [memoryContext] as never, user, undefined, undefined, undefined,
       undefined, undefined, model, agent, undefined, undefined, undefined,
     );
-    expect((tools as any).Remember.needsApproval).toBe(true);
+    expect((tools as any).memory_remember.needsApproval).toBe(true);
   });
 
   it("hands the matching decision to the wrapped execute by toolCallId", async () => {
     const seen: any[] = [];
     const fake = {
-      id: "memory_forget", name: "Forget memory", description: "d", type: "function", category: "m", needsApproval: true, config: [],
+      id: "memory_forget", name: "memory_forget", description: "d", type: "function", category: "m", needsApproval: true, config: [],
       tool: { execute: jest.fn(async (p: any) => { seen.push(p); return { type: "memory_forgotten" }; }) },
     } as never;
     const decisions = new Map([["call-1", { v: 1, kind: "forget" }]]);
@@ -343,7 +343,7 @@ describe("memory tool registration", () => {
       undefined, undefined, model, agent, undefined, undefined, undefined, undefined, decisions as never,
     );
     // The wrapper's execute is an async generator — drain it.
-    for await (const _chunk of (tools as any).Forget_memory.execute({ memoryId: "m1" }, { toolCallId: "call-1", messages: [] })) { /* drain */ }
+    for await (const _chunk of (tools as any).memory_forget.execute({ memoryId: "m1" }, { toolCallId: "call-1", messages: [] })) { /* drain */ }
     expect(seen[0].memoryDecision).toEqual({ v: 1, kind: "forget" });
     expect(seen[0].user).toBe(user);
   });
