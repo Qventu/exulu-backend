@@ -44,4 +44,9 @@ describe("recallMemories", () => {
     await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "q", user: undefined, db: dbFor() });
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined, role: undefined, limit: 10 }));
   });
+
+  it("builds the search text from the previous user turns when the question is a short follow-up", async () => {
+    await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "sorry, ich meinte 000048F2", user, db: dbFor(), previousUserTurns: ["Welche Steuerung ist in Anlage 000048F1 verbaut?"] });
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: "Welche Steuerung ist in Anlage 000048F1 verbaut?\nsorry, ich meinte 000048F2" }));
+  });
 });

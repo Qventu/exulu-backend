@@ -4,6 +4,7 @@ import type { ExuluContext } from "@SRC/exulu/context";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { resolveMemoryConfig } from "./config";
 import { buildMemoryPromptBlock, createRecallCollector, type RecallCollector } from "./recall-collector";
+import { buildRecallQuery } from "./recall-query";
 
 export type RecallResult = {
   collector: RecallCollector | undefined;
@@ -18,12 +19,13 @@ const EMPTY: RecallResult = { collector: undefined, memoryItems: undefined, prom
  * user-scoped hybrid search over the agent's memory context, limited by
  * memory_config, feeding the recall collector and the model-visible block.
  */
-export async function recallMemories({ agent, contexts, query, user, db }: {
+export async function recallMemories({ agent, contexts, query, user, db, previousUserTurns }: {
   agent: ExuluAgent | undefined;
   contexts: ExuluContext[] | undefined;
   query: string | undefined;
   user: User | undefined;
   db: any;
+  previousUserTurns?: string[];
 }): Promise<RecallResult> {
   if (!agent?.memory || !query) return { ...EMPTY };
   const context = contexts?.find((c) => c.id === agent.memory);
@@ -36,7 +38,7 @@ export async function recallMemories({ agent, contexts, query, user, db }: {
   if (!config.retrieval.enabled) return { collector, memoryItems: undefined, promptBlock: "" };
 
   const result = await context.search({
-    query,
+    query: buildRecallQuery(query, previousUserTurns ?? []),
     itemFilters: [],
     chunkFilters: [],
     method: "hybridSearch",

@@ -41,6 +41,7 @@ import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { recallMemories } from "./memory/recall";
+import { previousUserTexts } from "./memory/recall-query";
 import { collectMemoryDecisions } from "./memory/decisions";
 import type { RecallCollector } from "./memory/recall-collector";
 
@@ -356,7 +357,14 @@ export const generateSync = async ({
     }
 
     const { db: memoryDb } = await postgresClient();
-    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb });
+    // `messages` here holds only the prior conversation (the current `prompt`
+    // is passed separately to generateText, not appended to `messages`), so a
+    // placeholder stands in for it as the last element — previousUserTexts()
+    // drops "the last message" under the assumption that it is the current
+    // turn, and without the placeholder it would drop the actual last prior
+    // turn instead.
+    const currentAsUiMessage = { id: "current", role: "user", parts: query ? [{ type: "text", text: query }] : [] } as UIMessage;
+    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb, previousUserTurns: previousUserTexts([...messages, currentAsUiMessage]) });
     const memoryContext = memoryRecall.promptBlock;
     const memoryItems = memoryRecall.memoryItems;
 
@@ -755,7 +763,10 @@ export const generateStream = async ({
     }
 
     const { db: memoryDb } = await postgresClient();
-    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb });
+    // `messages` here already contains the history plus the current message
+    // as its last element (validated a few lines above), so
+    // previousUserTexts() correctly excludes only the current turn.
+    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb, previousUserTurns: previousUserTexts(messages) });
     const memoryContext = memoryRecall.promptBlock;
     const memoryItems = memoryRecall.memoryItems;
 
