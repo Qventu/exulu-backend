@@ -37,18 +37,24 @@ export async function recallMemories({ agent, contexts, query, user, db, previou
   const collector = createRecallCollector(context, user, db);
   if (!config.retrieval.enabled) return { collector, memoryItems: undefined, promptBlock: "" };
 
-  const result = await context.search({
-    query: buildRecallQuery(query, previousUserTurns ?? []),
-    itemFilters: [],
-    chunkFilters: [],
-    method: "hybridSearch",
-    sort: { field: "updatedAt", direction: "desc" },
-    trigger: "agent",
-    limit: config.retrieval.limit,
-    page: 1,
-    user,
-    role: user?.role?.id,
-  });
+  let result: Awaited<ReturnType<ExuluContext["search"]>> | undefined;
+  try {
+    result = await context.search({
+      query: buildRecallQuery(query, previousUserTurns ?? []),
+      itemFilters: [],
+      chunkFilters: [],
+      method: "hybridSearch",
+      sort: { field: "updatedAt", direction: "desc" },
+      trigger: "agent",
+      limit: config.retrieval.limit,
+      page: 1,
+      user,
+      role: user?.role?.id,
+    });
+  } catch (e) {
+    console.warn(`[EXULU] memory: recall failed for context "${context.id}"`, e instanceof Error ? e.message : e);
+    return { collector, memoryItems: undefined, promptBlock: "" };
+  }
   const chunks = result?.chunks ?? [];
   if (chunks.length === 0) return { collector, memoryItems: undefined, promptBlock: "" };
   await collector.addFromChunks(chunks, "prefetch");

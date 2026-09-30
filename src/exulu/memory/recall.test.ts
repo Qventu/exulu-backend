@@ -40,6 +40,19 @@ describe("recallMemories", () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  it("warns and returns an empty result without throwing when the search itself rejects", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failingSearch = jest.fn(async () => { throw new Error("vector store unreachable"); });
+    const failingContext: any = { id: "mem", name: "Memory", fields: [], search: failingSearch };
+    const r = await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [failingContext], query: "q", user, db: dbFor() });
+    expect(r.memoryItems).toBeUndefined();
+    expect(r.promptBlock).toBe("");
+    expect(r.collector).toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("mem"), expect.anything());
+    warn.mockRestore();
+  });
+
   it("passes no user for guests (public-only search)", async () => {
     await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "q", user: undefined, db: dbFor() });
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ user: undefined, role: undefined, limit: 10 }));
