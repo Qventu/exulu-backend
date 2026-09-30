@@ -1258,6 +1258,14 @@ export function createMutations(
       if (!context.user) {
         throw new Error("Authentication required to set the embedding model.");
       }
+      // Destructive: this drops a knowledge base's chunks table and triggers a
+      // full re-embed. Same gate as the other destructive context mutations
+      // in this file.
+      if (!context.user.super_admin) {
+        throw new Error(
+          "You are not authorized to set the embedding model via API, user must be super admin.",
+        );
+      }
 
       const model = args.model?.trim() || null;
       const queue = args.queue?.trim() || null;
