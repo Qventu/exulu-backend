@@ -33,6 +33,19 @@ describe("buildRecallQuery", () => {
   it("trims whitespace", () => {
     expect(buildRecallQuery("  hallo  ", [])).toBe("hallo");
   });
+
+  it("treats a message opening with nein/doch as a correction that needs context", () => {
+    const prev = ["Welche Steuerung ist in Anlage 000048F1 verbaut?"];
+    const doch = "Doch, das stimmt schon so wie ich es beschrieben habe fuer die gesamte Anlage im Erdgeschoss";
+    const nein = "Nein die Kabine faehrt bei dieser Anlage weiterhin voellig normal ohne jede Stoerung im Betrieb";
+    expect(buildRecallQuery(doch, prev)).toBe(`${prev[0]}\n${doch}`);
+    expect(buildRecallQuery(nein, prev)).toBe(`${prev[0]}\n${nein}`);
+  });
+
+  it("does not treat nein/doch in the middle of a self-contained question as a correction", () => {
+    const q = "Die Kabine faehrt normal, aber nein das Display zeigt trotzdem 0,2 m/s an bei Anlage 98200010";
+    expect(buildRecallQuery(q, ["earlier turn"])).toBe(q);
+  });
 });
 
 describe("previousUserTexts", () => {

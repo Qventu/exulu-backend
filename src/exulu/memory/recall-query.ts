@@ -5,7 +5,12 @@ export const SHORT_QUERY_WORDS = 8;
 /** Upper bound of the combined search text; the tail (current message) is always kept. */
 export const MAX_QUERY_CHARS = 600;
 /** Phrases that refer back to an earlier turn (DE/EN). */
-const REFERS_BACK = /\b(ich meinte|ich meine|meinte|sorry|nein,|doch,|das andere|die andere|der andere|das gleiche|dieselbe|derselbe|nochmal|noch mal|i meant|i mean|the same|that one|this one|the other)\b/i;
+const REFERS_BACK = /\b(ich meinte|ich meine|meinte|sorry|das andere|die andere|der andere|das gleiche|dieselbe|derselbe|nochmal|noch mal|i meant|i mean|the same|that one|this one|the other)\b/i;
+// Correction openers ("Nein, ...", "Doch, ...") are anchored to the start of the
+// message rather than folded into REFERS_BACK: a trailing \b after a literal
+// comma never matches in natural text, since the comma is followed by
+// whitespace, not a word character.
+const CORRECTION_OPENER = /^(nein|doch|falsch|nope|no)\b[,!.:]?/i;
 
 /**
  * Search text for the memory recall (spec §3.1, "conversation-aware"). The
@@ -16,7 +21,7 @@ const REFERS_BACK = /\b(ich meinte|ich meine|meinte|sorry|nein,|doch,|das andere
 export function buildRecallQuery(current: string, previousUserTurns: string[]): string {
   const cur = (current ?? "").trim();
   const words = cur.split(/\s+/).filter(Boolean).length;
-  const needsContext = words < SHORT_QUERY_WORDS || REFERS_BACK.test(cur);
+  const needsContext = words < SHORT_QUERY_WORDS || REFERS_BACK.test(cur) || CORRECTION_OPENER.test(cur);
   if (!needsContext) return cur.slice(0, MAX_QUERY_CHARS);
   const prev = previousUserTurns.map((t) => (t ?? "").trim()).filter(Boolean).slice(-2);
   if (prev.length === 0) return cur.slice(0, MAX_QUERY_CHARS);
