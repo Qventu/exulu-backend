@@ -63,6 +63,7 @@ import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
+import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
@@ -842,7 +843,10 @@ export const createExpressRoutes = async (
               };
             }
             if (part.type === "finish") {
-              return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt });
+              return {
+                ...finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt }),
+                ...recalledMemoriesMetadata({ recall: result.recall, agent, isGuest: !user?.id }),
+              };
             }
             return undefined;
           },
