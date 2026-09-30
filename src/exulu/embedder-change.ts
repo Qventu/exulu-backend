@@ -26,6 +26,12 @@ export type ChangeEmbedderDeps = {
   persist: (contextId: string, model: string | null, queue: string | null) => Promise<void>;
   hydrate: (contexts: ExuluContext[]) => Promise<void>;
   queueRegeneration: (context: ExuluContext) => Promise<{ jobs: string[]; items: number }>;
+  /**
+   * The model this context declares in code, or null. Injected rather than
+   * read off `context.embedder`, which by this point names the override that
+   * hydration assigned — not the default clearing falls back to.
+   */
+  codeModel: (context: ExuluContext) => string | null;
 };
 
 /**
@@ -53,9 +59,14 @@ export const changeContextEmbedder = async (
 ): Promise<{ case: RebuildCase; items: number; jobs: string[] }> => {
   const tableExists = await deps.chunksTableExists(context);
 
-  // Clearing the override: the context may end up with no embedder at all, so
-  // its chunks cannot be regenerated and the table has no valid shape.
-  if (!model) {
+  // Clearing is not an operation of its own: spec §3 makes it the same change
+  // with the code default as the target. Only a context that declares no
+  // model in code genuinely loses its embedder.
+  const target = model ?? deps.codeModel(context);
+
+  if (!target) {
+    // Nothing left to embed with: the context becomes unsearchable by design,
+    // and the table has no valid shape to keep.
     if (tableExists) await deps.dropChunksTable(context);
     await deps.persist(context.id, null, null);
     await deps.hydrate([context]);
@@ -64,7 +75,7 @@ export const changeContextEmbedder = async (
 
   // Validate first — this throws with an actionable message naming the exact
   // config.litellm.yaml entry to add, and nothing has been touched yet.
-  const { dimensionality } = deps.modelInfo(model);
+  const { dimensionality } = deps.modelInfo(target);
 
   const existing = await deps.currentDimensionality(context.id);
   const rebuild = decideRebuildCase(existing, dimensionality, tableExists);
@@ -84,6 +95,9 @@ export const changeContextEmbedder = async (
     await deps.deleteAllChunks(context);
   }
 
+  // `model` — not `target`. Clearing still deletes the override row; what
+  // changed is that the table was rebuilt for the code default it falls back
+  // to, and its chunks are queued for regeneration below.
   await deps.persist(context.id, model, queue);
   await deps.hydrate([context]);
 

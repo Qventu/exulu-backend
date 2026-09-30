@@ -1,5 +1,12 @@
 /**
- * Applies each context's stored embedder override onto the live instance.
+ * Makes each live context instance reflect the RESOLVED embedder state.
+ *
+ * "Resolved" in all three directions, not just the override one: the stored
+ * override when there is one, the model declared in code when the override
+ * has just been cleared, and nothing at all when the context has neither.
+ * Hydration that only ever assigns cannot undo itself, so a cleared override
+ * would survive on every replica that did not serve the mutation — and the
+ * chunks table it pointed at is already gone.
  *
  * `context.embedder` stays the single SYNCHRONOUS source of truth everywhere
  * (30 read sites across 8 files, several of which — the knex createTable
@@ -14,7 +21,7 @@
  * Design doc: docs/superpowers/specs/2026-09-30-context-embedder-settings-design.md §2
  */
 import { exuluApp } from "@SRC/exulu/app/singleton";
-import type { ExuluContext } from "./context";
+import type { ExuluContext, ExuluContextEmbedder } from "./context";
 import { resolveContextEmbedder, type ContextEmbedderInfo } from "./embedder-settings";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
 
@@ -38,6 +45,40 @@ const defaultDeps = (): HydrateDeps => ({
   },
 });
 
+/**
+ * The embedder each context was CONSTRUCTED with, captured the first time we
+ * hydrate it.
+ *
+ * Hydration overwrites `context.embedder`, and `resolveContextEmbedder`
+ * derives `codeModel` from exactly that field — so after one pass the
+ * instance no longer knows what code declared, and "fall back to the code
+ * default" would silently mean "keep the override". Keyed by the instance so
+ * it holds nothing alive and needs no reset between tests.
+ */
+const codeEmbedders = new WeakMap<object, ExuluContextEmbedder | undefined>();
+
+const codeEmbedderOf = (
+  context: Pick<ExuluContext, "embedder">,
+): ExuluContextEmbedder | undefined => {
+  if (!codeEmbedders.has(context)) codeEmbedders.set(context, context.embedder);
+  return codeEmbedders.get(context);
+};
+
+/**
+ * What CODE declares for this context, as opposed to what hydration has since
+ * assigned. Read-only: it never captures, so calling it cannot freeze an
+ * override in as if it were the default.
+ *
+ * Exported because clearing an override is a change TO the code default
+ * (spec §3), and by then `context.embedder` names the override. A context
+ * this module has not hydrated yet still carries its constructor value, so
+ * the live field is the right answer there.
+ */
+export const codeEmbedderFor = (
+  context: Pick<ExuluContext, "embedder">,
+): ExuluContextEmbedder | undefined =>
+  codeEmbedders.has(context) ? codeEmbedders.get(context) : context.embedder;
+
 export const hydrateContextEmbedders = async (
   contexts: ExuluContext[],
   deps: Partial<HydrateDeps> = {},
@@ -46,14 +87,26 @@ export const hydrateContextEmbedders = async (
 
   for (const context of contexts) {
     try {
-      const info = await resolve(context);
+      const codeEmbedder = codeEmbedderOf(context);
 
-      // No override: whatever the constructor set already stands.
-      if (info.source !== "database" || !info.databaseModel) continue;
+      // Resolve against what CODE declared, never against the instance as it
+      // currently stands — a previous hydration may already have replaced it
+      // with an override, which would make that override look like the code
+      // default and pin it forever.
+      const info = await resolve({ id: context.id, embedder: codeEmbedder });
+
+      // No override (never set, or just cleared): the resolved state is the
+      // code default, or nothing at all. Assign it either way — this is the
+      // branch that lets a cleared override actually take effect.
+      if (info.source !== "database" || !info.databaseModel) {
+        context.embedder = codeEmbedder;
+        continue;
+      }
 
       // A stored model that has since been removed from config.litellm.yaml
       // would make createChunksTable throw during boot. Refuse the override
-      // instead and leave the code default (or nothing) in place.
+      // instead and fall back to the code default (or nothing) — never to the
+      // dead model.
       try {
         modelInfo(info.databaseModel);
       } catch (err) {
@@ -63,11 +116,15 @@ export const hydrateContextEmbedders = async (
             `Ignoring the override and falling back to the model declared in code` +
             `${info.codeModel ? ` ("${info.codeModel}")` : " (none)"}.`,
         );
+        context.embedder = codeEmbedder;
         continue;
       }
 
       const queueName = info.databaseQueue;
-      let queue = context.embedder?.queue;
+      // Default to the code-declared queue, not to whatever the last
+      // hydration left on the instance: an override that drops its queue name
+      // must stop using the previous override's queue.
+      let queue = codeEmbedder?.queue;
       if (queueName) {
         const found = queues().find((q) => q.queue?.name === queueName);
         if (found) {

@@ -127,6 +127,83 @@ describe("hydrateContextEmbedders", () => {
     expect(await ctx.embedder.queue).toEqual({ queue: { name: "code-queue" } });
   });
 
+  it("RESTORES the code default when the override is cleared", async () => {
+    // The replica that did not serve the mutation only learns about a cleared
+    // override through hydration. If hydration merely skips "no override", it
+    // keeps a model whose chunks table has already been dropped.
+    const codeQueue = Promise.resolve({ queue: { name: "code-queue" } });
+    const ctx = context("docs", { model: "code-model", queue: codeQueue });
+
+    await hydrateContextEmbedders([ctx], deps());
+    expect(ctx.embedder.model).toBe("override-model");
+
+    await hydrateContextEmbedders([ctx], deps({
+      resolve: async (c: any) => ({
+        effectiveModel: c.embedder?.model ?? null,
+        source: c.embedder?.model ? ("code" as const) : null,
+        databaseModel: null,
+        codeModel: c.embedder?.model ?? null,
+        databaseQueue: null,
+      }),
+    }));
+    expect(ctx.embedder.model).toBe("code-model");
+    expect(await ctx.embedder.queue).toEqual({ queue: { name: "code-queue" } });
+  });
+
+  it("UNSETS the embedder when the override is cleared and code declares none", async () => {
+    const ctx = context("transcriptions");
+
+    await hydrateContextEmbedders([ctx], deps());
+    expect(ctx.embedder.model).toBe("override-model");
+
+    await hydrateContextEmbedders([ctx], deps({
+      resolve: async () => ({
+        effectiveModel: null,
+        source: null,
+        databaseModel: null,
+        codeModel: null,
+        databaseQueue: null,
+      }),
+    }));
+    expect(ctx.embedder).toBeUndefined();
+  });
+
+  it("re-reads the code default from construction, not from the previous hydration", async () => {
+    // resolveContextEmbedder derives codeModel from context.embedder, which a
+    // previous hydration has already overwritten. Hydration must resolve
+    // against what code declared or the override becomes self-perpetuating.
+    const ctx = context("docs", { model: "code-model" });
+    await hydrateContextEmbedders([ctx], deps());
+
+    const seen: (string | null)[] = [];
+    await hydrateContextEmbedders([ctx], deps({
+      resolve: async (c: any) => {
+        seen.push(c.embedder?.model ?? null);
+        return {
+          effectiveModel: "override-model",
+          source: "database" as const,
+          databaseModel: "override-model",
+          codeModel: c.embedder?.model ?? null,
+          databaseQueue: null,
+        };
+      },
+    }));
+    expect(seen).toEqual(["code-model"]);
+  });
+
+  it("falls back to the code default when a rejected override is re-hydrated", async () => {
+    const ctx = context("docs", { model: "code-model" });
+    await hydrateContextEmbedders([ctx], deps());
+    expect(ctx.embedder.model).toBe("override-model");
+
+    await hydrateContextEmbedders([ctx], deps({
+      modelInfo: () => {
+        throw new Error("Embedding model \"override-model\" was not found");
+      },
+    }));
+    expect(ctx.embedder.model).toBe("code-model");
+  });
+
   it("hydrates every context even if one of them fails", async () => {
     const bad = context("bad");
     const good = context("good");

@@ -28,7 +28,7 @@ import {
   resolveContextEmbedder,
   setEmbedderSetting,
 } from "@SRC/exulu/embedder-settings";
-import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
+import { codeEmbedderFor, hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
@@ -1263,11 +1263,15 @@ export function createMutations(
       const queue = args.queue?.trim() || null;
 
       // createChunksTable reads context.embedder.model for its dimensionality,
-      // so the instance must already carry the new model before the rebuild.
-      // hydrate() inside changeContextEmbedder re-derives it from the
-      // persisted value afterwards, so this assignment is only a bridge.
+      // so the instance must already carry the TARGET model before the
+      // rebuild. Clearing targets the code default (spec §3), not "no model",
+      // so bridge to the code embedder in that case rather than leaving the
+      // override on the instance. hydrate() inside changeContextEmbedder
+      // re-derives it from the persisted value afterwards.
       const previous = ctx.embedder;
+      const codeEmbedder = codeEmbedderFor(ctx);
       if (model) ctx.embedder = { model, queue: previous?.queue };
+      else if (codeEmbedder) ctx.embedder = codeEmbedder;
 
       try {
         const result = await changeContextEmbedder(ctx, model, queue, {
@@ -1287,6 +1291,7 @@ export function createMutations(
             m ? setEmbedderSetting(id, m, q) : clearEmbedderSetting(id),
           hydrate: (cs) => hydrateContextEmbedders(cs),
           queueRegeneration: (c) => c.embeddings.generate.all(config),
+          codeModel: (c) => codeEmbedderFor(c)?.model ?? null,
         });
         return {
           info: await resolveContextEmbedder(ctx),

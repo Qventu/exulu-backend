@@ -33,6 +33,7 @@ describe("changeContextEmbedder", () => {
     persist: jest.fn(async () => {}),
     hydrate: jest.fn(async () => {}),
     queueRegeneration: jest.fn(async () => ({ jobs: ["j1"], items: 7 })),
+    codeModel: jest.fn(() => null),
     ...over,
   });
 
@@ -106,12 +107,42 @@ describe("changeContextEmbedder", () => {
     expect(d.persist).not.toHaveBeenCalled();
   });
 
-  it("clearing (model null) drops the table and clears the setting", async () => {
-    const d = deps();
+  it("clearing a context WITH a code default is a change to the code model", async () => {
+    // Spec §3: clearing is the same operation with the code default as the
+    // target. The context stays searchable, so its chunks must be rebuilt
+    // with the code model and regenerated — not simply thrown away.
+    const d = deps({ codeModel: jest.fn(() => "code-model") });
+    const result = await changeContextEmbedder(ctx, null, null, d);
+
+    expect(d.modelInfo).toHaveBeenCalledWith("code-model");
+    expect(result.case).toBe("truncate");
+    expect(d.deleteAllChunks).toHaveBeenCalled();
+    expect(d.persist).toHaveBeenCalledWith("docs", null, null);
+    expect(d.queueRegeneration).toHaveBeenCalled();
+    expect(result.items).toBe(7);
+  });
+
+  it("clearing a context WITH a code default rebuilds when the dimension differs", async () => {
+    const d = deps({
+      codeModel: jest.fn(() => "code-model"),
+      modelInfo: jest.fn(() => ({ dimensionality: 3072 })),
+    });
+    const result = await changeContextEmbedder(ctx, null, null, d);
+    expect(result.case).toBe("recreate");
+    expect(d.dropChunksTable).toHaveBeenCalled();
+    expect(d.createChunksTable).toHaveBeenCalled();
+    expect(d.queueRegeneration).toHaveBeenCalled();
+  });
+
+  it("clearing a context with NO code default leaves it unsearchable", async () => {
+    // e.g. `transcriptions`: nothing is left to embed with, so the table has
+    // no valid shape and there is nothing to regenerate.
+    const d = deps({ codeModel: jest.fn(() => null) });
     const result = await changeContextEmbedder(ctx, null, null, d);
     expect(result.case).toBe("cleared");
     expect(d.dropChunksTable).toHaveBeenCalled();
     expect(d.createChunksTable).not.toHaveBeenCalled();
+    expect(d.deleteAllChunks).not.toHaveBeenCalled();
     expect(d.persist).toHaveBeenCalledWith("docs", null, null);
     expect(d.queueRegeneration).not.toHaveBeenCalled();
   });
