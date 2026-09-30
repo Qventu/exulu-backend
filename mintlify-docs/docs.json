@@ -72,6 +72,9 @@
           "building/knowledge/pipeline",
           "building/knowledge/entities"
         ] },
+        { "group": "Memory", "pages": [
+          "building/memory/overview"
+        ] },
         { "group": "Prompts & Skills", "pages": [
           "building/prompts",
           "building/skills/overview",

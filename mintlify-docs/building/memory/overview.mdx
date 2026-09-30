@@ -1,0 +1,23 @@
+---
+title: "Memory area"
+description: "See every memory base, what each agent has learned, and one memory in full."
+icon: "bookmark"
+---
+
+import { RightsCallout } from "/snippets/rights-callout.mdx";
+
+<RightsCallout right="agents (read)" />
+
+Open **Memory** in the Build section. The overview lists every memory base — a knowledge base with an `information` field and a `type` field — with the agents that use it, how many memories it holds, how many people contributed, and when it was last saved to.
+
+Counts include private memories. Their content stays visible only to the people who saved them: the list on a base's page shows what you may see ("8 of 33 visible to you").
+
+A base greyed out with "not configured correctly" is missing a required field; a base marked "not found in code" is referenced by an agent but no longer exists in the deployment.
+
+## A memory base
+
+Click a base to see its memories with search, a Mine filter, and filters for visibility, type and creator. Select rows to change access or delete in bulk — the same dialogs as in Knowledge. "Open in Knowledge" reaches the generic item tools.
+
+## A memory
+
+Each memory shows its wording, why it was saved, the source conversation when the base records it (an optional `source_session` field), who saved it and when, and who can see it. **Make private** and **Delete** are available to the creator, admins, and people with write access.
