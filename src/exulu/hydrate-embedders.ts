@@ -31,18 +31,20 @@ export type HydrateDeps = {
   queues: () => { queue: { name: string } }[];
 };
 
+const registeredQueues = (): { queue: { name: string } }[] => {
+  try {
+    return exuluApp.get().queues() as { queue: { name: string } }[];
+  } catch {
+    // The app singleton is not initialised in every context (e.g. early
+    // boot, tests). No registry means no queue — inline is a valid answer.
+    return [];
+  }
+};
+
 const defaultDeps = (): HydrateDeps => ({
   resolve: resolveContextEmbedder,
   modelInfo: getEmbeddingModelInfo,
-  queues: () => {
-    try {
-      return exuluApp.get().queues() as { queue: { name: string } }[];
-    } catch {
-      // The app singleton is not initialised in every context (e.g. early
-      // boot, tests). No registry means no queue — inline is a valid answer.
-      return [];
-    }
-  },
+  queues: registeredQueues,
 });
 
 /**
@@ -78,6 +80,25 @@ export const codeEmbedderFor = (
   context: Pick<ExuluContext, "embedder">,
 ): ExuluContextEmbedder | undefined =>
   codeEmbedders.has(context) ? codeEmbedders.get(context) : context.embedder;
+
+/**
+ * Whether embedding for `context` will run on a background queue once
+ * `overrideQueue` is in force, resolved exactly as hydration resolves it:
+ * the override's queue when it names one and the registry knows it, the
+ * code-declared queue when the override names none, inline otherwise.
+ *
+ * Callers use this to tell a queued regeneration (fine at any size) from an
+ * inline one (bounded — see MAX_INLINE_REGENERATION_ITEMS).
+ */
+export const willEmbedOnQueue = async (
+  context: Pick<ExuluContext, "embedder">,
+  overrideQueue: string | null,
+): Promise<boolean> => {
+  if (overrideQueue) {
+    return registeredQueues().some((q) => q.queue?.name === overrideQueue);
+  }
+  return Boolean(await codeEmbedderFor(context)?.queue);
+};
 
 export const hydrateContextEmbedders = async (
   contexts: ExuluContext[],

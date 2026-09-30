@@ -28,7 +28,11 @@ import {
   resolveContextEmbedder,
   setEmbedderSetting,
 } from "@SRC/exulu/embedder-settings";
-import { codeEmbedderFor, hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
+import {
+  codeEmbedderFor,
+  hydrateContextEmbedders,
+  willEmbedOnQueue,
+} from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
@@ -1309,6 +1313,12 @@ export function createMutations(
           hydrate: (cs) => hydrateContextEmbedders(cs),
           queueRegeneration: (c) => c.embeddings.generate.all(config),
           codeModel: (c) => codeEmbedderFor(c)?.model ?? null,
+          itemCount: async (c) => {
+            const { db } = await postgresClient();
+            const [row] = await db.from(getTableName(c.id)).count({ count: "*" });
+            return Number(row?.count ?? 0);
+          },
+          willEmbedOnQueue: (c) => willEmbedOnQueue(c, queue),
         });
         return {
           info: await resolveContextEmbedder(ctx),

@@ -32,7 +32,24 @@ export type ChangeEmbedderDeps = {
    * hydration assigned — not the default clearing falls back to.
    */
   codeModel: (context: ExuluContext) => string | null;
+  /** How many items would have to be re-embedded. */
+  itemCount: (context: ExuluContext) => Promise<number>;
+  /** Whether regeneration will run on a queue rather than inline, after the change. */
+  willEmbedOnQueue: (context: ExuluContext) => Promise<boolean>;
 };
+
+/**
+ * The ceiling `context.ts:1121` enforces: an inline (queue-less)
+ * `embeddings.generate.all` throws outright once the context holds more than
+ * 2000 items. Regeneration runs AFTER the table has been rebuilt and the new
+ * setting persisted, so letting a change run into that throw leaves an empty
+ * table, a stored model nothing has embedded with, and no jobs queued.
+ *
+ * Refuse at the same number, before anything has been destroyed. Keep the two
+ * in step: raising this without raising context.ts:1121 reintroduces the
+ * half-done state.
+ */
+export const MAX_INLINE_REGENERATION_ITEMS = 2000;
 
 /**
  * `existing` is the dimension actually found on the column, not the one the
@@ -76,6 +93,21 @@ export const changeContextEmbedder = async (
   // Validate first — this throws with an actionable message naming the exact
   // config.litellm.yaml entry to add, and nothing has been touched yet.
   const { dimensionality } = deps.modelInfo(target);
+
+  // Same philosophy, second guard: an inline regeneration of a large context
+  // cannot succeed (context.ts:1121), and it is only attempted once the table
+  // has already been rebuilt. Refuse here, while the context is still intact.
+  if (!(await deps.willEmbedOnQueue(context))) {
+    const items = await deps.itemCount(context);
+    if (items > MAX_INLINE_REGENERATION_ITEMS) {
+      throw new Error(
+        `Context "${context.id}" holds ${items} items and has no embedder queue configured, so ` +
+          `re-embedding would run inline and fail above ${MAX_INLINE_REGENERATION_ITEMS} items — ` +
+          `leaving the context with an empty chunks table. Configure an embedder queue for this ` +
+          `context first, then change the embedding model.`,
+      );
+    }
+  }
 
   const existing = await deps.currentDimensionality(context.id);
   const rebuild = decideRebuildCase(existing, dimensionality, tableExists);

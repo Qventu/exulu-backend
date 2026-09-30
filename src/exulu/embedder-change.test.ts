@@ -1,4 +1,8 @@
-import { changeContextEmbedder, decideRebuildCase } from "./embedder-change";
+import {
+  changeContextEmbedder,
+  decideRebuildCase,
+  MAX_INLINE_REGENERATION_ITEMS,
+} from "./embedder-change";
 
 describe("decideRebuildCase", () => {
   it("creates when the chunks table does not exist yet", () => {
@@ -34,6 +38,8 @@ describe("changeContextEmbedder", () => {
     hydrate: jest.fn(async () => {}),
     queueRegeneration: jest.fn(async () => ({ jobs: ["j1"], items: 7 })),
     codeModel: jest.fn(() => null),
+    itemCount: jest.fn(async () => 10),
+    willEmbedOnQueue: jest.fn(async () => false),
     ...over,
   });
 
@@ -145,6 +151,52 @@ describe("changeContextEmbedder", () => {
     expect(d.deleteAllChunks).not.toHaveBeenCalled();
     expect(d.persist).toHaveBeenCalledWith("docs", null, null);
     expect(d.queueRegeneration).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES an inline regeneration that is too large, before destroying anything", async () => {
+    // queueRegeneration runs after the rebuild and after persist, so letting
+    // it hit the context.ts:1121 ceiling would leave an empty table, the new
+    // setting stored, and no jobs.
+    const d = deps({
+      willEmbedOnQueue: jest.fn(async () => false),
+      itemCount: jest.fn(async () => MAX_INLINE_REGENERATION_ITEMS + 1),
+    });
+    await expect(changeContextEmbedder(ctx, "m", null, d)).rejects.toThrow(
+      /no embedder queue configured/,
+    );
+    expect(d.dropChunksTable).not.toHaveBeenCalled();
+    expect(d.createChunksTable).not.toHaveBeenCalled();
+    expect(d.deleteAllChunks).not.toHaveBeenCalled();
+    expect(d.persist).not.toHaveBeenCalled();
+    expect(d.queueRegeneration).not.toHaveBeenCalled();
+  });
+
+  it("names the item count in the refusal so the admin can act on it", async () => {
+    const d = deps({
+      willEmbedOnQueue: jest.fn(async () => false),
+      itemCount: jest.fn(async () => 5000),
+    });
+    await expect(changeContextEmbedder(ctx, "m", null, d)).rejects.toThrow(/5000 items/);
+  });
+
+  it("allows any size once a queue is configured", async () => {
+    const d = deps({
+      willEmbedOnQueue: jest.fn(async () => true),
+      itemCount: jest.fn(async () => 1_000_000),
+    });
+    const result = await changeContextEmbedder(ctx, "m", null, d);
+    expect(result.case).toBe("truncate");
+    expect(d.queueRegeneration).toHaveBeenCalled();
+  });
+
+  it("allows an inline regeneration at the ceiling itself", async () => {
+    const d = deps({
+      willEmbedOnQueue: jest.fn(async () => false),
+      itemCount: jest.fn(async () => MAX_INLINE_REGENERATION_ITEMS),
+    });
+    await expect(changeContextEmbedder(ctx, "m", null, d)).resolves.toMatchObject({
+      case: "truncate",
+    });
   });
 
   it("takes the create path, without attempting a drop, when the chunks table is absent", async () => {
