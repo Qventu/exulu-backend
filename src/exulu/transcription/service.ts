@@ -347,7 +347,11 @@ export const transcriptionService = {
     // Resolve once so the rendered text and the item's mirrored field always
     // agree — buildTranscriptItemInput must NOT re-derive this from `row`,
     // which still holds the pre-save value at this point in finalize.
-    const resolvedCorrected = input.corrected_segments ?? row.corrected_segments ?? null;
+    // `!== undefined` (not `??`) so an explicit `null` means "reset the
+    // correction," matching the persistence semantics below (nextCorrected-
+    // Segments) instead of silently keeping the row's old corrections.
+    const resolvedCorrected =
+      input.corrected_segments !== undefined ? input.corrected_segments : (row.corrected_segments ?? null);
 
     const transcriptText = renderTranscript(
       effectiveSegments(row.raw_segments, resolvedCorrected),
