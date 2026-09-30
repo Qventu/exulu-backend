@@ -24,7 +24,6 @@ import type { ExuluSkill } from "@EXULU_TYPES/skill";
 import { postgresClient } from "@SRC/postgres/client.ts";
 import { isRunSessionMetadata } from "./routines/run-session";
 import { setSessionCurrentTask } from "./task-description.ts";
-import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search.ts";
 import { autoDeclineStaleApprovals } from "./auto-decline-stale-approvals";
 import { sliceHistoryAtCheckpoint, deriveContextBudget, contextOccupancy, ContextCompactionRequiredError } from "./context-budget";
 import { guardExtractedFileText } from "./tool-output-offload";
@@ -41,6 +40,9 @@ import { imageAttachmentGuard } from "./tool-image-attachments";
 import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
+import { recallMemories } from "./memory/recall";
+import { collectMemoryDecisions } from "./memory/decisions";
+import type { RecallCollector } from "./memory/recall-collector";
 
 /**
   * Convert file parts in messages to OpenAI Responses API compatible format.
@@ -353,44 +355,10 @@ export const generateSync = async ({
         }).catch(() => { });
     }
 
-    // If memory context was configured for the agent, we retrieve
-    // relevant memory items and add it to the genericContext
-    let memoryContext = "";
-    let memoryItems: VectorSearchChunkResult[] | undefined;
-    if (agent?.memory && contexts?.length && query) {
-
-        const context = contexts.find((context) => context.id === agent?.memory);
-        if (!context) {
-            throw new Error(
-                "Context was set for agent memory but not found in the contexts: " +
-                agent?.memory +
-                " please double check with a developer to see if the context was removed from code.",
-            );
-        }
-
-        const result = await context?.search({
-            query: query,
-            itemFilters: [],
-            chunkFilters: [],
-            method: "hybridSearch",
-            sort: {
-                field: "updatedAt",
-                direction: "desc",
-            },
-            trigger: "agent",
-            limit: 10, // todo make this configurable?
-            page: 1,
-        });
-
-        if (result?.chunks?.length) {
-            // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
-            memoryItems = result.chunks;
-            memoryContext = `
-                  Pre-fetched relevant information for this query:
-  
-                  ${result.chunks.map((chunk) => chunk.chunk_content).join("\n\n")}`;
-        }
-    }
+    const { db: memoryDb } = await postgresClient();
+    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb });
+    const memoryContext = memoryRecall.promptBlock;
+    const memoryItems = memoryRecall.memoryItems;
 
     const personalizationInformation =
         exuluConfig?.privacy?.systemPromptPersonalization !== false
@@ -733,6 +701,7 @@ export const generateStream = async ({
     stream: ReturnType<typeof streamText>;
     originalMessages: UIMessage[];
     previousMessages: UIMessage[];
+    recall?: RecallCollector;
 }> => {
 
     if (!message) {
@@ -785,48 +754,10 @@ export const generateStream = async ({
         }).catch(() => { });
     }
 
-    // If memory context was configured for the agent, we retrieve
-    // relevant memory items and add it to the genericContext
-    let memoryContext = "";
-    let memoryItems: VectorSearchChunkResult[] | undefined;
-    if (agent?.memory && contexts?.length && query) {
-        const context = contexts.find((context) => context.id === agent?.memory);
-        if (!context) {
-            throw new Error(
-                "Context was set for agent memory but not found in the contexts: " +
-                agent?.memory +
-                " please double check with a developer to see if the context was removed from code.",
-            );
-        }
-        const result = await context?.search({
-            query: query,
-            itemFilters: [],
-            chunkFilters: [],
-            method: "hybridSearch",
-            sort: {
-                field: "updatedAt",
-                direction: "desc",
-            },
-            trigger: "agent",
-            limit: 10, // todo make this configurable?
-            page: 1,
-        });
-
-        if (result?.chunks?.length) {
-            memoryItems = result.chunks;
-            // Todo, sort by hybrid score? Retrieve more and set adaptive cutoff?
-            memoryContext = `
-                  <pre-fetched relevant information for this query>:
-  
-                  ${result.chunks.map((chunk, index) => `
-                    <general_information index="${index}">
-                      ${chunk.chunk_content}
-                    </general_information>
-                    `).join("\n\n")}
-                  
-                  </pre-fetched relevant information for this query>`;
-        }
-    }
+    const { db: memoryDb } = await postgresClient();
+    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb });
+    const memoryContext = memoryRecall.promptBlock;
+    const memoryItems = memoryRecall.memoryItems;
 
     // filter out messages with duplicate ids
     // If we encounter a duplicate message ID, we take the last
@@ -894,9 +825,9 @@ export const generateStream = async ({
 
     system += "\n\n" + genericContext;
 
-    /* if (memoryContext) {
-      system += "\n\n" + memoryContext;
-    } */
+    if (memoryContext) {
+        system += "\n\n" + memoryContext;
+    }
 
     // Citation gate is evaluated AFTER convert (below), once convert has had
     // a chance to inject project-scoped tools into currentTools (spec §7.1).
@@ -993,6 +924,7 @@ ${skillsList}
     console.log("[EXULU] Tools", currentTools?.map(x => x.name));
     console.log("[EXULU] Skills", currentSkills?.map(x => x.name));
 
+    const memoryDecisions = collectMemoryDecisions(messages);
     const tools = await convertExuluToolsToAiSdkTools(
         currentTools,
         currentSkills,
@@ -1012,6 +944,7 @@ ${skillsList}
         contextWindow,
         disabledTools,
         sessionOwnerId,
+        memoryDecisions,
     )
     console.log("[EXULU] Converted tools", Object.keys(tools));
 
@@ -1110,5 +1043,6 @@ ${skillsList}
         stream: result,
         originalMessages: messages,
         previousMessages: previousMessagesContent,
+        recall: memoryRecall.collector,
     };
 };
