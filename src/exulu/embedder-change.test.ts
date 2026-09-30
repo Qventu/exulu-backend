@@ -116,15 +116,14 @@ describe("changeContextEmbedder", () => {
     expect(d.queueRegeneration).not.toHaveBeenCalled();
   });
 
-  it("is idempotent about a table a concurrent change already dropped", async () => {
-    // Two admins changing the same context: the loser must not error on a
-    // drop that already happened.
+  it("takes the create path, without attempting a drop, when the chunks table is absent", async () => {
     const d = deps({
       chunksTableExists: jest.fn(async () => false),
       currentDimensionality: jest.fn(async () => null),
       modelInfo: jest.fn(() => ({ dimensionality: 3072 })),
     });
-    await expect(changeContextEmbedder(ctx, "m", null, d)).resolves.toBeTruthy();
+    const result = await changeContextEmbedder(ctx, "m", null, d);
+    expect(result.case).toBe("create");
     expect(d.dropChunksTable).not.toHaveBeenCalled();
     expect(d.createChunksTable).toHaveBeenCalled();
   });

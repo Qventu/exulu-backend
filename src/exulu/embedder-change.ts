@@ -72,7 +72,11 @@ export const changeContextEmbedder = async (
   // Destructive work. Ordered so that a failure here leaves the persisted
   // setting untouched and the context still on its previous embedder.
   if (rebuild === "recreate") {
-    if (tableExists) await deps.dropChunksTable(context);
+    // Concurrency: two admins changing the same context is safe because the
+    // caller wires dropChunksTable to `dropTableIfExists`, so a drop of a table
+    // the other admin already dropped is a no-op. Reaching "recreate" always
+    // means the table existed at decision time.
+    await deps.dropChunksTable(context);
     await deps.createChunksTable(context);
   } else if (rebuild === "create") {
     await deps.createChunksTable(context);
