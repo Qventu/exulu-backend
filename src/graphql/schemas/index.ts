@@ -4,7 +4,10 @@ import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from "graphql-type-json";
 import cron from "cron-validator";
 import { parseRerankerModels } from "@SRC/exulu/litellm/parse-reranker-models";
-import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-models";
+import {
+  parseEmbeddingModels,
+  resolveLiteLLMConfigPath,
+} from "@SRC/exulu/litellm/parse-embedding-models";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
@@ -952,6 +955,25 @@ type EmbeddingModelOption {
       "@SRC/exulu/litellm/catalog"
     );
     return fetchLiteLLMCatalog();
+  };
+
+  // availableEmbeddingModels: the embedding models declared in
+  // config.litellm.yaml, for the context-settings embedder picker. Registered
+  // once here (not per context) — same reasoning as litellmCatalog/queues
+  // above. Empty array when the config is missing/unreadable so callers can
+  // invoke this unconditionally.
+  resolvers.Query["availableEmbeddingModels"] = async () => {
+    try {
+      return parseEmbeddingModels(resolveLiteLLMConfigPath()).map((m) => ({
+        model: m.model_name,
+        dimensionality: m.dimensionality,
+        maxChunkSize: m.maxChunkSize,
+        maxBatchSize: m.maxBatchSize,
+      }));
+    } catch (err) {
+      console.warn("[EXULU] Could not read embedding models:", (err as Error).message);
+      return [];
+    }
   };
 
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {

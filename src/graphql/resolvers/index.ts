@@ -19,11 +19,7 @@ import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
 import { postgresClient } from "@SRC/postgres/client";
 import { resolveContextEmbedder } from "@SRC/exulu/embedder-settings";
-import {
-  getEmbeddingModelInfo,
-  parseEmbeddingModels,
-  resolveLiteLLMConfigPath,
-} from "@SRC/exulu/litellm/parse-embedding-models";
+import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
 export const itemsPaginationRequest = async ({
   db,
@@ -422,19 +418,6 @@ export function createQueries(
       }
 
       return { ...info, dimensionality, chunkCount };
-    };
-    queries["availableEmbeddingModels"] = async () => {
-      try {
-        return parseEmbeddingModels(resolveLiteLLMConfigPath()).map((m) => ({
-          model: m.model_name,
-          dimensionality: m.dimensionality,
-          maxChunkSize: m.maxChunkSize,
-          maxBatchSize: m.maxBatchSize,
-        }));
-      } catch (err) {
-        console.warn("[EXULU] Could not read embedding models:", (err as Error).message);
-        return [];
-      }
     };
     queries[`${tableNameSingular}EntitiesForItem`] = async (_, args, _context) => {
       const exists = contexts.find((ctx) => ctx.id === table.id);
