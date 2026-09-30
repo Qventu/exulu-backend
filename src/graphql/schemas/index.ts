@@ -402,6 +402,7 @@ export function createSDL(
       ${tableNameSingular}StaleEntityCount: Int
       ${tableNameSingular}EntityModel: ${tableNameSingular}EntityModelInfo
       ${tableNameSingular}EntitiesForItem(item: ID!): [${tableNameSingular}ItemEntity!]
+      ${tableNameSingular}EmbedderInfo: ${tableNameSingular}ContextEmbedderInfo
     `;
     }
     // todo add the fields of each table as filter options
@@ -423,6 +424,7 @@ export function createSDL(
     ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
     ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
     ${tableNameSingular}SetEntityModel(model: String): ${tableNameSingular}EntityModelInfo
+    ${tableNameSingular}SetEmbedder(model: String, queue: String): ${tableNameSingular}SetEmbedderPayload
     ${tableNameSingular}ExtractEntities(item: ID!): ${tableNameSingular}EntityExtractPayload
     ${tableNameSingular}DetachEntities(item: ID!): ${tableNameSingular}EntityDetachPayload
     `;
@@ -576,6 +578,22 @@ export function createSDL(
         codeModel: String
     }
 
+    type ${tableNameSingular}ContextEmbedderInfo {
+        effectiveModel: String
+        source: String
+        databaseModel: String
+        codeModel: String
+        databaseQueue: String
+        dimensionality: Int
+        chunkCount: Int
+    }
+
+    type ${tableNameSingular}SetEmbedderPayload {
+        info: ${tableNameSingular}ContextEmbedderInfo!
+        rebuild: String!
+        itemsQueued: Int!
+    }
+
     type ${tableNameSingular}EntityExtractPayload {
         extracted: Int!
     }
@@ -643,6 +661,10 @@ type PageInfo {
 
   typeDefs += `
     litellmCatalog: [LiteLLMModel!]!
+    `;
+
+  typeDefs += `
+    availableEmbeddingModels: [EmbeddingModelOption!]!
     `;
 
   typeDefs += `
@@ -909,6 +931,15 @@ type LiteLLMModel {
   supports_audio_input: Boolean
   input_cost_per_million_tokens: Float
   output_cost_per_million_tokens: Float
+}
+`;
+
+  modelDefs += `
+type EmbeddingModelOption {
+  model: String!
+  dimensionality: Int!
+  maxChunkSize: Int!
+  maxBatchSize: Int!
 }
 `;
 

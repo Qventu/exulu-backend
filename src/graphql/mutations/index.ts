@@ -22,6 +22,15 @@ import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/in
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
+import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
+import {
+  clearEmbedderSetting,
+  resolveContextEmbedder,
+  setEmbedderSetting,
+} from "@SRC/exulu/embedder-settings";
+import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
+import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
+import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -1239,6 +1248,57 @@ export function createMutations(
       // Empty / null clears the override and falls back to code / env.
       await setEntityModelSetting(ctx.id, args.model ?? null);
       return await resolveEntityModel(ctx);
+    };
+
+    mutations[`${tableNameSingular}SetEmbedder`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      if (!context.user) {
+        throw new Error("Authentication required to set the embedding model.");
+      }
+
+      const model = args.model?.trim() || null;
+      const queue = args.queue?.trim() || null;
+
+      // createChunksTable reads context.embedder.model for its dimensionality,
+      // so the instance must already carry the new model before the rebuild.
+      // hydrate() inside changeContextEmbedder re-derives it from the
+      // persisted value afterwards, so this assignment is only a bridge.
+      const previous = ctx.embedder;
+      if (model) ctx.embedder = { model, queue: previous?.queue };
+
+      try {
+        const result = await changeContextEmbedder(ctx, model, queue, {
+          currentDimensionality: currentChunksDimensionality,
+          modelInfo: getEmbeddingModelInfo,
+          chunksTableExists: (c) => c.chunksTableExists(),
+          dropChunksTable: async (c) => {
+            const { db } = await postgresClient();
+            await db.schema.dropTableIfExists(getChunksTableName(c.id));
+          },
+          createChunksTable: (c) => c.createChunksTable(),
+          deleteAllChunks: async (c) => {
+            const { db } = await postgresClient();
+            await db.from(getChunksTableName(c.id)).delete();
+          },
+          persist: async (id, m, q) =>
+            m ? setEmbedderSetting(id, m, q) : clearEmbedderSetting(id),
+          hydrate: (cs) => hydrateContextEmbedders(cs),
+          queueRegeneration: (c) => c.embeddings.generate.all(config),
+        });
+        return {
+          info: await resolveContextEmbedder(ctx),
+          rebuild: result.case,
+          itemsQueued: result.items,
+        };
+      } catch (err) {
+        // The rebuild failed; put the instance back so this replica keeps
+        // serving on the previous embedder (the setting was never persisted).
+        ctx.embedder = previous;
+        throw err;
+      }
     };
 
     mutations[`${tableNameSingular}ExtractEntities`] = async (_, args, context) => {
