@@ -72,6 +72,8 @@ import { EMAIL_INBOUND_S3_PREFIX } from "@SRC/exulu/email-inbound/webhook";
 import { uploadFile } from "@SRC/uppy";
 import { randomUUID } from "node:crypto";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
+import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
+import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -676,6 +678,10 @@ type PageInfo {
 
   typeDefs += `
     contextById(id: ID!): Context
+    `;
+
+  typeDefs += `
+    memoryBaseStats(contextId: ID!): MemoryBaseStats
     `;
 
   typeDefs += `
@@ -2325,6 +2331,7 @@ type LiteLLMModel {
           active: context.active,
           sources,
           processor,
+          memoryBase: checkMemoryBase(context),
           fields: await Promise.all(
             context.fields.map(async (field) => {
               if (field.type === "file" && !field.name.endsWith("_s3key")) {
@@ -2437,6 +2444,7 @@ type LiteLLMModel {
       active: data.active,
       sources,
       processor,
+      memoryBase: checkMemoryBase(data),
       fields: await Promise.all(
         data.fields.map(async (field) => {
           const label = field.name?.replace("_s3key", "");
@@ -2465,6 +2473,12 @@ type LiteLLMModel {
       mapped[field] = clean[field];
     });
     return mapped;
+  };
+
+  resolvers.Query["memoryBaseStats"] = async (_, args, context) => {
+    const target = contexts.find((c) => c.id === args.contextId);
+    if (!target) return null;
+    return memoryBaseStats({ context: target, user: context.user, db: context.db });
   };
 
   resolvers.Query["tools"] = async (_, args, context, info) => {
@@ -2804,6 +2818,23 @@ type Context {
     chunk_total: Int
     stuck_count: Int
     stale_count: Int
+    memoryBase: MemoryBaseCheck!
+}
+type MemoryBaseCheck {
+    ok: Boolean!
+    missing: [String!]!
+}
+type MemoryBaseUser {
+    id: Int!
+    name: String!
+}
+type MemoryBaseStats {
+    total: Int!
+    public: Int!
+    private: Int!
+    contributors: Int!
+    lastSavedAt: String
+    lastSavedBy: MemoryBaseUser
 }
 type Reranker {
     id: ID!
