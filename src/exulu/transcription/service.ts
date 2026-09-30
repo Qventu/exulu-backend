@@ -344,8 +344,13 @@ export const transcriptionService = {
     }
     const config = (app as any)._config ?? (app as any).config;
 
+    // Resolve once so the rendered text and the item's mirrored field always
+    // agree — buildTranscriptItemInput must NOT re-derive this from `row`,
+    // which still holds the pre-save value at this point in finalize.
+    const resolvedCorrected = input.corrected_segments ?? row.corrected_segments ?? null;
+
     const transcriptText = renderTranscript(
-      effectiveSegments(row.raw_segments, input.corrected_segments ?? row.corrected_segments),
+      effectiveSegments(row.raw_segments, resolvedCorrected),
       input.speakers,
     );
     const rightsMode: ExuluRightsMode =
@@ -360,6 +365,7 @@ export const transcriptionService = {
       transcriptText,
       rightsMode,
       isReSave,
+      correctedSegments: resolvedCorrected,
     });
 
     let item: Item;

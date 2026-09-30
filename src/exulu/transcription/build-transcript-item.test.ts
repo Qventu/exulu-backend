@@ -162,4 +162,21 @@ describe("buildTranscriptItemInput — corrections", () => {
   it("leaves corrected_segments undefined when nothing was corrected", () => {
     expect(buildTranscriptItemInput(args()).corrected_segments).toBeUndefined();
   });
+
+  it("prefers the resolved correctedSegments argument over the row's stale value", () => {
+    const stale = [{ start: 0, end: 1, text: "stale row value", speaker: "SPEAKER_00" }];
+    const resolved = [{ start: 0, end: 1, text: "fresh correction", speaker: "SPEAKER_00" }];
+    const item = buildTranscriptItemInput(
+      args({ row: row({ corrected_segments: stale }), correctedSegments: resolved }),
+    );
+    expect(item.corrected_segments).toEqual(resolved);
+  });
+
+  it("carries a first-ever correction even though the row predates it (row.corrected_segments is null)", () => {
+    const firstCorrection = [{ start: 0, end: 1, text: "first correction", speaker: "SPEAKER_00" }];
+    const item = buildTranscriptItemInput(
+      args({ row: row({ corrected_segments: null }), correctedSegments: firstCorrection }),
+    );
+    expect(item.corrected_segments).toEqual(firstCorrection);
+  });
 });
