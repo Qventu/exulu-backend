@@ -2,6 +2,8 @@ import {
   hydrateContextEmbedders,
   refreshContextEmbeddersIfStale,
   __resetEmbedderRefreshClock,
+  captureCodeEmbedder,
+  codeEmbedderFor,
 } from "./hydrate-embedders";
 
 const context = (id: string, embedder?: any) => ({ id, embedder }) as any;
@@ -223,6 +225,51 @@ describe("hydrateContextEmbedders", () => {
     }));
     expect(call).toBe(2);
     expect(good.embedder.model).toBe("good-model");
+  });
+});
+
+describe("captureCodeEmbedder", () => {
+  // SetEmbedder bridges ctx.embedder to the incoming value before
+  // changeContextEmbedder's hydrate() runs. If nothing captured the
+  // constructor embedder before that bridge, hydrate's own (non-capturing)
+  // read would freeze the bridged override in as the "code default" forever
+  // for a context this process has never hydrated before — exactly the bug
+  // the WeakMap was added to fix, reinstated. captureCodeEmbedder exists so
+  // the mutation can capture first and make that impossible.
+
+  it("captures the constructor embedder once and ignores later mutations", () => {
+    const ctx = context("docs", { model: "constructor-model" });
+    expect(captureCodeEmbedder(ctx)).toEqual({ model: "constructor-model" });
+
+    // Simulate the SetEmbedder bridge landing after the capture.
+    ctx.embedder = { model: "bridged-override" };
+    expect(captureCodeEmbedder(ctx)).toEqual({ model: "constructor-model" });
+  });
+
+  it("keeps the constructor embedder through a bridge assignment and a hydration pass", async () => {
+    // Reproduces the SetEmbedder ordering on a context that has never been
+    // hydrated in this process (like the built-in "transcriptions" context,
+    // which declares no code embedder at all).
+    const ctx = context("transcriptions");
+    captureCodeEmbedder(ctx);
+    ctx.embedder = { model: "bridged-override", queue: undefined };
+
+    await hydrateContextEmbedders([ctx], deps());
+
+    expect(codeEmbedderFor(ctx)).toBeUndefined();
+  });
+
+  it("keeps a captured undefined code embedder distinguishable from a context that was never captured", () => {
+    const captured = context("transcriptions");
+    captureCodeEmbedder(captured); // records "no code embedder" explicitly
+    captured.embedder = { model: "bridged-later" };
+    expect(codeEmbedderFor(captured)).toBeUndefined();
+
+    const neverCaptured = context("other");
+    neverCaptured.embedder = { model: "bridged-later" };
+    // Nothing has captured this instance yet, so codeEmbedderFor must fall
+    // back to the live value rather than assume "no entry" means "none".
+    expect(codeEmbedderFor(neverCaptured)).toEqual({ model: "bridged-later" });
   });
 });
 

@@ -59,7 +59,18 @@ const defaultDeps = (): HydrateDeps => ({
  */
 const codeEmbedders = new WeakMap<object, ExuluContextEmbedder | undefined>();
 
-const codeEmbedderOf = (
+/**
+ * Records `context`'s current `embedder` as its code default, unless it
+ * already has one recorded — never overwrites an existing capture, so a
+ * second call (or one that races a later mutation) is a no-op.
+ *
+ * Exported so a caller that is about to bridge `context.embedder` to a
+ * pending value ahead of hydration (SetEmbedder) can capture the real
+ * constructor value first. Without that, the first hydration pass would
+ * capture the bridge itself via this same function and mistake it for the
+ * code default forever on that instance.
+ */
+export const captureCodeEmbedder = (
   context: Pick<ExuluContext, "embedder">,
 ): ExuluContextEmbedder | undefined => {
   if (!codeEmbedders.has(context)) codeEmbedders.set(context, context.embedder);
@@ -108,7 +119,7 @@ export const hydrateContextEmbedders = async (
 
   for (const context of contexts) {
     try {
-      const codeEmbedder = codeEmbedderOf(context);
+      const codeEmbedder = captureCodeEmbedder(context);
 
       // Resolve against what CODE declared, never against the instance as it
       // currently stands — a previous hydration may already have replaced it

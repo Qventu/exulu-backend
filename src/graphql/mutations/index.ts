@@ -29,6 +29,7 @@ import {
   setEmbedderSetting,
 } from "@SRC/exulu/embedder-settings";
 import {
+  captureCodeEmbedder,
   codeEmbedderFor,
   hydrateContextEmbedders,
   willEmbedOnQueue,
@@ -1259,6 +1260,12 @@ export function createMutations(
       if (!ctx) {
         throw new Error(`Context ${table.id} not found.`);
       }
+      // Capture the constructor embedder before anything else touches this
+      // instance. If this context has never been hydrated in this process,
+      // the bridge assignment below would otherwise be the first thing
+      // hydrate() ever sees on it, and its own (non-capturing) read would
+      // freeze that bridge in as the "code default" forever on this replica.
+      captureCodeEmbedder(ctx);
       if (!context.user) {
         throw new Error("Authentication required to set the embedding model.");
       }
