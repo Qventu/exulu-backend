@@ -397,12 +397,19 @@ export function createQueries(
       // A stale model must not break the very query whose job is to report
       // that it is stale — that would leave the admin unable to see, let
       // alone fix, the misconfiguration.
+      //
+      // A null dimension alone does not say that, though: the UI would show a
+      // configured model while hydration has already refused it and search
+      // raises ContextEmbedderNotConfigured. `effectiveModelUnavailable`
+      // names the state outright.
       let dimensionality: number | null = null;
+      let effectiveModelUnavailable = false;
       if (info.effectiveModel) {
         try {
           dimensionality = getEmbeddingModelInfo(info.effectiveModel).dimensionality;
         } catch {
           dimensionality = null;
+          effectiveModelUnavailable = true;
         }
       }
 
@@ -417,7 +424,7 @@ export function createQueries(
         chunkCount = 0;
       }
 
-      return { ...info, dimensionality, chunkCount };
+      return { ...info, dimensionality, chunkCount, effectiveModelUnavailable };
     };
     queries[`${tableNameSingular}EntitiesForItem`] = async (_, args, _context) => {
       const exists = contexts.find((ctx) => ctx.id === table.id);

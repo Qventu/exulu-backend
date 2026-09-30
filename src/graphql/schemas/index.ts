@@ -589,6 +589,14 @@ export function createSDL(
         databaseQueue: String
         dimensionality: Int
         chunkCount: Int
+        """
+        True when effectiveModel names a model that is no longer a usable
+        embedding model in config.litellm.yaml. The context reports a
+        configured model, but hydration refuses it and search raises
+        ContextEmbedderNotConfigured — surface it rather than showing a
+        model that silently does not work.
+        """
+        effectiveModelUnavailable: Boolean
     }
 
     type ${tableNameSingular}SetEmbedderPayload {
