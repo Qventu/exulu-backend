@@ -24,14 +24,16 @@ export const buildTranscriptItemInput = ({
   transcriptText: string;
   rightsMode: ExuluRightsMode;
   isReSave: boolean;
-  // The already-resolved value (finalize's `input.corrected_segments ??
-  // row.corrected_segments`), not re-derived from `row` here: at the point
-  // finalize builds this item, `row` still holds the PRE-save value, so
-  // reading row.corrected_segments directly would mirror stale (or, on a
-  // first correction, absent) corrections onto the item — and the export
-  // route reads the item's corrected_segments, so that stale value would
-  // silently serve uncorrected text. Optional only so other/older callers
-  // keep working; finalize always passes it.
+  // The already-resolved value (finalize's `input.corrected_segments !==
+  // undefined ? input.corrected_segments : row.corrected_segments` — an
+  // explicit `null` means "reset the correction" and must win over the row's
+  // existing value, which `??` would silently ignore), not re-derived from
+  // `row` here: at the point finalize builds this item, `row` still holds
+  // the PRE-save value, so reading row.corrected_segments directly would
+  // mirror stale (or, on a first correction, absent) corrections onto the
+  // item — and the export route reads the item's corrected_segments, so that
+  // stale value would silently serve uncorrected text. Optional only so
+  // other/older callers keep working; finalize always passes it.
   correctedSegments?: RawSegment[] | null;
 }): Item => ({
   // Carrying the id on re-save makes context.createItem upsert in place.

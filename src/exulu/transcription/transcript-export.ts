@@ -50,7 +50,7 @@ const toBlocks = (
     const raw = segment.speaker || "unknown";
     const label = useSpeakerNames ? (names[raw] ?? raw) : raw;
     const last = blocks[blocks.length - 1];
-    if (last && last.label === label) {
+    if (last?.label === label) {
       last.text = `${last.text} ${text}`.trim();
     } else {
       blocks.push({ label, start: segment.start, text });
@@ -72,6 +72,9 @@ export function buildTranscriptMarkdown(
   item: TranscriptExportItem,
   options: TranscriptExportOptions,
 ): string {
+  // Deliberately `||`, not `??`: an empty-string name (whitespace-only, or
+  // trimmed to nothing) must also fall through to "Transcript" — `??` only
+  // catches null/undefined and would title the export "# " instead.
   const sections: string[] = [`# ${item.name?.trim() || "Transcript"}`];
 
   const meta = metaLine(item);
@@ -110,11 +113,21 @@ const formatCsvTime = (seconds: number): string => {
   return `${h}:${m}:${s}`;
 };
 
-/** "hh:mm:ss,mmm" — the SRT cue format (comma before milliseconds). */
+/**
+ * "hh:mm:ss,mmm" — the SRT cue format (comma before milliseconds).
+ *
+ * Rounds the whole timestamp to a millisecond count FIRST, then splits that
+ * into seconds + ms, rather than rounding the fractional part in isolation —
+ * rounding `% 1` alone can produce 1000 "milliseconds" (e.g. 5.9996 rounds
+ * its fractional part to 1000, not 0 carried into the next second), which is
+ * not valid SRT. Splitting a single rounded integer can never do that: the
+ * remainder of a division by 1000 is always 0-999.
+ */
 const formatSrtTime = (seconds: number): string => {
-  const clamped = Math.max(0, seconds);
-  const ms = String(Math.round((clamped % 1) * 1000)).padStart(3, "0");
-  return `${formatCsvTime(clamped)},${ms}`;
+  const totalMs = Math.round(Math.max(0, seconds) * 1000);
+  const wholeSeconds = Math.floor(totalMs / 1000);
+  const ms = String(totalMs % 1000).padStart(3, "0");
+  return `${formatCsvTime(wholeSeconds)},${ms}`;
 };
 
 /**
@@ -133,7 +146,7 @@ const resolveLabel = (
   useSpeakerNames: boolean,
 ): string => {
   const raw = rawSpeaker || "unknown";
-  return useSpeakerNames ? ((item.speakers ?? {})[raw] ?? raw) : raw;
+  return useSpeakerNames ? (item.speakers?.[raw] ?? raw) : raw;
 };
 
 export function buildTranscriptCsv(

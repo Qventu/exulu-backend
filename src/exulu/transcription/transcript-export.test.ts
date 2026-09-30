@@ -162,6 +162,33 @@ describe("buildTranscriptCsv", () => {
     const csv = buildTranscriptCsv(item({ raw_segments: [], corrected_segments: null }), all);
     expect(csv).toBe("start,end,speaker,text\n");
   });
+
+  it("quotes a speaker name that itself contains a comma", () => {
+    // The speaker cell only escapes conditionally (unlike the text cell,
+    // which is always quoted) — an earlier fix touched this exact path with
+    // no test guarding it.
+    const csv = buildTranscriptCsv(
+      item({
+        speakers: { SPEAKER_00: "Keller, Anja" },
+        raw_segments: [{ start: 0, end: 1, text: "Hi", speaker: "SPEAKER_00" }],
+      }),
+      all,
+    );
+    const body = csv.trimEnd().split("\n").slice(1).join("\n");
+    expect(body).toBe('00:00:00,00:00:01,"Keller, Anja","Hi"');
+  });
+
+  it("doubles a double quote inside a speaker name", () => {
+    const csv = buildTranscriptCsv(
+      item({
+        speakers: { SPEAKER_00: 'Anja "AJ" Keller' },
+        raw_segments: [{ start: 0, end: 1, text: "Hi", speaker: "SPEAKER_00" }],
+      }),
+      all,
+    );
+    const body = csv.trimEnd().split("\n").slice(1).join("\n");
+    expect(body).toBe('00:00:00,00:00:01,"Anja ""AJ"" Keller","Hi"');
+  });
 });
 
 describe("buildTranscriptSrt", () => {
@@ -189,5 +216,28 @@ describe("buildTranscriptSrt", () => {
 
   it("returns an empty string for a transcript with no segments", () => {
     expect(buildTranscriptSrt(item({ raw_segments: [], corrected_segments: null }), all)).toBe("");
+  });
+
+  it("rounds a millisecond value that would otherwise reach 1000 into the next second", () => {
+    // 5.9996s's fractional part alone rounds to 1000ms, which is not a valid
+    // SRT millisecond field — it must carry into the seconds place instead.
+    const srt = buildTranscriptSrt(
+      item({
+        raw_segments: [{ start: 5.9996, end: 6.1, text: "Hi", speaker: "SPEAKER_00" }],
+      }),
+      all,
+    );
+    expect(srt).toContain("00:00:06,000 --> 00:00:06,100");
+    expect(srt).not.toContain(",1000");
+  });
+
+  it("carries a rounding-boundary millisecond value across a minute boundary", () => {
+    const srt = buildTranscriptSrt(
+      item({
+        raw_segments: [{ start: 59.9999, end: 61, text: "Hi", speaker: "SPEAKER_00" }],
+      }),
+      all,
+    );
+    expect(srt).toContain("00:01:00,000 --> 00:01:01,000");
   });
 });
