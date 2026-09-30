@@ -17,6 +17,9 @@ import { applyFilters } from "./apply-filters";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import { checkRecordAccess } from "@SRC/utils/check-record-access";
+import { postgresClient } from "@SRC/postgres/client";
+import { resolveContextEmbedder } from "@SRC/exulu/embedder-settings";
+import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
 export const itemsPaginationRequest = async ({
   db,
@@ -383,6 +386,45 @@ export function createQueries(
         throw new Error("Context " + table.id + " not found in registry.");
       }
       return await resolveEntityModel(exists);
+    };
+    queries[`${tableNameSingular}EmbedderInfo`] = async (_, _args, _context) => {
+      const exists = contexts.find((ctx) => ctx.id === table.id);
+      if (!exists) {
+        throw new Error("Context " + table.id + " not found in registry.");
+      }
+      const info = await resolveContextEmbedder(exists);
+
+      // A stale model must not break the very query whose job is to report
+      // that it is stale — that would leave the admin unable to see, let
+      // alone fix, the misconfiguration.
+      //
+      // A null dimension alone does not say that, though: the UI would show a
+      // configured model while hydration has already refused it and search
+      // raises ContextEmbedderNotConfigured. `effectiveModelUnavailable`
+      // names the state outright.
+      let dimensionality: number | null = null;
+      let effectiveModelUnavailable = false;
+      if (info.effectiveModel) {
+        try {
+          dimensionality = getEmbeddingModelInfo(info.effectiveModel).dimensionality;
+        } catch {
+          dimensionality = null;
+          effectiveModelUnavailable = true;
+        }
+      }
+
+      let chunkCount = 0;
+      try {
+        const { db } = await postgresClient();
+        const [row] = await db.from(getChunksTableName(exists.id)).count({ count: "*" });
+        chunkCount = Number(row?.count ?? 0);
+      } catch {
+        // No chunks table yet — the common case for a context being
+        // configured for the first time.
+        chunkCount = 0;
+      }
+
+      return { ...info, dimensionality, chunkCount, effectiveModelUnavailable };
     };
     queries[`${tableNameSingular}EntitiesForItem`] = async (_, args, _context) => {
       const exists = contexts.find((ctx) => ctx.id === table.id);

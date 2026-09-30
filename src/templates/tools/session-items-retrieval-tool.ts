@@ -1,6 +1,7 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ExuluTool } from "@SRC/exulu/tool";
+import { isEmbedderNotConfigured } from "@SRC/exulu/embedder-not-configured";
 import { z } from "zod";
 
 export const createSessionItemsRetrievalTool = async ({
@@ -70,30 +71,37 @@ export const createSessionItemsRetrievalTool = async ({
 
           // Run retrieval over the items that are added to
           // the project.
-          return await context.search({
-            // todo check if it is more performant to use a concatenation of
-            // the query and keywords, or just the keywords, instead of the
-            // query itself.
-            query: query,
-            itemFilters: [
-              {
-                id: {
-                  in: itemIds,
+          try {
+            return await context.search({
+              // todo check if it is more performant to use a concatenation of
+              // the query and keywords, or just the keywords, instead of the
+              // query itself.
+              query: query,
+              itemFilters: [
+                {
+                  id: {
+                    in: itemIds,
+                  },
                 },
+              ],
+              chunkFilters: [],
+              user: user,
+              role: role,
+              method: "hybridSearch",
+              sort: {
+                field: "updatedAt",
+                direction: "desc",
               },
-            ],
-            chunkFilters: [],
-            user: user,
-            role: role,
-            method: "hybridSearch",
-            sort: {
-              field: "updatedAt",
-              direction: "desc",
-            },
-            trigger: "tool",
-            limit: 10,
-            page: 1,
-          });
+              trigger: "tool",
+              limit: 10,
+              page: 1,
+            });
+          } catch (err) {
+            if (isEmbedderNotConfigured(err)) {
+              return err.message;
+            }
+            throw err;
+          }
         }),
       );
 

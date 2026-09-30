@@ -22,6 +22,20 @@ import { itemsPaginationRequest, sanitizeRequestedFields } from "../resolvers/in
 import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
+import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
+import {
+  clearEmbedderSetting,
+  resolveContextEmbedder,
+  setEmbedderSetting,
+} from "@SRC/exulu/embedder-settings";
+import {
+  captureCodeEmbedder,
+  codeEmbedderFor,
+  hydrateContextEmbedders,
+  willEmbedOnQueue,
+} from "@SRC/exulu/hydrate-embedders";
+import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
+import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -1239,6 +1253,91 @@ export function createMutations(
       // Empty / null clears the override and falls back to code / env.
       await setEntityModelSetting(ctx.id, args.model ?? null);
       return await resolveEntityModel(ctx);
+    };
+
+    mutations[`${tableNameSingular}SetEmbedder`] = async (_, args, context) => {
+      const ctx = contexts.find((c) => c.id === table.id);
+      if (!ctx) {
+        throw new Error(`Context ${table.id} not found.`);
+      }
+      // Capture the constructor embedder before anything else touches this
+      // instance. If this context has never been hydrated in this process,
+      // the bridge assignment below would otherwise be the first thing
+      // hydrate() ever sees on it, and its own (non-capturing) read would
+      // freeze that bridge in as the "code default" forever on this replica.
+      captureCodeEmbedder(ctx);
+      if (!context.user) {
+        throw new Error("Authentication required to set the embedding model.");
+      }
+      // Destructive: this drops a knowledge base's chunks table and triggers a
+      // full re-embed. Same gate as the other destructive context mutations
+      // in this file.
+      if (!context.user.super_admin) {
+        throw new Error(
+          "You are not authorized to set the embedding model via API, user must be super admin.",
+        );
+      }
+
+      const model = args.model?.trim() || null;
+      const queue = args.queue?.trim() || null;
+
+      // createChunksTable reads context.embedder.model for its dimensionality,
+      // so the instance must already carry the TARGET model before the
+      // rebuild. Clearing targets the code default (spec §3), not "no model",
+      // so bridge to the code embedder in that case rather than leaving the
+      // override on the instance. hydrate() inside changeContextEmbedder
+      // re-derives it from the persisted value afterwards.
+      const previous = ctx.embedder;
+      const codeEmbedder = codeEmbedderFor(ctx);
+      if (model) ctx.embedder = { model, queue: previous?.queue };
+      else if (codeEmbedder) ctx.embedder = codeEmbedder;
+
+      try {
+        const result = await changeContextEmbedder(ctx, model, queue, {
+          currentDimensionality: currentChunksDimensionality,
+          modelInfo: getEmbeddingModelInfo,
+          chunksTableExists: (c) => c.chunksTableExists(),
+          dropChunksTable: async (c) => {
+            const { db } = await postgresClient();
+            await db.schema.dropTableIfExists(getChunksTableName(c.id));
+          },
+          // Deliberately NOT c.createChunksTable() on its own. Two admins
+          // changing the same context interleave as drop/drop/create/create,
+          // and the second plain createTable throws "already exists" after the
+          // first has already rebuilt it. ExuluContext.createChunksTable has
+          // other callers that want the plain behaviour, so the idempotence
+          // lives here. Do not "simplify" this back to a bare call.
+          createChunksTable: async (c) => {
+            if (await c.chunksTableExists()) return;
+            await c.createChunksTable();
+          },
+          deleteAllChunks: async (c) => {
+            const { db } = await postgresClient();
+            await db.from(getChunksTableName(c.id)).delete();
+          },
+          persist: async (id, m, q) =>
+            m ? setEmbedderSetting(id, m, q) : clearEmbedderSetting(id),
+          hydrate: (cs) => hydrateContextEmbedders(cs),
+          queueRegeneration: (c) => c.embeddings.generate.all(config),
+          codeModel: (c) => codeEmbedderFor(c)?.model ?? null,
+          itemCount: async (c) => {
+            const { db } = await postgresClient();
+            const [row] = await db.from(getTableName(c.id)).count({ count: "*" });
+            return Number(row?.count ?? 0);
+          },
+          willEmbedOnQueue: (c) => willEmbedOnQueue(c, queue),
+        });
+        return {
+          info: await resolveContextEmbedder(ctx),
+          rebuild: result.case,
+          itemsQueued: result.items,
+        };
+      } catch (err) {
+        // The rebuild failed; put the instance back so this replica keeps
+        // serving on the previous embedder (the setting was never persisted).
+        ctx.embedder = previous;
+        throw err;
+      }
     };
 
     mutations[`${tableNameSingular}ExtractEntities`] = async (_, args, context) => {

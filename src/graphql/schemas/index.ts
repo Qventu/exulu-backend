@@ -4,7 +4,10 @@ import { makeExecutableSchema } from "@graphql-tools/schema";
 import GraphQLJSON from "graphql-type-json";
 import cron from "cron-validator";
 import { parseRerankerModels } from "@SRC/exulu/litellm/parse-reranker-models";
-import { resolveLiteLLMConfigPath } from "@SRC/exulu/litellm/parse-embedding-models";
+import {
+  parseEmbeddingModels,
+  resolveLiteLLMConfigPath,
+} from "@SRC/exulu/litellm/parse-embedding-models";
 import type { ExuluTool } from "@SRC/exulu/tool";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/context.ts";
@@ -402,6 +405,7 @@ export function createSDL(
       ${tableNameSingular}StaleEntityCount: Int
       ${tableNameSingular}EntityModel: ${tableNameSingular}EntityModelInfo
       ${tableNameSingular}EntitiesForItem(item: ID!): [${tableNameSingular}ItemEntity!]
+      ${tableNameSingular}EmbedderInfo: ${tableNameSingular}ContextEmbedderInfo
     `;
     }
     // todo add the fields of each table as filter options
@@ -423,6 +427,7 @@ export function createSDL(
     ${tableNameSingular}BackfillEntities(onlyStale: Boolean, limit: Int): ${tableNameSingular}EntityBackfillPayload
     ${tableNameSingular}PurgeEntityType(type: String!): ${tableNameSingular}EntityPurgePayload
     ${tableNameSingular}SetEntityModel(model: String): ${tableNameSingular}EntityModelInfo
+    ${tableNameSingular}SetEmbedder(model: String, queue: String): ${tableNameSingular}SetEmbedderPayload
     ${tableNameSingular}ExtractEntities(item: ID!): ${tableNameSingular}EntityExtractPayload
     ${tableNameSingular}DetachEntities(item: ID!): ${tableNameSingular}EntityDetachPayload
     `;
@@ -576,6 +581,30 @@ export function createSDL(
         codeModel: String
     }
 
+    type ${tableNameSingular}ContextEmbedderInfo {
+        effectiveModel: String
+        source: String
+        databaseModel: String
+        codeModel: String
+        databaseQueue: String
+        dimensionality: Int
+        chunkCount: Int
+        """
+        True when effectiveModel names a model that is no longer a usable
+        embedding model in config.litellm.yaml. The context reports a
+        configured model, but hydration refuses it and search raises
+        ContextEmbedderNotConfigured — surface it rather than showing a
+        model that silently does not work.
+        """
+        effectiveModelUnavailable: Boolean
+    }
+
+    type ${tableNameSingular}SetEmbedderPayload {
+        info: ${tableNameSingular}ContextEmbedderInfo!
+        rebuild: String!
+        itemsQueued: Int!
+    }
+
     type ${tableNameSingular}EntityExtractPayload {
         extracted: Int!
     }
@@ -643,6 +672,10 @@ type PageInfo {
 
   typeDefs += `
     litellmCatalog: [LiteLLMModel!]!
+    `;
+
+  typeDefs += `
+    availableEmbeddingModels: [EmbeddingModelOption!]!
     `;
 
   typeDefs += `
@@ -912,6 +945,15 @@ type LiteLLMModel {
 }
 `;
 
+  modelDefs += `
+type EmbeddingModelOption {
+  model: String!
+  dimensionality: Int!
+  maxChunkSize: Int!
+  maxBatchSize: Int!
+}
+`;
+
   // litellmCatalog: returns the list of models LiteLLM is currently configured
   // to expose. Empty array when LiteLLM is off / misconfigured so callers can
   // invoke this unconditionally. Cache lives in the shared catalog module so
@@ -921,6 +963,25 @@ type LiteLLMModel {
       "@SRC/exulu/litellm/catalog"
     );
     return fetchLiteLLMCatalog();
+  };
+
+  // availableEmbeddingModels: the embedding models declared in
+  // config.litellm.yaml, for the context-settings embedder picker. Registered
+  // once here (not per context) — same reasoning as litellmCatalog/queues
+  // above. Empty array when the config is missing/unreadable so callers can
+  // invoke this unconditionally.
+  resolvers.Query["availableEmbeddingModels"] = async () => {
+    try {
+      return parseEmbeddingModels(resolveLiteLLMConfigPath()).map((m) => ({
+        model: m.model_name,
+        dimensionality: m.dimensionality,
+        maxChunkSize: m.maxChunkSize,
+        maxBatchSize: m.maxBatchSize,
+      }));
+    } catch (err) {
+      console.warn("[EXULU] Could not read embedding models:", (err as Error).message);
+      return [];
+    }
   };
 
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {
