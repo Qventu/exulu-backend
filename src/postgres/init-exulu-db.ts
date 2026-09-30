@@ -9,6 +9,7 @@ import type { ExuluContext } from "@SRC/exulu/context";
 import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
 import { getTableName } from "@SRC/exulu/table-names";
+import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 
 const {
   agentsSchema,
@@ -353,6 +354,12 @@ export const execute = async ({ contexts }: { contexts: ExuluContext[] }) => {
   const { db } = await postgresClient();
   console.log("[EXULU] Checking Exulu IMP database status.");
   await up(db);
+  // Apply stored embedder overrides before context tables are touched: a
+  // context whose embedder exists only as an override must already have it
+  // when contextDatabases decides whether to create its chunks table.
+  // platform_configurations is created by the core-schema loop above, so
+  // this is the earliest point the setting can be read.
+  await hydrateContextEmbedders(contexts);
   await contextDatabases(contexts);
   console.log("[EXULU] Inserting default user and admin role.");
   const existingAdminRole = await db.from("roles").where({ name: "admin" }).first();

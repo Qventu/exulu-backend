@@ -13,6 +13,8 @@ import type { ChunkerOperation } from "./chunker";
 import { defaultChunker } from "./chunker";
 import { resolveEmbedder } from "./resolve-embedder";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
+import { exuluApp } from "@SRC/exulu/app/singleton";
+import { refreshContextEmbeddersIfStale } from "./hydrate-embedders";
 import { VALID_RIGHTS_MODES, type ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "./statistics";
@@ -431,6 +433,13 @@ export class ExuluContext {
     chunks: VectorSearchChunkResult[];
     entityInsights?: EntityInsights;
   }> => {
+    try {
+      await refreshContextEmbeddersIfStale(exuluApp.get().contexts);
+    } catch {
+      // Singleton not initialised (e.g. tests, early boot) — the embedder
+      // set at construction/boot-hydration still stands.
+    }
+
     const { db } = await postgresClient();
 
     const result = await vectorSearch({
@@ -1015,6 +1024,13 @@ export class ExuluContext {
         job?: string;
         chunks?: number;
       }> => {
+        try {
+          await refreshContextEmbeddersIfStale(exuluApp.get().contexts);
+        } catch {
+          // Singleton not initialised (e.g. tests, early boot) — the
+          // embedder set at construction/boot-hydration still stands.
+        }
+
         console.log("[EXULU] Generating embeddings for item", item.id);
 
         if (!this.embedder) {
