@@ -292,11 +292,14 @@ export async function runMemoryPhase({
     }));
 
     if (relevantMemoryChunks.length > 0) {
+      // Names/ids only — the full chunk_content already rides along on
+      // `chunks` for the model; repeating it in `text` would put a second
+      // copy of the memory into the serialized tool result.
       steps.push({
         text:
-          "Retrieved potentially relevant information from memory: " +
+          `Retrieved ${relevantMemoryChunks.length} potentially relevant ${relevantMemoryChunks.length === 1 ? "memory" : "memories"}: ` +
           relevantMemoryChunks
-            .map((c) => `${c.item_name}: ${c.chunk_content}`)
+            .map((c) => `${c.item_name} (${c.item_id})`)
             .join(", "),
         chunks: memoryChunksForAnswer,
       });

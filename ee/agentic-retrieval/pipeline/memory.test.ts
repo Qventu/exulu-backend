@@ -45,6 +45,24 @@ describe("runMemoryPhase", () => {
     expect(r.memoryChunksForAnswer[0]).toMatchObject({ chunk_id: "1", rerank_score: 1, context: { id: "memory" } });
   });
 
+  it("keeps the relevance step's text to item names/ids and a count, never the raw chunk_content (no second copy of the memory in the serialized tool result)", async () => {
+    (generateText as jest.Mock)
+      .mockResolvedValueOnce({ output: { relevantChunkIds: ["1", "2"] } })
+      .mockResolvedValueOnce({ output: { overrides: false, confidence: "low", authoritativeChunkIds: [], reason: "" } })
+      .mockResolvedValueOnce({ output: { shouldPrioritizeFiles: false, fileNameHints: [] } })
+      .mockResolvedValueOnce({ output: { updatedUserQuestion: baseOpts.question, updatedRelevantKeywords: [], updatedImportantKeyword: "FST-2XT" } });
+    const r = await runMemoryPhase({
+      ...baseOpts,
+      memoryChunks: [memChunk("1", "SECRET-CHUNK-CONTENT-ONE"), memChunk("2", "SECRET-CHUNK-CONTENT-TWO")],
+      memoryConfig: allOn,
+    });
+    const relevanceStep = r.steps.find((s) => s.text.includes("Retrieved"));
+    expect(relevanceStep?.text).toContain("2 potentially relevant memories");
+    expect(relevanceStep?.text).toContain("Memory 1 (m1)");
+    expect(relevanceStep?.text).toContain("Memory 2 (m2)");
+    expect(relevanceStep?.text).not.toContain("SECRET-CHUNK-CONTENT");
+  });
+
   it("activates the override only with overrides=true AND high confidence AND chunks", async () => {
     (generateText as jest.Mock)
       .mockResolvedValueOnce({ output: { relevantChunkIds: ["1"] } })
