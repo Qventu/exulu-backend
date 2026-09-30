@@ -5,6 +5,7 @@ import { fuzzyPrefilter } from "./prefilter";
 import { withTiming } from "./timing";
 import { applyRewrites } from "./text-utils";
 import type { Chunk } from "./types";
+import { isEmbedderNotConfigured } from "@SRC/exulu/embedder-not-configured";
 
 /** Attach the source knowledge base to each chunk so citations and the chat UI can
  * attribute passages deterministically. Only memory chunks were labeled before; the
@@ -184,7 +185,13 @@ export async function searchContexts(opts: {
 
         return [];
       } catch (err) {
-        console.warn(`[EXULU pipeline] searchContexts failed for context "${ctxId}":`, err);
+        if (isEmbedderNotConfigured(err)) {
+          console.warn(
+            `[EXULU pipeline] context "${ctxId}" is not searchable: ${(err as Error).message}`,
+          );
+        } else {
+          console.warn(`[EXULU pipeline] searchContexts failed for context "${ctxId}":`, err);
+        }
         return [];
       }
     })),
