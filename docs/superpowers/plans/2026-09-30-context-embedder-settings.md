@@ -1502,7 +1502,7 @@ Append to `app/(application)/data/queries.ts`, following the existing per-contex
 ```ts
 export const GET_EMBEDDER_INFO = (context: string) => gql`
   query EmbedderInfo${context} {
-    ${context}_itemEmbedderInfo {
+    ${context}_itemsEmbedderInfo {
       effectiveModel
       source
       databaseModel
@@ -1516,7 +1516,7 @@ export const GET_EMBEDDER_INFO = (context: string) => gql`
 
 export const SET_EMBEDDER = (context: string) => gql`
   mutation SetEmbedder${context}($model: String, $queue: String) {
-    ${context}_itemSetEmbedder(model: $model, queue: $queue) {
+    ${context}_itemsSetEmbedder(model: $model, queue: $queue) {
       info {
         effectiveModel
         source
@@ -1544,7 +1544,11 @@ export const GET_AVAILABLE_EMBEDDING_MODELS = gql`
 `;
 ```
 
-**Verify the generated field names first.** The backend builds them from `tableNameSingular`; run the backend and introspect, or read how `${tableNameSingular}` resolves for a context id in `src/graphql/schemas/index.ts`, and correct the `${context}_item…` prefixes above to match exactly. Do not guess — a wrong field name fails only at runtime.
+**The field names above are verified, not guessed.** For a context, the generated `tableNameSingular`
+is `<ctx>_items` (plural) — confirmed against the shipped entity-model caller, which reads
+`modelData?.[\`${context}_itemsEntityModel\`]` at
+`app/(application)/data/components/entity-types.tsx:114`. So it is `${context}_itemsEmbedderInfo` and
+`${context}_itemsSetEmbedder`, with the `s`. A missing `s` fails only at runtime.
 
 - [ ] **Step 3: Add the hook**
 
@@ -1601,7 +1605,11 @@ export function useEmbedderSettings(contextId: string): {
 }
 ```
 
-The `Object.values(...)[0]` reads are deliberate: the field name is generated per context, so the response key is not a literal you can type. If Step 2's introspection gave you the exact key, prefer indexing by it and drop this.
+**Index by the literal key, not `Object.values(...)[0]`.** The key is known —
+`` `${contextId}_itemsEmbedderInfo` `` and `` `${contextId}_itemsSetEmbedder` `` — and that is how the
+shipped entity-model caller does it (`entity-types.tsx:114`). Replace the two `Object.values(...)[0]`
+reads above with typed index reads before you commit; they are written that way only so the snippet
+compiles in isolation.
 
 - [ ] **Step 4: Verify and commit**
 
