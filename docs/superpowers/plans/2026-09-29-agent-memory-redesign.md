@@ -1812,14 +1812,15 @@ Facts established at planning time (2026-09-29): 275 `feedback` rows with `score
 
 ```bash
 cd /Users/daniel.claessen/Desktop/Projects/newlkiag && git branch --show-current
-ls -la node_modules/@exulu/backend            # symlink → must point at the WORKTREE for this eval
-rm node_modules/@exulu/backend && ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory node_modules/@exulu/backend
+ls -la node_modules/@exulu/ | head           # @exulu/backend is a REAL installed package (4.1.0 from npm) — back it up, never delete it
+test -L node_modules/@exulu/backend || mv node_modules/@exulu/backend node_modules/@exulu/backend.npm-backup
+ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory node_modules/@exulu/backend
 (cd /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory && npm run build)
-grep -n "^POSTGRES_DB_\|^LITELLM_BASE_URL\|^LITELLM_MASTER_KEY\|^EVAL_API_KEY\|^PORT" .env | sed 's/=.*/=…/'
+grep -n "^POSTGRES_DB_\|^LITELLM_BASE_URL\|^LITELLM_MASTER_KEY\|^EVAL_API_KEY" .env | sed 's/=.*/=…/'
 mkdir -p scripts/memory-eval/out && grep -q "scripts/memory-eval/out" .gitignore || echo "scripts/memory-eval/out/" >> .gitignore
 ```
 
-Expected: the symlink now targets the worktree (note the previous target in the README so it can be restored: it was `/Users/daniel.claessen/Desktop/Projects/exulu/backend`); the env keys exist. `EVAL_API_KEY` is already in the gitignored `.env` (a temporary Newton key named `temporary_eval_key`, provided by Daniel on 2026-09-29; the scripts prefer it over `EXULU_API_KEY`; never commit or print it — revoke it in the admin UI when the eval is done). Start the dev server in a second terminal (`npm run dev`, note the port, default from `PORT`) and confirm `curl -s localhost:$PORT/health` answers.
+Expected: `node_modules/@exulu/backend` is now a symlink to the worktree and `backend.npm-backup` holds the installed package (Step 5 restores it); the env keys exist. The newlkiag server listens on port **9001** (hard-coded in `server.ts`), so `EVAL_BASE_URL` defaults to `http://localhost:9001`. Start it in a second terminal with `npm run dev:server` and confirm it answers: `curl -s -o /dev/null -w '%{http_code}\n' localhost:9001/` (any HTTP status means it is up; the tunnel on 5433 must be open first or boot fails on the DB). `EVAL_API_KEY` is already in the gitignored `.env` (a temporary Newton key named `temporary_eval_key`, provided by Daniel on 2026-09-29; the scripts prefer it over `EXULU_API_KEY`; never commit or print it — revoke it in the admin UI when the eval is done). Start the dev server in a second terminal (`npm run dev`, note the port, default from `PORT`) and confirm `curl -s localhost:$PORT/health` answers.
 
 - [ ] **Step 2: Extract the cases**
 
@@ -1917,7 +1918,7 @@ import "dotenv/config";
 import { readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-const BASE = process.env.EVAL_BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`;
+const BASE = process.env.EVAL_BASE_URL ?? "http://localhost:9001";
 const AGENT_ID = process.env.EVAL_AGENT_ID ?? "48ae3121-7ac7-42b1-94d7-77467b1f8be7";
 const API_KEY = process.env.EVAL_API_KEY ?? process.env.EXULU_API_KEY!;
 const subsetOnly = process.argv.includes("--subset");
@@ -2070,17 +2071,18 @@ cat > scripts/memory-eval/README.md <<'EOF'
 # Memory regression eval
 Replays Newlift's positively rated answers through the run endpoint and checks (1) the memories the verified
 answer used are recalled, (2) an LLM judge scores the new answer against the verified one.
-Prereqs: DB tunnel on 127.0.0.1:5433, dev server on $PORT with the @exulu/backend build under test,
+Prereqs: DB tunnel on 127.0.0.1:5433, dev server on :9001 (`npm run dev:server`) with the @exulu/backend build under test,
 EVAL_API_KEY (agent-scoped org key for Newton; falls back to EXULU_API_KEY), LITELLM_BASE_URL + LITELLM_MASTER_KEY.
 Steps: extract-cases → run-cases [--subset | --sample N] [--tag t] → report [--tag t]. Output in out/ (gitignored).
-Note: the @exulu/backend symlink normally points at ../exulu/backend; point it at the worktree only for the eval.
+Note: node_modules/@exulu/backend is normally the installed npm package; for an eval, move it to
+backend.npm-backup, symlink the backend worktree in its place, and move the backup back afterwards.
 EOF
-rm node_modules/@exulu/backend && ln -s /Users/daniel.claessen/Desktop/Projects/exulu/backend node_modules/@exulu/backend
+rm node_modules/@exulu/backend && mv node_modules/@exulu/backend.npm-backup node_modules/@exulu/backend
 git add scripts/memory-eval .gitignore && git -c commit.gpgsign=false commit -m "chore(eval): memory regression eval scripts against positive-feedback cases"
 cd /Users/daniel.claessen/Desktop/Projects/exulu/backend-agent-memory && git add docs/superpowers/evals && git -c commit.gpgsign=false commit -m "docs(evals): Newlift memory recall regression report"
 ```
 
-Expected: both commits land (newlkiag on `develop`, backend on `feat/agent-memory`); the symlink points back at the primary checkout. The report's Decision line is the gate for the rest of this plan: on NO-GO, stop and report to Daniel before starting the frontend tasks.
+Expected: both commits land (newlkiag on `develop`, backend on `feat/agent-memory`); `node_modules/@exulu/backend` is the installed 4.1.0 package again (no symlink left behind), and the dev server started for the eval is stopped. The report's Decision line is the gate for the rest of this plan: on NO-GO, stop and report to Daniel before starting the frontend tasks.
 
 ---
 
