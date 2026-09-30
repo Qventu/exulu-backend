@@ -368,7 +368,6 @@ export function createAgenticRetrievalTool(opts: {
           timings,
           mergedCall: engineV2 && v2.mergedMemoryCall,
           memoryChunks: memoryItems ?? [],
-          memoryContext,
           question: userQuery,
           keywords: relevantKeywords,
           importantKeyword,
@@ -412,8 +411,6 @@ export function createAgenticRetrievalTool(opts: {
         });
         result.reasoning.push({ text: step.text, tools: [] });
       }
-      // Memory citable chunks go first (insertion-order dedup)
-      addChunks(result, memResult.memoryChunksForAnswer);
       yield { result: serializeOutput(result) };
 
       // ── Preselection-subset guard (yield, not throw) ──────────────────────
@@ -603,7 +600,7 @@ export function createAgenticRetrievalTool(opts: {
       });
 
       lap("rerankMs");
-      // Accumulate main results (dedup by chunk_id, memory chunks already first)
+      // Accumulate main results (dedup by chunk_id)
       addChunks(result, mainRerank.limited_results);
       yield { result: serializeOutput(result) };
 

@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { microCall } from "./micro-call";
 import { withTiming } from "./timing";
-import { singleSearch } from "./multi-query";
 import { fuzzyPrefilter } from "./prefilter";
-import { deriveKeywordVariants, normalizeFileName, stripSeparators } from "./text-utils";
+import { normalizeFileName } from "./text-utils";
 import type { Chunk, ChunkWithScore, MemoryPhaseResult, PhaseStep } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -12,115 +11,6 @@ import type { Chunk, ChunkWithScore, MemoryPhaseResult, PhaseStep } from "./type
 
 const MEMORY_OVERRIDE_MIN_CONFIDENCE = "high";
 const MEMORY_SYNTHETIC_RERANK_SCORE = 1;
-const ITEM_CACHE_TTL_MS = 5 * 60 * 1000;
-
-// ---------------------------------------------------------------------------
-// 5-min item cache (keyed by memoryContext.id)
-// ---------------------------------------------------------------------------
-
-type MemoryItem = { id: string; name: string; description?: string; information?: string };
-
-let memoryItemCache = new Map<string, { items: MemoryItem[]; tsp: Date }>();
-
-export function clearMemoryItemCache(): void {
-  memoryItemCache = new Map();
-}
-
-async function loadMemoryItems(context: {
-  id: string;
-  getItems: (o: any) => Promise<MemoryItem[]>;
-}): Promise<MemoryItem[]> {
-  const cached = memoryItemCache.get(context.id);
-  if (cached && Date.now() - cached.tsp.getTime() < ITEM_CACHE_TTL_MS) {
-    return cached.items;
-  }
-  const items = await context.getItems({
-    fields: ["id", "name", "description", "information"],
-    filters: [],
-  });
-  memoryItemCache.set(context.id, { items, tsp: new Date() });
-  return items;
-}
-
-// ---------------------------------------------------------------------------
-// Keyword recall (ported from newton-memory.ts:91-169)
-// ---------------------------------------------------------------------------
-
-export async function recallMemoryByKeywords({
-  keywords,
-  importantKeyword,
-  user,
-  role,
-  memoryContext,
-  timings,
-}: {
-  keywords: string[];
-  importantKeyword: string;
-  user: any;
-  role: any;
-  memoryContext: { id: string; getItems: (o: any) => Promise<MemoryItem[]> };
-  timings?: Record<string, number>;
-}): Promise<Chunk[]> {
-  const allKeywords = [
-    ...new Set(
-      [importantKeyword, ...keywords].filter(
-        (k): k is string => !!k && k.trim().length > 0,
-      ),
-    ),
-  ];
-  if (!allKeywords.length) return [];
-
-  const importantVariants = importantKeyword
-    ? [...new Set(deriveKeywordVariants(importantKeyword).map(stripSeparators))].filter(
-        (v) => v.length >= 4,
-      )
-    : [];
-  const allVariants = [
-    ...new Set(allKeywords.flatMap(deriveKeywordVariants).map(stripSeparators)),
-  ].filter((v) => v.length >= 4);
-  if (!allVariants.length) return [];
-
-  const items = await withTiming(timings, "memory.keywordRecall.itemsMs", () => loadMemoryItems(memoryContext));
-
-  type Scored = { id: string; hits: number; importantHit: boolean; name: string };
-  const scored: Scored[] = [];
-  for (const item of items) {
-    const haystack = stripSeparators(
-      [item.name, item.description, item.information].filter(Boolean).join(" "),
-    );
-    if (!haystack) continue;
-    const hits = allVariants.filter((v) => haystack.includes(v)).length;
-    if (hits === 0) continue;
-    const importantHit = importantVariants.some((v) => haystack.includes(v));
-    scored.push({ id: item.id, hits, importantHit, name: item.name ?? "" });
-  }
-
-  scored.sort((a, b) => {
-    if (a.importantHit !== b.importantHit) return a.importantHit ? -1 : 1;
-    return b.hits - a.hits;
-  });
-  const topMatches = scored.slice(0, 25);
-  if (!topMatches.length) return [];
-
-  console.log(
-    "[EXULU pipeline] keyword-triggered memory matches:",
-    topMatches.map((s) => `${s.name} (hits=${s.hits}, important=${s.importantHit})`),
-  );
-
-  // Full-text only: the items were already selected by keyword above, so this
-  // call just ranks their chunks. The hybrid method would add an embedding
-  // round trip (0.5-1.2 s, up to 5 s cold) on the memory phase's critical path.
-  const chunks = await withTiming(timings, "memory.keywordRecall.searchMs", () => singleSearch({
-    query: allKeywords.join(", "),
-    config: { method: "tsvector", cutoffs: undefined, limit: 50 },
-    user,
-    role,
-    pinnedItemIds: topMatches.map((s) => s.id),
-    context: memoryContext,
-  }));
-
-  return chunks;
-}
 
 // ---------------------------------------------------------------------------
 // Neutral result helper
@@ -290,7 +180,6 @@ function mergedFollowups(
 export async function runMemoryPhase({
   timings,
   memoryChunks,
-  memoryContext,
   question,
   keywords,
   importantKeyword,
@@ -303,7 +192,6 @@ export async function runMemoryPhase({
   mergedCall = false,
 }: {
   memoryChunks: Chunk[];
-  memoryContext?: any;
   question: string;
   keywords: string[];
   importantKeyword: string;
@@ -324,33 +212,12 @@ export async function runMemoryPhase({
 }): Promise<MemoryPhaseResult> {
   try {
     // Short-circuit: disabled, or nothing to work with
-    if (!memoryConfig.enabled || (memoryChunks.length === 0 && !memoryContext)) {
+    if (!memoryConfig.enabled || memoryChunks.length === 0) {
       return neutralResult(question, keywords, importantKeyword);
     }
 
     const steps: PhaseStep[] = [];
-    let retrieved_memory = [...memoryChunks];
-
-    // Keyword recall: extend memory with items that match the user's keywords
-    if (memoryContext) {
-      try {
-        const keywordMatched = await withTiming(timings, "memory.keywordRecallMs", () => recallMemoryByKeywords({
-          keywords,
-          importantKeyword,
-          user,
-          role,
-          memoryContext,
-          timings,
-        }));
-        if (keywordMatched.length > 0) {
-          const seen = new Set(retrieved_memory.map((c) => c.chunk_id));
-          const additions = keywordMatched.filter((c) => !seen.has(c.chunk_id));
-          retrieved_memory = [...retrieved_memory, ...additions];
-        }
-      } catch (e) {
-        console.error("[EXULU pipeline] keyword-triggered memory recall failed:", e);
-      }
-    }
+    const retrieved_memory = [...memoryChunks];
 
     // Step 1: Relevance check
     const CHECK_MEMORIES_FOR_RELEVANT_INFORMATION = `
@@ -425,11 +292,14 @@ export async function runMemoryPhase({
     }));
 
     if (relevantMemoryChunks.length > 0) {
+      // Names/ids only — the full chunk_content already rides along on
+      // `chunks` for the model; repeating it in `text` would put a second
+      // copy of the memory into the serialized tool result.
       steps.push({
         text:
-          "Retrieved potentially relevant information from memory: " +
+          `Retrieved ${relevantMemoryChunks.length} potentially relevant ${relevantMemoryChunks.length === 1 ? "memory" : "memories"}: ` +
           relevantMemoryChunks
-            .map((c) => `${c.item_name}: ${c.chunk_content}`)
+            .map((c) => `${c.item_name} (${c.item_id})`)
             .join(", "),
         chunks: memoryChunksForAnswer,
       });

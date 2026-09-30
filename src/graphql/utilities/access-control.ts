@@ -1,6 +1,17 @@
 import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { User } from "@EXULU_TYPES/models/user";
 
+/**
+ * Mirrors the "agents" branch of applyAccessControl's role check, for
+ * resolvers that don't run a query through applyAccessControl directly
+ * (e.g. memoryBaseStats, which aggregates counts rather than selecting rows).
+ * Super admins always pass; otherwise the caller's role must have read or
+ * write rights on the agents table, since a memory base is configured on an
+ * agent.
+ */
+export const hasAgentsReadAccess = (user?: User): boolean =>
+  user?.super_admin === true || user?.role?.agents === "read" || user?.role?.agents === "write";
+
 export const applyAccessControl = (
   table: ExuluTableDefinition,
   query: any,

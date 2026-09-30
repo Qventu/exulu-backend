@@ -16,6 +16,8 @@ export type { ExuluAgent } from "@EXULU_TYPES/models/agent.ts"
 export { ExuluContext } from "./exulu/context.ts"
 export { ExuluReadApi } from "./exulu/read-api.ts";
 export { postgresClient } from "./postgres/client";
+export { recallMemories } from "./exulu/memory/recall";
+export { checkMemoryBase } from "./exulu/memory/memory-base";
 export type { VectorSearchChunkResult } from "./graphql/resolvers/vector-search.ts";
 export { ExuluTool } from "./exulu/tool"
 export type {

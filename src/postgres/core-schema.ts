@@ -259,6 +259,10 @@ const agentsSchema: ExuluTableDefinition = {
       type: "text", // allows selecting a exulu context as native memory for the agent
     },
     {
+      name: "memory_config",
+      type: "json", // MemoryConfig (src/exulu/memory/config.ts); null = defaults
+    },
+    {
       name: "model",
       type: "text",
     },
