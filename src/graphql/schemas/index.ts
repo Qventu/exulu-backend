@@ -77,6 +77,7 @@ import { randomUUID } from "node:crypto";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
+import { listMemoryBases } from "@SRC/graphql/resolvers/memory-bases";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -715,6 +716,10 @@ type PageInfo {
 
   typeDefs += `
     memoryBaseStats(contextId: ID!): MemoryBaseStats
+    `;
+
+  typeDefs += `
+    memoryBases: [MemoryBase!]!
     `;
 
   typeDefs += `
@@ -2547,6 +2552,11 @@ type EmbeddingModelOption {
     return memoryBaseStats({ context: target, user: context.user, db: context.db });
   };
 
+  resolvers.Query["memoryBases"] = async (_, _args, context) => {
+    if (!hasAgentsReadAccess(context.user)) return [];
+    return listMemoryBases({ contexts, user: context.user, db: context.db });
+  };
+
   resolvers.Query["tools"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     const { search, category, limit = 100, page = 0 } = args;
@@ -2902,6 +2912,20 @@ type MemoryBaseStats {
     visible: Int!
     lastSavedAt: String
     lastSavedBy: MemoryBaseUser
+}
+type MemoryBaseAgent {
+    id: ID!
+    name: String!
+}
+type MemoryBase {
+    id: ID!
+    name: String!
+    description: String
+    valid: Boolean!
+    missing: [String!]!
+    missingFromCode: Boolean!
+    agents: [MemoryBaseAgent!]!
+    stats: MemoryBaseStats
 }
 type Reranker {
     id: ID!
