@@ -1,4 +1,4 @@
-import { checkMemoryBase, memoryTypeValues } from "./memory-base";
+import { checkMemoryBase, memoryTypeValues, memoryBaseHasSourceSession } from "./memory-base";
 
 const ctx = (fields: { name: string; type: string; enumValues?: string[] }[]) => ({ fields } as any);
 
@@ -44,5 +44,15 @@ describe("memoryTypeValues", () => {
   it("returns the enum values, or [] when the contract is not met", () => {
     expect(memoryTypeValues(ctx([{ name: "type", type: "enum", enumValues: ["A", "B"] }]))).toEqual(["A", "B"]);
     expect(memoryTypeValues(ctx([]))).toEqual([]);
+  });
+});
+
+describe("memoryBaseHasSourceSession", () => {
+  it("is true only for a text field named source_session", () => {
+    expect(memoryBaseHasSourceSession({ fields: [{ name: "source_session", type: "text" }] } as any)).toBe(true);
+    expect(memoryBaseHasSourceSession({ fields: [{ name: "source_session", type: "longText" }] } as any)).toBe(true);
+    expect(memoryBaseHasSourceSession({ fields: [{ name: "source_session", type: "uuid" }] } as any)).toBe(false);
+    expect(memoryBaseHasSourceSession({ fields: [{ name: "information", type: "text" }] } as any)).toBe(false);
+    expect(memoryBaseHasSourceSession(undefined)).toBe(false);
   });
 });

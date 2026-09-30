@@ -93,6 +93,23 @@ describe("memory_remember", () => {
     const failed: any = await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {} } as any, {} as any);
     expect(failed).toMatchObject({ type: "memory_error", message: "boom" });
   });
+
+  it("writes source_session when the base defines the field and a session id is present", async () => {
+    const withSource: any = { ...context, fields: [...context.fields, { name: "source_session", type: "text" }] };
+    const t = Object.fromEntries(createMemoryTools({ agent, context: withSource, user: me }).map((x) => [x.id, x]));
+    await t.memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {}, sessionID: "sess-1" } as any, {} as any);
+    expect(createItem.mock.calls[0][0]).toMatchObject({ source_session: "sess-1" });
+  });
+
+  it("omits source_session when the base does not define it, or when no session id is present", async () => {
+    await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {}, sessionID: "sess-1" } as any, {} as any);
+    expect(createItem.mock.calls[0][0]).not.toHaveProperty("source_session");
+    createItem.mockClear();
+    const withSource: any = { ...context, fields: [...context.fields, { name: "source_session", type: "text" }] };
+    const t = Object.fromEntries(createMemoryTools({ agent, context: withSource, user: me }).map((x) => [x.id, x]));
+    await t.memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {} } as any, {} as any);
+    expect(createItem.mock.calls[0][0]).not.toHaveProperty("source_session");
+  });
 });
 
 describe("memory_update / memory_forget", () => {

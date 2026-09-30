@@ -29,3 +29,13 @@ export function memoryTypeValues(context: ContextLike): string[] {
   if (!type || type.type !== "enum") return [];
   return [...(type.enumValues ?? [])];
 }
+
+/**
+ * Optional contract field (sub-project 2): a `source_session` text field lets the
+ * remember tool record the chat session a memory was saved from, so the Memory
+ * area can link to the conversation. Bases without it simply have no link.
+ */
+export function memoryBaseHasSourceSession(context: ContextLike): boolean {
+  const field = context?.fields?.find((f) => f.name === "source_session");
+  return !!field && TEXT_TYPES.has(field.type);
+}

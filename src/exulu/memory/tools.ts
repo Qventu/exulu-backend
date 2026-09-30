@@ -7,7 +7,7 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { postgresClient } from "@SRC/postgres/client";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
-import { memoryTypeValues } from "./memory-base";
+import { memoryTypeValues, memoryBaseHasSourceSession } from "./memory-base";
 import type { MemoryDecision } from "./decisions";
 import { canEditMemory } from "./access";
 import { displayName, loadVisibleMemoryRows, type MemoryItemRow } from "./recall-collector";
@@ -87,6 +87,7 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
       const type = resolveType(context, d?.type ?? params.type);
       const rights_mode: ExuluRightsMode | undefined =
         d?.rights_mode ?? (params.visibility === "public" ? "public" : params.visibility === "private" ? "private" : undefined);
+      const sessionID = typeof params.sessionID === "string" && params.sessionID ? params.sessionID : undefined;
       // createItem and the rbac grant apply are deliberately separate
       // try/catches: once the item exists, a grant failure must not surface
       // as memory_error (which would tell the model the save failed and
@@ -95,7 +96,12 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
       let created: { id?: string; rights_mode?: string; [key: string]: any };
       try {
         const { item } = await context.createItem(
-          { name: title, information, ...(type ? { type } : {}), description: String(params.whySaved ?? ""), ...(rights_mode ? { rights_mode } : {}) },
+          {
+            name: title, information, ...(type ? { type } : {}),
+            description: String(params.whySaved ?? ""),
+            ...(rights_mode ? { rights_mode } : {}),
+            ...(sessionID && memoryBaseHasSourceSession(context) ? { source_session: sessionID } : {}),
+          },
           exuluConfig, u.id, u.role?.id, false,
         );
         created = item;
