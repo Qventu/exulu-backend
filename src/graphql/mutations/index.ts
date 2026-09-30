@@ -1282,7 +1282,16 @@ export function createMutations(
             const { db } = await postgresClient();
             await db.schema.dropTableIfExists(getChunksTableName(c.id));
           },
-          createChunksTable: (c) => c.createChunksTable(),
+          // Deliberately NOT c.createChunksTable() on its own. Two admins
+          // changing the same context interleave as drop/drop/create/create,
+          // and the second plain createTable throws "already exists" after the
+          // first has already rebuilt it. ExuluContext.createChunksTable has
+          // other callers that want the plain behaviour, so the idempotence
+          // lives here. Do not "simplify" this back to a bare call.
+          createChunksTable: async (c) => {
+            if (await c.chunksTableExists()) return;
+            await c.createChunksTable();
+          },
           deleteAllChunks: async (c) => {
             const { db } = await postgresClient();
             await db.from(getChunksTableName(c.id)).delete();
