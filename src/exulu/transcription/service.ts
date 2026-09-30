@@ -27,7 +27,7 @@ import {
   TranscriptionServerUnavailable,
   type WhisperJob,
 } from "./client";
-import { renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
+import { effectiveSegments, renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
 import { buildTranscriptItemInput } from "./build-transcript-item";
 
 const TABLE = "transcription_jobs";
@@ -62,6 +62,7 @@ export type FinalizeInput = {
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
   target_rbac_roles?: { id: string; rights: "read" | "write" }[];
+  corrected_segments?: RawSegment[] | null;
 };
 
 type JobRow = {
@@ -94,6 +95,8 @@ type JobRow = {
   chunk_count?: number | null;
   /** Live recordings: when the last chunk was accepted. */
   last_chunk_at?: string | null;
+  /** User corrections to the transcript text; null means never corrected. */
+  corrected_segments?: RawSegment[] | null;
 };
 
 const log = (msg: string) => console.log(`[EXULU-TRANSCRIPTION] ${msg}`);
@@ -341,7 +344,10 @@ export const transcriptionService = {
     }
     const config = (app as any)._config ?? (app as any).config;
 
-    const transcriptText = renderTranscript(row.raw_segments, input.speakers);
+    const transcriptText = renderTranscript(
+      effectiveSegments(row.raw_segments, input.corrected_segments ?? row.corrected_segments),
+      input.speakers,
+    );
     const rightsMode: ExuluRightsMode =
       input.target_rights_mode ?? row.target_rights_mode ?? "private";
 
@@ -427,6 +433,11 @@ export const transcriptionService = {
       }
     }
 
+    // Persist a freshly-submitted correction; otherwise leave the row's
+    // existing corrected_segments (if any) untouched.
+    const nextCorrectedSegments =
+      input.corrected_segments !== undefined ? input.corrected_segments : row.corrected_segments;
+
     const [updated] = await db(TABLE)
       .where({ id })
       .update({
@@ -434,6 +445,7 @@ export const transcriptionService = {
         saved_item_id: itemId,
         title: input.title ?? row.title ?? null,
         speakers: JSON.stringify(input.speakers),
+        corrected_segments: nextCorrectedSegments ? JSON.stringify(nextCorrectedSegments) : null,
         error: projectWarning ? `Saved, but could not attach to project: ${projectWarning}` : null,
         updatedAt: new Date(),
       })
@@ -454,6 +466,7 @@ export const transcriptionService = {
         dbRow.target_rbac_roles,
       ),
       post_processing_outputs: parseJsonField<unknown[]>(dbRow.post_processing_outputs),
+      corrected_segments: parseJsonField<RawSegment[]>(dbRow.corrected_segments),
     } as JobRow;
   },
 };

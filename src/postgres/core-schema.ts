@@ -743,6 +743,10 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "chunk_count", type: "number", default: 0 },
     // Heartbeat of the last accepted chunk; shown in the queue row.
     { name: "last_chunk_at", type: "date" },
+    // User corrections to the transcript text. raw_segments stays the
+    // untouched engine output so a correction can always be reset and
+    // diarization can be re-run (spec 2026-09-29 §2.2).
+    { name: "corrected_segments", type: "json" },
   ],
 };
 

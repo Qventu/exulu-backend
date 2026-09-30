@@ -151,3 +151,15 @@ describe("buildTranscriptItemInput — denormalised list columns", () => {
     expect(item.project_id).toBe("proj-7");
   });
 });
+
+describe("buildTranscriptItemInput — corrections", () => {
+  it("carries corrected_segments onto the item", () => {
+    const corrected = [{ start: 0, end: 1, text: "hi there", speaker: "SPEAKER_00" }];
+    const item = buildTranscriptItemInput(args({ row: row({ corrected_segments: corrected }) }));
+    expect(item.corrected_segments).toEqual(corrected);
+  });
+
+  it("leaves corrected_segments undefined when nothing was corrected", () => {
+    expect(buildTranscriptItemInput(args()).corrected_segments).toBeUndefined();
+  });
+});

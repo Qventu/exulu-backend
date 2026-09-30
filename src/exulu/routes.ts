@@ -1351,6 +1351,7 @@ export const createExpressRoutes = async (
           "language",
           "speakers",
           "raw_segments",
+          "corrected_segments",
           "post_processing",
         ],
         user: user as any,

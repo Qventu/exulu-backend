@@ -32,6 +32,7 @@ export const buildTranscriptItemInput = ({
   duration_seconds: row.duration_seconds ?? undefined,
   speakers,
   raw_segments: row.raw_segments,
+  corrected_segments: row.corrected_segments ?? undefined,
   // Recall meeting-bot post-processing results (null for Whisper jobs).
   post_processing: row.post_processing_outputs ?? undefined,
   // Handle for the meeting video; null for Whisper uploads.
