@@ -56,11 +56,24 @@ describe("buildMemoryPromptBlock", () => {
     expect(block).toContain("Check X12 first }");
     expect(block).toContain("saved by Sara Kraus");
     expect(block).toContain("private");
-    // Same regex as components/message-renderer.tsx flexibleCitationRegex
-    expect(block.match(/\{[^}]*?item_name\s*:\s*[^,}]+[^}]*?\}/g)).toHaveLength(1);
+    // Same regex as components/message-renderer.tsx flexibleCitationRegex. This
+    // block feeds the MODEL's context (never rendered to the user directly), so
+    // matching twice here is fine: once for the header's own well-formed
+    // citation-format example (now that its closing brace is present), once
+    // for the real memory's citation.
+    expect(block.match(/\{[^}]*?item_name\s*:\s*[^,}]+[^}]*?\}/g)).toHaveLength(2);
   });
   it("returns an empty string for no memories", () => {
     expect(buildMemoryPromptBlock([])).toBe("");
+  });
+
+  it("closes the brace on the citation example in the header", () => {
+    const block = buildMemoryPromptBlock([{
+      id: "a1", contextId: "mem", title: "T", information: "I", type: "FACT",
+      rights_mode: "private", createdBy: null, createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z", source: "prefetch",
+    }]);
+    expect(block).toContain("e.g. {item_name: <title>, item_id: <id>, context: <contextId>}");
   });
 });
 

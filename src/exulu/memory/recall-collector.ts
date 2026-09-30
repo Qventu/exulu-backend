@@ -112,7 +112,7 @@ export function buildMemoryPromptBlock(memories: RecalledMemory[]): string {
   });
   return [
     "Memories: facts people saved earlier for this assistant. Use them where relevant and cite each memory you rely on",
-    "with its citation object exactly as given, e.g. {item_name: <title>, item_id: <id>, context: <contextId>",
+    "with its citation object exactly as given, e.g. {item_name: <title>, item_id: <id>, context: <contextId>}",
     ...lines,
   ].join("\n");
 }
