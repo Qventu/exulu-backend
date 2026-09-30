@@ -27,7 +27,7 @@ import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-too
 import { GraphQLDate } from "@SRC/graphql/types";
 import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
-import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
+import { applyAccessControl, hasAgentsReadAccess } from "@SRC/graphql/utilities/access-control";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { createQueries } from "@SRC/graphql/resolvers";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
@@ -2476,6 +2476,9 @@ type LiteLLMModel {
   };
 
   resolvers.Query["memoryBaseStats"] = async (_, args, context) => {
+    // spec §3.3: memory bases are configured on agents, so viewing their
+    // stats requires the same agents-read right as viewing the agent itself.
+    if (!hasAgentsReadAccess(context.user)) return null;
     const target = contexts.find((c) => c.id === args.contextId);
     if (!target) return null;
     return memoryBaseStats({ context: target, user: context.user, db: context.db });
