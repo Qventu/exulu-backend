@@ -28,7 +28,7 @@
 1. An agent references a memory context id that no longer exists in code: the overview must list it greyed as "not found in code" and never throw or omit the agent (test in Task 3).
 2. A viewer with agents read but no access to another user's private memory: the per-base stats count it, the list and the detail never reveal it (`visible` test in Task 2; the list and detail only ever read RBAC-scoped item queries, so the row is absent and the detail renders "not available" — UAT item 6 in Task 9).
 3. A base without the optional `source_session` field: the memory item query must not request the field (Task 5's query builder test, Task 7's `hasSourceSession` test) and the detail renders "No conversation recorded" from the missing value (Task 8's `sourceQuote` null cases cover an unreadable or empty session).
-4. Search input of only whitespace or characters like `%`, `_`, `{`: the filter must be omitted for whitespace and passed verbatim otherwise (Task 7 test) — the generated `contains` operator escapes on the server.
+4. Search input of only whitespace or characters like `%`, `_`, `{`: the filter must be omitted for whitespace and passed verbatim otherwise (Task 7 test) — the server does not escape `contains`; `buildMemoryFilters` escapes `\`, `%` and `_`.
 5. Bulk delete where one selected item is not writable by the viewer: the existing dialog's error list must show which failed and keep the others (reused behaviour, UAT item in Task 9).
 
 ---

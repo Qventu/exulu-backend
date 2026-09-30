@@ -77,7 +77,8 @@ import { randomUUID } from "node:crypto";
 import { createAgentTool } from "@SRC/exulu/agent-as-tool.ts";
 import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
-import { listMemoryBases } from "@SRC/graphql/resolvers/memory-bases";
+import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contributors";
+import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -719,7 +720,15 @@ type PageInfo {
     `;
 
   typeDefs += `
+    memoryBaseContributors(contextId: ID!): [MemoryBaseUser!]!
+    `;
+
+  typeDefs += `
     memoryBases: [MemoryBase!]!
+    `;
+
+  typeDefs += `
+    memoryAgentCount: Int!
     `;
 
   typeDefs += `
@@ -2552,9 +2561,23 @@ type EmbeddingModelOption {
     return memoryBaseStats({ context: target, user: context.user, db: context.db });
   };
 
+  resolvers.Query["memoryBaseContributors"] = async (_, args, context) => {
+    // Same gate as memoryBaseStats: names of the people who saved into a base
+    // are agent configuration, not the `users` directory.
+    if (!hasAgentsReadAccess(context.user)) return [];
+    const target = contexts.find((c) => c.id === args.contextId);
+    if (!target) return [];
+    return memoryBaseContributors({ context: target, db: context.db });
+  };
+
   resolvers.Query["memoryBases"] = async (_, _args, context) => {
     if (!hasAgentsReadAccess(context.user)) return [];
     return listMemoryBases({ contexts, user: context.user, db: context.db });
+  };
+
+  resolvers.Query["memoryAgentCount"] = async (_, _args, context) => {
+    if (!hasAgentsReadAccess(context.user)) return 0;
+    return countAgents(context.db);
   };
 
   resolvers.Query["tools"] = async (_, args, context, info) => {

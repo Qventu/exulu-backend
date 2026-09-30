@@ -50,3 +50,17 @@ Raw data (gitignored): newlkiag `scripts/memory-eval/out/` — `judged-rerun.jso
 - Optionally delete the 177 `[memory-eval]`-titled `agent_sessions` (and their messages) under user 51.
 - `agents.memory_config` was added to `exulu-test` by the eval helper (nullable json, as in core-schema);
   Newton's row is set to `{"retrieval":{"enabled":true,"limit":25}}` on purpose.
+
+## Security follow-up (found 2026-10-01, final review of the Memory area)
+
+`agent_messagesPagination` is not RBAC-scoped. The `agent_messages` table carries no RBAC flag in the core
+schema, so `applyAccessControl` passes the query through untouched, and any authenticated user can page another
+user's session messages by supplying that session's id.
+
+The Memory area is not the hole: its source quote only requests messages after `agent_sessionById` has proved the
+session readable for the viewer (the messages query is skipped until the session resolves non-null). The API hole
+predates this branch and is reachable directly from any client.
+
+Proposed fix: scope the query to sessions the viewer can read — join `agent_sessions` and run
+`applyAccessControl` with the field-prefix argument, or special-case `agent_messages` the way the by-id resolver
+already special-cases `agent`. Owner: Daniel to schedule.

@@ -44,7 +44,8 @@ mutations reused: <ctx>_itemsUpdateOneById, <ctx>_itemsBulkUpdateRBAC, <ctx>_ite
   quote are always fetched through RBAC-scoped queries.
 - The Memory area requires the same right as Knowledge (`agents: read`). Everything below that is item RBAC.
 - A memory base is still a code-defined context that passes `checkMemoryBase`; invalid and vanished bases are
-  shown so builders understand why an agent has no memory, but they are not navigable.
+  shown so builders understand why an agent has no memory. A base an agent references but code no longer defines
+  is not navigable at all; an invalid base opens a page that shows the warning and no list.
 
 ## 2. Data model
 

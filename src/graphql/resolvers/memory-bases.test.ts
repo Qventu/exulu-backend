@@ -1,7 +1,7 @@
 jest.mock("./memory-base-stats", () => ({
   memoryBaseStats: jest.fn(async ({ context }: any) => ({ total: context.id === "mem_a" ? 47 : 3, public: 1, private: 1, contributors: 2, visible: 1, lastSavedAt: null, lastSavedBy: null })),
 }));
-import { listMemoryBases } from "./memory-bases";
+import { listMemoryBases, countAgents } from "./memory-bases";
 
 const valid = (id: string, name: string) => ({ id, name, description: `${name} desc`, fields: [{ name: "information", type: "text" }, { name: "type", type: "enum", enumValues: ["FACT"] }] }) as any;
 const invalid = { id: "docs", name: "Docs", fields: [{ name: "body", type: "text" }] } as any;
@@ -24,5 +24,18 @@ describe("listMemoryBases", () => {
   it("does not list invalid contexts nobody uses", async () => {
     const rows = await listMemoryBases({ contexts: [invalid, valid("mem_a", "Alpha")], user: { id: 1 } as any, db: db([]) });
     expect(rows.map((r) => r.id)).toEqual(["mem_a"]);
+  });
+});
+
+describe("countAgents", () => {
+  it("returns the unscoped agent total", async () => {
+    const db = jest.fn(() => ({ count: async () => [{ c: 12 }] })) as any;
+    expect(await countAgents(db)).toBe(12);
+    expect(db).toHaveBeenCalledWith("agents");
+  });
+
+  it("coerces a string count and falls back to 0", async () => {
+    expect(await countAgents(jest.fn(() => ({ count: async () => [{ c: "7" }] })) as any)).toBe(7);
+    expect(await countAgents(jest.fn(() => ({ count: async () => [] })) as any)).toBe(0);
   });
 });

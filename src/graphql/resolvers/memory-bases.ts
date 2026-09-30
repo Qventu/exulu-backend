@@ -40,3 +40,14 @@ export async function listMemoryBases({ contexts, user, db }: { contexts: ExuluC
   const rank = (r: MemoryBaseRow) => (r.missingFromCode ? 3 : !r.valid ? 2 : r.agents.length > 0 ? 0 : 1);
   return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
+
+/**
+ * Total number of agents, for the overview's "N of M agents use a memory base".
+ * `memoryBases` is unscoped (agents-read gated), so the denominator has to be
+ * the unscoped agent count too — mixing it with the RBAC-scoped
+ * agentsPagination total made the two halves of the sentence disagree.
+ */
+export async function countAgents(db: any): Promise<number> {
+  const [row] = await db("agents").count("id as c");
+  return typeof row?.c === "number" ? row.c : Number(row?.c) || 0;
+}
