@@ -1,6 +1,6 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
-import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
+import { checkMemoryBase, MEMORY_REQUIRED_FIELDS } from "@SRC/exulu/memory/memory-base";
 import { memoryBaseStats, type MemoryBaseStats } from "./memory-base-stats";
 
 export type MemoryBaseRow = {
@@ -35,7 +35,7 @@ export async function listMemoryBases({ contexts, user, db }: { contexts: ExuluC
     byBase.delete(context.id);
   }
   for (const [id, used] of byBase) {
-    rows.push({ id, name: id, description: null, valid: false, missing: ["information", "type"], missingFromCode: true, agents: used, stats: null });
+    rows.push({ id, name: id, description: null, valid: false, missing: [...MEMORY_REQUIRED_FIELDS], missingFromCode: true, agents: used, stats: null });
   }
   const rank = (r: MemoryBaseRow) => (r.missingFromCode ? 3 : !r.valid ? 2 : r.agents.length > 0 ? 0 : 1);
   return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
