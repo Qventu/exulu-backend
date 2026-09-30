@@ -804,6 +804,34 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
     expect(generateTextSpy).toHaveBeenCalledTimes(1);
   });
 
+  test("feeds the prompt a timestamped transcript so summaries can cite passages", async () => {
+    // The reading view turns [mm:ss] in an output back into a seek; the
+    // model can only emit them if it saw them.
+    const row = jobRow({
+      status: "awaiting_review",
+      raw_segments: JSON.stringify([
+        {
+          start: 1278,
+          end: 1281,
+          text: "Let's lock the budget line.",
+          speaker: "SPEAKER_00",
+        },
+      ]),
+      post_processing_outputs: null,
+    });
+    firstResults[JOBS] = [row, { ...row }];
+    firstResults["prompt_library"] = [
+      { id: "prompt-1", name: "Summary", content: "Summarize this meeting." },
+    ];
+    firstResults["users"] = [{ id: 7, email: "u@example.com" }];
+
+    await recallService.runOnePostProcessing("job-1", "prompt-1", "agent-1");
+
+    const { prompt } = generateTextSpy.mock.calls[0][0];
+    expect(prompt).toContain("[21:18]");
+    expect(prompt).not.toMatch(/^\s*SPEAKER_\d+: /m);
+  });
+
   test("manual run merges instead of clobbering: a concurrent writer's outputs survive", async () => {
     const p2Output = {
       prompt_id: "p2",

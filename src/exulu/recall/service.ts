@@ -601,9 +601,13 @@ export const recallService = {
         agent,
       });
 
+      // Timestamped on purpose: a summary that can cite [mm:ss] becomes
+      // clickable in the reading view (spec §3.1). The stored
+      // transcript_text stays untimestamped.
       const transcriptText = renderTranscript(
         job.raw_segments ?? [],
         job.speakers ?? {},
+        { timestamps: true },
       );
 
       const { text } = await generateText({

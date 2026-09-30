@@ -67,6 +67,7 @@ import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
+import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
@@ -1334,6 +1335,35 @@ export const createExpressRoutes = async (
     buildTags,
     transcribe: transcribeAudio,
     service: liveRecordingService,
+  });
+
+  // Reading view's Export menu: a saved transcript as markdown, docx, pdf,
+  // csv or srt, built per request so the Include options can vary.
+  // Design doc: docs/superpowers/specs/2026-09-29-transcripts-redesign-design.md §3.2
+  registerTranscriptExportRoute(app, {
+    authenticate: (req) => requestValidators.authenticate(req),
+    getItem: async (itemId, user) => {
+      const context = contexts?.find((c) => c.id === "transcriptions");
+      if (!context) return undefined;
+      const [item] = await context.getItems({
+        filters: [{ id: { eq: itemId } }],
+        fields: [
+          "name",
+          "recording_source",
+          "recorded_at",
+          "duration_seconds",
+          "language",
+          "speakers",
+          "raw_segments",
+          "corrected_segments",
+          "post_processing",
+        ],
+        user: user as any,
+        role: (user as any).role?.id,
+      });
+      return item as never;
+    },
+    convert: (markdown, format) => exportMarkdown(markdown, format),
   });
 
   // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's

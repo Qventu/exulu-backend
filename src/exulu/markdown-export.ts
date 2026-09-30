@@ -20,14 +20,25 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export type ExportFormat = "docx" | "pdf";
+/**
+ * docx and pdf go through pandoc/LibreOffice (exportMarkdown below). md, csv
+ * and srt are built as text by the transcript export builders and never
+ * reach a converter.
+ */
+export type ExportFormat = "docx" | "pdf" | "md" | "csv" | "srt";
 
 const MAX_FILENAME_LENGTH = 160;
 
+const CONTENT_TYPES: Record<ExportFormat, string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pdf: "application/pdf",
+  md: "text/markdown; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  srt: "application/x-subrip; charset=utf-8",
+};
+
 export function exportContentType(format: ExportFormat): string {
-  return format === "docx"
-    ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    : "application/pdf";
+  return CONTENT_TYPES[format];
 }
 
 /** Filesystem- and header-safe filename: "<item name> - <field label>.<ext>". */
@@ -67,6 +78,9 @@ async function convertDocxToPdf(docxBytes: Buffer, workDir: string): Promise<Buf
 
 /** Converts markdown content to the requested format. Cleans up its own temp files. */
 export async function exportMarkdown(markdown: string, format: ExportFormat): Promise<Buffer> {
+  if (format !== "docx" && format !== "pdf") {
+    throw new Error(`exportMarkdown only converts docx and pdf, got '${format}'`);
+  }
   const workDir = await mkdtemp(join(tmpdir(), "exulu-md-export-"));
   try {
     const docx = await convertMarkdownToDocx(markdown, workDir);

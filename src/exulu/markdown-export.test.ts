@@ -46,3 +46,26 @@ describe("exportFilename", () => {
     expect(name.endsWith(".docx")).toBe(true);
   });
 });
+
+describe("exportContentType — transcript formats", () => {
+  it("maps the three new transcript formats", () => {
+    expect(exportContentType("md")).toBe("text/markdown; charset=utf-8");
+    expect(exportContentType("csv")).toBe("text/csv; charset=utf-8");
+    expect(exportContentType("srt")).toBe("application/x-subrip; charset=utf-8");
+  });
+
+  it("still maps the two office formats", () => {
+    expect(exportContentType("docx")).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(exportContentType("pdf")).toBe("application/pdf");
+  });
+});
+
+describe("exportFilename — transcript formats", () => {
+  it("uses the new extensions", () => {
+    expect(exportFilename("Kick-off Comfort-Line", "transcript", "srt")).toBe(
+      "Kick-off_Comfort-Line_-_transcript.srt",
+    );
+  });
+});

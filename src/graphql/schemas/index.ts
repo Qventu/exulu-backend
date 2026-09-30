@@ -802,6 +802,7 @@ type PageInfo {
       target_rights_mode: String
       target_rbac_users: [RBACUserInput!]
       target_rbac_roles: [RBACRoleInput!]
+      corrected_segments: JSON
     }
 
     type TranscriptionJobFinalizeResult {
@@ -2111,6 +2112,7 @@ type EmbeddingModelOption {
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
       target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      corrected_segments: args.input.corrected_segments,
     });
     return { job: row, item_id: item.id };
   };
