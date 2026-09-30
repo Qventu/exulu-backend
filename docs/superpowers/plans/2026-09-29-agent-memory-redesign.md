@@ -2086,6 +2086,199 @@ Expected: both commits land (newlkiag on `develop`, backend on `feat/agent-memor
 
 ---
 
+### Task 6b: Conversation-aware recall query
+
+**Files:**
+- Create: `src/exulu/memory/recall-query.ts`
+- Create: `src/exulu/memory/recall-query.test.ts`
+- Modify: `src/exulu/memory/recall.ts` (new optional `previousUserTurns` input; search text from `buildRecallQuery`)
+- Modify: `src/exulu/memory/recall.test.ts` (one new test)
+- Modify: `src/exulu/generate-stream.ts` (both `recallMemories` call sites pass the previous user turns)
+
+**Interfaces:**
+- Consumes: `recallMemories({ agent, contexts, query, user, db })` (Task 6); `UIMessage` from `ai`.
+- Produces: `buildRecallQuery(current: string, previousUserTurns: string[]): string`; `previousUserTexts(messages: UIMessage[]): string[]` (user text of all messages except the last one, oldest first); `recallMemories` gains `previousUserTurns?: string[]`.
+
+Why (Newlift eval, 2026-09-30): recall was keyed on the current user message only, so a terse follow-up like "sorry, ich meinte 000048F2" recalled nothing although the verified answer relied on a memory. Spec §3.1 now says the query is conversation-aware.
+
+- [ ] **Step 1: Write the failing tests**
+
+`src/exulu/memory/recall-query.test.ts`:
+
+```ts
+import type { UIMessage } from "ai";
+import { buildRecallQuery, previousUserTexts, MAX_QUERY_CHARS } from "./recall-query";
+
+describe("buildRecallQuery", () => {
+  const prev = ["Wie wird bei der FST-2 die Kalibrierfahrt gestartet?", "Und bei Anlage 000048F1, welche Steuerung ist verbaut?"];
+
+  it("uses a long, self-contained question as is", () => {
+    const q = "Anlage 98200010, AZFR 2.0: Display zeigt 0,2 m/s, die Kabine fährt aber normal. Was soll ich prüfen?";
+    expect(buildRecallQuery(q, prev)).toBe(q);
+  });
+
+  it("prepends the previous two user turns to a short follow-up", () => {
+    expect(buildRecallQuery("sorry, ich meinte 000048F2", prev)).toBe(`${prev[0]}\n${prev[1]}\nsorry, ich meinte 000048F2`);
+  });
+
+  it("prepends context when a long message still refers back", () => {
+    const q = "Nein, ich meinte die andere Anlage mit dem gleichen Fehlerbild an der Steuerung und den Ventilen";
+    expect(buildRecallQuery(q, prev)).toBe(`${prev[0]}\n${prev[1]}\n${q}`);
+  });
+
+  it("returns the current message alone when there is no earlier turn", () => {
+    expect(buildRecallQuery("und bei 000048F2?", [])).toBe("und bei 000048F2?");
+    expect(buildRecallQuery("und bei 000048F2?", ["", "  "])).toBe("und bei 000048F2?");
+  });
+
+  it("caps the combined text at MAX_QUERY_CHARS and always keeps the current message", () => {
+    const long = ["x".repeat(500), "y".repeat(500)];
+    const out = buildRecallQuery("kurz?", long);
+    expect(out.length).toBe(MAX_QUERY_CHARS);
+    expect(out.endsWith("\nkurz?")).toBe(true);
+  });
+
+  it("trims whitespace", () => {
+    expect(buildRecallQuery("  hallo  ", [])).toBe("hallo");
+  });
+});
+
+describe("previousUserTexts", () => {
+  const m = (role: string, text: string): UIMessage => ({ id: text, role, parts: [{ type: "text", text }] } as unknown as UIMessage);
+  it("returns user texts of all but the last message, oldest first", () => {
+    expect(previousUserTexts([m("user", "a"), m("assistant", "x"), m("user", "b"), m("assistant", "y"), m("user", "c")])).toEqual(["a", "b"]);
+  });
+  it("ignores non-text parts and empty texts", () => {
+    const withFile = { id: "f", role: "user", parts: [{ type: "file", url: "u" }] } as unknown as UIMessage;
+    expect(previousUserTexts([withFile, m("user", ""), m("user", "z"), m("user", "current")])).toEqual(["z"]);
+  });
+  it("is empty for a single message", () => {
+    expect(previousUserTexts([m("user", "only")])).toEqual([]);
+  });
+});
+```
+
+Append to `src/exulu/memory/recall.test.ts` (inside `describe("recallMemories")`):
+
+```ts
+  it("builds the search text from the previous user turns when the question is a short follow-up", async () => {
+    await recallMemories({ agent: { id: "a", memory: "mem" } as any, contexts: [context], query: "sorry, ich meinte 000048F2", user, db: dbFor(), previousUserTurns: ["Welche Steuerung ist in Anlage 000048F1 verbaut?"] });
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: "Welche Steuerung ist in Anlage 000048F1 verbaut?\nsorry, ich meinte 000048F2" }));
+  });
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `npx jest src/exulu/memory/recall-query src/exulu/memory/recall -v`
+Expected: FAIL — module not found; the new recall test fails on the query text.
+
+- [ ] **Step 3: Implement**
+
+`src/exulu/memory/recall-query.ts`:
+
+```ts
+import type { UIMessage } from "ai";
+
+/** Fewer words than this and the message is treated as a follow-up that needs context. */
+export const SHORT_QUERY_WORDS = 8;
+/** Upper bound of the combined search text; the tail (current message) is always kept. */
+export const MAX_QUERY_CHARS = 600;
+/** Phrases that refer back to an earlier turn (DE/EN). */
+const REFERS_BACK = /\b(ich meinte|ich meine|meinte|sorry|nein,|doch,|das andere|die andere|der andere|das gleiche|dieselbe|derselbe|nochmal|noch mal|i meant|i mean|the same|that one|this one|the other)\b/i;
+
+/**
+ * Search text for the memory recall (spec §3.1, "conversation-aware"). The
+ * current message alone when it stands on its own; otherwise the previous one
+ * or two user turns are prepended so a terse follow-up still recalls the
+ * memories the conversation is about.
+ */
+export function buildRecallQuery(current: string, previousUserTurns: string[]): string {
+  const cur = (current ?? "").trim();
+  const words = cur.split(/\s+/).filter(Boolean).length;
+  const needsContext = words < SHORT_QUERY_WORDS || REFERS_BACK.test(cur);
+  if (!needsContext) return cur.slice(0, MAX_QUERY_CHARS);
+  const prev = previousUserTurns.map((t) => (t ?? "").trim()).filter(Boolean).slice(-2);
+  if (prev.length === 0) return cur.slice(0, MAX_QUERY_CHARS);
+  const combined = [...prev, cur].join("\n");
+  return combined.length > MAX_QUERY_CHARS ? combined.slice(combined.length - MAX_QUERY_CHARS) : combined;
+}
+
+/** User-authored text of every message except the last one, oldest first. */
+export function previousUserTexts(messages: UIMessage[]): string[] {
+  return messages
+    .slice(0, -1)
+    .filter((m) => m.role === "user")
+    .map((m) => ((m.parts ?? []) as { type: string; text?: string }[]).filter((p) => p.type === "text" && typeof p.text === "string").map((p) => p.text!.trim()).filter(Boolean).join("\n"))
+    .filter(Boolean);
+}
+```
+
+`src/exulu/memory/recall.ts`: add `previousUserTurns?: string[]` to the options type, import `buildRecallQuery`, and search with `query: buildRecallQuery(query, previousUserTurns ?? [])` (the early `if (!agent?.memory || !query)` guard keeps using the raw `query`).
+
+`src/exulu/generate-stream.ts`: in `generateStream`, where `recallMemories({ agent, contexts, query, user, db: memoryDb })` is called, add `previousUserTurns: previousUserTexts(messages)` — `messages` there already contains the history plus the current message (validated a few lines above). In `generateSync`, add `previousUserTurns: previousUserTexts(messages)` using the same `messages` array that function builds from `previousMessages` and the prompt; if `generateSync` builds its message list only after the recall, compute the previous turns from `previousMessages` directly with `previousUserTexts([...previousMessagesAsUiMessages, currentPlaceholder])` — the implementer picks the variable that holds the prior UI messages at that point and says which in the report. Import `previousUserTexts` next to `recallMemories`.
+
+- [ ] **Step 4: Run the tests and typecheck**
+
+Run: `npx jest src/exulu/memory -v && npx tsc --noEmit -p tsconfig.json`
+Expected: PASS; only the 8 known pre-existing tsc errors.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/exulu/memory/recall-query.ts src/exulu/memory/recall-query.test.ts src/exulu/memory/recall.ts src/exulu/memory/recall.test.ts src/exulu/generate-stream.ts
+git commit -m "feat(memory): conversation-aware recall query for short and referring follow-ups"
+```
+
+---
+
+### Task 8c: Newlift eval re-run with the cited-memory gate (limit 25)
+
+**Files (newlkiag):**
+- Modify: `scripts/memory-eval/extract-cases.ts` (add `citedMemoryIds`, live-checked; `memorySubset` = cited)
+- Modify: `scripts/memory-eval/run-cases.ts` (selection: all cited cases + latest 20 non-cited; the session-row creation from the first run stays)
+- Modify: `scripts/memory-eval/report.ts` (Stage 1 = cited metric, gate ≥ 80 %; Stage 2 excludes "remember this" turns)
+- Create: `scripts/memory-eval/set-memory-limit.ts` (promoted from `out/`; sets/prints Newton's `memory_config`)
+- Modify: `scripts/memory-eval/README.md`
+
+**Files (backend worktree):**
+- Create: `docs/superpowers/evals/2026-09-30-newlift-memory-recall-rerun.md`
+
+**Interfaces:**
+- Consumes: everything Task 8b set up (tunnel, `EVAL_API_KEY`, the newlkiag package backup/symlink procedure, port 9001, `LITELLM_BASE_URL=http://127.0.0.1:4000` for the judge, the `ee/python/.venv` symlink workaround for LiteLLM in a worktree); the Task 6b build.
+- Produces: the re-run report and a GO / NO-GO under the revised gates (spec §6.1).
+
+- [ ] **Step 1: Prepare (same as Task 8b Step 1)** — back up `node_modules/@exulu/backend`, symlink the worktree, `npm run build` in the worktree (now including Task 6b), symlink `ee/python/.venv` from the primary checkout into the worktree, start `npm run dev:server` on :9001 with the tunnel open, confirm it answers.
+
+- [ ] **Step 2: Cited-memory ground truth**
+
+In `extract-cases.ts` replace `memoryIdsIn`'s role: keep `usedMemoryIds` for reference but add
+
+```ts
+const CITATION = /\{[^}]*?item_id\s*:\s*"?([0-9a-f-]{36})"?[^}]*?context\s*:\s*"?(newton_memory_context|memory)"?[^}]*?\}/g;
+function citedMemoryIds(answerText: string): string[] {
+  const ids = new Set<string>();
+  for (const m of answerText.matchAll(CITATION)) ids.add(m[1]!);
+  return [...ids];
+}
+```
+
+run it on `verifiedAnswer` (the assistant TEXT, not the tool output), then keep only ids that exist:
+`select id from newton_memory_context_items where id = any($1)` (one query per case is fine). Case fields: `citedMemoryIds` (live only), `deletedCitedIds`, and `memorySubset = citedMemoryIds.length > 0`. Selection written to `cases.json`: every case with `memorySubset` plus the latest 20 non-subset cases, newest first. Print `cited cases: N (of which all-deleted: M), non-cited selected: 20`.
+
+- [ ] **Step 3: Limit 25 and the run**
+
+`scripts/memory-eval/set-memory-limit.ts` (from the first run's `out/` helper): `--show` prints the current `agents.memory_config` for the Newton agent; `--set 25` writes `{"retrieval":{"enabled":true,"limit":25}}`; `--restore <file>` writes a captured value back. Run `--show` (capture to `out/memory-config-before.json`), then `--set 25`. Newton's limit stays at 25 after this task (spec decision); say so in the report.
+
+Then `npx tsx scripts/memory-eval/run-cases.ts --tag rerun` (all selected cases; expected ≈ 33 cases, under 50 turns) and `LITELLM_BASE_URL=http://127.0.0.1:4000 npx tsx scripts/memory-eval/report.ts --tag rerun`.
+
+`report.ts` changes: Stage 1 iterates cases with `citedMemoryIds.length > 0`; a hit = every cited id ∈ `recalled` ids; print hit rate, gate ≥ 80 %, and per-miss lines with the missing memory titles (look titles up from the recalled list or, when absent, from a `select id, name from newton_memory_context_items where id = any($1)`). Stage 2: skip cases whose verified answer came right after a user turn matching `/merk(e|) dir|remember (this|that)|speicher(e|) das/i` (the approval-paused ones) and print how many were skipped; gate mean ≥ 70 and no cited case < 50. Decision line: GO when both gates pass.
+
+- [ ] **Step 4: File, restore, commit, stop**
+
+Copy `out/report-rerun.md` to the backend worktree as `docs/superpowers/evals/2026-09-30-newlift-memory-recall-rerun.md` with a short header stating the gate revision (spec §6.1, 2026-09-30) and the Task 6b commit it tested. Restore the newlkiag package (`rm` the symlink, `mv backend.npm-backup backend`), remove the `.venv` symlink from the worktree, stop the server and LiteLLM, verify `git status` clean apart from the intended files. Commit newlkiag (`chore(eval): cited-memory gate, limit helper and re-run selection`) and the backend worktree (`docs(evals): Newlift memory recall re-run with the cited-memory gate`). On NO-GO stop and report before any frontend task.
+
+---
+
 ### Task 9: Backend build, full test run and docs
 
 **Files:**

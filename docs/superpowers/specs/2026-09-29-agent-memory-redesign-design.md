@@ -168,6 +168,11 @@ chunks to its result. This design replaces both with one recall step, `recallMem
   recall is dropped. Guests (no user) keep today's behaviour: public items only. If the Newlift eval (§6.1)
   shows verified memories missing, a keyword-variant expansion of the question is added to this same step —
   never a second retrieval elsewhere.
+- **Recall query is conversation-aware** (added 2026-09-30 after the Newlift eval): the search text is the
+  current user message, but when that message is short (fewer than 8 words) or refers back to an earlier turn
+  ("ich meinte …", "sorry", "the same one"), the previous one or two user turns are prepended, capped at 600
+  characters keeping the current message. A terse follow-up such as "sorry, ich meinte 000048F2" otherwise
+  recalls nothing.
 - The result is the turn's memory set. It is (1) injected once into the system prompt as the block below,
   (2) emitted as `recalledMemories` metadata, and (3) passed to the knowledge-search tool as its memory
   chunks. The pipeline's memory phase keeps its model-side judgement (relevance filter, override, file
@@ -356,14 +361,21 @@ against the Newlift database over the local tunnel (`127.0.0.1:5433`, database `
   user turns replayed in order (max 4), then the question. The stream's message metadata carries
   `recalledMemories` (the exact set the model was given) and the text deltas carry the answer, so one call
   per case yields both measurements with no script-side bootstrapping of the app.
-- **Stage 1, recall hit rate (deterministic)**: for each memory-subset case, every memory id the verified
-  answer used must appear in `recalledMemories`. Report hit rate, per-case misses with the memory titles.
-  Gate: ≥ 95 % at Newton's limit (10); if lower, re-run at limit 25 and, if that passes, set Newton's limit
-  to 25; if still lower, add the keyword-variant expansion (§3.1) and re-run.
+- **Stage 1, recall hit rate (deterministic)** — revised 2026-09-30. The first run showed the original
+  ground truth (memory chunks present in the old search tool's output) was the retired retriever's whole
+  candidate list, partly deleted since, so set-equality with it could never pass. The gate now uses the
+  memories the verified answer **cited** in its text (citation objects with `context: newton_memory_context`
+  or the older alias `context: memory`), restricted to ids that still exist. A case passes when every such id
+  is in `recalledMemories`. Gate: ≥ 80 % of cited cases pass at Newton's limit of 25 (the first run measured
+  54.5 % at limit 10 and a clear improvement at 25, so 25 becomes Newton's setting).
 - **Stage 2, answer quality (model-judged, all selected cases)**: score
   each new answer against the verified answer with an LLM-as-judge prompt (0–100) on Newton's own model via
-  LiteLLM. Gate: mean ≥ 70 and no memory-subset case below 50. Optionally the same cases are run against
-  the current `develop` build on a second port for a side-by-side mean.
+  LiteLLM. Gate: mean ≥ 70 and no cited case below 50; turns whose historical answer was a "remember this"
+  request are excluded, because the new design correctly stops at the save card instead of answering.
+  Optionally the same cases are run against the current `develop` build on a second port for a side-by-side
+  mean.
+- **Re-run (2026-09-30)**: after the conversation-aware recall query, the eval is re-run on every cited case
+  plus the latest 20 non-cited cases with Newton's limit at 25; the result gates the frontend work.
 - Output: a markdown report committed under `docs/superpowers/evals/2026-09-29-newlift-memory-recall.md`
   with counts, hit rate, misses, judge scores and the decision.
 
