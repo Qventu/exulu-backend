@@ -2899,6 +2899,7 @@ type MemoryBaseStats {
     public: Int!
     private: Int!
     contributors: Int!
+    visible: Int!
     lastSavedAt: String
     lastSavedBy: MemoryBaseUser
 }
