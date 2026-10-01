@@ -34,12 +34,30 @@ jest.mock("@SRC/exulu/resolve-model", () => ({
 }));
 
 const recallEnabledSpy = jest.fn(() => true);
-const recallStoreVideoLocallySpy = jest.fn(() => false);
 jest.mock("./env", () => ({
   recallEnabled: () => recallEnabledSpy(),
   RecallNotConfiguredError: class RecallNotConfiguredError extends Error {},
   recordingMonthlyLimitSeconds: () => null,
-  recallStoreVideoLocally: () => recallStoreVideoLocallySpy(),
+}));
+
+// resolveTranscriptsSettings is Task 2's own (DB-backed) resolver — mocked
+// here the same way bot-identity.test.ts avoids it: a settings() factory the
+// suite can override per test, rather than fighting its DB plumbing.
+const resolved = <T>(value: T) => ({ value, source: "code" as const });
+const defaultSettings = () => ({
+  botName: resolved("IMP Notetaker"),
+  notifyChat: resolved(false),
+  recordersMayOverrideBot: resolved(true),
+  defaultRightsMode: resolved("private"),
+  summaryPresets: resolved([]),
+  videoRetentionHours: resolved(2160),
+  storeVideoLocally: resolved(false),
+  monthlyRecordingLimitMinutes: resolved("none"),
+  videoStorageCostPerHour: resolved(0),
+});
+const resolveTranscriptsSettingsSpy = jest.fn(async () => defaultSettings());
+jest.mock("../transcripts-settings", () => ({
+  resolveTranscriptsSettings: () => resolveTranscriptsSettingsSpy(),
 }));
 
 const downloadAndStoreRecordingVideoSpy = jest.fn<Promise<string | null>, any[]>();
@@ -138,7 +156,7 @@ const resetAll = () => {
   }
   jest.clearAllMocks();
   recallEnabledSpy.mockReturnValue(true);
-  recallStoreVideoLocallySpy.mockReturnValue(false);
+  resolveTranscriptsSettingsSpy.mockResolvedValue(defaultSettings());
 };
 
 beforeEach(resetAll);
@@ -455,6 +473,74 @@ describe("createMeetingBot input normalization", () => {
     expect(inserts).toHaveLength(1);
     expect(inserts[0].post_processing_prompts).toBeNull();
   });
+
+  test("dispatches the workspace bot name and resolved retention when the request supplies none", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "IMP Notetaker",
+        notifyChat: undefined,
+        retentionHours: 2160,
+      }),
+    );
+  });
+
+  test("a per-request bot name and notice win when recorders may override", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+      bot_name: "Standup bot",
+      notify_chat: true,
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "Standup bot",
+        notifyChat: { message: "This meeting is being recorded and transcribed." },
+      }),
+    );
+  });
+
+  test("a per-request bot name and notice are ignored when recorders may not override", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      recordersMayOverrideBot: resolved(false),
+    });
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+      bot_name: "Standup bot",
+      notify_chat: true,
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bot_name: "IMP Notetaker",
+        notifyChat: undefined,
+      }),
+    );
+  });
+
+  test("passes the resolved videoRetentionHours through verbatim, including the 'forever' sentinel", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      videoRetentionHours: resolved("forever" as const),
+    });
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ retentionHours: "forever" }),
+    );
+  });
 });
 
 describe("reconcileOnce recovery paths and post-processing crash-safety", () => {
@@ -513,7 +599,10 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
   });
 
   test("stores a local video copy when RECALL_STORE_VIDEO_LOCALLY is on, alongside the transcript", async () => {
-    recallStoreVideoLocallySpy.mockReturnValue(true);
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      storeVideoLocally: resolved(true),
+    });
     const row = jobRow({
       status: "transcribing",
       recall_recording_id: "rec-1",
@@ -550,7 +639,7 @@ describe("reconcileOnce recovery paths and post-processing crash-safety", () => 
     );
   });
 
-  test("does not attempt video storage when RECALL_STORE_VIDEO_LOCALLY is off (the default)", async () => {
+  test("does not attempt video storage when storeVideoLocally resolves to off (the default)", async () => {
     const row = jobRow({
       status: "transcribing",
       recall_recording_id: "rec-1",

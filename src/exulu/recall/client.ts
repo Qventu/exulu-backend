@@ -145,6 +145,13 @@ export type CreateBotInput = {
   bot_name?: string;
   /** Optional "this meeting is being recorded" chat notice. */
   notifyChat?: { message: string };
+  /**
+   * Resolved Recall-side retention window (the workspace's videoRetentionHours
+   * setting, already run through its env/code fallback). Omit to fall back to
+   * recallRecordingRetentionHours() directly — kept so this stays callable
+   * (and its existing tests keep passing) without a resolved value in hand.
+   */
+  retentionHours?: number | "forever";
 };
 
 /** Mixed video artifact. `data.download_url` is a signed S3 URL valid ~6h. */
@@ -214,6 +221,18 @@ export const recordingDurationSeconds = (
 };
 
 /**
+ * recording_config.retention for the resolved workspace setting: "forever"
+ * keeps the recording at Recall until explicitly deleted ({ type: "forever" }
+ * per the Recall API); any other value is a timed window in hours, falling
+ * back to the env/code default when the caller has no resolved value in hand
+ * (e.g. a call site this plan does not reach).
+ */
+const buildRetention = (retentionHours: number | "forever" | undefined) =>
+  retentionHours === "forever"
+    ? { type: "forever" as const }
+    : { type: "timed" as const, hours: retentionHours ?? recallRecordingRetentionHours() };
+
+/**
  * Create Bot request body.
  *
  * recording_config is sent in full rather than partially. The Recall docs do
@@ -232,7 +251,7 @@ export const buildCreateBotPayload = (input: CreateBotInput) => ({
     video_mixed_layout: "speaker_view",
     participant_events: {},
     meeting_metadata: {},
-    retention: { type: "timed", hours: recallRecordingRetentionHours() },
+    retention: buildRetention(input.retentionHours),
   },
   ...(input.notifyChat
     ? {

@@ -2135,7 +2135,10 @@ type EmbeddingModelOption {
       language: args.input.language ?? null,
       title: args.input.title ?? null,
       bot_name: args.input.bot_name ?? null,
-      notify_chat: args.input.notify_chat ?? false,
+      // null (not false) when the caller omits it: lets resolveBotIdentity
+      // fall through to the workspace notifyChat default instead of the
+      // per-request value silently pinning it to "off" on every dispatch.
+      notify_chat: args.input.notify_chat ?? null,
       project_id: args.input.project_id ?? null,
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,

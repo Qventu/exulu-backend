@@ -29,14 +29,14 @@ import {
   recallEnabled,
   RecallNotConfiguredError,
   recordingMonthlyLimitSeconds,
-  recallStoreVideoLocally,
 } from "./env";
 import { downloadAndStoreRecordingVideo } from "./video-storage";
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
 import { withGlossary } from "@SRC/utils/agent-glossary";
+import { resolveTranscriptsSettings } from "../transcripts-settings";
+import { resolveBotIdentity } from "./bot-identity";
 
 const TABLE = "transcription_jobs";
-const DEFAULT_BOT_NAME = "Company Notetaker";
 
 // Reconciliation sweep tuning. The webhook route ACKs with 2xx before
 // processing, and Recall never redelivers an ACKed event — so a crash,
@@ -82,7 +82,7 @@ export type CreateMeetingBotInput = {
   language?: string | null;
   title?: string | null;
   bot_name?: string | null;
-  notify_chat?: boolean;
+  notify_chat?: boolean | null;
   project_id?: string | null;
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
@@ -222,13 +222,20 @@ export const recallService = {
       .returning("*");
 
     try {
+      const settings = await resolveTranscriptsSettings();
+      const { botName, notifyChat } = resolveBotIdentity(input, {
+        botName: settings.botName.value,
+        notifyChat: settings.notifyChat.value,
+        recordersMayOverrideBot: settings.recordersMayOverrideBot.value,
+      });
       const bot = await recallClient.createBot({
         meeting_url: input.meeting_url,
         join_at: joinAt.toISOString(),
-        bot_name: input.bot_name?.trim() || DEFAULT_BOT_NAME,
-        notifyChat: input.notify_chat
+        bot_name: botName,
+        notifyChat: notifyChat
           ? { message: "This meeting is being recorded and transcribed." }
           : undefined,
+        retentionHours: settings.videoRetentionHours.value,
       });
       const [updated] = await db(TABLE)
         .where({ id: inserted.id })
@@ -364,17 +371,19 @@ export const recallService = {
       // Prefer Recall's authoritative recording duration; fall back to the
       // transcript span (last spoken word) when the recording object lacks it.
       let duration = durationFromSegments(segments);
-      // Only populated when RECALL_STORE_VIDEO_LOCALLY is on for this
+      // Only populated when the workspace's storeVideoLocally setting (or its
+      // RECALL_STORE_VIDEO_LOCALLY env/code fallback) is on for this
       // deployment — otherwise the video stays reachable only via
       // ExuluRecall.getRecordingVideoUrl, for as long as Recall retains it.
       let videoS3Key: string | null = null;
       const recId = recordingId ?? job.recall_recording_id;
       if (recId) {
+        const settings = await resolveTranscriptsSettings();
         try {
           const rec = await recallClient.retrieveRecording(recId);
           const recDuration = recordingDurationSeconds(rec);
           if (recDuration != null) duration = recDuration;
-          if (recallStoreVideoLocally()) {
+          if (settings.storeVideoLocally.value) {
             try {
               videoS3Key = await downloadAndStoreRecordingVideo(
                 rec,

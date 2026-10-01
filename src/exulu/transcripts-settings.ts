@@ -138,9 +138,10 @@ export const resolveTranscriptsSettings =
 
     return {
       botName: resolveSetting(stored.botName, null, DEFAULT_BOT_NAME),
-      // Mirrors meetingBotStart's per-request default (`notify_chat: args.input.notify_chat ?? false`,
-      // src/graphql/schemas/index.ts:2138) so a deployment that never opens this settings page keeps
-      // its existing (notifications-off) behavior untouched.
+      // Mirrors what meetingBotStart's per-request default used to hardcode
+      // (`notify_chat: args.input.notify_chat ?? false`, src/graphql/schemas/index.ts:2138,
+      // now `?? null` so resolveBotIdentity can apply this value) so a deployment that never
+      // opens this settings page keeps its existing (notifications-off) behavior untouched.
       notifyChat: resolveSetting(stored.notifyChat, null, false),
       recordersMayOverrideBot: resolveSetting(stored.recordersMayOverrideBot, null, true),
       defaultRightsMode: resolveSetting<ExuluRightsMode>(stored.defaultRightsMode, null, "private"),

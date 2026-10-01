@@ -207,6 +207,25 @@ describe("buildCreateBotPayload", () => {
     }
   });
 
+  it("honors a resolved retentionHours over the env var, once a caller has one", () => {
+    const original = process.env.RECALL_RECORDING_RETENTION_HOURS;
+    process.env.RECALL_RECORDING_RETENTION_HOURS = "1";
+    try {
+      const payload = buildCreateBotPayload({ ...base, retentionHours: 720 }) as any;
+      expect(payload.recording_config.retention).toEqual({
+        type: "timed",
+        hours: 720,
+      });
+    } finally {
+      process.env.RECALL_RECORDING_RETENTION_HOURS = original;
+    }
+  });
+
+  it('sends { type: "forever" } when the resolved retention is the "forever" sentinel', () => {
+    const payload = buildCreateBotPayload({ ...base, retentionHours: "forever" }) as any;
+    expect(payload.recording_config.retention).toEqual({ type: "forever" });
+  });
+
   it("passes meeting_url and join_at through unchanged", () => {
     const payload = buildCreateBotPayload(base) as any;
     expect(payload.meeting_url).toBe(base.meeting_url);
