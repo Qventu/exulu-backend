@@ -75,6 +75,14 @@ describe("resolveTranscriptsSettings", () => {
     });
   });
 
+  it("falls back to the code default for notifyChat (false), matching meetingBotStart's existing default", async () => {
+    first.mockResolvedValue(undefined);
+    expect((await resolveTranscriptsSettings()).notifyChat).toEqual({
+      value: false,
+      source: "code",
+    });
+  });
+
   it("reads retention from env when nothing is stored", async () => {
     process.env.RECALL_RECORDING_RETENTION_HOURS = "720";
     first.mockResolvedValue(undefined);

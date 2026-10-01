@@ -20,6 +20,7 @@ import {
   RECALL_RECORDING_RETENTION_DEFAULT_HOURS,
 } from "./recall/env";
 import { resolveSetting, type ResolvedSetting } from "./platform-setting";
+import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 
 export const TRANSCRIPTS_SETTINGS_KEY = "transcripts_settings";
 
@@ -32,7 +33,7 @@ export type TranscriptsSettings = {
   botName: string | null;
   notifyChat: boolean | null;
   recordersMayOverrideBot: boolean | null;
-  defaultRightsMode: string | null;
+  defaultRightsMode: ExuluRightsMode | null;
   summaryPresets: SummaryPreset[] | null;
   /** "forever" is a deliberate choice; null means "not set here". */
   videoRetentionHours: number | "forever" | null;
@@ -137,9 +138,12 @@ export const resolveTranscriptsSettings =
 
     return {
       botName: resolveSetting(stored.botName, null, DEFAULT_BOT_NAME),
-      notifyChat: resolveSetting(stored.notifyChat, null, true),
+      // Mirrors meetingBotStart's per-request default (`notify_chat: args.input.notify_chat ?? false`,
+      // src/graphql/schemas/index.ts:2138) so a deployment that never opens this settings page keeps
+      // its existing (notifications-off) behavior untouched.
+      notifyChat: resolveSetting(stored.notifyChat, null, false),
       recordersMayOverrideBot: resolveSetting(stored.recordersMayOverrideBot, null, true),
-      defaultRightsMode: resolveSetting(stored.defaultRightsMode, null, "private"),
+      defaultRightsMode: resolveSetting<ExuluRightsMode>(stored.defaultRightsMode, null, "private"),
       summaryPresets: resolveSetting<SummaryPreset[]>(stored.summaryPresets, null, []),
       videoRetentionHours: resolveSetting<number | "forever">(
         stored.videoRetentionHours,
