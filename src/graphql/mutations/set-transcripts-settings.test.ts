@@ -53,13 +53,16 @@ jest.mock("@EE/rbac-update.ts", () => ({ handleRBACUpdate: jest.fn() }));
 
 // setTranscriptsSettings-specific mocks: buildTranscriptsSettingsInfo (called
 // on every successful save, including the "allows a super admin" case below)
-// touches postgresClient (for prompt_library) and exuluApp (for agents), plus
-// the Task 2 settings module itself.
+// touches postgresClient twice — once for prompt_library, once for agents —
+// plus the Task 2 settings module itself.
 //
 // Both reads are controllable per-test (promptLibraryBehavior /
 // agentsBehavior) so the degradation tests below can force each one to throw
 // independently — pinning Review Fix #1: buildTranscriptsSettingsInfo must
-// resolve, not reject, when either lookup fails.
+// resolve, not reject, when either lookup fails. Perf fix: agents is now read
+// via the same projected postgresClient().db.from(...).select("id") query as
+// prompt_library (previously exuluApp.get().agents(), an N+1 over RBACResolver),
+// so a single table-aware mock drives both.
 let promptLibraryBehavior: "ok" | "throw" = "ok";
 let agentsBehavior: "ok" | "throw" = "ok";
 
@@ -67,29 +70,20 @@ jest.mock("@SRC/postgres/client", () => ({
   postgresClient: jest.fn(async () => ({
     db: Object.assign((_table: string) => ({}), {
       // .select("id") matters here: it is the shape buildTranscriptsSettingsInfo
-      // must call (Review Fix #2 — no full-row prompt_library scan).
-      from: (_table: string) => ({
+      // must call for both tables (Review Fix #2 — no full-row scans).
+      from: (table: string) => ({
         select: async (_col: string) => {
-          if (promptLibraryBehavior === "throw") {
+          if (table === "prompt_library" && promptLibraryBehavior === "throw") {
             throw new Error("prompt_library read failed");
+          }
+          if (table === "agents" && agentsBehavior === "throw") {
+            throw new Error("agents read failed");
           }
           return [] as { id: string }[];
         },
       }),
     }),
   })),
-}));
-jest.mock("@SRC/exulu/app/singleton", () => ({
-  exuluApp: {
-    get: () => ({
-      agents: async () => {
-        if (agentsBehavior === "throw") {
-          throw new Error("agents() failed");
-        }
-        return [];
-      },
-    }),
-  },
 }));
 
 const saveTranscriptsSettings = jest.fn(async () => {});

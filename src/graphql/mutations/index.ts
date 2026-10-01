@@ -36,7 +36,6 @@ import {
 } from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
-import { exuluApp } from "@SRC/exulu/app/singleton";
 import {
   resolveTranscriptsSettings,
   saveTranscriptsSettings,
@@ -279,8 +278,9 @@ export const buildTranscriptsSettingsInfo = async () => {
 
   let liveAgentIds: Set<string> | null = null;
   try {
-    const agents = await exuluApp.get().agents();
-    liveAgentIds = new Set(agents.map((agent) => String(agent.id)));
+    const { db } = await postgresClient();
+    const agentRows: { id: string }[] = await db.from("agents").select("id");
+    liveAgentIds = new Set(agentRows.map((row) => String(row.id)));
   } catch (err) {
     console.warn(
       "[EXULU] Could not read agents for the Transcripts settings page:",
