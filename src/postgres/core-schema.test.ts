@@ -33,6 +33,25 @@ describe("transcription_jobs schema (live recording columns)", () => {
   });
 });
 
+describe("memory_usages schema", () => {
+  test("is registered with the usage columns and no RBAC", () => {
+    const schema = coreSchemas.get().memoryUsagesSchema();
+    expect(schema.name).toEqual({ plural: "memory_usages", singular: "memory_usage" });
+    expect(schema.RBAC).toBeFalsy();
+    const byName = Object.fromEntries(schema.fields.map((f) => [f.name, f]));
+    expect(byName.memory_id).toMatchObject({ type: "uuid", required: true });
+    expect(byName.context).toMatchObject({ type: "text", required: true });
+    expect(byName.agent).toMatchObject({ type: "text", required: true });
+    expect(byName.session).toMatchObject({ type: "text" });
+    expect(byName.message_id).toMatchObject({ type: "text", required: true });
+    expect(byName.user).toMatchObject({ type: "number" });
+    expect(byName.guest).toMatchObject({ type: "boolean", default: false });
+    // no RBAC → addCoreFields must not add rights_mode/created_by
+    expect(byName.rights_mode).toBeUndefined();
+    expect(byName.created_by).toBeUndefined();
+  });
+});
+
 describe("addCoreFields", () => {
   test("created_by is nullable in the API: item tables store it as text and SDK-created rows have none", () => {
     const schema = addCoreFields({ name: { plural: "x_items", singular: "x_item" }, type: "items", RBAC: true, fields: [] } as any);

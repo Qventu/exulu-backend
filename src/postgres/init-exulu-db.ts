@@ -36,6 +36,7 @@ const {
   contextPresetsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
+  memoryUsagesSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
   sharedArtifactsSchema,
@@ -127,6 +128,7 @@ const up = async function (knex: Knex) {
     contextPresetsSchema(),
     entityTypeSettingsSchema(),
     promptFavoritesSchema(),
+    memoryUsagesSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
     sharedArtifactsSchema(),
@@ -309,6 +311,22 @@ const up = async function (knex: Knex) {
     await knex.raw(
       `CREATE INDEX IF NOT EXISTS job_results_session_waiting_idx
           ON job_results (session) WHERE state = 'waiting_approval'`,
+    );
+  }
+
+  // Memory usage (sub-project 3a): idempotent writes + the aggregate paths.
+  if (await knex.schema.hasTable("memory_usages")) {
+    await knex.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS memory_usages_message_memory_uidx
+          ON memory_usages (message_id, memory_id)`,
+    );
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS memory_usages_context_memory_created_idx
+          ON memory_usages (context, memory_id, "createdAt")`,
+    );
+    await knex.raw(
+      `CREATE INDEX IF NOT EXISTS memory_usages_context_created_idx
+          ON memory_usages (context, "createdAt")`,
     );
   }
 

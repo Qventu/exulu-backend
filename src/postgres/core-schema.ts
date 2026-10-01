@@ -699,6 +699,30 @@ const promptFavoritesSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * Memory usage (agent memory redesign, sub-project 3a): one row per memory
+ * recalled into an answer. Ids and timestamps only — never content. Counts
+ * are derived by query; the unique (message_id, memory_id) index makes the
+ * writer idempotent. Indexes are created in init-exulu-db.ts (the schema's
+ * `index` flag is informational only).
+ */
+const memoryUsagesSchema: ExuluTableDefinition = {
+  type: "memory_usages",
+  name: {
+    plural: "memory_usages",
+    singular: "memory_usage",
+  },
+  fields: [
+    { name: "memory_id", type: "uuid", required: true, index: true },
+    { name: "context", type: "text", required: true, index: true },
+    { name: "agent", type: "text", required: true },
+    { name: "session", type: "text" },
+    { name: "message_id", type: "text", required: true },
+    { name: "user", type: "number" },
+    { name: "guest", type: "boolean", default: false },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -961,6 +985,7 @@ export const coreSchemas = {
       promptLibrarySchema: (): ExuluTableDefinition => addCoreFields(promptLibrarySchema),
       entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
+      memoryUsagesSchema: (): ExuluTableDefinition => addCoreFields(memoryUsagesSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
