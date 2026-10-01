@@ -68,7 +68,9 @@ async function hasTables(db: any, ...names: string[]): Promise<boolean> {
 /** Per-memory count + last use for the given ids (one grouped query). */
 export async function memoryUsageByIds({ db, contextId, ids }: { db: any; contextId: string; ids: string[] }): Promise<UsageSummary[]> {
   if (ids.length === 0 || !(await hasTables(db, USAGE))) return [];
-  const rows: any[] = await db(USAGE).where("context", contextId).whereIn("memory_id", ids).groupBy("memory_id").select("memory_id").count("id as c").max("createdAt as last");
+  // The frontend sends ≤ 20 ids at a time; clamp so the API never accepts thousands.
+  const wanted = ids.slice(0, 200);
+  const rows: any[] = await db(USAGE).where("context", contextId).whereIn("memory_id", wanted).groupBy("memory_id").select("memory_id").count("id as c").max("createdAt as last");
   return rows.map((r) => ({ memoryId: r.memory_id, count: num(r.c), lastUsedAt: iso(r.last) }));
 }
 

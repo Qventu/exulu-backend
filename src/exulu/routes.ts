@@ -912,7 +912,7 @@ export const createExpressRoutes = async (
                 contextId: agent.memory,
                 agentId: agent.id,
                 session: (headers.session as string | undefined) ?? null,
-                messageId: responseMessage?.id ?? messages[messages.length - 1]?.id ?? "",
+                messageId: responseMessage?.id ?? messages[messages.length - 1]?.id ?? randomUUID(),
                 userId: user?.id ?? null,
               });
             }

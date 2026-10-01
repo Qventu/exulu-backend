@@ -61,6 +61,13 @@ describe("memoryUsageByIds", () => {
     expect(await memoryUsageByIds({ db, contextId: "mem", ids: [] })).toEqual([]);
     expect(db).not.toHaveBeenCalled();
   });
+  it("clamps ids to 200 before the whereIn", async () => {
+    const db = fakeDb({ memory_usages: [] });
+    const ids = Array.from({ length: 250 }, (_, i) => `m${i}`);
+    await memoryUsageByIds({ db, contextId: "mem", ids });
+    const [, , , whereInIds] = db.__log.find((l: any[]) => l[0] === "memory_usages" && l[1] === "whereIn");
+    expect(whereInIds).toHaveLength(200);
+  });
 });
 
 describe("memoryUsage", () => {
@@ -131,5 +138,15 @@ describe("memoryBaseUnusedIds", () => {
     });
     expect(await memoryBaseUnusedIds({ db, context, mode: "NEVER", staleDays: 90, now: NOW })).toEqual(["m4"]);
     expect(await memoryBaseUnusedIds({ db, context, mode: "STALE", staleDays: 90, now: NOW })).toEqual(["m2"]);
+  });
+  it("NEVER = all items when the usage table is missing; STALE = none", async () => {
+    const db = fakeDb({ mem_items: [{ id: "m1" }, { id: "m2" }] }, { hasTable: (t) => t !== "memory_usages" });
+    expect(await memoryBaseUnusedIds({ db, context, mode: "NEVER", staleDays: 90, now: NOW })).toEqual(["m1", "m2"]);
+    expect(await memoryBaseUnusedIds({ db, context, mode: "STALE", staleDays: 90, now: NOW })).toEqual([]);
+  });
+  it("returns [] for both modes when the items table is missing", async () => {
+    const db = fakeDb({}, { hasTable: () => false });
+    expect(await memoryBaseUnusedIds({ db, context, mode: "NEVER", staleDays: 90, now: NOW })).toEqual([]);
+    expect(await memoryBaseUnusedIds({ db, context, mode: "STALE", staleDays: 90, now: NOW })).toEqual([]);
   });
 });
