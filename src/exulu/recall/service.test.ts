@@ -37,7 +37,6 @@ const recallEnabledSpy = jest.fn(() => true);
 jest.mock("./env", () => ({
   recallEnabled: () => recallEnabledSpy(),
   RecallNotConfiguredError: class RecallNotConfiguredError extends Error {},
-  recordingMonthlyLimitSeconds: () => null,
 }));
 
 // resolveTranscriptsSettings is Task 2's own (DB-backed) resolver — mocked
@@ -92,6 +91,7 @@ const calls: Record<string, any[][]> = {};
 const firstResults: Record<string, any[]> = {};
 const selectResults: Record<string, any[][]> = {};
 const updateResults: Record<string, number[]> = {};
+const sumResults: Record<string, number[]> = {};
 
 const record = (table: string, name: string, builder: any) =>
   (...args: any[]) => {
@@ -130,7 +130,11 @@ const builderFor = (table: string) => {
     (calls[`${table}.insert`] ||= []).push([values]);
     return { returning: jest.fn(async () => [{ id: "jr-1", ...values }]) };
   };
-  builder.sum = jest.fn(async () => [{ total: 0 }]);
+  // monthlyUsedSeconds' .sum(): seed per-table via sumResults; defaults to 0
+  // (no usage) when a test doesn't care.
+  builder.sum = jest.fn(async () => [
+    { total: (sumResults[table] ||= []).shift() ?? 0 },
+  ]);
   // Awaiting the builder itself resolves a seeded multi-row select.
   builder.then = (resolve: any, reject: any) =>
     Promise.resolve((selectResults[table] ||= []).shift() ?? []).then(
@@ -151,7 +155,7 @@ import { recallService } from "./service";
 const JOBS = "transcription_jobs";
 
 const resetAll = () => {
-  for (const store of [calls, firstResults, selectResults, updateResults]) {
+  for (const store of [calls, firstResults, selectResults, updateResults, sumResults]) {
     for (const key of Object.keys(store)) delete store[key];
   }
   jest.clearAllMocks();
@@ -540,6 +544,74 @@ describe("createMeetingBot input normalization", () => {
     expect(createBotSpy).toHaveBeenCalledWith(
       expect.objectContaining({ retentionHours: "forever" }),
     );
+  });
+});
+
+describe("monthly recording cap (resolved from settings, not read from env directly)", () => {
+  test("getUsage reports a stored cap — converted from minutes to seconds — regardless of the env var", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      monthlyRecordingLimitMinutes: resolved(10), // 600s cap
+    });
+    sumResults[JOBS] = [400];
+
+    const usage = await recallService.getUsage();
+
+    expect(usage).toEqual({
+      enabled: true,
+      used_seconds: 400,
+      limit_seconds: 600,
+      percent: (400 / 600) * 100,
+      exceeded: false,
+    });
+  });
+
+  test('getUsage reports no cap when the resolved setting is "none", however much is used', async () => {
+    // defaultSettings() already resolves to "none"; this is the no-stored-row,
+    // no-env-var deployment, and also a deployment where the env var is set
+    // but the admin explicitly chose "none" — the resolver (tested in Task 2)
+    // already picked "none" by the time service.ts sees it.
+    sumResults[JOBS] = [999_999];
+
+    const usage = await recallService.getUsage();
+
+    expect(usage).toEqual({
+      enabled: false,
+      used_seconds: 999_999,
+      limit_seconds: null,
+      percent: null,
+      exceeded: false,
+    });
+  });
+
+  test("createMeetingBot enforces a stored cap even when usage already meets it", async () => {
+    resolveTranscriptsSettingsSpy.mockResolvedValue({
+      ...defaultSettings(),
+      monthlyRecordingLimitMinutes: resolved(5), // 300s cap
+    });
+    sumResults[JOBS] = [300]; // at the cap
+
+    await expect(
+      recallService.createMeetingBot({
+        userId: 7,
+        meeting_url: "https://meet.example/abc",
+      }),
+    ).rejects.toThrow(/RECORDING_LIMIT_REACHED/);
+
+    // Rejected before ever inserting the job row or dispatching a bot.
+    expect(calls[`${JOBS}.insert`]).toBeUndefined();
+    expect(createBotSpy).not.toHaveBeenCalled();
+  });
+
+  test('createMeetingBot never enforces when the resolved cap is "none", however much is used', async () => {
+    sumResults[JOBS] = [999_999]; // defaultSettings() cap is "none"
+
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(createBotSpy).toHaveBeenCalled();
   });
 });
 

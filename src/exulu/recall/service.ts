@@ -25,11 +25,7 @@ import { resolveModel } from "@SRC/exulu/resolve-model";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import { renderTranscript, type RawSegment, type SpeakerMap } from "../transcription/transcript-text";
 import { recallClient, recordingDurationSeconds } from "./client";
-import {
-  recallEnabled,
-  RecallNotConfiguredError,
-  recordingMonthlyLimitSeconds,
-} from "./env";
+import { recallEnabled, RecallNotConfiguredError } from "./env";
 import { downloadAndStoreRecordingVideo } from "./video-storage";
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
 import { withGlossary } from "@SRC/utils/agent-glossary";
@@ -152,9 +148,20 @@ export const recallService = {
     return Number(row?.total ?? 0);
   },
 
+  /**
+   * Resolved monthly recording cap in seconds, or null when uncapped (the
+   * "none" sentinel). The setting is stored in minutes (the natural unit for
+   * an admin-facing cap); callers here want seconds, matching
+   * duration_seconds.
+   */
+  async _monthlyLimitSeconds(): Promise<number | null> {
+    const resolved = (await resolveTranscriptsSettings()).monthlyRecordingLimitMinutes.value;
+    return resolved === "none" ? null : resolved * 60;
+  },
+
   /** Current month's recording usage against the optional monthly cap. */
   async getUsage(): Promise<RecordingUsage> {
-    const limit = recordingMonthlyLimitSeconds();
+    const limit = await this._monthlyLimitSeconds();
     const used = await this.monthlyUsedSeconds();
     return {
       enabled: limit != null,
@@ -174,7 +181,7 @@ export const recallService = {
     if (!recallEnabled()) throw new RecallNotConfiguredError();
 
     // Enforce the optional monthly recording cap before launching a bot.
-    const limit = recordingMonthlyLimitSeconds();
+    const limit = await this._monthlyLimitSeconds();
     if (limit != null) {
       const used = await this.monthlyUsedSeconds();
       if (used >= limit) {
