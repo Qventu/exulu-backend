@@ -1,4 +1,5 @@
 import type { User } from "@EXULU_TYPES/models/user";
+import { creatorId } from "./creator-id";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import type { ExuluContext } from "@SRC/exulu/context";
@@ -10,7 +11,7 @@ export type RecallSource = "prefetch" | "knowledge_search";
 
 export type MemoryItemRow = {
   id: string; name?: string | null; information?: string | null; description?: string | null;
-  type?: string | null; rights_mode?: string | null; created_by?: number | null;
+  type?: string | null; rights_mode?: string | null; created_by?: number | string | null;
   createdAt?: string | Date | null; updatedAt?: string | Date | null;
 };
 
@@ -57,15 +58,14 @@ export class RecallCollector {
   }
 
   async addRows(rows: MemoryItemRow[], source: RecallSource): Promise<void> {
-    const creatorIds = [...new Set(rows.map((r) => r.created_by).filter((id): id is number => typeof id === "number" && !this.creators.has(id)))];
+    const creatorIds = [...new Set(rows.map((r) => creatorId(r.created_by)).filter((id): id is number => id !== null && !this.creators.has(id)))];
     if (creatorIds.length > 0) {
       for (const u of await this.deps.loadUsers(creatorIds)) this.creators.set(u.id, displayName(u));
     }
     for (const r of rows) {
       if (this.items.has(r.id)) continue;
-      const createdBy = typeof r.created_by === "number" && this.creators.has(r.created_by)
-        ? { id: r.created_by, name: this.creators.get(r.created_by)! }
-        : null;
+      const cid = creatorId(r.created_by);
+      const createdBy = cid !== null && this.creators.has(cid) ? { id: cid, name: this.creators.get(cid)! } : null;
       this.items.set(r.id, {
         id: r.id, contextId: this.deps.contextId,
         title: (r.name ?? "").toString(), information: (r.information ?? r.description ?? "").toString(),

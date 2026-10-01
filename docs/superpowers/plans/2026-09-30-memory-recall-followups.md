@@ -64,3 +64,17 @@ predates this branch and is reachable directly from any client.
 Proposed fix: scope the query to sessions the viewer can read — join `agent_sessions` and run
 `applyAccessControl` with the field-prefix argument, or special-case `agent_messages` the way the by-id resolver
 already special-cases `agent`. Owner: Daniel to schedule.
+
+## Creator attribution for SDK-created items (found 2026-10-01, Memory area UAT)
+
+`ExuluContext.createItem(item, config, user, role)` never writes `created_by`; its `user`/`role`
+arguments only feed the processor. Only the GraphQL `itemsCreateOne` mutation sets
+`created_by = context.user.id`. The memory `remember` tool now passes `created_by` explicitly
+(fix a95e1ea), but every other SDK caller that acts for a user — the agent knowledge write tools
+in particular — still creates items without a creator, so private items created that way are
+visible only through RBAC grants and show no "created by". Decide whether `createItem` should set
+`created_by` from its `user` argument when the item carries none (and exclude it from upsert
+merges so source syncs do not reassign creators). Owner: Daniel to schedule.
+
+Related: item tables store `created_by` as **text** (`createItemsTable`), while the core schema
+declares it as a number; the memory code normalises through `creatorId()` (src/exulu/memory/creator-id.ts).

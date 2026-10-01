@@ -69,4 +69,10 @@ describe("memoryBaseContributors", () => {
       { id: 3, name: "zoe@example.com" },
     ]);
   });
+
+  it("accepts numeric-string ids (text column) and de-duplicates them with numbers", async () => {
+    const db = fakeDb({ createdBy: [{ created_by: "9" }, { created_by: "4" }, { created_by: 9 }, { created_by: "x" }], users: [{ id: 9, firstname: "Sara", lastname: "Kraus" }, { id: 4, firstname: "Anton", lastname: "Bauer" }] });
+    expect(await memoryBaseContributors({ context, db })).toEqual([{ id: 4, name: "Anton Bauer" }, { id: 9, name: "Sara Kraus" }]);
+    expect(db.__calls.filter((c: any) => c.table === "users")).toEqual([{ table: "users", ids: [9, 4] }]);
+  });
 });

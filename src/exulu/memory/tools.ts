@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { creatorId } from "./creator-id";
 import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
@@ -42,8 +43,9 @@ const resolveType = (context: ExuluContext, raw: unknown): string | undefined =>
 };
 
 async function creatorOf(row: MemoryItemRow, db: any): Promise<{ id: number; name: string } | null> {
-  if (typeof row.created_by !== "number") return null;
-  const [u] = await db("users").whereIn("id", [row.created_by]).select("id", "firstname", "lastname", "email");
+  const creator = creatorId(row.created_by);
+  if (creator === null) return null;
+  const [u] = await db("users").whereIn("id", [creator]).select("id", "firstname", "lastname", "email");
   return u ? { id: u.id, name: displayName(u) } : null;
 }
 
@@ -99,6 +101,9 @@ export function createMemoryTools({ agent, context, user }: { agent: ExuluAgent;
           {
             name: title, information, ...(type ? { type } : {}),
             description: String(params.whySaved ?? ""),
+            // createItem never writes the creator itself (its user argument only
+            // feeds the processor), so the memory records who saved it here.
+            created_by: u.id,
             ...(rights_mode ? { rights_mode } : {}),
             ...(sessionID && memoryBaseHasSourceSession(context) ? { source_session: sessionID } : {}),
           },

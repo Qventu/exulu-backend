@@ -883,10 +883,13 @@ export const addCoreFields = (schema: ExuluTableDefinition): ExuluTableDefinitio
       });
     }
     if (!schema.fields.some((field) => field.name === "created_by")) {
+      // Nullable in the API: item tables store created_by as text and rows
+      // created through the SDK (processors, sources, tools) may carry none,
+      // so a non-null field would fail every list that selects it.
       schema.fields.push({
         name: "created_by",
         type: "number",
-        required: true,
+        required: false,
         default: 0,
       });
     }

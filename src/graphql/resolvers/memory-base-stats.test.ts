@@ -53,4 +53,9 @@ describe("memoryBaseStats", () => {
     expect((await memoryBaseStats({ context, user: undefined, db: fakeDb({ ...a, last: { createdAt: "2026-09-01T00:00:00.000Z", created_by: null } }) })).lastSavedBy).toBeNull();
     expect((await memoryBaseStats({ context, user: undefined, db: fakeDb({ ...a, last: { createdAt: "2026-09-01T00:00:00.000Z", created_by: 9 } }) })).lastSavedBy).toBeNull();
   });
+
+  it("resolves lastSavedBy when created_by arrives as a numeric string", async () => {
+    const db = fakeDb({ total: 1, pub: 1, priv: 0, contributors: 1, visible: 1, last: { createdAt: "2026-09-01T00:00:00.000Z", created_by: "9" }, user: { id: 9, firstname: "Sara", lastname: "Kraus" } });
+    expect((await memoryBaseStats({ context, user: undefined, db })).lastSavedBy).toEqual({ id: 9, name: "Sara Kraus" });
+  });
 });

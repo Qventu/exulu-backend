@@ -1,6 +1,7 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
+import { creatorId } from "./creator-id";
 import type { MemoryItemRow } from "./recall-collector";
 
 type Grant = { access_type: string; user_id?: number | null; role_id?: string | null; team_id?: string | null };
@@ -15,7 +16,8 @@ type Grant = { access_type: string; user_id?: number | null; role_id?: string | 
 export async function canEditMemory(context: ExuluContext, row: MemoryItemRow, user: User | undefined, db: any): Promise<boolean> {
   if (!user?.id) return false;
   if (user.super_admin === true) return true;
-  if (typeof row.created_by === "number" && row.created_by === user.id) return true;
+  const creator = creatorId(row.created_by);
+  if (creator !== null && creator === user.id) return true;
   const entity = convertContextToTableDefinition(context).name.singular;
   const grants: Grant[] = await db("rbac")
     .where({ entity, target_resource_id: row.id, rights: "write" })

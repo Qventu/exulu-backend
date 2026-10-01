@@ -39,6 +39,10 @@ const base = { title: "Encoder first", information: "Check X12 before valves", t
 beforeEach(() => { createItem.mockClear(); updateItem.mockClear(); deleteItem.mockClear(); (handleRBACUpdate as jest.Mock).mockClear(); visible.mockReset(); mockRbacRows.length = 0; });
 
 describe("memory_remember", () => {
+  it("records the saving user as created_by (createItem itself never sets it)", async () => {
+    await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {} } as any, {} as any);
+    expect(createItem.mock.calls[0][0]).toMatchObject({ created_by: 4 });
+  });
   it("registers three approval-gated tools with fixed ids", () => {
     const created = createMemoryTools({ agent, context, user: me });
     const ids = created.map((t) => t.id);
@@ -58,7 +62,7 @@ describe("memory_remember", () => {
     const decision = { v: 1, kind: "remember", title: "Encoder first!", information: "Edited wording", type: "PREFERENCE", rights_mode: "users", rbac: { users: [{ id: 5, rights: "read" }] } };
     const out: any = await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {}, memoryDecision: decision } as any, {} as any);
     expect(createItem).toHaveBeenCalledWith(
-      { name: "Encoder first!", information: "Edited wording", type: "PREFERENCE", description: "Question about AZFR", rights_mode: "users" },
+      { name: "Encoder first!", information: "Edited wording", type: "PREFERENCE", description: "Question about AZFR", created_by: 4, rights_mode: "users" },
       {}, 4, "r1", false,
     );
     expect(handleRBACUpdate).toHaveBeenCalledWith(mockDb, expect.any(String), "new-1", decision.rbac, []);
@@ -67,7 +71,7 @@ describe("memory_remember", () => {
 
   it("falls back to the model input and the context default when there is no decision, normalising the enum", async () => {
     const out: any = await tools().memory_remember.tool.execute!({ ...base, user: me, exuluConfig: {} } as any, {} as any);
-    expect(createItem.mock.calls[0][0]).toEqual({ name: "Encoder first", information: "Check X12 before valves", type: "FACT", description: "Question about AZFR" });
+    expect(createItem.mock.calls[0][0]).toEqual({ name: "Encoder first", information: "Check X12 before valves", type: "FACT", description: "Question about AZFR", created_by: 4 });
     expect(handleRBACUpdate).not.toHaveBeenCalled();
     expect(out.type).toBe("memory_saved");
   });

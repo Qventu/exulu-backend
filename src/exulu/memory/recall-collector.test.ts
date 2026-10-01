@@ -43,6 +43,13 @@ describe("RecallCollector", () => {
     expect(collector.list()).toHaveLength(1);
     expect(collector.list()[0].createdBy).toBeNull();
   });
+
+  it("resolves creators whose created_by arrives as a numeric string (item tables store it as text)", async () => {
+    const { collector, loadUsers } = make([row("a", { created_by: "7" as any })]);
+    await collector.addFromChunks([chunk("a")], "prefetch");
+    expect(loadUsers.mock.calls[0][0]).toEqual([7]);
+    expect(collector.list()[0].createdBy).toEqual({ id: 7, name: "Sara Kraus" });
+  });
 });
 
 describe("buildMemoryPromptBlock", () => {
