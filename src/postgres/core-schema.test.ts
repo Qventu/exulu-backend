@@ -1,4 +1,4 @@
-import { coreSchemas } from "./core-schema";
+import { addCoreFields, coreSchemas } from "./core-schema";
 
 describe("shared_artifacts schema", () => {
   test("is registered with the expected shape", () => {
@@ -30,5 +30,14 @@ describe("transcription_jobs schema (live recording columns)", () => {
     const lastChunkAt = schema.fields.find((f) => f.name === "last_chunk_at");
     expect(chunkCount).toMatchObject({ type: "number", default: 0 });
     expect(lastChunkAt).toMatchObject({ type: "date" });
+  });
+});
+
+describe("addCoreFields", () => {
+  test("created_by is nullable in the API: item tables store it as text and SDK-created rows have none", () => {
+    const schema = addCoreFields({ name: { plural: "x_items", singular: "x_item" }, type: "items", RBAC: true, fields: [] } as any);
+    const field = schema.fields.find((f) => f.name === "created_by");
+    expect(field).toBeDefined();
+    expect(field?.required).toBe(false);
   });
 });

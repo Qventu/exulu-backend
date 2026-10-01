@@ -9,6 +9,7 @@ describe("canEditMemory", () => {
     const db = dbWith([]);
     expect(await canEditMemory(context, row, { id: 9 } as any, db)).toBe(true);
     expect(await canEditMemory(context, row, { id: 1, super_admin: true } as any, db)).toBe(true);
+    expect(await canEditMemory(context, { ...row, created_by: "9" }, { id: 9 } as any, db)).toBe(true);
     expect(db).not.toHaveBeenCalled();
   });
   it("denies everyone else on public and private items unless a write grant matches them", async () => {

@@ -1,4 +1,5 @@
 import type { ExuluContext } from "@SRC/exulu/context";
+import { creatorId } from "@SRC/exulu/memory/creator-id";
 import { getTableName } from "@SRC/exulu/table-names";
 import { displayName } from "@SRC/exulu/memory/recall-collector";
 
@@ -19,7 +20,7 @@ export async function memoryBaseContributors({ context, db }: { context: ExuluCo
 
   try {
     const rows = await db(tableName).whereNot("archived", true).distinct("created_by").select("created_by");
-    const ids = Array.from(new Set((rows ?? []).map((r: any) => r?.created_by).filter((id: unknown) => typeof id === "number")));
+    const ids = Array.from(new Set((rows ?? []).map((r: any) => creatorId(r?.created_by)).filter((id): id is number => id !== null)));
     if (ids.length === 0) return [];
 
     const users = await db("users").whereIn("id", ids).select("id", "firstname", "lastname", "email");

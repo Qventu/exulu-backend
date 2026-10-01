@@ -1,4 +1,5 @@
 import type { User } from "@EXULU_TYPES/models/user";
+import { creatorId } from "@SRC/exulu/memory/creator-id";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { getTableName } from "@SRC/exulu/table-names";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
@@ -39,8 +40,9 @@ export async function memoryBaseStats({ context, user, db }: { context: ExuluCon
     const [visibleRow] = await scoped().count("id as c");
 
     let lastSavedBy: MemoryBaseStats["lastSavedBy"] = null;
-    if (last && typeof last.created_by === "number") {
-      const [u] = await db("users").whereIn("id", [last.created_by]).select("id", "firstname", "lastname", "email");
+    const lastCreator = creatorId(last?.created_by);
+    if (last && lastCreator !== null) {
+      const [u] = await db("users").whereIn("id", [lastCreator]).select("id", "firstname", "lastname", "email");
       if (u) lastSavedBy = { id: u.id, name: displayName(u) };
     }
     const lastSavedAt = last?.createdAt instanceof Date ? last.createdAt.toISOString() : typeof last?.createdAt === "string" ? last.createdAt : null;
