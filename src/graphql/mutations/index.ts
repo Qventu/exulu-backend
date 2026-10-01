@@ -36,6 +36,13 @@ import {
 } from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
+import { exuluApp } from "@SRC/exulu/app/singleton";
+import {
+  resolveTranscriptsSettings,
+  saveTranscriptsSettings,
+  filterLivePresets,
+} from "@SRC/exulu/transcripts-settings";
+import { parseSettingsInput } from "./transcripts-settings-input";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -223,6 +230,58 @@ const postprocessUpdate = async ({
     }
   }
   return result;
+};
+
+/**
+ * Build the TranscriptsSettingsInfo payload shared by the `transcriptsSettings`
+ * query (src/graphql/schemas/index.ts) and the `setTranscriptsSettings`
+ * mutation below, so a save and the page's own refetch are built identically.
+ *
+ * summaryPresets is filtered through filterLivePresets before being returned:
+ * prompts/agents are deleted independently of this page, so a stale preset
+ * (pointing at a prompt_library row or agent that no longer exists) is
+ * expected, not exceptional — it is reported separately as stalePresets
+ * rather than silently dropped or left to break the composer.
+ *
+ * videoRetentionHours / monthlyRecordingLimitMinutes are stringified here
+ * (String(value)) because each resolves to `number | sentinel`, and the SDL
+ * types both as String so the sentinel ("forever" / "none") can cross the
+ * wire verbatim. The frontend parses the string back with the same rule.
+ */
+export const buildTranscriptsSettingsInfo = async () => {
+  const resolved = await resolveTranscriptsSettings();
+
+  const { db } = await postgresClient();
+  const promptRows: { id: string }[] = await db.from("prompt_library");
+  const livePromptIds = new Set(promptRows.map((row) => String(row.id)));
+
+  const agents = await exuluApp.get().agents();
+  const liveAgentIds = new Set(agents.map((agent) => String(agent.id)));
+
+  const { live, stale } = filterLivePresets(
+    resolved.summaryPresets.value,
+    livePromptIds,
+    liveAgentIds,
+  );
+
+  return {
+    botName: resolved.botName,
+    notifyChat: resolved.notifyChat,
+    recordersMayOverrideBot: resolved.recordersMayOverrideBot,
+    defaultRightsMode: resolved.defaultRightsMode,
+    summaryPresets: { value: live, source: resolved.summaryPresets.source },
+    videoRetentionHours: {
+      value: String(resolved.videoRetentionHours.value),
+      source: resolved.videoRetentionHours.source,
+    },
+    storeVideoLocally: resolved.storeVideoLocally,
+    monthlyRecordingLimitMinutes: {
+      value: String(resolved.monthlyRecordingLimitMinutes.value),
+      source: resolved.monthlyRecordingLimitMinutes.source,
+    },
+    videoStorageCostPerHour: resolved.videoStorageCostPerHour,
+    stalePresets: stale,
+  };
 };
 
 export function createMutations(
@@ -1419,6 +1478,26 @@ export function createMutations(
       };
     }
   }
+
+  // Global mutation, registered the same way as the global queries in
+  // src/graphql/schemas/index.ts (litellmCatalog etc.): unrelated to `table`,
+  // so this assignment simply repeats identically on every per-table call of
+  // createMutations rather than needing special-casing to run once.
+  //
+  // Gated exactly like the destructive context mutations above
+  // (xSetEmbedder, xProcessItem(s)): the Transcripts settings link sits in a
+  // menu every user sees, so the UI-level check is not the protection — this
+  // server-side super_admin gate is.
+  mutations["setTranscriptsSettings"] = async (_, args, context) => {
+    if (!context.user) {
+      throw new Error("Authentication required to change the Transcripts settings.");
+    }
+    if (!context.user.super_admin) {
+      throw new Error("Only a super admin can change the Transcripts settings.");
+    }
+    await saveTranscriptsSettings(parseSettingsInput(args.input));
+    return buildTranscriptsSettingsInfo();
+  };
 
   return mutations;
 }
