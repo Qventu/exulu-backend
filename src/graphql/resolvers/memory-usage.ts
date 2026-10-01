@@ -1,3 +1,4 @@
+import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { creatorId } from "@SRC/exulu/memory/creator-id";
@@ -10,6 +11,13 @@ import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-
 const USAGE = "memory_usages";
 const DAY = 24 * 60 * 60 * 1000;
 const WEEK = 7 * DAY;
+
+// `coreSchemas.get().agentSessionsSchema()` runs `addCoreFields`, which pushes
+// onto the shared module-level schema object's `fields` array on every call
+// (see core-schema.ts) — every other production call site invokes it once at
+// module scope, so memoize it here instead of calling it per request.
+let sessionsTableDef: ExuluTableDefinition | null = null;
+const sessionsTable = (): ExuluTableDefinition => (sessionsTableDef ??= coreSchemas.get().agentSessionsSchema());
 
 export type UsageSummary = { memoryId: string; count: number; lastUsedAt: string | null };
 export type UsageEntry = {
@@ -74,7 +82,7 @@ export async function memoryUsage({ db, contextId, memoryId, limit, user }: { db
   const userIds = [...new Set(recentRows.map((r) => creatorId(r.user)).filter((x): x is number => x !== null))];
   const titles = new Map<string, string | null>();
   if (sessionIds.length) {
-    const sessions: any[] = await applyAccessControl(coreSchemas.get().agentSessionsSchema(), db("agent_sessions").whereIn("id", sessionIds), user).select("id", "title");
+    const sessions: any[] = await applyAccessControl(sessionsTable(), db("agent_sessions").whereIn("id", sessionIds), user).select("id", "title");
     for (const s of sessions) titles.set(s.id, s.title ?? "");
   }
   const agents = new Map<string, string>();

@@ -1,7 +1,9 @@
 jest.mock("@SRC/graphql/utilities/access-control", () => ({ applyAccessControl: jest.fn((_t: unknown, q: any) => { q.__scoped = true; return q; }) }));
 jest.mock("@SRC/exulu/table-names", () => ({ getTableName: (id: string) => `${id}_items` }));
 jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({ convertContextToTableDefinition: (c: any) => ({ name: { singular: c.id, plural: `${c.id}s` } }) }));
-jest.mock("@SRC/postgres/core-schema", () => ({ coreSchemas: { get: () => ({ agentSessionsSchema: () => ({ name: { singular: "agent_session", plural: "agent_sessions" } }) }) } }));
+// `mock`-prefixed so jest's hoist plugin allows the closure (see jest.mock docs).
+const mockAgentSessionsSchema = jest.fn(() => ({ name: { singular: "agent_session", plural: "agent_sessions" } }));
+jest.mock("@SRC/postgres/core-schema", () => ({ coreSchemas: { get: () => ({ agentSessionsSchema: mockAgentSessionsSchema }) } }));
 
 import { isStale, memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds, staleCutoff, weekBuckets } from "./memory-usage";
 
@@ -82,6 +84,11 @@ describe("memoryUsage", () => {
       ],
     });
     expect((require("@SRC/graphql/utilities/access-control") as any).applyAccessControl).toHaveBeenCalled();
+
+    // sessionsTable() memoizes coreSchemas.get().agentSessionsSchema() at module scope;
+    // a second call must reuse the cached definition, not re-invoke the factory.
+    await memoryUsage({ db, contextId: "mem", memoryId: "m1", limit: 5, user: { id: 9 } as any });
+    expect(mockAgentSessionsSchema).toHaveBeenCalledTimes(1);
   });
   it("is null-safe for a missing table", async () => {
     expect(await memoryUsage({ db: fakeDb({}, { hasTable: () => false }), contextId: "mem", memoryId: "m1", limit: 5, user: undefined })).toEqual({ count: 0, lastUsedAt: null, recent: [] });
