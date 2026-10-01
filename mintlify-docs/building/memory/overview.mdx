@@ -18,6 +18,10 @@ A base greyed out with "not configured correctly" is missing a required field; a
 
 Click a base to see its memories with search, a Mine filter, and filters for visibility, type and creator. Select rows to change access or delete in bulk — the same dialogs as in Knowledge. "Open in Knowledge" reaches the generic item tools.
 
+## Usage
+
+Every time an agent is given a memory for an answer, that use is recorded — the memory, the agent, the conversation and the time, never the content. A base's page shows how many memories were never used, the list has a **Last used** column and a **Usage** filter (never used, not used in 90 days), and selected memories can be **archived** in bulk: they leave recall and the counts, and can be restored in Knowledge. A memory's page lists its recent conversations; the link opens only conversations you may read. Guest chats count too, shown as "Guest".
+
 ## A memory
 
-Each memory shows its wording, why it was saved, the source conversation when the base records it (an optional `source_session` field), who saved it and when, and who can see it. **Make private** and **Delete** are available to the creator, admins, and people with an explicit write grant on the memory.
+Each memory shows its wording, why it was saved, the source conversation when the base records it (an optional `source_session` field), who saved it and when, and who can see it. **Make private** and **Delete** are available to the creator, admins, and people with an explicit write grant on the memory. Its **Usage** section shows how often it was given to an agent and the recent conversations.
