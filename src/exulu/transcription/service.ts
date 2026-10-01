@@ -22,6 +22,7 @@ import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { Item } from "@EXULU_TYPES/models/item";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
+import { recallService } from "@SRC/exulu/recall/service";
 import {
   transcriptionClient,
   TranscriptionServerUnavailable,
@@ -53,6 +54,7 @@ export type StartJobInput = {
   target_rights_mode?: ExuluRightsMode | null;
   target_rbac_users?: { id: number; rights: "read" | "write" }[];
   target_rbac_roles?: { id: string; rights: "read" | "write" }[];
+  post_processing_prompts?: { prompt_id: string; agent_id: string }[];
 };
 
 export type FinalizeInput = {
@@ -85,6 +87,8 @@ type JobRow = {
   created_by: number;
   createdAt: string;
   updatedAt: string;
+  // {prompt, agent} pairs to run once the transcript completes.
+  post_processing_prompts?: { prompt_id: string; agent_id: string }[] | null;
   // Recall meeting-bot post-processing results, carried into the saved item.
   post_processing_outputs?: unknown[] | null;
   /** Recall recording id — the handle for the meeting video. Null for Whisper. */
@@ -129,6 +133,24 @@ const presignAudio = async (s3Key: string): Promise<string> => {
   return getPresignedUrl(bucket, objectKey, config);
 };
 
+/**
+ * Whether a whisper job that just reported `status` should have its
+ * post-processing run.
+ *
+ * pollOnce calls _applyJobUpdate on every tick for every transcribing row, so
+ * this must be false for every status but `completed`, and false once outputs
+ * exist — otherwise each tick pays for another set of LLM calls.
+ */
+export const shouldRunUploadPostProcessing = (
+  whisperStatus: string,
+  prompts: { prompt_id: string; agent_id: string }[] | null | undefined,
+  existingOutputs: unknown[] | null | undefined,
+): boolean =>
+  whisperStatus === "completed" &&
+  Array.isArray(prompts) &&
+  prompts.length > 0 &&
+  (existingOutputs === null || existingOutputs === undefined || existingOutputs.length === 0);
+
 export const transcriptionService = {
   /**
    * Create a transcription job row and dispatch it to the whisper server.
@@ -153,6 +175,9 @@ export const transcriptionService = {
         target_rights_mode: input.target_rights_mode ?? "private",
         target_rbac_users: input.target_rbac_users ? JSON.stringify(input.target_rbac_users) : null,
         target_rbac_roles: input.target_rbac_roles ? JSON.stringify(input.target_rbac_roles) : null,
+        post_processing_prompts: input.post_processing_prompts
+          ? JSON.stringify(input.post_processing_prompts)
+          : null,
         rights_mode: "private",
         created_by: input.userId,
         createdAt: now,
@@ -264,6 +289,20 @@ export const transcriptionService = {
           duration_seconds: job.duration_seconds ?? null,
           updatedAt: new Date(),
         });
+
+      if (
+        shouldRunUploadPostProcessing(
+          job.status,
+          row.post_processing_prompts as { prompt_id: string; agent_id: string }[] | null,
+          row.post_processing_outputs,
+        )
+      ) {
+        // Same fire-and-forget shape as live-recording.ts:181 — a failing
+        // summary must never stop the transcript becoming reviewable.
+        void recallService.runPostProcessing(row.id).catch((err: unknown) => {
+          log(`post-processing for upload ${row.id} failed: ${(err as Error).message}`);
+        });
+      }
       return;
     }
 
@@ -474,6 +513,9 @@ export const transcriptionService = {
       ),
       target_rbac_roles: parseJsonField<{ id: string; rights: "read" | "write" }[]>(
         dbRow.target_rbac_roles,
+      ),
+      post_processing_prompts: parseJsonField<{ prompt_id: string; agent_id: string }[]>(
+        dbRow.post_processing_prompts,
       ),
       post_processing_outputs: parseJsonField<unknown[]>(dbRow.post_processing_outputs),
       corrected_segments: parseJsonField<RawSegment[]>(dbRow.corrected_segments),

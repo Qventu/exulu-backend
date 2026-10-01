@@ -793,6 +793,7 @@ type PageInfo {
       target_rights_mode: String
       target_rbac_users: [RBACUserInput!]
       target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
     }
 
     input TranscriptionJobFinalizeInput {
@@ -2100,6 +2101,7 @@ type EmbeddingModelOption {
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
       target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      post_processing_prompts: args.input.post_processing_prompts ?? undefined,
     });
   };
 
