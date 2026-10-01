@@ -129,6 +129,16 @@ export type RecordingUsage = {
   exceeded: boolean;
 };
 
+/**
+ * Pure minutes -> seconds conversion for the resolved monthlyRecordingLimitMinutes
+ * setting ("none" -> no cap). Separated from the resolver so a caller that
+ * already holds a resolved settings object (createMeetingBot, which resolves
+ * settings exactly once per dispatch) can derive the cap without a second
+ * resolveTranscriptsSettings() round-trip.
+ */
+export const capSecondsFrom = (value: number | "none"): number | null =>
+  value === "none" ? null : value * 60;
+
 export const recallService = {
   /**
    * Total recorded meeting duration (seconds) for the current UTC month. Sums
@@ -150,13 +160,13 @@ export const recallService = {
 
   /**
    * Resolved monthly recording cap in seconds, or null when uncapped (the
-   * "none" sentinel). The setting is stored in minutes (the natural unit for
-   * an admin-facing cap); callers here want seconds, matching
-   * duration_seconds.
+   * "none" sentinel). Resolves settings itself, so callers that already hold
+   * a resolved settings object (createMeetingBot — one resolution per
+   * dispatch) should call capSecondsFrom directly instead of this.
    */
   async _monthlyLimitSeconds(): Promise<number | null> {
     const resolved = (await resolveTranscriptsSettings()).monthlyRecordingLimitMinutes.value;
-    return resolved === "none" ? null : resolved * 60;
+    return capSecondsFrom(resolved);
   },
 
   /** Current month's recording usage against the optional monthly cap. */
@@ -180,8 +190,15 @@ export const recallService = {
   async createMeetingBot(input: CreateMeetingBotInput) {
     if (!recallEnabled()) throw new RecallNotConfiguredError();
 
+    // Resolved once and reused below for the cap check, bot identity, and
+    // retention: one round-trip on the path a user waits on while a bot
+    // joins their meeting, and no window where an admin's save lands between
+    // two reads and the cap check disagrees with the bot identity within a
+    // single dispatch.
+    const settings = await resolveTranscriptsSettings();
+
     // Enforce the optional monthly recording cap before launching a bot.
-    const limit = await this._monthlyLimitSeconds();
+    const limit = capSecondsFrom(settings.monthlyRecordingLimitMinutes.value);
     if (limit != null) {
       const used = await this.monthlyUsedSeconds();
       if (used >= limit) {
@@ -229,7 +246,6 @@ export const recallService = {
       .returning("*");
 
     try {
-      const settings = await resolveTranscriptsSettings();
       const { botName, notifyChat } = resolveBotIdentity(input, {
         botName: settings.botName.value,
         notifyChat: settings.notifyChat.value,

@@ -150,7 +150,7 @@ jest.mock("@SRC/postgres/client", () => ({
   postgresClient: jest.fn(async () => ({ db })),
 }));
 
-import { recallService } from "./service";
+import { recallService, capSecondsFrom } from "./service";
 
 const JOBS = "transcription_jobs";
 
@@ -493,6 +493,15 @@ describe("createMeetingBot input normalization", () => {
     );
   });
 
+  test("resolves settings exactly once per dispatch — not once for the cap check and again for bot identity", async () => {
+    await recallService.createMeetingBot({
+      userId: 7,
+      meeting_url: "https://meet.example/abc",
+    });
+
+    expect(resolveTranscriptsSettingsSpy).toHaveBeenCalledTimes(1);
+  });
+
   test("a per-request bot name and notice win when recorders may override", async () => {
     await recallService.createMeetingBot({
       userId: 7,
@@ -544,6 +553,17 @@ describe("createMeetingBot input normalization", () => {
     expect(createBotSpy).toHaveBeenCalledWith(
       expect.objectContaining({ retentionHours: "forever" }),
     );
+  });
+});
+
+describe("capSecondsFrom — pure minutes-to-seconds conversion for an already-resolved cap", () => {
+  test('"none" means no cap', () => {
+    expect(capSecondsFrom("none")).toBeNull();
+  });
+
+  test("a number of minutes converts to seconds", () => {
+    expect(capSecondsFrom(10)).toBe(600);
+    expect(capSecondsFrom(0)).toBe(0);
   });
 });
 
