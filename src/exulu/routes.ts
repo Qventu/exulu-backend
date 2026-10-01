@@ -1012,17 +1012,6 @@ export const createExpressRoutes = async (
           res.status(status).send(body);
           return;
         }
-        if (agent.memory) {
-          await recordMemoryUsage({
-            db,
-            recall: response.recall,
-            contextId: agent.memory,
-            agentId: agent.id,
-            session: (headers.session as string | undefined) ?? null,
-            messageId: (response as any).stream?.response?.id ?? randomUUID(),
-            userId: user?.id ?? null,
-          });
-        }
         res.status(200).json(response);
         return;
       }

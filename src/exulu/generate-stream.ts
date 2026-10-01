@@ -44,6 +44,8 @@ import { recallMemories } from "./memory/recall";
 import { previousUserTexts } from "./memory/recall-query";
 import { collectMemoryDecisions } from "./memory/decisions";
 import type { RecallCollector } from "./memory/recall-collector";
+import { recordMemoryUsage } from "./memory/usage";
+import { randomUUID } from "node:crypto";
 
 /**
   * Convert file parts in messages to OpenAI Responses API compatible format.
@@ -592,6 +594,20 @@ export const generateSync = async ({
             await onTokenUsage({ inputTokens, outputTokens });
         }
 
+        // Usage tracking (memory usage spec §2.2): one row per recalled
+        // memory per answer, guests included. Never affects the answer.
+        if (agent && agent.memory) {
+            await recordMemoryUsage({
+                db: memoryDb,
+                recall: memoryRecall.collector,
+                contextId: agent.memory,
+                agentId: agent.id,
+                session: session ?? null,
+                messageId: output.response?.id ?? randomUUID(),
+                userId: user?.id ?? null,
+            });
+        }
+
         return result.text || result.object;
     }
     if (messages) {
@@ -599,7 +615,7 @@ export const generateSync = async ({
             "[EXULU] Generating text",
             "with messages: " + messages.length,
         );
-        const { text, totalUsage } = await generateText({
+        const { text, totalUsage, response } = await generateText({
             temperature: 0, // TODO Make this configurable
             model: model, // Should be a LanguageModelV1
             system,
@@ -658,6 +674,20 @@ export const generateSync = async ({
             await onTokenUsage({
                 inputTokens: totalUsage?.inputTokens || 0,
                 outputTokens: totalUsage?.outputTokens || 0,
+            });
+        }
+
+        // Usage tracking (memory usage spec §2.2): one row per recalled
+        // memory per answer, guests included. Never affects the answer.
+        if (agent && agent.memory) {
+            await recordMemoryUsage({
+                db: memoryDb,
+                recall: memoryRecall.collector,
+                contextId: agent.memory,
+                agentId: agent.id,
+                session: session ?? null,
+                messageId: response?.id ?? randomUUID(),
+                userId: user?.id ?? null,
             });
         }
 
