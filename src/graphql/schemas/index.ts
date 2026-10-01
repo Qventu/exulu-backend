@@ -79,6 +79,7 @@ import { checkMemoryBase } from "@SRC/exulu/memory/memory-base";
 import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
 import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contributors";
 import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
+import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -729,6 +730,13 @@ type PageInfo {
 
   typeDefs += `
     memoryAgentCount: Int!
+    `;
+
+  typeDefs += `
+    memoryUsageByIds(contextId: ID!, ids: [ID!]!): [MemoryUsageSummary!]!
+    memoryUsage(contextId: ID!, memoryId: ID!, limit: Int = 5): MemoryUsage
+    memoryBaseUsage(contextId: ID!, staleDays: Int = 90): MemoryBaseUsage
+    memoryBaseUnusedIds(contextId: ID!, mode: MemoryUnusedMode!, staleDays: Int = 90): [ID!]!
     `;
 
   typeDefs += `
@@ -2638,6 +2646,26 @@ type EmbeddingModelOption {
     return countAgents(context.db);
   };
 
+  const memoryContextOf = (id: string) => contexts.find((c) => c.id === id);
+  resolvers.Query["memoryUsageByIds"] = async (_, args, context) => {
+    if (!hasAgentsReadAccess(context.user) || !memoryContextOf(args.contextId)) return [];
+    return memoryUsageByIds({ db: context.db, contextId: args.contextId, ids: args.ids });
+  };
+  resolvers.Query["memoryUsage"] = async (_, args, context) => {
+    if (!hasAgentsReadAccess(context.user) || !memoryContextOf(args.contextId)) return null;
+    return memoryUsage({ db: context.db, contextId: args.contextId, memoryId: args.memoryId, limit: args.limit ?? 5, user: context.user });
+  };
+  resolvers.Query["memoryBaseUsage"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryBaseUsage({ db: context.db, context: target, user: context.user, staleDays: args.staleDays ?? 90 });
+  };
+  resolvers.Query["memoryBaseUnusedIds"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return [];
+    return memoryBaseUnusedIds({ db: context.db, context: target, mode: args.mode, staleDays: args.staleDays ?? 90 });
+  };
+
   resolvers.Query["tools"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     const { search, category, limit = 100, page = 0 } = args;
@@ -3008,6 +3036,26 @@ type MemoryBase {
     agents: [MemoryBaseAgent!]!
     stats: MemoryBaseStats
 }
+type MemoryUsageSummary { memoryId: ID!  count: Int!  lastUsedAt: String }
+type MemoryUsageEntry {
+    sessionId: String
+    messageId: String!
+    usedAt: String!
+    agent: MemoryBaseAgent
+    user: MemoryBaseUser
+    title: String
+}
+type MemoryUsage { count: Int!  lastUsedAt: String  recent: [MemoryUsageEntry!]! }
+type MemoryWeekBucket { weekStart: String!  count: Int! }
+type MemoryMostUsed { id: ID!  information: String!  count: Int!  lastUsedAt: String }
+type MemoryBaseUsage {
+    used: Int!
+    neverUsed: Int!
+    stale: Int!
+    mostUsed: [MemoryMostUsed!]!
+    newPerWeek: [MemoryWeekBucket!]!
+}
+enum MemoryUnusedMode { NEVER  STALE }
 type Reranker {
     id: ID!
     name: String!
