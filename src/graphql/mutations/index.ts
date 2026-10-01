@@ -36,6 +36,12 @@ import {
 } from "@SRC/exulu/hydrate-embedders";
 import { currentChunksDimensionality } from "@SRC/exulu/chunks-dimensionality";
 import { getEmbeddingModelInfo } from "@SRC/exulu/litellm/parse-embedding-models";
+import {
+  resolveTranscriptsSettings,
+  saveTranscriptsSettings,
+  filterLivePresets,
+} from "@SRC/exulu/transcripts-settings";
+import { parseSettingsInput } from "./transcripts-settings-input";
 
 // Same allow-list as utils/check-item-write-access.ts — the modes a client
 // may explicitly set on create.
@@ -223,6 +229,88 @@ const postprocessUpdate = async ({
     }
   }
   return result;
+};
+
+/**
+ * Build the TranscriptsSettingsInfo payload shared by the `transcriptsSettings`
+ * query (src/graphql/schemas/index.ts) and the `setTranscriptsSettings`
+ * mutation below, so a save and the page's own refetch are built identically.
+ *
+ * summaryPresets is filtered through filterLivePresets before being returned:
+ * prompts/agents are deleted independently of this page, so a stale preset
+ * (pointing at a prompt_library row or agent that no longer exists) is
+ * expected, not exceptional — it is reported separately as stalePresets
+ * rather than silently dropped or left to break the composer.
+ *
+ * videoRetentionHours / monthlyRecordingLimitMinutes are stringified here
+ * (String(value)) because each resolves to `number | sentinel`, and the SDL
+ * types both as String so the sentinel ("forever" / "none") can cross the
+ * wire verbatim. The frontend parses the string back with the same rule.
+ *
+ * transcriptsSettings is a non-null root field (TranscriptsSettingsInfo!,
+ * src/graphql/schemas/index.ts), so a throw anywhere in here does not just
+ * null out one field — GraphQL null-bubbles the whole response, and Task 6
+ * wires this query into the composer-open path every user hits. The
+ * prompt_library / agents lookups below exist only to classify presets as
+ * live vs stale for display, never to decide whether this query can answer
+ * at all (spec §6: an unreadable settings row must never stop a composer
+ * opening, and that applies just as much to this derived lookup). Each read
+ * is guarded independently and logged the same way the settings store's own
+ * read degrades (transcripts-settings.ts's getTranscriptsSettings); on
+ * either failure we cannot trust a partial id set, so this falls back to
+ * treating every stored preset as live rather than risk misreporting a real
+ * preset as stale.
+ */
+export const buildTranscriptsSettingsInfo = async () => {
+  const resolved = await resolveTranscriptsSettings();
+
+  let livePromptIds: Set<string> | null = null;
+  try {
+    const { db } = await postgresClient();
+    const promptRows: { id: string }[] = await db.from("prompt_library").select("id");
+    livePromptIds = new Set(promptRows.map((row) => String(row.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read prompt_library for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
+
+  let liveAgentIds: Set<string> | null = null;
+  try {
+    const { db } = await postgresClient();
+    const agentRows: { id: string }[] = await db.from("agents").select("id");
+    liveAgentIds = new Set(agentRows.map((row) => String(row.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read agents for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
+
+  const { live, stale } =
+    livePromptIds && liveAgentIds
+      ? filterLivePresets(resolved.summaryPresets.value, livePromptIds, liveAgentIds)
+      : { live: resolved.summaryPresets.value, stale: [] };
+
+  return {
+    botName: resolved.botName,
+    notifyChat: resolved.notifyChat,
+    recordersMayOverrideBot: resolved.recordersMayOverrideBot,
+    defaultRightsMode: resolved.defaultRightsMode,
+    summaryPresets: { value: live, source: resolved.summaryPresets.source },
+    videoRetentionHours: {
+      value: String(resolved.videoRetentionHours.value),
+      source: resolved.videoRetentionHours.source,
+    },
+    storeVideoLocally: resolved.storeVideoLocally,
+    monthlyRecordingLimitMinutes: {
+      value: String(resolved.monthlyRecordingLimitMinutes.value),
+      source: resolved.monthlyRecordingLimitMinutes.source,
+    },
+    videoStorageCostPerHour: resolved.videoStorageCostPerHour,
+    stalePresets: stale,
+  };
 };
 
 export function createMutations(
@@ -1419,6 +1507,26 @@ export function createMutations(
       };
     }
   }
+
+  // Global mutation, registered the same way as the global queries in
+  // src/graphql/schemas/index.ts (litellmCatalog etc.): unrelated to `table`,
+  // so this assignment simply repeats identically on every per-table call of
+  // createMutations rather than needing special-casing to run once.
+  //
+  // Gated exactly like the destructive context mutations above
+  // (xSetEmbedder, xProcessItem(s)): the Transcripts settings link sits in a
+  // menu every user sees, so the UI-level check is not the protection — this
+  // server-side super_admin gate is.
+  mutations["setTranscriptsSettings"] = async (_, args, context) => {
+    if (!context.user) {
+      throw new Error("Authentication required to change the Transcripts settings.");
+    }
+    if (!context.user.super_admin) {
+      throw new Error("Only a super admin can change the Transcripts settings.");
+    }
+    await saveTranscriptsSettings(parseSettingsInput(args.input));
+    return buildTranscriptsSettingsInfo();
+  };
 
   return mutations;
 }

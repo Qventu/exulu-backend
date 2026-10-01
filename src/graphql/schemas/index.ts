@@ -35,7 +35,7 @@ import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { createQueries } from "@SRC/graphql/resolvers";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
 import { getJobsByQueueName } from "../resolvers/job-queues";
-import { createMutations } from "../mutations";
+import { createMutations, buildTranscriptsSettingsInfo } from "../mutations";
 import type { ExuluEval } from "@SRC/exulu/evals";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { processUiMessagesFlow, validateWorkflowPayload } from "@EE/workers.ts";
@@ -739,6 +739,52 @@ type PageInfo {
     getUniqueSkillTags: [String!]!
     `;
 
+  // Transcripts settings (spec §5): one workspace-level settings object,
+  // registered once here like litellmCatalog/availableEmbeddingModels above —
+  // NOT per context table. Each field resolves database -> env -> code, so
+  // the settings page can show where a value came from.
+  typeDefs += `
+    transcriptsSettings: TranscriptsSettingsInfo!
+    `;
+
+  mutationDefs += `
+    setTranscriptsSettings(input: TranscriptsSettingsInput!): TranscriptsSettingsInfo!
+    `;
+
+  modelDefs += `
+    type ResolvedStringSetting { value: String, source: String! }
+    type ResolvedBoolSetting { value: Boolean, source: String! }
+    type ResolvedFloatSetting { value: Float, source: String! }
+    type SummaryPreset { prompt_id: ID!, agent_id: ID! }
+    type ResolvedPresetSetting { value: [SummaryPreset!]!, source: String! }
+
+    type TranscriptsSettingsInfo {
+      botName: ResolvedStringSetting!
+      notifyChat: ResolvedBoolSetting!
+      recordersMayOverrideBot: ResolvedBoolSetting!
+      defaultRightsMode: ResolvedStringSetting!
+      summaryPresets: ResolvedPresetSetting!
+      videoRetentionHours: ResolvedStringSetting!
+      storeVideoLocally: ResolvedBoolSetting!
+      monthlyRecordingLimitMinutes: ResolvedStringSetting!
+      videoStorageCostPerHour: ResolvedFloatSetting!
+      stalePresets: [SummaryPreset!]!
+    }
+
+    input SummaryPresetInput { prompt_id: ID!, agent_id: ID! }
+    input TranscriptsSettingsInput {
+      botName: String
+      notifyChat: Boolean
+      recordersMayOverrideBot: Boolean
+      defaultRightsMode: String
+      summaryPresets: [SummaryPresetInput!]
+      videoRetentionHours: String
+      storeVideoLocally: Boolean
+      monthlyRecordingLimitMinutes: String
+      videoStorageCostPerHour: Float
+    }
+  `;
+
   mutationDefs += `
     runEval(id: ID!, test_case_ids: [ID!]): RunEvalReturnPayload
     `;
@@ -807,6 +853,7 @@ type PageInfo {
       target_rights_mode: String
       target_rbac_users: [RBACUserInput!]
       target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
     }
 
     input TranscriptionJobFinalizeInput {
@@ -1004,6 +1051,13 @@ type EmbeddingModelOption {
       return [];
     }
   };
+
+  // transcriptsSettings: the workspace-level Transcripts settings object
+  // (spec §5), each field resolved database -> env -> code. Shares
+  // buildTranscriptsSettingsInfo with the setTranscriptsSettings mutation
+  // (src/graphql/mutations/index.ts) so the query and the mutation's return
+  // value are built the exact same way.
+  resolvers.Query["transcriptsSettings"] = async () => buildTranscriptsSettingsInfo();
 
   resolvers.Query["workflowSchedule"] = async (_, args, context, info) => {
     // Creates a scheduled workflow execution, takes args.workflow (id) args.queue and args.schedule and args.variables
@@ -2114,6 +2168,7 @@ type EmbeddingModelOption {
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,
       target_rbac_roles: args.input.target_rbac_roles ?? undefined,
+      post_processing_prompts: args.input.post_processing_prompts ?? undefined,
     });
   };
 
@@ -2149,7 +2204,10 @@ type EmbeddingModelOption {
       language: args.input.language ?? null,
       title: args.input.title ?? null,
       bot_name: args.input.bot_name ?? null,
-      notify_chat: args.input.notify_chat ?? false,
+      // null (not false) when the caller omits it: lets resolveBotIdentity
+      // fall through to the workspace notifyChat default instead of the
+      // per-request value silently pinning it to "off" on every dispatch.
+      notify_chat: args.input.notify_chat ?? null,
       project_id: args.input.project_id ?? null,
       target_rights_mode: args.input.target_rights_mode ?? null,
       target_rbac_users: args.input.target_rbac_users ?? undefined,

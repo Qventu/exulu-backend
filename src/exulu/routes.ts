@@ -70,6 +70,8 @@ import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts"
 import { registerTranscriptExportRoute } from "./transcription/export-route.ts";
 import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
 import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
+import { testSource, type TranscriptionSource } from "./transcription/source-test.ts";
+import { findLiteLLMModel } from "./litellm/catalog.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
   generateImage,
@@ -118,7 +120,7 @@ import { handleOauthCallback } from "./auth/callback-handler.ts";
 import { handleCredentialSubmit } from "./auth/submit-handler.ts";
 import { handleCredentialList, handleCredentialDelete } from "./auth/manage-handlers.ts";
 import { OAUTH_CALLBACK_PATH } from "./auth/flow.ts";
-import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
+import { recallEnabled, recallApiBaseUrl, recallApiKey, RECALL_NOT_CONFIGURED_MESSAGE } from "./recall/env.ts";
 import { verifyRecallRequest } from "./recall/verify.ts";
 import { recallService } from "./recall/service.ts";
 import { handleRBACUpdate } from "@EE/rbac-update.ts";
@@ -1364,6 +1366,73 @@ export const createExpressRoutes = async (
       return item as never;
     },
     convert: (markdown, format) => exportMarkdown(markdown, format),
+  });
+
+  // Sources section of the Transcripts settings page (spec §5): a per-source
+  // reachability check behind the admin's "Test" button. Deliberately a
+  // liveness probe, not a round trip through the model/bot itself — see
+  // testSource's own doc comment. super_admin-gated like setTranscriptsSettings
+  // (src/graphql/mutations/index.ts): the settings page is reachable from a
+  // menu every user sees, so this server-side check is the real protection.
+  const TRANSCRIPTION_SOURCES = ["upload", "meeting", "record"] as const;
+  app.get("/transcription-sources/:source/test", async (req: Request, res: Response) => {
+    const authResult = await requestValidators.authenticate(req);
+    if (!authResult.user?.id) {
+      res.status(authResult.code ?? 401).json({ detail: authResult.message });
+      return;
+    }
+    if (!authResult.user.super_admin) {
+      res.status(403).json({ detail: "Only a super admin can test a transcription source." });
+      return;
+    }
+    const source = req.params.source ?? "";
+    if (!(TRANSCRIPTION_SOURCES as readonly string[]).includes(source)) {
+      res.status(400).json({ detail: `Unknown source "${source}".` });
+      return;
+    }
+    try {
+      const result = await testSource(source as TranscriptionSource, {
+        whisperConfigured: () => transcriptionClient.isConfigured(),
+        pingWhisper: async () => {
+          await transcriptionClient.health();
+        },
+        recallConfigured: () => recallEnabled(),
+        // A cheap authenticated GET (one bot, not a real listing) — enough to
+        // prove the API key + region actually work, without pulling a page
+        // of bots just to answer a liveness check.
+        pingRecall: async () => {
+          const url = `${recallApiBaseUrl()}/bot/?limit=1`;
+          const response = await fetch(url, {
+            headers: { Authorization: recallApiKey() as string, accept: "application/json" },
+            signal: AbortSignal.timeout(10_000),
+          }).catch((err) => {
+            throw new Error(`Unable to reach the Recall API: ${(err as Error).message}`);
+          });
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`Recall API ${response.status}: ${body}`);
+          }
+        },
+        recordModelConfigured: () => liveRecordingEnabled(),
+        // Catalogue lookup, not a live transcription call: confirms
+        // TRANSCRIPTION_MODEL is actually declared (and active) in the
+        // deployed LiteLLM config, which is what "reachable" means for a
+        // model this check must never spend tokens on.
+        pingRecordModel: async () => {
+          const modelName = process.env.TRANSCRIPTION_MODEL as string;
+          const model = await findLiteLLMModel(modelName);
+          if (!model) {
+            throw new Error(`LiteLLM has no model named "${modelName}" (TRANSCRIPTION_MODEL).`);
+          }
+          if (model.active === false) {
+            throw new Error(`Model "${modelName}" is configured but marked inactive in LiteLLM.`);
+          }
+        },
+      });
+      res.status(200).json(result);
+    } catch (err) {
+      res.status(400).json({ detail: (err as Error).message });
+    }
   });
 
   // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
