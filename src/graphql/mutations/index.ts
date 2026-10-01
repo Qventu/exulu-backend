@@ -247,22 +247,51 @@ const postprocessUpdate = async ({
  * (String(value)) because each resolves to `number | sentinel`, and the SDL
  * types both as String so the sentinel ("forever" / "none") can cross the
  * wire verbatim. The frontend parses the string back with the same rule.
+ *
+ * transcriptsSettings is a non-null root field (TranscriptsSettingsInfo!,
+ * src/graphql/schemas/index.ts), so a throw anywhere in here does not just
+ * null out one field — GraphQL null-bubbles the whole response, and Task 6
+ * wires this query into the composer-open path every user hits. The
+ * prompt_library / agents lookups below exist only to classify presets as
+ * live vs stale for display, never to decide whether this query can answer
+ * at all (spec §6: an unreadable settings row must never stop a composer
+ * opening, and that applies just as much to this derived lookup). Each read
+ * is guarded independently and logged the same way the settings store's own
+ * read degrades (transcripts-settings.ts's getTranscriptsSettings); on
+ * either failure we cannot trust a partial id set, so this falls back to
+ * treating every stored preset as live rather than risk misreporting a real
+ * preset as stale.
  */
 export const buildTranscriptsSettingsInfo = async () => {
   const resolved = await resolveTranscriptsSettings();
 
-  const { db } = await postgresClient();
-  const promptRows: { id: string }[] = await db.from("prompt_library");
-  const livePromptIds = new Set(promptRows.map((row) => String(row.id)));
+  let livePromptIds: Set<string> | null = null;
+  try {
+    const { db } = await postgresClient();
+    const promptRows: { id: string }[] = await db.from("prompt_library").select("id");
+    livePromptIds = new Set(promptRows.map((row) => String(row.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read prompt_library for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
 
-  const agents = await exuluApp.get().agents();
-  const liveAgentIds = new Set(agents.map((agent) => String(agent.id)));
+  let liveAgentIds: Set<string> | null = null;
+  try {
+    const agents = await exuluApp.get().agents();
+    liveAgentIds = new Set(agents.map((agent) => String(agent.id)));
+  } catch (err) {
+    console.warn(
+      "[EXULU] Could not read agents for the Transcripts settings page:",
+      (err as Error).message,
+    );
+  }
 
-  const { live, stale } = filterLivePresets(
-    resolved.summaryPresets.value,
-    livePromptIds,
-    liveAgentIds,
-  );
+  const { live, stale } =
+    livePromptIds && liveAgentIds
+      ? filterLivePresets(resolved.summaryPresets.value, livePromptIds, liveAgentIds)
+      : { live: resolved.summaryPresets.value, stale: [] };
 
   return {
     botName: resolved.botName,
