@@ -293,25 +293,25 @@ In `src/exulu/routes.ts` import `recordMemoryUsage` from `./memory/usage.ts` (sa
             }
 ```
 
-- [ ] **Step 5: Hook the non-streaming path**
+- [ ] **Step 5: Hook the non-streaming path (corrected 2026-10-01)**
 
-After `response = await generateSync({ … })` succeeds in the same route (before the response is sent):
+`generateSync` (`src/exulu/generate-stream.ts`) returns plain text from both of its branches and never exposes the recall collector, so the route cannot record usage after the fact. Record it inside `generateSync` instead, in both text-returning branches after `generateText` and before the `return` (the collector, `agent`, `user`, `session` and `memoryDb` are in scope there; the branch's `generateText` result carries the model's `response.id`):
 
 ```ts
-          if (agent.memory) {
-            await recordMemoryUsage({
-              db,
-              recall: response.recall,
-              contextId: agent.memory,
-              agentId: agent.id,
-              session: (headers.session as string | undefined) ?? null,
-              messageId: (response as any).stream?.response?.id ?? randomUUID(),
-              userId: user?.id ?? null,
-            });
-          }
+    if (agent.memory) {
+      await recordMemoryUsage({
+        db: memoryDb,
+        recall: memoryRecall.collector,
+        contextId: agent.memory,
+        agentId: agent.id,
+        session: session ?? null,
+        messageId: result.response?.id ?? randomUUID(),
+        userId: user?.id ?? null,
+      });
+    }
 ```
 
-`generateSync` already returns `recall: memoryRecall.collector` (generate-stream.ts ~line 1053). `randomUUID` is already imported in routes.ts. If `messageId` is ever empty in the stream hook, the unique index still accepts it; it only weakens idempotency for that one answer.
+Import `recordMemoryUsage` from `./memory/usage` and `randomUUID` from `node:crypto` in generate-stream.ts. Nothing is added to the routes.ts sync branch. (The original plan text wrongly attributed `generateStream`'s `recall` return field to `generateSync`; the Task 2 review caught it — see the SDD ledger, Ruling 2.)
 
 - [ ] **Step 6: Run the tests and typecheck**
 
