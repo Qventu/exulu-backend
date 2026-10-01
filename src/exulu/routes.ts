@@ -64,6 +64,7 @@ import { compactSession, CompactionInsufficientError } from "./compact-session.t
 import { describeRequestError } from "./request-error.ts";
 import { finishTurnMetadata } from "./turn-metadata.ts";
 import { recalledMemoriesMetadata } from "./memory/recalled-metadata.ts";
+import { recordMemoryUsage } from "./memory/usage.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
 import { transcriptionClient } from "./transcription/client.ts";
 import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
@@ -902,6 +903,19 @@ export const createExpressRoutes = async (
                 );
               }
             }
+            // Usage tracking (memory usage spec §2.2): one row per recalled
+            // memory per answer, guests included. Never affects the answer.
+            if (agent.memory) {
+              await recordMemoryUsage({
+                db,
+                recall: result.recall,
+                contextId: agent.memory,
+                agentId: agent.id,
+                session: (headers.session as string | undefined) ?? null,
+                messageId: responseMessage?.id ?? messages[messages.length - 1]?.id ?? "",
+                userId: user?.id ?? null,
+              });
+            }
             const metadata = messages[messages.length - 1]?.metadata as any;
             console.log("[EXULU] Finished streaming", metadata);
             console.log("[EXULU] Statistics", {
@@ -997,6 +1011,17 @@ export const createExpressRoutes = async (
           const { status, body } = describeRequestError(err);
           res.status(status).send(body);
           return;
+        }
+        if (agent.memory) {
+          await recordMemoryUsage({
+            db,
+            recall: response.recall,
+            contextId: agent.memory,
+            agentId: agent.id,
+            session: (headers.session as string | undefined) ?? null,
+            messageId: (response as any).stream?.response?.id ?? randomUUID(),
+            userId: user?.id ?? null,
+          });
         }
         res.status(200).json(response);
         return;
