@@ -96,6 +96,21 @@ describe("project_search option", () => {
   });
 });
 
+describe("show_sources_to_external_users option", () => {
+  it("defaults to true when absent or empty (empty string = backend default)", () => {
+    expect(parsePipelineConfig({}).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig(undefined).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig({ show_sources_to_external_users: "" }).showSourcesToExternalUsers).toBe(true);
+  });
+
+  it("parses explicit values", () => {
+    expect(parsePipelineConfig({ show_sources_to_external_users: "false" }).showSourcesToExternalUsers).toBe(false);
+    expect(parsePipelineConfig({ show_sources_to_external_users: false }).showSourcesToExternalUsers).toBe(false);
+    expect(parsePipelineConfig({ show_sources_to_external_users: "true" }).showSourcesToExternalUsers).toBe(true);
+    expect(parsePipelineConfig({ show_sources_to_external_users: true }).showSourcesToExternalUsers).toBe(true);
+  });
+});
+
 describe("tuning.engine — the per-agent switch between the v1 flow and the parallel v2 flow", () => {
   it("defaults to v1 so existing agents keep today's behaviour", () => {
     expect(parsePipelineConfig({ tuning: '{"topK": 8}' }).tuning.engine).toBe("v1");
