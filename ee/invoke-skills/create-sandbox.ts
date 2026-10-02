@@ -12,6 +12,8 @@ import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-f
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
 import { selectGrantedVariables } from './variable-grants'
+import { getAuditLogger } from '@SRC/exulu/audit/logger'
+import { buildSkillSandboxEvent } from '@SRC/exulu/audit/emitters/skill-sandbox'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
@@ -23,7 +25,11 @@ import { postgresClient } from "@SRC/postgres/client";
 /**
  * Load every variable the database has decrypted values for, then keep only
  * the ones an administrator has explicitly granted to the skill sandbox.
- * Returns a name → value map suitable for spreading into a child-process env.
+ * Returns the granted name → value map (for spreading into a child-process
+ * env) alongside the withheld NAMES — never values — of every other row, so
+ * a broken skill is diagnosable from one log line. A row whose decryption
+ * failed is skipped by the `continue` below, which means it is absent from
+ * `granted` and therefore lands in `withheldNames` too.
  *
  * Used by the skill sandbox to expose configured secrets to bash commands
  * (API keys, etc.) so skills can call external services without hard-coding
@@ -35,7 +41,10 @@ import { postgresClient } from "@SRC/postgres/client";
  * Variables whose name starts with `_` or contains `=` are skipped — those
  * shapes corrupt POSIX env parsing or shadow shell internals.
  */
-const getAllExuluVariables = async (): Promise<Record<string, string>> => {
+const getAllExuluVariables = async (): Promise<{
+    granted: Record<string, string>;
+    withheldNames: string[];
+}> => {
     const { db } = await postgresClient();
     const rows: Variable[] = await db.from("variables").select("*");
     const decrypted: Variable[] = [];
@@ -56,7 +65,12 @@ const getAllExuluVariables = async (): Promise<Record<string, string>> => {
         }
         decrypted.push({ ...row, value });
     }
-    return selectGrantedVariables(decrypted);
+    const granted = selectGrantedVariables(decrypted);
+    const withheldNames = decrypted
+        .filter((row) => row?.name && !(row.name in granted))
+        .map((row) => row.name)
+        .sort();
+    return { granted, withheldNames };
 }
 
 const execAsync = promisify(exec);
@@ -586,8 +600,11 @@ export async function createSessionSandbox(
     // won't see the variables (an empty map is the same as nothing
     // configured).
     let configuredVariables: Record<string, string> = {}
+    let withheldNames: string[] = []
     try {
-        configuredVariables = await getAllExuluVariables()
+        const loaded = await getAllExuluVariables()
+        configuredVariables = loaded.granted
+        withheldNames = loaded.withheldNames
     } catch (err) {
         console.error(
             `[SKILLS] Failed to load configured variables for session ${sessionId}; bash env will not include them.`,
@@ -615,6 +632,34 @@ export async function createSessionSandbox(
     if (skippedNames.length) {
         console.warn(
             `[SKILLS] Skipped ${skippedNames.length} variable(s) for session ${sessionId}: ${skippedNames.join(", ")} (invalid env name or collides with a runtime key).`,
+        )
+    }
+
+    // One audit event per sandbox creation, gated by
+    // sources.skillSandbox.enabled (off by default — see
+    // src/exulu/audit/config.ts). Every name array below is key-derived —
+    // grantedNames/skippedNames come from buildSkillEnv, withheldNames from
+    // getAllExuluVariables' row.name filter — never a row's value, so no
+    // credential value can ride along in this event.
+    const auditLogger = getAuditLogger(config)
+    if (auditLogger.shouldAuditSkillSandbox()) {
+        auditLogger.record(
+            buildSkillSandboxEvent({
+                sessionID: sessionId,
+                user: userId !== undefined ? { id: userId } : undefined,
+                skills: skills.map((s) => ({ id: s.id, name: s.name, version: s.current_version })),
+                grantedNames,
+                withheldNames,
+                skippedNames,
+                strippedSecretCount: strippedSecretNames.length,
+                degradedSandbox: useDirectExec,
+            }),
+        )
+    }
+
+    if (withheldNames.length) {
+        console.log(
+            `[SKILLS] Session ${sessionId}: ${withheldNames.length} variable(s) not shared with skills: ${withheldNames.join(", ")}.`,
         )
     }
 

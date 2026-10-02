@@ -39,6 +39,27 @@ describe("getAuditLogger", () => {
     });
     expect(logger.shouldAuditTool("normal")).toBe(false);
   });
+
+  it("shouldAuditSkillSandbox is false on the no-op logger", () => {
+    const logger = getAuditLogger({});
+    expect(logger.shouldAuditSkillSandbox()).toBe(false);
+  });
+
+  it("shouldAuditSkillSandbox defaults to false when audit is enabled but skillSandbox is unconfigured", () => {
+    const logger = getAuditLogger({
+      audit: { enabled: true, retentionDays: 30 },
+      fileUploads: s3,
+    });
+    expect(logger.shouldAuditSkillSandbox()).toBe(false);
+  });
+
+  it("shouldAuditSkillSandbox is true when sources.skillSandbox.enabled is true", () => {
+    const logger = getAuditLogger({
+      audit: { enabled: true, retentionDays: 30, sources: { skillSandbox: { enabled: true } } },
+      fileUploads: s3,
+    });
+    expect(logger.shouldAuditSkillSandbox()).toBe(true);
+  });
 });
 
 describe("initAudit signal-handler idempotency", () => {
