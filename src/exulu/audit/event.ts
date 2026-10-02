@@ -67,7 +67,7 @@ export type AuditToolCallInput = {
 // Context handed to the skill-sandbox emitter (see emitters/skill-sandbox.ts).
 export type AuditSkillSandboxInput = {
   sessionID?: string;
-  agent?: { id?: string; name?: string };
+  agent?: { id?: string; name?: string; slug?: string };
   user?: { id?: unknown; email?: string; role?: { id?: unknown } };
   projectId?: string;
   skills: Array<{ id: string; name: string; version?: number }>;

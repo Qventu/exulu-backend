@@ -75,3 +75,36 @@ test("computed overrides always win", () => {
   });
   expect(env.NODE_PATH).toBe("/usr/lib/node_modules");
 });
+
+test("a runtime-discovered secret name is stripped like an inventoried one", () => {
+  // The LiteLLM config's `os.environ/ACME_PROVIDER_KEY` case: not in the
+  // inventory, still a platform credential.
+  const { env, strippedSecretNames } = buildSkillEnv({
+    processEnv: { ...base, ACME_PROVIDER_KEY: "sk-acme" },
+    grantedVariables: {},
+    extraSecretNames: ["ACME_PROVIDER_KEY"],
+  });
+  expect(env.ACME_PROVIDER_KEY).toBeUndefined();
+  expect(strippedSecretNames).toContain("ACME_PROVIDER_KEY");
+});
+
+test("an extra secret name absent from the environment changes nothing", () => {
+  const { env, strippedSecretNames } = buildSkillEnv({
+    processEnv: base,
+    grantedVariables: {},
+    extraSecretNames: ["NOT_SET_HERE"],
+  });
+  expect(strippedSecretNames).toEqual([]);
+  expect(env.PATH).toBe("/usr/bin");
+});
+
+test("an admin-granted variable still wins over a runtime-discovered secret name", () => {
+  // Same rule as for inventoried secrets: the platform's value goes, the
+  // administrator's explicit grant stays.
+  const { env } = buildSkillEnv({
+    processEnv: { ...base, COHERE_API_KEY: "platform-value" },
+    grantedVariables: { COHERE_API_KEY: "admin-value" },
+    extraSecretNames: ["COHERE_API_KEY"],
+  });
+  expect(env.COHERE_API_KEY).toBe("admin-value");
+});

@@ -15,6 +15,36 @@ import type { Variable } from "@EXULU_TYPES/models/variable";
  * Names starting with `_` or containing `=` stay excluded regardless of the
  * grant — those shapes corrupt POSIX env parsing or shadow shell internals.
  */
+/**
+ * The rows whose ciphertext is worth touching: an explicit grant and nothing
+ * else. Decryption is the expensive, failure-prone half of loading variables,
+ * and §1 of the design says filter first — so an ungranted row's value is never
+ * decrypted at all.
+ */
+export const selectRowsToDecrypt = (rows: Variable[]): Variable[] =>
+    rows.filter((row) => Boolean(row?.name) && row.allow_skill_access === true);
+
+/**
+ * The withheld NAMES — never values — derived from the UNFILTERED row list.
+ *
+ * Deriving from the full list rather than from the decrypted subset is what
+ * makes a failed decrypt visible: such a row is absent from `granted`, so it
+ * is reported as withheld, which is what an operator needs to diagnose a
+ * broken skill. Derived from the same list, a row with a bad name shape
+ * (leading `_`, embedded `=`) is reported too.
+ */
+export const deriveWithheldNames = (
+    rows: Variable[],
+    granted: Record<string, string>,
+): string[] => [
+    ...new Set(
+        rows
+            .filter((row) => Boolean(row?.name))
+            .map((row) => row.name)
+            .filter((name) => !(name in granted)),
+    ),
+].sort();
+
 export const selectGrantedVariables = (rows: Variable[]): Record<string, string> => {
     const out: Record<string, string> = {};
     for (const row of rows) {

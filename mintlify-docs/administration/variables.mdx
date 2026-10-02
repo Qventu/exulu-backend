@@ -55,7 +55,11 @@ A skill that depends on a variable you haven't enabled fails with its own error,
 
 If a skill fails after this change, open the variable it needs and turn on **Allow agent access when using skills**.
 
-Platform secrets — database credentials, the LiteLLM master key, SMTP credentials, and the other values the backend itself depends on — are never shared with skills, regardless of this setting. The toggle only controls variables stored in this table; it cannot expose platform configuration.
+Platform secrets — database credentials, the LiteLLM master key, SMTP credentials, provider API keys, and the other values the backend itself depends on — are withheld from the skill environment regardless of this setting. The toggle only controls variables stored in this table; it cannot expose platform configuration.
+
+<Note>
+Withholding them relies on the kernel sandbox being active. Where the host cannot provide it, skills run in **degraded mode** — the server log says so at startup — and the container is the only boundary, so a skill could still reach the server's own environment. Set `EXULU_REQUIRE_SANDBOX=1` to fail instead of degrading, and see [Troubleshooting](/self-hosting/troubleshooting) for restoring the sandbox on hosts that block it.
+</Note>
 
 ## Reveal-on-demand
 

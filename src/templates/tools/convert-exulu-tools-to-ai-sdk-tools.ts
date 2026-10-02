@@ -219,6 +219,9 @@ export const convertExuluToolsToAiSdkTools = async (
         currentSkills || [],
         exuluConfig,
         sessionOwnerId ?? user?.id,
+        // Same agent descriptor the tool-call audit emitter uses below, so a
+        // skill.sandbox.created event can be joined to the agent that caused it.
+        agent ? { id: agent.id, name: agent.name, slug: (agent as any).slug } : undefined,
       );
     } catch (err) {
       console.error(

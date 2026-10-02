@@ -4,6 +4,14 @@ export type BuildSkillEnvArgs = {
   processEnv: NodeJS.ProcessEnv;
   grantedVariables: Record<string, string>;
   overrides?: NodeJS.ProcessEnv;
+  /**
+   * Secret names discovered at runtime rather than declared in the inventory —
+   * today the `os.environ/NAME` directives in the deployment's
+   * config.litellm.yaml (see src/exulu/litellm/os-environ-names.ts). Treated
+   * exactly like an inventoried secret. Still a denylist: nothing is kept
+   * because it appears here, only removed.
+   */
+  extraSecretNames?: readonly string[];
 };
 
 export type BuildSkillEnvResult = {
@@ -26,12 +34,14 @@ export const buildSkillEnv = ({
   processEnv,
   grantedVariables,
   overrides = {},
+  extraSecretNames = [],
 }: BuildSkillEnvArgs): BuildSkillEnvResult => {
   const env: NodeJS.ProcessEnv = {};
   const strippedSecretNames: string[] = [];
+  const extraSecrets = new Set(extraSecretNames);
 
   for (const [name, value] of Object.entries(processEnv)) {
-    if (isSecretEnvName(name)) {
+    if (isSecretEnvName(name) || extraSecrets.has(name)) {
       strippedSecretNames.push(name);
       continue;
     }
