@@ -373,13 +373,6 @@ git commit -m "feat(skills): buildSkillEnv composes the sandbox env from an expl
 
 ```ts
 // ee/invoke-skills/create-sandbox.env.test.ts
-import { spawn } from "child_process";
-
-jest.mock("child_process", () => ({
-  ...jest.requireActual("child_process"),
-  spawn: jest.fn(),
-}));
-
 test("the writeFile spawn is given an explicit env, never the inherited one", () => {
   // Guard against regression of the leak-by-omission at create-sandbox.ts:755.
   const src = require("fs").readFileSync(
@@ -462,6 +455,7 @@ git commit -m "fix(skills): construct the sandbox env instead of inheriting it, 
 **Files:**
 - Modify: `src/postgres/core-schema.ts` (`variablesSchema`, ~line 154-176)
 - Modify: `types/models/variable.ts`
+- Create: `ee/invoke-skills/variable-grants.ts`
 - Modify: `ee/invoke-skills/create-sandbox.ts` (`getAllExuluVariables`, line 33)
 - Test: `ee/invoke-skills/variable-grants.test.ts`
 
@@ -473,7 +467,7 @@ git commit -m "fix(skills): construct the sandbox env instead of inheriting it, 
 
 ```ts
 // ee/invoke-skills/variable-grants.test.ts
-import { selectGrantedVariables } from "./create-sandbox";
+import { selectGrantedVariables } from "./variable-grants";
 
 test("only variables with allow_skill_access are returned", () => {
   const rows = [
@@ -526,9 +520,12 @@ export interface Variable {
 
 - [ ] **Step 4: Extract and filter in the loader**
 
-In `create-sandbox.ts`, export the pure selection step so it is testable without a database, and have `getAllExuluVariables` use it:
+Put the pure selection step in its own module so the unit test does not pull in `create-sandbox.ts`'s import graph (S3, postgres, sandbox-runtime). Create `ee/invoke-skills/variable-grants.ts`, and have `getAllExuluVariables` import and use it:
 
 ```ts
+// ee/invoke-skills/variable-grants.ts
+import type { Variable } from "@EXULU_TYPES/models/variable";
+
 export const selectGrantedVariables = (rows: Variable[]): Record<string, string> => {
     const out: Record<string, string> = {};
     for (const row of rows) {
