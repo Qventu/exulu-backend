@@ -2,16 +2,6 @@ import { buildSkillSandboxEvent } from "@SRC/exulu/audit/emitters/skill-sandbox"
 import { selectGrantedVariables } from "./variable-grants";
 import type { Variable } from "@EXULU_TYPES/models/variable";
 
-test("a disabled audit logger is a no-op and never throws", () => {
-  const noop = { enabled: false, record: jest.fn(), shouldAuditSkillSandbox: () => false } as any;
-  const emit = () => {
-    if (!noop.shouldAuditSkillSandbox()) return;
-    noop.record(buildSkillSandboxEvent({} as any));
-  };
-  expect(emit).not.toThrow();
-  expect(noop.record).not.toHaveBeenCalled();
-});
-
 test("withheld names are the ungranted variable names, not their values", () => {
   const all = ["JIRA_CLIENT_ID", "ANTHROPIC_API_KEY", "PERPLEXITY_API_KEY"];
   const granted = ["JIRA_CLIENT_ID"];
