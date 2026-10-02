@@ -86,7 +86,7 @@ function probeSandboxSupport(): Promise<SandboxProbeResult> {
             // Minimal bwrap invocation: bind / read-only and exit. If the host
             // refuses unprivileged user namespaces, this returns
             // "Operation not permitted" — same path SRT would hit on every command.
-            const child = spawn('bwrap', ['--dev-bind', '/', '/', '--', '/bin/true']);
+            const child = spawn('bwrap', ['--dev-bind', '/', '/', '--', '/bin/true'], { env: {} });
             let stderr = '';
             child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
             child.on('error', (err) => {

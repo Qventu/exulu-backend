@@ -7,6 +7,6 @@ test("the writeFile spawn is given an explicit env, never the inherited one", ()
   const spawnCalls = [...src.matchAll(/spawn\(\s*['"]\/bin\/bash['"][\s\S]{0,200}?\)/g)];
   expect(spawnCalls.length).toBeGreaterThan(0);
   for (const call of spawnCalls) {
-    expect(call[0]).toContain("env:");
+    expect(call[0]).toContain("env: sandboxedExecEnv");
   }
 });
