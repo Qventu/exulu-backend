@@ -35,6 +35,15 @@ export const ENV_CLASSIFICATION: Record<string, "secret" | "runtime"> = {
   // capability token than a password — but knowing it still unlocks
   // enterprise entitlements, so classified secret per the fail-safe rule.
   EXULU_ENTERPRISE_LICENSE: "secret",
+  // POSTGRES_DB_USER / REDIS_USER / SMTP_USER: a username alone grants
+  // nothing without its paired password. Classified secret anyway — the
+  // design's claim is "a skill never sees the platform's own credentials",
+  // and a username is half of one. No skill has a legitimate need for the
+  // platform's database, cache, or mail identity; an admin can expose one
+  // deliberately as a platform variable if that ever changes.
+  POSTGRES_DB_USER: "secret",
+  REDIS_USER: "secret",
+  SMTP_USER: "secret",
 
   // --- runtime: paths, locales, feature flags, hostnames, ports, log levels.
   // Only changes behaviour.
@@ -70,20 +79,17 @@ export const ENV_CLASSIFICATION: Record<string, "secret" | "runtime"> = {
   POSTGRES_DB_NAME: "runtime",
   POSTGRES_DB_PORT: "runtime",
   POSTGRES_DB_SSL: "runtime",
-  POSTGRES_DB_USER: "runtime", // username alone grants nothing without POSTGRES_DB_PASSWORD
   PUBLIC_API_BASE_URL: "runtime",
   RECALL_REGION: "runtime",
   RECALL_RECORDING_RETENTION_HOURS: "runtime",
   RECALL_STORE_VIDEO_LOCALLY: "runtime",
   REDIS_HOST: "runtime",
   REDIS_PORT: "runtime",
-  REDIS_USER: "runtime", // username alone grants nothing without REDIS_PASSWORD
   SERVER_ROOT_PATH: "runtime",
   SMTP_FROM: "runtime",
   SMTP_HOST: "runtime",
   SMTP_PORT: "runtime",
   SMTP_SECURE: "runtime",
-  SMTP_USER: "runtime", // username alone grants nothing without SMTP_PASSWORD
   TOTAL_MAX_RECORDINGS_DURATION_PER_MONTH: "runtime",
   TRANSCRIPTION_MODEL: "runtime",
   TRANSCRIPTION_SERVER: "runtime",
