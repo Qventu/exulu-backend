@@ -33,9 +33,29 @@ The toolbar provides:
 - **Search variables…** — filter by name.
 - **Type** filter — All / Secrets / Plain text.
 
-The table columns are **Name**, **Type**, **Used by**, and **Updated**.
+The table columns are **Name**, **Type**, **Skill access**, **Used by**, and **Updated**.
 
 **Used by** shows how many resources (agents, routines, users) reference each variable. A count like "3 resources" links to the usage detail view for that variable. Variables with no references show "—".
+
+**Skill access** shows a **Shared with skills** badge on rows where [sharing with skills](#sharing-a-variable-with-skills) is turned on, and "—" otherwise.
+
+## Sharing a variable with skills
+
+<Warning>
+**Breaking default, as of this release.** No variable — secret or plain text — is shared with the skill sandbox until an administrator turns this on, per variable. Previously every row in the variables table was injected into every skill's bash environment. Any existing skill that reads one of your variables (an API key, a base URL) will fail at its next run until you enable that specific variable here.
+</Warning>
+
+Each variable's create/edit form has an **Allow agent access when using skills** toggle, **off by default** — including for variables created before this toggle existed. Flip it on only for the specific variables a skill actually needs; leave it off for everything else, since a skill executes code and can send on anything it can read.
+
+A skill that depends on a variable you haven't enabled fails with its own error, and the server log names the withheld variable(s) for that session:
+
+```text
+[SKILLS] Session <id>: 1 variable(s) not shared with skills: ACME_API_KEY.
+```
+
+If a skill fails after this change, open the variable it needs and turn on **Allow agent access when using skills**.
+
+Platform secrets — database credentials, the LiteLLM master key, SMTP credentials, and the other values the backend itself depends on — are never shared with skills, regardless of this setting. The toggle only controls variables stored in this table; it cannot expose platform configuration.
 
 ## Reveal-on-demand
 
@@ -54,6 +74,7 @@ Click **Add variable** in the page header. The form asks for:
 | **Name** | A unique identifier. Convention: `UPPERCASE_WITH_UNDERSCORES` (e.g., `ANTHROPIC_API_KEY`). |
 | **Type** | Secret or Plain text. |
 | **Value** | The value to store. |
+| **Allow agent access when using skills** | Off by default. See [Sharing a variable with skills](#sharing-a-variable-with-skills). |
 
 Click **Create variable** to save. The name must be unique across the organization.
 
@@ -65,6 +86,7 @@ When editing:
 - The **value field** shows "Leave empty to keep the current value; type a new value to replace it." — leaving it blank preserves the existing value.
 - **Renaming** a variable that is referenced by resources triggers a confirmation warning: renaming may break those references.
 - **Switching from Secret to Plain** triggers a confirmation warning.
+- **Allow agent access when using skills** can be flipped on or off at any time; see [Sharing a variable with skills](#sharing-a-variable-with-skills).
 
 Click **Save changes** to commit.
 
