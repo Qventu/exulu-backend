@@ -100,9 +100,12 @@ the platform hold" in a reviewable file.
 `types/models/variable.ts`.
 
 - **Column**: `allow_skill_access boolean not null default false`.
-- **Migration**: in `src/postgres/init-db.ts`, gated on an `information_schema`
-  column-existence check. `NOT NULL DEFAULT false` makes every existing row
-  `false` from the DDL alone — no data migration needed.
+- **Migration**: none needed as a bespoke step. `addMissingFields`
+  (`src/postgres/init-exulu-db.ts:46`) adds any field declared in the schema
+  that has no column yet, via `knex.schema.alterTable` + `mapType` with the
+  declared default. Declaring the field *is* the migration; existing rows take
+  the default. The grant filter uses `= true`, so both `false` and a legacy
+  `null` read as "not granted".
 - **Filter**: `getAllExuluVariables()` (`create-sandbox.ts:33`) gains
   `where allow_skill_access = true`. It is module-local with one call site, so
   nothing outside the sandbox is affected.
