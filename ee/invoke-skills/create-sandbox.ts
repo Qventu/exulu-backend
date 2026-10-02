@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
 import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
+import { buildSkillEnv } from './skill-env'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
@@ -593,20 +594,27 @@ export async function createSessionSandbox(
         )
     }
 
-    // Environment for sandboxed bash invocations.
-    //   - Spread order matters: later spreads win.
-    //   - configuredVariables go first so process.env (PATH, HOME, etc.)
-    //     overrides them. If a variable accidentally collides with a system
-    //     env name, the system value stays authoritative.
-    //   - NODE_PATH is set last so it's always our resolved global root,
-    //     regardless of what process.env or variables already had.
-    const sandboxedExecEnv: NodeJS.ProcessEnv = {
-        ...configuredVariables,
-        ...process.env,
-        ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
-        ...(pythonVenvPath
-            ? { PATH: `${join(pythonVenvPath, 'bin')}:${process.env.PATH ?? ''}`, VIRTUAL_ENV: pythonVenvPath }
-            : {}),
+    // Environment for sandboxed bash invocations. buildSkillEnv is the only
+    // place this is composed: base runtime env (platform secrets stripped) →
+    // granted variables → computed overrides (NODE_PATH / venv PATH last, so
+    // they always win regardless of what process.env or variables already
+    // had).
+    const { env: sandboxedExecEnv, strippedSecretNames, grantedNames, skippedNames } =
+        buildSkillEnv({
+            processEnv: process.env,
+            grantedVariables: configuredVariables,
+            overrides: {
+                ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
+                ...(pythonVenvPath
+                    ? { PATH: `${join(pythonVenvPath, 'bin')}:${process.env.PATH ?? ''}`, VIRTUAL_ENV: pythonVenvPath }
+                    : {}),
+            },
+        })
+
+    if (skippedNames.length) {
+        console.warn(
+            `[SKILLS] Skipped ${skippedNames.length} variable(s) for session ${sessionId}: ${skippedNames.join(", ")} (invalid env name or collides with a runtime key).`,
+        )
     }
 
     // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
@@ -752,7 +760,7 @@ export async function createSessionSandbox(
                 `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
             )
             await new Promise<void>((resolveSpawn, rejectSpawn) => {
-                const child = spawn('/bin/bash', ['-c', wrapped])
+                const child = spawn('/bin/bash', ['-c', wrapped], { env: sandboxedExecEnv })
                 let stderr = ''
                 child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
                 child.on('error', rejectSpawn)
