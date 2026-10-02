@@ -11,6 +11,7 @@ import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, t
 import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import { buildSkillEnv } from './skill-env'
+import { selectGrantedVariables } from './variable-grants'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
@@ -20,13 +21,16 @@ import CryptoJS from "crypto-js";
 import { postgresClient } from "@SRC/postgres/client";
 
 /**
- * Load every variable from the database with its decrypted value. Returns
- * a name → value map suitable for spreading into a child-process env.
+ * Load every variable the database has decrypted values for, then keep only
+ * the ones an administrator has explicitly granted to the skill sandbox.
+ * Returns a name → value map suitable for spreading into a child-process env.
  *
  * Used by the skill sandbox to expose configured secrets to bash commands
  * (API keys, etc.) so skills can call external services without hard-coding
  * credentials. Decryption runs server-side; nothing encrypted leaves the
- * Node process.
+ * Node process. The grant filter (selectGrantedVariables) requires
+ * `allow_skill_access === true` — a row with no grant (including legacy rows
+ * with a null value from before this column existed) is never exposed.
  *
  * Variables whose name starts with `_` or contains `=` are skipped — those
  * shapes corrupt POSIX env parsing or shadow shell internals.
@@ -34,11 +38,9 @@ import { postgresClient } from "@SRC/postgres/client";
 const getAllExuluVariables = async (): Promise<Record<string, string>> => {
     const { db } = await postgresClient();
     const rows: Variable[] = await db.from("variables").select("*");
-    const out: Record<string, string> = {};
+    const decrypted: Variable[] = [];
     for (const row of rows) {
         if (!row?.name) continue;
-        if (row.name.startsWith("_")) continue;
-        if (row.name.includes("=")) continue;
         let value = row.value;
         if (row.encrypted) {
             try {
@@ -52,10 +54,9 @@ const getAllExuluVariables = async (): Promise<Record<string, string>> => {
                 continue;
             }
         }
-        if (typeof value !== "string") continue;
-        out[row.name] = value;
+        decrypted.push({ ...row, value });
     }
-    return out;
+    return selectGrantedVariables(decrypted);
 }
 
 const execAsync = promisify(exec);

@@ -3,6 +3,7 @@ export interface Variable {
     name: string;
     value: string;
     encrypted: boolean;
+    allow_skill_access: boolean;
     createdAt: string;
     updatedAt: string;
 }
