@@ -29,8 +29,11 @@ import {
   recallEnabled,
   RecallNotConfiguredError,
   recordingMonthlyLimitSeconds,
+  recallStoreVideoLocally,
 } from "./env";
+import { downloadAndStoreRecordingVideo } from "./video-storage";
 import { mapRecallTranscript, durationFromSegments } from "./transcript-map";
+import { withGlossary } from "@SRC/utils/agent-glossary";
 
 const TABLE = "transcription_jobs";
 const DEFAULT_BOT_NAME = "Company Notetaker";
@@ -361,12 +364,27 @@ export const recallService = {
       // Prefer Recall's authoritative recording duration; fall back to the
       // transcript span (last spoken word) when the recording object lacks it.
       let duration = durationFromSegments(segments);
+      // Only populated when RECALL_STORE_VIDEO_LOCALLY is on for this
+      // deployment — otherwise the video stays reachable only via
+      // ExuluRecall.getRecordingVideoUrl, for as long as Recall retains it.
+      let videoS3Key: string | null = null;
       const recId = recordingId ?? job.recall_recording_id;
       if (recId) {
         try {
           const rec = await recallClient.retrieveRecording(recId);
           const recDuration = recordingDurationSeconds(rec);
           if (recDuration != null) duration = recDuration;
+          if (recallStoreVideoLocally()) {
+            try {
+              videoS3Key = await downloadAndStoreRecordingVideo(
+                rec,
+                jobId,
+                exuluApp.get().config,
+              );
+            } catch (err) {
+              log(`could not store video locally for job ${jobId}: ${(err as Error).message}`);
+            }
+          }
         } catch (err) {
           log(`could not fetch recording duration for job ${jobId}: ${(err as Error).message}`);
         }
@@ -376,6 +394,7 @@ export const recallService = {
         recall_transcript_id: transcriptId ?? job.recall_transcript_id ?? null,
         raw_segments: JSON.stringify(segments),
         duration_seconds: duration,
+        ...(videoS3Key ? { video_s3key: videoS3Key } : {}),
         status: "awaiting_review",
       });
     } catch (err) {
@@ -589,7 +608,7 @@ export const recallService = {
 
       const { text } = await generateText({
         model: resolved.languageModel,
-        system: agent.instructions || undefined,
+        system: withGlossary(agent.instructions, agent.tools) || undefined,
         prompt: `${prompt.content}\n\n---\nMeeting transcript:\n\n${transcriptText}`,
         maxRetries: 3,
         abortSignal: AbortSignal.timeout(POST_PROCESSING_PROMPT_TIMEOUT_MS),
@@ -938,6 +957,7 @@ type JobRow = {
   recall_bot_id: string | null;
   recall_recording_id: string | null;
   recall_transcript_id: string | null;
+  video_s3key: string | null;
   bot_status: string | null;
   language: string | null;
   raw_segments: RawSegment[] | null;

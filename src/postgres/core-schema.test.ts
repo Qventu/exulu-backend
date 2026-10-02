@@ -22,3 +22,13 @@ describe("shared_artifacts schema", () => {
     expect(nameField?.unique).toBe(true);
   });
 });
+
+describe("transcription_jobs schema (live recording columns)", () => {
+  test("declares chunk_count (default 0) and last_chunk_at", () => {
+    const schema = coreSchemas.get().transcriptionJobsSchema();
+    const chunkCount = schema.fields.find((f) => f.name === "chunk_count");
+    const lastChunkAt = schema.fields.find((f) => f.name === "last_chunk_at");
+    expect(chunkCount).toMatchObject({ type: "number", default: 0 });
+    expect(lastChunkAt).toMatchObject({ type: "date" });
+  });
+});

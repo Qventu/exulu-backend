@@ -8,7 +8,7 @@
 
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const { existsSync } = require('fs');
+const { existsSync, rmSync } = require('fs');
 const { resolve, join } = require('path');
 
 const execAsync = promisify(exec);
@@ -83,6 +83,53 @@ async function setupPythonEnvironment() {
 }
 
 /**
+ * Remove node-liblzma (LGPL-3.0) from the installed tree.
+ *
+ * It arrives as an OPTIONAL dependency of just-bash, which reaches us through
+ * bash-tool. just-bash is the only dependent. It is loaded lazily, by a dynamic
+ * import inside a try/catch, and only when a shell command uses xz compression;
+ * with it absent that path throws its own "xz compression requires
+ * node-liblzma" error and every other command is unaffected.
+ *
+ * Why not `npm install --omit=optional`: that flag is all-or-nothing, and 24 of
+ * the 91 runtime optional packages are the `@img/sharp-*` platform binaries.
+ * Omitting them leaves sharp unable to load, which breaks document processing.
+ * So the removal has to be targeted at this one package.
+ *
+ * Set EXULU_KEEP_NODE_LIBLZMA=true to keep it — for example if you want xz
+ * support and have satisfied yourself about LGPL-3.0 in your deployment.
+ *
+ * Best-effort by design: it walks up from this package looking for the hoisted
+ * copy, and silently does nothing if the layout differs (pnpm, yarn PnP) or the
+ * directory is not writable. Never fails the install.
+ */
+function removeNodeLiblzma() {
+  if (String(process.env.EXULU_KEEP_NODE_LIBLZMA).toLowerCase() === 'true') {
+    console.log(`${colors.yellow}⊘${colors.reset} Keeping node-liblzma (EXULU_KEEP_NODE_LIBLZMA=true) — LGPL-3.0`);
+    return;
+  }
+
+  // Walk up from this package looking for a hoisted node_modules/node-liblzma.
+  let dir = resolve(__dirname, '..');
+  for (let depth = 0; depth < 6; depth++) {
+    const candidate = join(dir, 'node_modules', 'node-liblzma');
+    if (existsSync(candidate)) {
+      try {
+        rmSync(candidate, { recursive: true, force: true });
+        console.log(`${colors.green}✓${colors.reset} Removed node-liblzma (LGPL-3.0; optional, xz compression only)`);
+      } catch (err) {
+        console.log(`${colors.yellow}!${colors.reset} Could not remove node-liblzma (LGPL-3.0): ${err.message}`);
+        console.log('  Remove it manually, or set EXULU_KEEP_NODE_LIBLZMA=true to keep it deliberately.');
+      }
+      return;
+    }
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+}
+
+/**
  * Main postinstall function
  */
 async function main() {
@@ -91,6 +138,10 @@ async function main() {
   console.log(`${colors.blue}  @exulu/backend - Post-install Setup${colors.reset}`);
   console.log(`${colors.blue}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${colors.reset}`);
   console.log('');
+
+  // Runs before the Python setup and before any early return below, so it
+  // happens even when SKIP_PYTHON_SETUP=1 or the venv already exists.
+  removeNodeLiblzma();
 
   // Check if we should skip setup
   if (shouldSkipSetup()) {
@@ -105,15 +156,21 @@ async function main() {
     return;
   }
 
-  // Check if already exists
+  // We deliberately do NOT skip running setup.sh just because the venv
+  // directory and a `python` binary already exist (pythonEnvironmentExists()
+  // only checks that much, not that requirements.txt is fully installed).
+  // ee/python/setup.sh is itself idempotent — it only skips *recreating* the
+  // venv, never skips `pip install -r requirements.txt` — so always invoking
+  // it is cheap when nothing is missing (a few seconds) and is the only way
+  // to guarantee a venv created before a new requirement was added (e.g.
+  // python-docx, 2026-09-11) actually gets it installed. This used to return
+  // early here whenever the venv folder was merely present, which silently
+  // left newly-added dependencies uninstalled across any install that reused
+  // an older venv — see the docx-manipulation skill incident on dx-algi,
+  // 2026-09-21.
   if (pythonEnvironmentExists()) {
-    console.log(`${colors.green}✓${colors.reset} Python environment already set up`);
+    console.log(`${colors.blue}ℹ${colors.reset} Python environment directory already exists — verifying and installing any missing dependencies...`);
     console.log('');
-    console.log('To rebuild, run:');
-    console.log(`  ${colors.green}import { setupPythonEnvironment } from '@exulu/backend';${colors.reset}`);
-    console.log(`  ${colors.green}await setupPythonEnvironment({ force: true });${colors.reset}`);
-    console.log('');
-    return;
   }
 
   // Run setup

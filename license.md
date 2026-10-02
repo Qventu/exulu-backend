@@ -1,4 +1,4 @@
-Copyright (c) 2023-2026 Qventu B.v.
+Copyright (c) 2023-2026 Qventu B.V.
 
 Certain portions of this software are licensed as described below:
 

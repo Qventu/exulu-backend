@@ -38,6 +38,7 @@ import { getPackageRoot } from "@SRC/utils/python-setup.ts";
 import { builtInContexts } from "@SRC/templates/contexts";
 import { transcriptionClient } from "@SRC/exulu/transcription/client.ts";
 import { startTranscriptionPollingLoop } from "@SRC/exulu/transcription/polling-loop.ts";
+import { liveRecordingEnabled } from "@SRC/exulu/transcription/live-recording";
 import { logRecallStartup, recallEnabled } from "@SRC/exulu/recall/env.ts";
 import { startRecallReconcileLoop } from "@SRC/exulu/recall/reconcile-loop.ts";
 import type { AuditConfig } from "../audit/config";
@@ -354,6 +355,12 @@ export class ExuluApp {
       );
     }
 
+    console.log(
+      `[EXULU] Live recording (Transcripts page): ${liveRecordingEnabled() ? "enabled" : "disabled"} ` +
+      `(EXULU_USE_LITELLM=${process.env.EXULU_USE_LITELLM ?? "unset"}, ` +
+      `TRANSCRIPTION_MODEL=${process.env.TRANSCRIPTION_MODEL ? "set" : "unset"})`,
+    );
+
     if (process.env.TTS_MODEL && !isLiteLLMEnabled()) {
       console.warn(
         "[EXULU] TTS_MODEL is set but EXULU_USE_LITELLM is not 'true'. " +
@@ -603,6 +610,12 @@ export class ExuluApp {
 
   public get audit(): AuditLogger {
     return this._audit ?? getAuditLogger(this._config ?? {});
+  }
+
+  /** The deployment's ExuluConfig, for background/webhook code paths that
+   *  have no request to read it off (e.g. the Recall webhook handler). */
+  public get config(): ExuluConfig {
+    return this._config ?? ({} as ExuluConfig);
   }
 
   public embeddings = {

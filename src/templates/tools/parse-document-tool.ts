@@ -5,7 +5,8 @@ import { ExuluTool } from "@SRC/exulu/tool";
 import { getPresignedUrl } from "@SRC/uppy";
 import type { ExuluConfig } from "@SRC/exulu/app";
 import type { User } from "@EXULU_TYPES/models/user";
-import { pdfToText } from "./document-render-helpers";
+import { convertLegacyOfficeToModern, isLegacyOfficeFormat, pdfToText } from "./document-render-helpers";
+import { sessionFilePrefix } from "@SRC/exulu/session-files";
 
 const DEFAULT_LIMIT = 250;
 const MAX_CONTENT_CHARS = 16_000;
@@ -14,6 +15,26 @@ const MAX_CONTENT_CHARS = 16_000;
  * (knowledge base with a processor) or view_document_page is the way in. */
 const MIN_CHARS_PER_PAGE = 20;
 
+/**
+ * Some PDFs carry a text layer whose font subset has no usable ToUnicode map: every
+ * glyph extracts offset by a constant ("Technische Daten" → "7HFKQLVFKH 'DWHQ"), and
+ * digits fall below 0x20 and vanish. Such text passes the empty-layer check but is worse
+ * than nothing, because the model silently guesses the numbers. Flag it when control
+ * characters (other than whitespace) make up a noticeable share of the text.
+ */
+export function looksLikeGarbledTextLayer(text: string): boolean {
+  let control = 0;
+  let visible = 0;
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code === 9 || code === 10 || code === 12 || code === 13 || code === 32) continue;
+    visible++;
+    if (code < 32 || code === 127) control++;
+  }
+  if (visible < 40) return false;
+  return control / visible > 0.01;
+}
+
 // No .csv here — CSV is plain text; read_session_file already covers it.
 const OFFICE_EXTENSIONS = new Set([
   ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".odt", ".ods", ".odp", ".rtf",
@@ -21,14 +42,46 @@ const OFFICE_EXTENSIONS = new Set([
 
 const pagesPattern = /^(\d+)(?:-(\d+))?$/;
 
+const BINARY_DOCUMENT_EXTENSION_PATTERN = new RegExp(
+  `([^\\s"'\`]+\\.(?:pdf|${[...OFFICE_EXTENSIONS].map((ext) => ext.slice(1)).join("|")}))\\b`,
+  "i",
+);
+
+/**
+ * bash/grep/cat against PDF or Office files can't find text inside them — the bytes
+ * are compressed or otherwise non-plain-text, so a search silently returns nothing
+ * (or binary garbage) and the agent has no signal to explain why. Real incident,
+ * 2026-09-14 (job 40a1f12d): ALFREDO_2 grepped a PDF ~25 times in a row for the same
+ * term before giving up, ballooning the turn to 1.4M tokens and failing
+ * CONTEXT_COMPACTION_REQUIRED — even though it had already extracted the same PDF's
+ * text via parse_document earlier in the same turn. Returns a hint to redirect the
+ * agent to parse_document, or undefined when the command looks unrelated (no binary
+ * document referenced, or the command already produced real, readable output).
+ */
+export function binaryDocumentBashHint(command: string, stdout: string, stderr: string): string | undefined {
+  const match = command.match(BINARY_DOCUMENT_EXTENSION_PATTERN);
+  if (!match) return undefined;
+  const silent = !stdout.trim() && !stderr.trim();
+  if (!silent && !looksLikeGarbledTextLayer(stdout)) return undefined;
+  const [, file] = match;
+  return (
+    `Note: "${file}" is a binary document — grep/cat/text tools cannot read the text inside it, so a silent or ` +
+    "garbled result does not mean the content isn't there. Use parse_document to extract its text first, then " +
+    "search or read within that extracted text instead of the original file."
+  );
+}
+
 export const createParseDocumentTool = ({
   sessionID,
   user,
   exuluConfig,
+  ownerId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
+  /** Session owner — files are namespaced by owner, not by the current speaker. */
+  ownerId?: number | string;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -61,8 +114,7 @@ export const createParseDocumentTool = ({
     }
 
     const uploads = exuluConfig.fileUploads!;
-    const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
-    const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
+    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
     try {
       const url = await getPresignedUrl(uploads.s3Bucket!, key, exuluConfig);
       const res = await fetch(url);
@@ -78,6 +130,15 @@ export const createParseDocumentTool = ({
         const pageTexts = raw.replace(/\f$/, "").split("\f");
         totalPages = pageTexts.length;
         const nonWhitespace = raw.replace(/\s/g, "").length;
+        if (looksLikeGarbledTextLayer(raw)) {
+          return {
+            error:
+              `"${safeName}" has a text layer that is unreadable (its font encoding maps glyphs to the wrong ` +
+              "characters, so words and especially numbers come out wrong or vanish). Do not use extracted " +
+              "text from this file. Use view_document_page to read the pages visually, or suggest the user add " +
+              "the document to a knowledge base with a document processor for full OCR.",
+          };
+        }
         if (nonWhitespace < totalPages * MIN_CHARS_PER_PAGE) {
           return {
             error:
@@ -104,7 +165,12 @@ export const createParseDocumentTool = ({
           .map(({ page, text }) => `--- page ${page} ---\n${text.trim()}`)
           .join("\n");
       } else {
-        const extracted = await parseOfficeAsync(bytes, {
+        // officeparser only reads the modern XML formats; .doc/.xls/.ppt/.rtf
+        // need converting first even though OFFICE_EXTENSIONS accepts them.
+        const officeBytes = isLegacyOfficeFormat(ext)
+          ? await convertLegacyOfficeToModern(bytes, ext)
+          : bytes;
+        const extracted = await parseOfficeAsync(officeBytes, {
           outputErrorToConsole: false,
           newlineDelimiter: "\n",
         });

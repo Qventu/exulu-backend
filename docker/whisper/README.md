@@ -104,6 +104,7 @@ All settings live in `.env` (see `.env.example` for the annotated list):
 | Variable            | Default                    | Purpose                                    |
 | ------------------- | -------------------------- | ------------------------------------------ |
 | `HF_AUTH_TOKEN`     | –                          | HuggingFace token; enables diarization     |
+| `EXULU_ALIGN_MODEL_<LANG>` | –                   | Licensed alignment model for one language; vi/hr/he/hi/da skip word-level alignment without it |
 | `WHISPER_MODEL`     | `large-v3`                 | Model id (`medium`/`small`/`base` = faster)|
 | `WHISPER_DEVICE`    | `auto`                     | `auto` \| `cuda` \| `cpu`                   |
 | `WHISPER_BATCH_SIZE`| `4`                        | Inference batch size                       |

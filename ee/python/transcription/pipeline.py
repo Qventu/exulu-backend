@@ -35,6 +35,51 @@ class CancelledError(Exception):
     pass
 
 
+# Forced-alignment models whisperx would download that are NOT licence-cleared
+# for commercial use. Keys are the Hugging Face repo ids in whisperx's own
+# DEFAULT_ALIGN_MODELS_HF table; values are the reason, which is logged verbatim.
+#
+# whisperx picks an alignment model from the language Whisper *detected*, so
+# without this guard an ordinary upload in one of these languages silently pulls
+# the model onto the server and uses it. Alignment only refines timestamps to
+# word level: when it is skipped the transcript, its segment-level timings and
+# its speaker labels are all still produced (see _get_align_model).
+#
+# To allow one of these again, supply a licence-cleared replacement through
+# EXULU_ALIGN_MODEL_<LANG> rather than deleting the entry — e.g.
+# EXULU_ALIGN_MODEL_VI=my-org/licensed-vi-aligner.
+RESTRICTED_ALIGN_MODELS: dict[str, str] = {
+    "nguyenvulebinh/wav2vec2-base-vi":
+        "CC-BY-NC-4.0 — non-commercial use only",
+    "classla/wav2vec2-xls-r-parlaspeech-hr":
+        "no licence stated on the model card or in the Hugging Face metadata",
+    "imvladikon/wav2vec2-xls-r-300m-hebrew":
+        "no licence stated on the model card or in the Hugging Face metadata",
+    "theainerd/Wav2Vec2-large-xlsr-hindi":
+        "no licence stated on the model card or in the Hugging Face metadata",
+    # Danish is blocked on the conservative side: the model card states only
+    # that use "needs to adhere to this license from the Danish Parliament",
+    # and those terms have not been reviewed. Remove this entry once they have.
+    "saattrupdan/wav2vec2-xls-r-300m-ftspeech":
+        "licence is 'other' — refers to unreviewed Danish Parliament terms",
+}
+
+
+def _default_align_model_for(language_code: str) -> Optional[str]:
+    """The model id whisperx would resolve for this language, without loading it.
+
+    Mirrors load_align_model's own lookup order. Returns None for a language
+    whisperx has no default for, which it treats as an error anyway.
+    """
+    from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
+
+    # The TORCH table holds torchaudio bundle names, which ship with torchaudio
+    # under BSD-2-Clause rather than being downloaded from Hugging Face.
+    if language_code in DEFAULT_ALIGN_MODELS_TORCH:
+        return DEFAULT_ALIGN_MODELS_TORCH[language_code]
+    return DEFAULT_ALIGN_MODELS_HF.get(language_code)
+
+
 def detect_device(requested: str = "auto") -> str:
     if requested != "auto":
         return requested
@@ -72,7 +117,9 @@ class TranscriptionPipeline:
         self.diarize_model = None
         self.diarization_enabled = False
         self.diarization_disabled_reason: str = "not attempted"
-        self.align_models: dict[str, tuple] = {}
+        self.align_models: dict[str, Optional[tuple]] = {}
+        # language_code -> why alignment was skipped, for observability
+        self.align_skipped_reasons: dict[str, str] = {}
 
     def load(self) -> None:
         # whisperx doesn't ship MPS support; run whisper on CPU when DEVICE=mps
@@ -122,12 +169,49 @@ class TranscriptionPipeline:
             print(f"[pipeline] Failed to load pyannote ({self.diarization_disabled_reason}); diarization disabled", flush=True)
 
     def _get_align_model(self, language_code: str):
-        if language_code not in self.align_models:
-            device = "cpu" if self.device == "mps" else self.device
-            print(f"[pipeline] Loading align model for {language_code}", flush=True)
-            self.align_models[language_code] = whisperx.load_align_model(
-                language_code=language_code, device=device
+        """Load the forced-alignment model for a language, or None if blocked.
+
+        Returns None when the model whisperx would use is not licence-cleared
+        and no replacement is configured. The caller skips alignment in that
+        case; nothing is downloaded, because the check runs before the load.
+        """
+        if language_code in self.align_models:
+            return self.align_models[language_code]
+
+        device = "cpu" if self.device == "mps" else self.device
+
+        # An operator-supplied replacement wins over whisperx's default, so a
+        # deployment that has licensed a model for one of the blocked languages
+        # can use it without patching this file.
+        override = os.getenv(f"EXULU_ALIGN_MODEL_{language_code.upper()}") or None
+        model_name = override or _default_align_model_for(language_code)
+
+        if override:
+            print(
+                f"[pipeline] Align model for {language_code} overridden by "
+                f"EXULU_ALIGN_MODEL_{language_code.upper()}={override}",
+                flush=True,
             )
+        elif model_name in RESTRICTED_ALIGN_MODELS:
+            reason = RESTRICTED_ALIGN_MODELS[model_name]
+            self.align_skipped_reasons[language_code] = reason
+            print(
+                f"[pipeline] WARNING: word-level alignment skipped for "
+                f"'{language_code}'. Its default model '{model_name}' is not "
+                f"licence-cleared ({reason}) and was neither downloaded nor used. "
+                f"The transcript, segment timings and speaker labels are "
+                f"unaffected; only word-level timing precision is lost. Set "
+                f"EXULU_ALIGN_MODEL_{language_code.upper()} to a licensed model "
+                f"to re-enable alignment for this language.",
+                flush=True,
+            )
+            self.align_models[language_code] = None
+            return None
+
+        print(f"[pipeline] Loading align model for {language_code}", flush=True)
+        self.align_models[language_code] = whisperx.load_align_model(
+            language_code=language_code, device=device, model_name=model_name
+        )
         return self.align_models[language_code]
 
     def transcribe(
@@ -170,15 +254,25 @@ class TranscriptionPipeline:
 
         language = transcribe_result["language"]
         align_device = "cpu" if self.device == "mps" else self.device
-        model_a, metadata = self._get_align_model(language)
-        aligned = whisperx.align(
-            transcribe_result["segments"],
-            model_a,
-            metadata,
-            audio,
-            align_device,
-            return_char_alignments=False,
-        )
+        align_bundle = self._get_align_model(language)
+        if align_bundle is None:
+            # Alignment blocked for this language (see RESTRICTED_ALIGN_MODELS).
+            # Whisper's own segments already carry start/end/text, and
+            # assign_word_speakers accepts an unaligned TranscriptionResult —
+            # it assigns speakers per segment and only walks words when a
+            # segment has them. So the transcript degrades to segment-level
+            # timing rather than failing.
+            aligned = transcribe_result
+        else:
+            model_a, metadata = align_bundle
+            aligned = whisperx.align(
+                transcribe_result["segments"],
+                model_a,
+                metadata,
+                audio,
+                align_device,
+                return_char_alignments=False,
+            )
 
         if is_cancelled():
             raise CancelledError()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PDF Splitter — splits a PDF into fixed-size page chunks using PyMuPDF.
+PDF Splitter — splits a PDF into fixed-size page chunks using pypdf.
 
 Outputs a JSON array to stdout, each element:
   { "path": "<absolute-path>", "start_page": <int>, "end_page": <int> }
@@ -22,26 +22,20 @@ import argparse
 
 # stdout is this script's result channel and the caller does JSON.parse() on it,
 # so nothing else may write there. Our own prints all pass file=sys.stderr, but
-# dependencies do not honour that: PyMuPDF sends its messages to sys.stdout by
-# default, and importing the legacy `fitz` alias emits
-# "warning: The `fitz` API is deprecated ..." — which lands ahead of the payload
-# and fails the caller with "Unexpected token 'w'". PyMuPDF arrives unpinned as
-# a docling transitive dependency, so a routine rebuild is enough to introduce a
-# banner like that. Point sys.stdout at stderr before importing anything and
-# keep a private handle for the result, so any library that prints — now or
-# after a future dependency bump — is shunted to the log channel instead of
-# corrupting the payload.
+# a dependency need not: any library is free to emit a deprecation banner or a
+# progress line on stdout, and it would land ahead of the payload and fail the
+# caller with "Unexpected token 'w'". Point sys.stdout at stderr before
+# importing anything and keep a private handle for the result, so a library
+# that prints — now or after a future dependency bump — is shunted to the log
+# channel instead of corrupting the payload.
 _stdout = sys.stdout
 sys.stdout = sys.stderr
 
-try:
-    import pymupdf as fitz  # PyMuPDF >= 1.24.3, where the module was renamed
-except ImportError:  # older releases only ship the legacy `fitz` module
-    import fitz
+from pypdf import PdfReader, PdfWriter
 
 
 def _write_chunk(
-    doc: fitz.Document,
+    reader: PdfReader,
     output_dir: str,
     chunk_start: int,
     chunk_end: int,
@@ -56,10 +50,11 @@ def _write_chunk(
     """
     chunk_path = os.path.join(output_dir, f"chunk_{chunk_start}_{chunk_end - 1}.pdf")
 
-    sub = fitz.open()
-    sub.insert_pdf(doc, from_page=chunk_start, to_page=chunk_end - 1)
-    sub.save(chunk_path)
-    sub.close()
+    writer = PdfWriter()
+    writer.append(reader, pages=(chunk_start, chunk_end))
+    with open(chunk_path, "wb") as fh:
+        writer.write(fh)
+    writer.close()
 
     chunk_bytes = os.path.getsize(chunk_path)
     n_pages = chunk_end - chunk_start
@@ -68,8 +63,8 @@ def _write_chunk(
         os.remove(chunk_path)
         mid = chunk_start + n_pages // 2
         return (
-            _write_chunk(doc, output_dir, chunk_start, mid, max_size_bytes)
-            + _write_chunk(doc, output_dir, mid, chunk_end, max_size_bytes)
+            _write_chunk(reader, output_dir, chunk_start, mid, max_size_bytes)
+            + _write_chunk(reader, output_dir, mid, chunk_end, max_size_bytes)
         )
 
     if max_size_bytes and chunk_bytes > max_size_bytes:
@@ -88,21 +83,21 @@ def split_pdf(
     chunk_size: int,
     max_size_bytes: int | None = None,
 ) -> list[dict]:
-    doc = fitz.open(input_path)
+    reader = PdfReader(input_path)
 
     # Some PDFs are saved with an empty owner/user password by certain writers
     # (e.g. older Adobe Acrobat exports). The OS opens them transparently by
     # trying "" first, but most libraries raise immediately. We replicate that
-    # OS-level behaviour here.
-    if doc.needs_pass:
-        authenticated = doc.authenticate("")
-        if not authenticated:
+    # OS-level behaviour here. pypdf's decrypt() returns a PasswordType enum
+    # whose NOT_DECRYPTED member is falsy, so a plain truth test is enough.
+    if reader.is_encrypted:
+        if not reader.decrypt(""):
             raise ValueError(
                 "PDF requires a non-empty password and cannot be opened automatically."
             )
         print("[split_pdf] Authenticated with empty password (phantom-password PDF)", file=sys.stderr)
 
-    total_pages = len(doc)
+    total_pages = len(reader.pages)
     file_size = os.path.getsize(input_path)
     print(
         f"[split_pdf] Total pages: {total_pages}, chunk size: {chunk_size}, "
@@ -115,7 +110,7 @@ def split_pdf(
 
     if not needs_split:
         print("[split_pdf] No split needed — returning original path", file=sys.stderr)
-        doc.close()
+        reader.close()
         return [{
             "path": os.path.abspath(input_path),
             "start_page": 0,
@@ -127,7 +122,7 @@ def split_pdf(
     chunks = []
     for start_page in range(0, total_pages, chunk_size):
         end_page = min(start_page + chunk_size, total_pages)
-        sub_chunks = _write_chunk(doc, output_dir, start_page, end_page, max_size_bytes)
+        sub_chunks = _write_chunk(reader, output_dir, start_page, end_page, max_size_bytes)
         for c in sub_chunks:
             print(
                 f"[split_pdf] Chunk {len(chunks) + 1}: pages {c['start_page']}–{c['end_page'] - 1} "
@@ -136,7 +131,7 @@ def split_pdf(
             )
         chunks.extend(sub_chunks)
 
-    doc.close()
+    reader.close()
     return chunks
 
 

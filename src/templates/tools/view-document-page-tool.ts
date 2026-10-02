@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sessionFilePrefix } from "@SRC/exulu/session-files";
 import { extname } from "node:path";
 import { ExuluTool } from "@SRC/exulu/tool";
 import { getS3ObjectBytes, getS3ObjectEtag } from "@SRC/uppy";
@@ -29,10 +30,13 @@ export const createViewDocumentPageTool = ({
   sessionID,
   user,
   exuluConfig,
+  ownerId,
 }: {
   sessionID?: string;
   user?: User;
   exuluConfig?: ExuluConfig;
+  /** Session owner — files are namespaced by owner, not by the current speaker. */
+  ownerId?: number | string;
 }): ExuluTool | undefined => {
   if (!sessionID || !exuluConfig?.fileUploads?.s3Bucket) return undefined;
 
@@ -79,8 +83,7 @@ export const createViewDocumentPageTool = ({
     }
 
     const uploads = exuluConfig.fileUploads!;
-    const generalPrefix = uploads.s3prefix ? `${uploads.s3prefix.replace(/\/$/, "")}/` : "";
-    const key = `${generalPrefix}user_${user?.id ?? "api"}/sessions/${sessionID}/${safeName}`;
+    const key = `${sessionFilePrefix(ownerId ?? user?.id ?? "api", sessionID, uploads.s3prefix)}${safeName}`;
     const pageNumber = page ?? 1;
 
     try {

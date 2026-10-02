@@ -93,6 +93,39 @@ export const recordingMonthlyLimitSeconds = (): number | null => {
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null;
 };
 
+/**
+ * Default Recall-side retention window (hours) when RECALL_RECORDING_RETENTION_HOURS
+ * is unset: 90 days. Recall's own account default is "forever" for accounts created
+ * after 2025-06-12 — bounded here so a deployment doesn't implicitly rely on a third
+ * party as permanent storage.
+ */
+export const RECALL_RECORDING_RETENTION_DEFAULT_HOURS = 2160;
+
+/**
+ * How long Recall retains a meeting's video/audio/transcript media before
+ * automatically deleting it, in hours. Configurable per deployment: a customer
+ * needing near-zero data retention at Recall (the third party) can set this very
+ * low (e.g. 1) and pair it with RECALL_STORE_VIDEO_LOCALLY=true so the video lands
+ * on their own server promptly and Recall's copy is gone soon after; a customer who
+ * doesn't care can leave the default (or raise it) and skip local storage entirely.
+ */
+export const recallRecordingRetentionHours = (): number => {
+  const raw = Number(process.env.RECALL_RECORDING_RETENTION_HOURS);
+  return Number.isFinite(raw) && raw > 0
+    ? Math.floor(raw)
+    : RECALL_RECORDING_RETENTION_DEFAULT_HOURS;
+};
+
+/**
+ * Whether to download each meeting's video and keep a permanent copy in this
+ * deployment's own S3 (alongside the transcript) instead of only ever linking to
+ * Recall's own copy. Off by default — enabling this changes the storage cost
+ * profile (video is much larger than transcript text) and should be an explicit
+ * per-deployment choice.
+ */
+export const recallStoreVideoLocally = (): boolean =>
+  process.env.RECALL_STORE_VIDEO_LOCALLY === "true";
+
 /** The webhook URL Recall should be pointed at in the dashboard. */
 export const recallWebhookUrl = (): string | null => {
   const base = recallPublicBaseUrl();

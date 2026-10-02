@@ -27,6 +27,9 @@ export const transcriptionsContext = new ExuluContext({
     // (resolve a fresh URL via ExuluRecall.getRecordingVideoUrl — it expires
     // after six hours). Null for Whisper uploads.
     { name: "recall_recording_id", type: "text" },
+    // Permanent local copy of the mixed video, present only when
+    // RECALL_STORE_VIDEO_LOCALLY=true was set at recording time.
+    { name: "video", type: "file" },
   ],
   sources: [],
   active: true,

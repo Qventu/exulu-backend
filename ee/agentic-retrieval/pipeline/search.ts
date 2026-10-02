@@ -2,6 +2,7 @@ import { effectiveKbSettings, type KbProfile } from "./config";
 import { multiQuerySearch, singleSearch, type SearchCallConfig } from "./multi-query";
 import { generateHydePassage } from "./hyde";
 import { fuzzyPrefilter } from "./prefilter";
+import { withTiming } from "./timing";
 import { applyRewrites } from "./text-utils";
 import type { Chunk } from "./types";
 
@@ -30,6 +31,8 @@ export async function searchContexts(opts: {
   rewrites: { find: string; replace: string }[];
   styleHint: string;
   maxQueries: number;
+  timings?: Record<string, number>;                     // sub-phase sink (see timing.ts)
+  timingPrefix?: string;                                // e.g. "search.main" / "search.fallback"
   skipPrefilter: boolean;                               // true for the speculative fallback pass
 }): Promise<{ chunks: Chunk[] }> {
   const {
@@ -54,7 +57,7 @@ export async function searchContexts(opts: {
   } = opts;
 
   const chunkArrays = await Promise.all(
-    contextIds.map(async (ctxId): Promise<Chunk[]> => {
+    contextIds.map((ctxId): Promise<Chunk[]> => withTiming(opts.timings, `${opts.timingPrefix ?? "search"}.${ctxId}Ms`, async () => {
       try {
         // Rule 4: Missing context contributes []
         const ctx = contextsById.get(ctxId);
@@ -124,13 +127,13 @@ export async function searchContexts(opts: {
             // Generate HyDE passage when settings.hyde is true
             let hydePassage: string | null = null;
             if (hyde) {
-              hydePassage = await generateHydePassage({
+              hydePassage = await withTiming(opts.timings, `${opts.timingPrefix ?? "search"}.${ctxId}.hydeMs`, () => generateHydePassage({
                 originalQuestion: question,
                 relevantKeywords: keywords,
                 importantKeyword,
                 styleHint,
                 model,
-              });
+              }));
             }
 
             // HyDE placed right after the question so the cap never drops it
@@ -153,14 +156,14 @@ export async function searchContexts(opts: {
           // pass too), unlike the cross-context identifier/memory/user pins suppressed above.
           // keywordPrefilter and no pins yet → fuzzyPrefilter; results become the pins
           if (keywordPrefilter && pinnedItemIds.length === 0) {
-            const prefiltered = await fuzzyPrefilter({
+            const prefiltered = await withTiming(opts.timings, `${opts.timingPrefix ?? "search"}.${ctxId}.prefilterMs`, () => fuzzyPrefilter({
               cacheKey: `conversations:${ctxId}`,
               relevantKeywords: keywords,
               importantKeyword,
               context: ctx,
               fields: ["name", "id", "external_id", "description"],
               normalize: (i: any) => [i.name, i.description].filter(Boolean).join(": "),
-            });
+            }));
             pinnedItemIds = prefiltered.map((r) => r.id);
           }
 
@@ -184,7 +187,7 @@ export async function searchContexts(opts: {
         console.warn(`[EXULU pipeline] searchContexts failed for context "${ctxId}":`, err);
         return [];
       }
-    }),
+    })),
   );
 
   return { chunks: chunkArrays.flat() };

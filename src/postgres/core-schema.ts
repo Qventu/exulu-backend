@@ -296,6 +296,14 @@ const agentsSchema: ExuluTableDefinition = {
       type: "number",
     },
     {
+      // Thinking budget of the answer model, forwarded as LiteLLM's
+      // reasoning_effort ("none" | "disable" | "minimal" | "low" | "medium" |
+      // "high"). null = provider default. See resolve-reasoning-effort.ts.
+      // Auto-ALTERed on boot.
+      name: "reasoning_effort",
+      type: "text",
+    },
+    {
       name: "guest_access",
       type: "boolean",
       default: false,
@@ -723,6 +731,18 @@ const transcriptionJobsSchema: ExuluTableDefinition = {
     { name: "post_processing_prompts", type: "json" },
     // Results: [{ prompt_id, agent_id, prompt_name, status, output, error, ran_at }].
     { name: "post_processing_outputs", type: "json" },
+    // Permanent local copy of the meeting's mixed MP4, downloaded from Recall
+    // when RECALL_STORE_VIDEO_LOCALLY=true. Null when that flag is off (the
+    // video then stays reachable only via ExuluRecall.getRecordingVideoUrl,
+    // for as long as Recall itself retains it) or for Whisper upload jobs.
+    { name: "video", type: "file" },
+    // Live (browser-microphone) recordings — spec
+    // docs/superpowers/specs/2026-09-23-live-recording-transcription-design.md §2.
+    // chunk_count is the NEXT expected chunk seq; the chunk route appends with
+    // a compare-and-swap on it, so retries and duplicates can never double-append.
+    { name: "chunk_count", type: "number", default: 0 },
+    // Heartbeat of the last accepted chunk; shown in the queue row.
+    { name: "last_chunk_at", type: "date" },
   ],
 };
 

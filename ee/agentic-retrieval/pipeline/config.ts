@@ -57,6 +57,21 @@ const tuningSchema = z.object({
   identifierBoost: z.number().min(0).max(1).default(0.15),
   pageWindow: z.number().int().min(0).default(1),
   maxQueriesPerContext: z.number().int().positive().default(5),
+  /**
+   * Orchestration engine. "v1" is the sequential flow every agent ran before 2026-09;
+   * "v2" merges the phase-1 LLM hops and runs identifier pins in parallel. Per agent,
+   * so a candidate agent can run v2 while the production agent stays on v1.
+   */
+  engine: z.enum(["v1", "v2"]).default("v1"),
+  /** v2 sub-features; each can be switched off on its own to bisect a regression. */
+  v2: z
+    .object({
+      mergedMemoryCall: z.boolean().default(true),
+      mergedRoutingCall: z.boolean().default(true),
+      parallelPins: z.boolean().default(true),
+    })
+    // zod's .default() returns the value as-is (inner defaults are not applied), so spell it out.
+    .default({ mergedMemoryCall: true, mergedRoutingCall: true, parallelPins: true }),
 });
 
 export type KbProfile = z.infer<typeof kbProfileSchema>;

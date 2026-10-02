@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { microCall } from "./micro-call";
+import { withTiming } from "./timing";
 import { fuzzyPrefilter } from "./prefilter";
 import { normalizeFileName } from "./text-utils";
 import type { RoutingRule } from "./config";
@@ -39,6 +40,69 @@ Return hasFilenameHint/hasPageHint false (and omit the hint fields) when neither
 is present. When in doubt, return false.
 `;
 
+type MergedRoutingOutput = {
+  docPage: { hasFilenameHint: boolean; filenameHints?: string[]; hasPageHint: boolean; pageNumber?: number | null };
+  explicitlyRequestedKnowledgeBases: string[];
+  classification?: { ruleId: string; reason: string } | null;
+};
+
+/**
+ * engine v2: the three routing judgements (document/page reference, explicit knowledge-base
+ * request, rule classification) in one structured call instead of two sequential hops.
+ * The instructions are the v1 prompts joined together so each judgement keeps its rules.
+ */
+async function runMergedRoutingCall({
+  model,
+  question,
+  knownIdentifiers,
+  enabledContexts,
+  routingRules,
+  extraInstructions,
+}: {
+  model: any;
+  question: string;
+  knownIdentifiers: string[];
+  enabledContexts: Array<{ id: string; name: string; description?: string }>;
+  routingRules: RoutingRule[];
+  extraInstructions?: string;
+}): Promise<MergedRoutingOutput> {
+  const kbListing = enabledContexts
+    .map((c) => `- ${c.id}: ${c.name}${c.description ? " — " + c.description : ""}`)
+    .join("\n");
+  const rulesLines = routingRules.map((r) => `- ${r.id} (${r.label}): ${r.description}`).join("\n");
+  const system =
+    `You analyse the user's request and answer ${routingRules.length ? "three" : "two"} questions in one go.\n\n` +
+    `A. DOCUMENT / PAGE REFERENCE (docPage):\n${buildDocPagePrompt(knownIdentifiers)}\n\n` +
+    `B. EXPLICIT KNOWLEDGE BASE REQUEST (explicitlyRequestedKnowledgeBases): check if the user has EXPLICITLY asked you to search in one or multiple of the following knowledge bases:\n${kbListing}\n` +
+    `EXPLICIT means the user names a knowledge base or clearly commands searching a specific source (e.g. "search in the tickets", "look this up in the manuals KB"). ` +
+    `A question that merely CONCERNS a topic related to a knowledge base's name or contents (e.g. asking about software changes, norms, or a product) is NOT an explicit request. ` +
+    `When in doubt, return an empty array. If explicit, return the knowledge base ids.\n` +
+    (routingRules.length
+      ? `\nC. CLASSIFICATION (classification): classify the request into exactly one of these categories:\n${rulesLines}` +
+        (extraInstructions ? `\n<instructions>\n${extraInstructions}\n</instructions>` : "")
+      : "");
+  const ids = enabledContexts.map((c) => c.id) as [string, ...string[]];
+  const schema = z.object({
+    docPage: z.object({
+      hasFilenameHint: z.boolean(),
+      filenameHints: z.array(z.string()).optional(),
+      hasPageHint: z.boolean(),
+      pageNumber: z.number().int().nullable().optional(),
+    }),
+    explicitlyRequestedKnowledgeBases: z.array(z.enum(ids)),
+    ...(routingRules.length
+      ? {
+          classification: z.object({
+            ruleId: z.enum(routingRules.map((r) => r.id) as [string, ...string[]]),
+            reason: z.string(),
+          }),
+        }
+      : {}),
+  });
+  const { output } = await microCall({ model, system, messages: [{ role: "user", content: question }], schema });
+  return output as MergedRoutingOutput;
+}
+
 export async function runRoutingPhase(opts: {
   question: string;
   enabledContexts: Array<{ id: string; name: string; description?: string }>;
@@ -49,6 +113,9 @@ export async function runRoutingPhase(opts: {
   /** Example product/model designations from the configured identifier vocabularies —
    * injected into the doc-reference prompt so they are never mistaken for filenames. */
   knownIdentifiers?: string[];
+  timings?: Record<string, number>;
+  /** engine v2: doc/page detection, explicit-KB detection and classification in ONE call. */
+  mergedCall?: boolean;
   model: any;
 }): Promise<RoutingPhaseResult> {
   const {
@@ -59,6 +126,7 @@ export async function runRoutingPhase(opts: {
     preselectedItems,
     extraInstructions,
     knownIdentifiers = [],
+    mergedCall = false,
     model,
   } = opts;
 
@@ -97,9 +165,30 @@ export async function runRoutingPhase(opts: {
     ` an empty array.` +
     `\nIf explicit, return the knowledge base ids. If not, return an empty array.`;
 
-  // --- Phase 1: parallel doc/page detection + explicit-KB detection ---
+  // --- Phase 1: doc/page detection + explicit-KB detection (+ classification when merged) ---
 
-  const [docPageRaw, explicitKBRaw] = await Promise.all([
+  // Classification is only needed when rules decide the routing (no explicit KB, no preselection);
+  // the merged call asks for it in the same round trip and phase 3 uses it when applicable.
+  const wantsClassification = routingRules.length > 0 && preselectedItems.size === 0;
+  const merged = mergedCall
+    ? await withTiming(opts.timings, "routing.mergedMs", () =>
+        runMergedRoutingCall({
+          model,
+          question,
+          knownIdentifiers,
+          enabledContexts,
+          routingRules: wantsClassification ? routingRules : [],
+          extraInstructions,
+        }).catch((err) => {
+          console.warn("[EXULU pipeline] merged routing call failed — falling back to the v1 hops.", err);
+          return null;
+        }),
+      )
+    : null;
+
+  const [docPageRaw, explicitKBRaw] = merged
+    ? [{ output: merged.docPage }, { output: { explicitlyRequestedKnowledgeBases: merged.explicitlyRequestedKnowledgeBases } }]
+    : await withTiming(opts.timings, "routing.detectMs", () => Promise.all([
     (async () => {
       try {
         return await microCall({
@@ -141,7 +230,7 @@ export async function runRoutingPhase(opts: {
         return { output: { explicitlyRequestedKnowledgeBases: [] as string[] } };
       }
     })(),
-  ]);
+  ]));
 
   // --- Phase 2: resolve filename hints across all document contexts ---
 
@@ -250,7 +339,9 @@ export async function runRoutingPhase(opts: {
     }
 
     try {
-      const { output: classified } = await microCall({
+      const { output: classified } = merged?.classification
+        ? { output: merged.classification }
+        : await withTiming(opts.timings, "routing.classifyMs", () => microCall({
         model,
         system: classifyPrompt,
         messages: [{ role: "user", content: question }],
@@ -258,7 +349,7 @@ export async function runRoutingPhase(opts: {
           ruleId: z.enum(ruleIds as [string, ...string[]]),
           reason: z.string(),
         }),
-      });
+      }));
 
       const matchedRule = routingRules.find((r) => r.id === classified.ruleId);
       if (matchedRule) {

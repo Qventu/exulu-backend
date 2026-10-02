@@ -4,7 +4,8 @@ describe("parsePipelineConfig", () => {
   it("returns full defaults for an empty/missing config", () => {
     const cfg = parsePipelineConfig(undefined);
     expect(cfg.tuning).toEqual({ topK: 5, fallbackThreshold: 0.95, pinBoost: 0.15,
-      identifierBoost: 0.15, pageWindow: 1, maxQueriesPerContext: 5 });
+      identifierBoost: 0.15, pageWindow: 1, maxQueriesPerContext: 5,
+      engine: "v1", v2: { mergedMemoryCall: true, mergedRoutingCall: true, parallelPins: true } });
     expect(cfg.memory).toEqual({ enabled: true, override: false, filePrioritization: false, queryAugmentation: true });
     expect(cfg.routing.rules).toEqual([]);
     expect(cfg.knowledgeBases).toEqual({});
@@ -107,5 +108,21 @@ describe("show_sources_to_external_users option", () => {
     expect(parsePipelineConfig({ show_sources_to_external_users: false }).showSourcesToExternalUsers).toBe(false);
     expect(parsePipelineConfig({ show_sources_to_external_users: "true" }).showSourcesToExternalUsers).toBe(true);
     expect(parsePipelineConfig({ show_sources_to_external_users: true }).showSourcesToExternalUsers).toBe(true);
+  });
+});
+
+describe("tuning.engine — the per-agent switch between the v1 flow and the parallel v2 flow", () => {
+  it("defaults to v1 so existing agents keep today's behaviour", () => {
+    expect(parsePipelineConfig({ tuning: '{"topK": 8}' }).tuning.engine).toBe("v1");
+  });
+  it("enables v2 with every sub-feature on, and lets a single feature be switched off for bisecting", () => {
+    const cfg = parsePipelineConfig({ tuning: '{"engine": "v2", "v2": {"parallelPins": false}}' });
+    expect(cfg.tuning.engine).toBe("v2");
+    expect(cfg.tuning.v2).toEqual({ mergedMemoryCall: true, mergedRoutingCall: true, parallelPins: false });
+  });
+  it("falls back to v1 on an unknown engine value", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    expect(parsePipelineConfig({ tuning: '{"engine": "v9"}' }).tuning.engine).toBe("v1");
+    warn.mockRestore();
   });
 });

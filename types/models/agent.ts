@@ -30,6 +30,8 @@ export interface ExuluAgent {
     suggestions_enabled?: boolean;
     sandbox_enabled?: boolean;
     max_tool_steps?: number | null;
+    /** Thinking budget of the answer model, forwarded as LiteLLM reasoning_effort; null = provider default. */
+    reasoning_effort?: string | null;
     slug?: string;
     tools?: {
         id: string;

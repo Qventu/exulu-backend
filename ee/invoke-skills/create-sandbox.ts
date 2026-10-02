@@ -8,6 +8,7 @@ import { join, dirname, resolve, relative, posix } from 'node:path'
 import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
+import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
@@ -270,6 +271,7 @@ async function restoreArtifactsFromS3(
     sessionId: string,
     userId: number | string,
     config: ExuluConfig,
+    opts: { onlyMissing?: boolean } = {},
 ): Promise<void> {
     const userPrefix = `user_${userId}/sessions/${sessionId}/`
     let objects: S3FileObject[]
@@ -297,8 +299,18 @@ async function restoreArtifactsFromS3(
         const idx = obj.key.indexOf(userPrefix)
         const relativePath = idx >= 0 ? obj.key.slice(idx + userPrefix.length) : ''
         if (!relativePath) continue // directory marker or unexpected key shape
+        if (isIgnoredArtifactPath(relativePath)) continue // never pull dependency trees back
 
         const localPath = join(sessionDir, relativePath)
+        if (opts.onlyMissing) {
+            let localSize: number | undefined
+            try {
+                localSize = (await stat(localPath)).size
+            } catch {
+                localSize = undefined
+            }
+            if (!needsDownload(localSize, obj.size)) continue
+        }
         try {
             // Use binary-safe fetch — session artifacts now include PDFs, .docx
             // and other binary formats (from user uploads as well as agent
@@ -380,6 +392,20 @@ export async function downloadKeyIntoSandbox(opts: {
  * cache AND no session directory on disk), previously persisted artifacts for
  * the session are restored from S3 into the fresh session directory.
  */
+/**
+ * Loaded lazily: python-setup resolves the package root via import.meta.url, which
+ * must not be evaluated when this module is merely imported (jest runs CJS).
+ */
+async function resolvePythonVenvPath(): Promise<string | undefined> {
+    try {
+        const { getPythonVenvPath } = await import('@SRC/utils/python-setup.ts')
+        return getPythonVenvPath()
+    } catch (err) {
+        console.warn('[SKILLS] Could not resolve the Python venv for the session sandbox; skill scripts fall back to the system python.', err)
+        return undefined
+    }
+}
+
 export async function createSessionSandbox(
     sessionId: string,
     skills: SkillRef[],
@@ -404,6 +430,16 @@ export async function createSessionSandbox(
             cached.installedSkills.set(skill.id, skill.current_version)
         }
 
+        // Files uploaded through the side panel (or by an email routine) after the
+        // sandbox was created live only in S3 until re-synced; without this the agent's
+        // `ls` never sees them although the system prompt promises it will.
+        if (userId && config.fileUploads) {
+            try {
+                await restoreArtifactsFromS3(cached.handle.sessionDir, sessionId, userId, config, { onlyMissing: true })
+            } catch (err) {
+                console.error(`[SKILLS] Failed to re-sync S3 session files for session ${sessionId}; continuing.`, err)
+            }
+        }
         return cached.handle
     }
 
@@ -439,8 +475,9 @@ export async function createSessionSandbox(
     // Restore artifacts from S3 only on a true cold start. If the dir already
     // existed, the local files are at least as new as S3 and may contain
     // unsaved-to-S3 writes from a prior process.
-    if (userId && config.fileUploads && !dirExisted) {
-        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config)
+    if (userId && config.fileUploads) {
+        // Cold start restores everything; a surviving on-disk dir only fetches what changed.
+        await restoreArtifactsFromS3(sessionDir, sessionId, userId, config, { onlyMissing: dirExisted })
     }
 
     // Probe whether bwrap can actually create namespaces on this host. On a
@@ -492,6 +529,9 @@ export async function createSessionSandbox(
     // fail with a clear MODULE_NOT_FOUND, matching what the user would see
     // outside the sandbox).
     const npmGlobalRoot = await getNpmGlobalRoot()
+    // The @exulu/backend Python venv carries the skill runtime deps (python-docx …).
+    // Put its bin dir first on PATH so `python3` inside the sandbox resolves to it.
+    const pythonVenvPath = await resolvePythonVenvPath()
 
     // Per-session policy. Passed to every wrapWithSandbox() invocation made
     // from within this closure. customConfig wins over the singleton's
@@ -510,6 +550,7 @@ export async function createSessionSandbox(
                 // the sandbox. Without this, `require('docx')` fails with
                 // EPERM even when NODE_PATH points the resolver here.
                 ...(npmGlobalRoot ? [npmGlobalRoot] : []),
+                ...(pythonVenvPath ? [pythonVenvPath] : []),
             ],
             allowWrite: [sessionDir],
             denyWrite: [],
@@ -563,6 +604,9 @@ export async function createSessionSandbox(
         ...configuredVariables,
         ...process.env,
         ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
+        ...(pythonVenvPath
+            ? { PATH: `${join(pythonVenvPath, 'bin')}:${process.env.PATH ?? ''}`, VIRTUAL_ENV: pythonVenvPath }
+            : {}),
     }
 
     // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
@@ -757,6 +801,7 @@ export async function createSessionSandbox(
             for (const entry of entries) {
                 const full = join(dir, entry.name)
                 if (full === skillsDir) continue
+                if (isIgnoredArtifactPath(relative(sessionDir, full))) continue
                 if (entry.isDirectory()) {
                     await walk(full)
                 } else if (entry.isFile()) {
@@ -917,11 +962,17 @@ export async function createSessionSandbox(
             // marker block isn't truncated. Only files with a presigned URL
             // appear here; locally-only entries would just confuse the user.
             let stdout = result?.stdout ?? ''
-            const withUrls = artifacts.filter((a) => a.url)
+            // Cap the listing: one command can touch thousands of files, and every
+            // entry carries a presigned URL. The full set is still mirrored to S3.
+            const { kept, omitted } = capArtifacts(artifacts)
+            const withUrls = kept.filter((a) => a.url)
             if (withUrls.length > 0) {
                 const lines = ['', '[exulu-artifacts]']
                 for (const a of withUrls) {
                     lines.push(`  ${a.relativePath}: ${a.url}`)
+                }
+                if (omitted > 0) {
+                    lines.push(`  … ${omitted} more file(s) were created and mirrored but are not listed here.`)
                 }
                 stdout = `${stdout}\n${lines.join('\n')}`
             }
@@ -929,7 +980,8 @@ export async function createSessionSandbox(
             return {
                 ...result,
                 stdout,
-                artifacts,
+                artifacts: kept,
+                ...(omitted > 0 ? { artifactsOmitted: omitted } : {}),
             }
         },
     })

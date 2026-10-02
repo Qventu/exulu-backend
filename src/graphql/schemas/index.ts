@@ -44,6 +44,12 @@ import { checkLicense } from "@EE/entitlements.ts";
 import fs from "fs";
 import { transcriptionService } from "@SRC/exulu/transcription/service";
 import { transcriptionClient } from "@SRC/exulu/transcription/client";
+import { assertOwnsTranscriptionJob as assertOwnsTranscriptionJobShared } from "@SRC/exulu/transcription/authorize";
+import {
+  liveRecordingService,
+  liveRecordingEnabled,
+  LIVE_RECORDING_DISABLED_MESSAGE,
+} from "@SRC/exulu/transcription/live-recording";
 import { recallService } from "@SRC/exulu/recall/service";
 import { recallEnabled, RECALL_NOT_CONFIGURED_MESSAGE } from "@SRC/exulu/recall/env";
 import {
@@ -724,6 +730,8 @@ type PageInfo {
     transcriptionJobCancel(id: ID!): transcription_job
     meetingBotStart(input: MeetingBotStartInput!): transcription_job
     runTranscriptPostProcessing(id: ID!, prompt_id: ID!, agent_id: ID!): transcription_job
+    liveRecordingStart(input: LiveRecordingStartInput!): transcription_job
+    liveRecordingStop(id: ID!, input: LiveRecordingStopInput): transcription_job
     `;
 
   mutationDefs += `
@@ -781,6 +789,21 @@ type PageInfo {
       agent_id: ID!
     }
 
+    input LiveRecordingStartInput {
+      title: String
+      language: String
+      project_id: ID
+      target_rights_mode: String
+      target_rbac_users: [RBACUserInput!]
+      target_rbac_roles: [RBACRoleInput!]
+      post_processing_prompts: [PostProcessingPromptInput!]
+    }
+
+    input LiveRecordingStopInput {
+      audio_s3key: String
+      duration_seconds: Float
+    }
+
     type MeetingRecordingUsage {
       enabled: Boolean!
       used_seconds: Float!
@@ -829,6 +852,13 @@ type PageInfo {
 
   typeDefs += `
    meetingRecordingUsage: MeetingRecordingUsage
+    `;
+
+  // On-demand fallback for a job that never got a permanent local copy
+  // (RECALL_STORE_VIDEO_LOCALLY off): resolves a fresh signed URL straight
+  // from Recall. Expires in ~6h — never cache it client-side.
+  typeDefs += `
+   recordingVideoUrl(job_id: ID!): String
     `;
 
   typeDefs += `
@@ -1978,24 +2008,8 @@ type LiteLLMModel {
   // checks the auto-CRUD does in createMutations.validateWriteAccess for RBAC
   // tables — required because the three custom transcription mutations bypass
   // the generated CRUD path.
-  const assertOwnsTranscriptionJob = async (id: string, context: any) => {
-    const { db, user } = context;
-    if (!user) throw new Error("Authentication required");
-    if (user.super_admin === true) return;
-    const row = await db
-      .from("transcription_jobs")
-      .select(["created_by", "rights_mode"])
-      .where({ id })
-      .first();
-    if (!row) throw new Error(`transcription_job ${id} not found`);
-    if (row.rights_mode === "public") return;
-    // `created_by` is a text column while `user.id` is an integer SERIAL, so
-    // compare as strings — a raw `===` fails for the legitimate creator
-    // ("1" === 1 → false). Matches utils/check-record-access.ts and the
-    // auto-CRUD validateWriteAccess check.
-    if (row.created_by != null && String(row.created_by) === String(user.id)) return;
-    throw new Error("Not authorized to act on this transcription job");
-  };
+  const assertOwnsTranscriptionJob = async (id: string, context: any) =>
+    assertOwnsTranscriptionJobShared(context.db, context.user, id);
 
   resolvers.Mutation["transcriptionJobStart"] = async (_, args, context) => {
     const { user } = context;
@@ -2068,9 +2082,54 @@ type LiteLLMModel {
     return db.from("transcription_jobs").where({ id: args.id }).first();
   };
 
+  // Live (browser microphone) recordings — spec 2026-09-23. Gate mirrors the
+  // composer mic (/transcribe); the frontend hides the mode on the same flag.
+  resolvers.Mutation["liveRecordingStart"] = async (_, args, context) => {
+    const { user } = context;
+    if (!user) throw new Error("Authentication required");
+    if (!liveRecordingEnabled()) {
+      throw new Error(`LIVE_RECORDING_DISABLED: ${LIVE_RECORDING_DISABLED_MESSAGE}`);
+    }
+    return liveRecordingService.start({
+      userId: user.id,
+      title: args.input.title ?? null,
+      language: args.input.language ?? null,
+      project_id: args.input.project_id ?? null,
+      target_rights_mode: args.input.target_rights_mode ?? null,
+      target_rbac_users: args.input.target_rbac_users ?? null,
+      target_rbac_roles: args.input.target_rbac_roles ?? null,
+      post_processing_prompts: args.input.post_processing_prompts ?? null,
+    });
+  };
+
+  resolvers.Mutation["liveRecordingStop"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.id, context);
+    return liveRecordingService.stop(args.id, {
+      audio_s3key: args.input?.audio_s3key ?? null,
+      duration_seconds: args.input?.duration_seconds ?? null,
+    });
+  };
+
   resolvers.Query["meetingRecordingUsage"] = async (_, __, context) => {
     if (!context.user) throw new Error("Authentication required");
     return recallService.getUsage();
+  };
+
+  // Authorization mirrors assertOwnsTranscriptionJob above (creator/admin/public
+  // only) — the transcription_jobs row is the sole authorization surface here,
+  // same as the other custom transcription resolvers in this file. If a saved
+  // item's RBAC later grants a non-creator read access to the transcript, this
+  // endpoint does not yet honor that broader grant.
+  resolvers.Query["recordingVideoUrl"] = async (_, args, context) => {
+    await assertOwnsTranscriptionJob(args.job_id, context);
+    const { db } = context;
+    const row = await db
+      .from("transcription_jobs")
+      .select(["recall_recording_id"])
+      .where({ id: args.job_id })
+      .first();
+    if (!row?.recall_recording_id) return null;
+    return recallService.getRecordingVideoUrl(row.recall_recording_id);
   };
 
   resolvers.Query["evals"] = async (_, args, context, info) => {

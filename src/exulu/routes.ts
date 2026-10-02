@@ -1,4 +1,4 @@
-import { type Express, type Request, type Response } from "express";
+import { type Express, type Request, type Response, type NextFunction } from "express";
 import { requestValidators } from "../validators/requests.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { postgresClient } from "../postgres/client.ts";
@@ -29,6 +29,7 @@ import { extractBundleToS3, extractBundleToVersion, BundleValidationError } from
 import { parseSkillFrontmatter } from "../skills/frontmatter.ts";
 import { getPdfPreviewBytes, PreviewRenderError } from "../sessions/pdf-preview-cache.ts";
 import { downloadKeyIntoSandbox } from "../../ee/invoke-skills/create-sandbox.ts";
+import { withGlossary } from "../utils/agent-glossary.ts";
 import { InMemoryLRUCache } from "@apollo/utils.keyvaluecache";
 import bodyParser from "body-parser";
 import CryptoJS from "crypto-js";
@@ -60,7 +61,12 @@ import { markStreamActive, clearStreamActive, isStreamActive } from "./active-st
 import { resumeRoutineRunIfWaiting } from "@SRC/exulu/routines/run-state";
 import { compactSession, CompactionInsufficientError } from "./compact-session.ts";
 import { describeRequestError } from "./request-error.ts";
+import { finishTurnMetadata } from "./turn-metadata.ts";
 import { transcribeAudio, TranscriptionError } from "./transcribe.ts";
+import { transcriptionClient } from "./transcription/client.ts";
+import { registerLiveRecordingChunkRoute } from "./transcription/chunk-route.ts";
+import { liveRecordingEnabled, liveRecordingService } from "./transcription/live-recording.ts";
+import { assertOwnsTranscriptionJob } from "./transcription/authorize.ts";
 import { synthesizeSpeech, SpeechError } from "./speech.ts";
 import {
   generateImage,
@@ -578,6 +584,12 @@ export const createExpressRoutes = async (
       recall: {
         enabled: recallEnabled(),
       },
+      // Whisper upload transcription (TRANSCRIPTION_SERVER). The Transcripts
+      // page gates its "Upload a file" mode on this — previously it was gated
+      // on the composer-mic flag and showed an upload mode that could not work.
+      whisper: {
+        enabled: transcriptionClient.isConfigured(),
+      },
     });
   });
 
@@ -771,11 +783,13 @@ export const createExpressRoutes = async (
             : JSON.stringify(req.body.customInstructions)
           : "";
 
-        const instructions = customInstructions
-          ? `${agent.instructions}\n\n${customInstructions}`
-          : agent.instructions;
+        const instructions = withGlossary(
+          customInstructions ? `${agent.instructions}\n\n${customInstructions}` : agent.instructions,
+          agent.tools,
+        );
 
         if (headers.session) markStreamActive(headers.session as string);
+        const turnStartedAt = Date.now();
         let result: Awaited<ReturnType<typeof generateStream>>;
         try {
           result = await generateStream({
@@ -827,13 +841,7 @@ export const createExpressRoutes = async (
               };
             }
             if (part.type === "finish") {
-              return {
-                totalTokens: part.totalUsage.totalTokens,
-                reasoningTokens: part.totalUsage.reasoningTokens,
-                inputTokens: part.totalUsage.inputTokens,
-                outputTokens: part.totalUsage.outputTokens,
-                cachedInputTokens: part.totalUsage.cachedInputTokens,
-              };
+              return finishTurnMetadata({ totalUsage: part.totalUsage, startedAt: turnStartedAt });
             }
             return undefined;
           },
@@ -943,9 +951,10 @@ export const createExpressRoutes = async (
             : JSON.stringify(req.body.customInstructions)
           : "";
 
-        const instructions = customInstructions
-          ? `${agent.instructions}\n\n${customInstructions}`
-          : agent.instructions;
+        const instructions = withGlossary(
+          customInstructions ? `${agent.instructions}\n\n${customInstructions}` : agent.instructions,
+          agent.tools,
+        );
 
         let response: Awaited<ReturnType<typeof generateSync>>;
         try {
@@ -1222,23 +1231,23 @@ export const createExpressRoutes = async (
     limits: { fileSize: MAX_TRANSCRIBE_BYTES },
   });
 
+  // Shared by /transcribe and /transcription-jobs/:id/chunks: parses the
+  // single "file" field and maps multer's size error to a 413.
+  const transcribeUploadMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    transcribeUpload.single("file")(req, res, (err: unknown) => {
+      if (!err) return next();
+      const code = (err as { code?: string })?.code;
+      if (code === "LIMIT_FILE_SIZE") {
+        res.status(413).json({ detail: "Recording too large. Please record a shorter clip." });
+        return;
+      }
+      res.status(400).json({ detail: err instanceof Error ? err.message : "Upload failed." });
+    });
+  };
+
   app.post(
     "/transcribe",
-    (req: Request, res: Response, next) => {
-      transcribeUpload.single("file")(req, res, (err: unknown) => {
-        if (!err) return next();
-        const code = (err as { code?: string })?.code;
-        if (code === "LIMIT_FILE_SIZE") {
-          res
-            .status(413)
-            .json({ detail: "Recording too large. Please record a shorter clip." });
-          return;
-        }
-        res
-          .status(400)
-          .json({ detail: err instanceof Error ? err.message : "Upload failed." });
-      });
-    },
+    transcribeUploadMiddleware,
     async (req: Request, res: Response) => {
       if (!isLiteLLMEnabled() || !process.env.TRANSCRIPTION_MODEL) {
         res.status(503).json({
@@ -1306,6 +1315,21 @@ export const createExpressRoutes = async (
       }
     },
   );
+
+  // Live (browser microphone) recordings: one audio chunk per request,
+  // appended to the job's raw_segments. Same gate/limits as /transcribe.
+  // Design doc: docs/superpowers/specs/2026-09-23-live-recording-transcription-design.md §3.4
+  registerLiveRecordingChunkRoute(app, {
+    upload: transcribeUploadMiddleware,
+    enabled: liveRecordingEnabled,
+    authenticate: (req) => requestValidators.authenticate(req),
+    getDb: async () => (await postgresClient()).db,
+    assertOwns: assertOwnsTranscriptionJob,
+    waitForLiteLLMReady,
+    buildTags,
+    transcribe: transcribeAudio,
+    service: liveRecordingService,
+  });
 
   // Text-to-speech. Forwards a JSON { text } payload to the LiteLLM proxy's
   // /v1/audio/speech endpoint with the model from TTS_MODEL and the optional
@@ -3417,6 +3441,7 @@ export const createExpressRoutes = async (
         const history = Array.isArray(existing.history) ? existing.history : [];
         await db("skills").where({ id: existing.id }).update({
           current_version: nextVersion,
+          updatedAt: new Date().toISOString(),
           history: JSON.stringify([
             ...history,
             { version: nextVersion, created_at: new Date().toISOString(), label: "Published from agent" },
@@ -3554,6 +3579,7 @@ export const createExpressRoutes = async (
     await db("skills").where({ id: skillId }).update({
       s3folder: `skills/${skillId}`,
       current_version: 1,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify([
         { version: 1, created_at: new Date().toISOString(), label: "Initial" },
       ]),
@@ -3714,6 +3740,7 @@ export const createExpressRoutes = async (
     await db("skills").where({ id: skillId }).update({
       s3folder: `skills/${skillId}`,
       current_version: 1,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify([
         { version: 1, created_at: new Date().toISOString(), label: "Uploaded bundle" },
       ]),
@@ -4052,6 +4079,7 @@ export const createExpressRoutes = async (
 
     await db("skills").where({ id: skillId }).update({
       current_version: newVersion,
+      updatedAt: new Date().toISOString(),
       history: JSON.stringify(newHistory),
     });
 

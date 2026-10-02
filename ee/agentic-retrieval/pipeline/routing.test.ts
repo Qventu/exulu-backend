@@ -185,3 +185,37 @@ describe("runRoutingPhase", () => {
     expect(r.mainContexts).toEqual(["docs", "tickets"]);
   });
 });
+
+describe("runRoutingPhase with mergedCall (engine v2)", () => {
+  const rules = [{ id: "t", label: "T", description: "d", main: ["docs"], fallback: ["tickets"] }];
+  const mergedOut = (over: Partial<any> = {}) => ({ output: {
+    docPage: { hasFilenameHint: false, filenameHints: [], hasPageHint: false, pageNumber: null },
+    explicitlyRequestedKnowledgeBases: [],
+    classification: { ruleId: "t", reason: "because" },
+    ...over,
+  } });
+
+  it("asks the model once and applies the classification", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(mergedOut());
+    const r = await runRoutingPhase({ question: "how do I fix the door?", enabledContexts: enabled, documentContexts: [],
+      routingRules: rules, preselectedItems: new Map(), model: {}, mergedCall: true });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(r.mainContexts).toEqual(["docs"]);
+    expect(r.fallbackContexts).toEqual(["tickets"]);
+  });
+
+  it("lets an explicit knowledge-base request win over the classification, with no fallback", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(mergedOut({ explicitlyRequestedKnowledgeBases: ["tickets"] }));
+    const r = await runRoutingPhase({ question: "search tickets for X", enabledContexts: enabled, documentContexts: [],
+      routingRules: rules, preselectedItems: new Map(), model: {}, mergedCall: true });
+    expect(r.mainContexts).toEqual(["tickets"]);
+    expect(r.fallbackContexts).toEqual([]);
+  });
+
+  it("still reports a requested page from the merged answer", async () => {
+    (generateText as jest.Mock).mockResolvedValueOnce(mergedOut({ docPage: { hasFilenameHint: false, filenameHints: [], hasPageHint: true, pageNumber: 38 } }));
+    const r = await runRoutingPhase({ question: "page 38", enabledContexts: enabled, documentContexts: [],
+      routingRules: rules, preselectedItems: new Map(), model: {}, mergedCall: true });
+    expect(r.userRequestedPage).toBe(38);
+  });
+});

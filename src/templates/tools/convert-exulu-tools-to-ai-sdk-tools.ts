@@ -30,7 +30,7 @@ import { truncateToolOutput } from "@SRC/utils/truncate-tool-output";
 import { guardToolOutput } from "@SRC/exulu/tool-output-offload";
 import { buildAuthToolModelOutput } from "./auth-tool-model-output";
 import { createSessionFileReadTool } from "./session-file-read-tool";
-import { createParseDocumentTool } from "./parse-document-tool";
+import { createParseDocumentTool, binaryDocumentBashHint } from "./parse-document-tool";
 import { createViewDocumentPageTool } from "./view-document-page-tool";
 import { deriveContextBudget } from "@SRC/exulu/context-budget";
 import { getAuditLogger } from "@SRC/exulu/audit/logger";
@@ -183,6 +183,8 @@ export const convertExuluToolsToAiSdkTools = async (
   memoryItems?: VectorSearchChunkResult[],
   contextWindow?: number,
   disabledTools?: string[],
+  /** Owner of the session — session files are namespaced by owner, not by the speaker. */
+  sessionOwnerId?: number | string,
 ): Promise<Record<string, Tool>> => {
   if (!currentTools) return {};
 
@@ -212,7 +214,7 @@ export const convertExuluToolsToAiSdkTools = async (
         sessionID,
         currentSkills || [],
         exuluConfig,
-        user?.id,
+        sessionOwnerId ?? user?.id,
       );
     } catch (err) {
       console.error(
@@ -293,17 +295,17 @@ export const convertExuluToolsToAiSdkTools = async (
     }
   }
 
-  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig });
+  const sessionFileReadTool = createSessionFileReadTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (sessionFileReadTool && !disabled.has(sessionFileReadTool.id)) {
     currentTools.push(sessionFileReadTool);
   }
 
-  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig });
+  const parseDocumentTool = createParseDocumentTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (parseDocumentTool && !disabled.has(parseDocumentTool.id)) {
     currentTools.push(parseDocumentTool);
   }
 
-  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig });
+  const viewDocumentPageTool = createViewDocumentPageTool({ sessionID, user, exuluConfig, ownerId: sessionOwnerId });
   if (viewDocumentPageTool && !disabled.has(viewDocumentPageTool.id)) {
     currentTools.push(viewDocumentPageTool);
   }
@@ -422,13 +424,21 @@ export const convertExuluToolsToAiSdkTools = async (
               | undefined;
             if (!origExecute) throw new Error('bash execute is undefined');
             const result = await origExecute(args, opts);
+            const rawStdout = typeof result?.stdout === 'string' ? result.stdout : '';
+            const rawStderr = typeof result?.stderr === 'string' ? result.stderr : '';
+            // Nudges agents off grep/cat against PDF/Office session files — those are
+            // binary and silently return nothing or garbage, which otherwise reads as
+            // "not found yet" and invites retrying the same command many times over
+            // (2026-09-14 incident: ~25 repeats blew a turn's context to 1.4M tokens).
+            const hint = binaryDocumentBashHint(String((args as { command?: string } | undefined)?.command ?? ''), rawStdout, rawStderr);
+            const stderrWithHint = hint ? [rawStderr, hint].filter(Boolean).join('\n\n') : rawStderr;
             return {
               ...result,
               ...(typeof result?.stdout === 'string' && {
-                stdout: truncateToolOutput(result.stdout, budget.contextWindow, 'bash', 0.10, toolOutputCharLimit),
+                stdout: truncateToolOutput(rawStdout, budget.contextWindow, 'bash', 0.10, toolOutputCharLimit),
               }),
-              ...(typeof result?.stderr === 'string' && {
-                stderr: truncateToolOutput(result.stderr, budget.contextWindow, 'bash stderr', 0.40, toolOutputCharLimit),
+              ...((typeof result?.stderr === 'string' || hint) && {
+                stderr: truncateToolOutput(stderrWithHint, budget.contextWindow, 'bash stderr', 0.40, toolOutputCharLimit),
               }),
             };
           },

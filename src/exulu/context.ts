@@ -13,7 +13,7 @@ import type { ChunkerOperation } from "./chunker";
 import { defaultChunker } from "./chunker";
 import { resolveEmbedder } from "./resolve-embedder";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
-import type { ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
+import { VALID_RIGHTS_MODES, type ExuluRightsMode } from "@EXULU_TYPES/rbac-rights-modes";
 import type { ExuluStatisticParams, STATISTICS_LABELS } from "@EXULU_TYPES/statistics";
 import { updateStatistic } from "./statistics";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics";
@@ -72,6 +72,22 @@ export type ExuluContextFieldDefinition = {
   hidden?: boolean;
 };
 
+
+/**
+ * Falls back to `defaultMode` (or "private") when `rightsMode` isn't one of
+ * the known valid values. Pure so it's directly testable — see createItem for
+ * why this check exists (guards a low-level path with no other validation).
+ */
+export function sanitizeItemRightsMode(
+  rightsMode: unknown,
+  defaultMode?: ExuluRightsMode,
+): ExuluRightsMode | undefined {
+  if (rightsMode == null) return rightsMode as undefined;
+  if (VALID_RIGHTS_MODES.includes(rightsMode as ExuluRightsMode)) {
+    return rightsMode as ExuluRightsMode;
+  }
+  return defaultMode ?? "private";
+}
 
 export type ExuluContextSource = {
   id: string;
@@ -624,6 +640,25 @@ export class ExuluContext {
     if (upsert && !item.id && !item.external_id) {
       throw new Error("Item id or external id is required for upsert.");
     }
+
+    // Unlike the GraphQL createOne/upsert mutation (which rejects an invalid
+    // rights_mode outright), this low-level method is also called directly by
+    // tools/workers/sync jobs that shouldn't die over a malformed value — so
+    // sanitize instead of throwing. Without this, any caller building `item`
+    // from something other than validated mutation input (e.g. a stray field
+    // that happens to collide with the name "rights_mode") can silently write
+    // garbage straight into a row's own access-control column, making it
+    // invisible to everyone but a super-admin with no error anywhere in the
+    // chain. Root-caused an ALGI incident (2026-09-22): ~68% of
+    // ersatzteil_katalog_items had rights_mode literally set to the table
+    // name itself.
+    if (item.rights_mode != null && !VALID_RIGHTS_MODES.includes(item.rights_mode as ExuluRightsMode)) {
+      console.warn(
+        `[EXULU] createItem: invalid rights_mode "${item.rights_mode}" for context "${this.id}" ` +
+          `(item ${item.id ?? item.external_id ?? "(new)"}) — falling back to the configured default.`,
+      );
+    }
+    item.rights_mode = sanitizeItemRightsMode(item.rights_mode, this.configuration.defaultRightsMode);
 
     const { db } = await postgresClient();
 

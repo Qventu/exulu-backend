@@ -79,9 +79,9 @@ export const orderLookupTool = new ExuluTool({
 
   needsApproval: false,
 
-  execute: async ({ orderId, includeLineItems = false }, options) => {
-    const apiUrl = options?.config?.orders_api_url ?? "https://orders.internal/api/v2";
-    const apiKey = options?.config?.orders_api_key;
+  execute: async ({ orderId, includeLineItems = false, toolVariablesConfig }) => {
+    const apiUrl = toolVariablesConfig.orders_api_url ?? "https://orders.internal/api/v2";
+    const apiKey = toolVariablesConfig.orders_api_key;
 
     const url = new URL(`${apiUrl}/orders/${orderId}`);
     if (includeLineItems) url.searchParams.set("expand", "line_items");
@@ -106,6 +106,7 @@ export const orderLookupTool = new ExuluTool({
 A few points about this tool:
 
 - **`config` params** — `orders_api_url` (type `"string"`) and `orders_api_key` (type `"variable"`) are set by an administrator in the agent workbench, not in code. Variable-type params are stored encrypted and looked up at call time. The agent never sees them.
+- **Reading those params** — they arrive as `toolVariablesConfig` on the **first** argument, keyed by param name, already decrypted. They are not on the second (`options`) argument, which carries only AI-SDK context. See [Reading config values at runtime](/developers/core/exulu-tool/configuration#reading-config-values-at-runtime). If an administrator has not configured the tool, `toolVariablesConfig` is `{}` — the `??` fallback above is deliberate for a URL, but never fall back to a default credential or tenant.
 - **`needsApproval: false`** — read-only, reversible operations should not block the user. Set `true` (the default) for any action that modifies data or has side effects.
 - **Return shape** — `{ result: string }` is the standard return for tools that produce a text or JSON response. Always `JSON.stringify` objects before returning — agents parse JSON automatically.
 
@@ -148,8 +149,8 @@ export const batchReportTool = new ExuluTool({
 
   needsApproval: true, // prompts the user before running — it hits external services
 
-  execute: async function* ({ accountIds, period }, options) {
-    const apiUrl = options?.config?.reporting_api_url ?? "https://reporting.internal/api";
+  execute: async function* ({ accountIds, period, toolVariablesConfig }) {
+    const apiUrl = toolVariablesConfig.reporting_api_url ?? "https://reporting.internal/api";
 
     for (const accountId of accountIds) {
       try {

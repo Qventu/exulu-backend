@@ -231,3 +231,35 @@ export function resolveSearchQueryTexts(query: string): {
     hybridOrQuery: buildFullTextOrQuery(query, ftsText),
   };
 }
+
+/**
+ * Which full-text query the hybrid search should run.
+ *
+ * The lenient OR form (websearch_to_tsquery over all tokens) fixes queries where one
+ * unmatched keyword zeroed the branch, but on large corpora it matches tens of thousands
+ * of rows that all have to be ranked (measured: 5.6 s per query on a 97k-chunk manual
+ * corpus versus 5 ms for the strict form). So the strict AND form runs first and the OR
+ * form is used only when the strict query matches nothing at all.
+ */
+export function chooseFullTextQuery(opts: { strictMatches: boolean; strictText: string; orText: string }): {
+  fn: "plainto_tsquery" | "websearch_to_tsquery";
+  text: string;
+} {
+  if (opts.strictMatches || countOrTerms(opts.orText) > MAX_OR_TERMS) {
+    return { fn: "plainto_tsquery", text: opts.strictText };
+  }
+  return { fn: "websearch_to_tsquery", text: opts.orText };
+}
+
+/**
+ * Above this many OR-ed terms the lenient form is not run at all. Long queries are
+ * HyDE passages or pasted paragraphs: their lexical signal is noise and the GIN
+ * bitmap over dozens of posting lists is slow (measured 6.3 s for 56 terms versus
+ * 1.0 s for 12 on a 97k-chunk corpus). The strict AND form then rarely matches, so
+ * the semantic branch carries the query, which is what those passages are for.
+ */
+export const MAX_OR_TERMS = 12;
+
+function countOrTerms(orText: string): number {
+  return orText.trim() ? orText.split(/\s+or\s+/i).length : 0;
+}

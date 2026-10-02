@@ -15,6 +15,8 @@ import { resolveIdentifierPins } from "./prefilter";
 import { searchContexts } from "./search";
 import { rerankResults } from "./rerank";
 import type { AgenticRetrievalOutput, RerankState, ChunkWithScore } from "./types";
+import { withTiming } from "./timing";
+import { needsPinRerun } from "./pin-rerun";
 import type { VectorSearchChunkResult } from "@SRC/graphql/resolvers/vector-search";
 import { parsePreselectedItems } from "./global-ids";
 import { isExternalOrAnonymousUser } from "@SRC/exulu/resolve-max-steps";
@@ -275,6 +277,16 @@ export function createAgenticRetrievalTool(opts: {
         usage: [],
         totalTokens: 0,
       };
+      // Phase timings (ms) — surfaced as a step and as `timings` on the result so latency
+      // can be analysed from stored tool results on deployments without tracing.
+      const t0 = Date.now();
+      const timings: Record<string, number> = {};
+      let tPhase = t0;
+      const lap = (name: string) => {
+        const now = Date.now();
+        timings[name] = (timings[name] ?? 0) + (now - tPhase);
+        tPhase = now;
+      };
 
       try {
       // ── Enabled contexts (knowledge_bases.enabled filter + restore-all) ───
@@ -377,8 +389,21 @@ export function createAgenticRetrievalTool(opts: {
         .filter(Boolean)
         .join("\n");
 
-      const [memResult, routResult] = await Promise.all([
-        runMemoryPhase({
+      const engineV2 = cfg.tuning.engine === "v2";
+      const v2 = cfg.tuning.v2;
+      const pinsFor = (question: string) =>
+        resolveIdentifierPins({
+          question,
+          identifierSets: cfg.vocabulary.identifiers,
+          contextsById,
+          kbKindById,
+          model: utilityModel,
+        });
+
+      const [memResult, routResult, parallelPins] = await Promise.all([
+        withTiming(timings, "memoryMs", () => runMemoryPhase({
+          timings,
+          mergedCall: engineV2 && v2.mergedMemoryCall,
           memoryChunks: memoryItems ?? [],
           memoryContext,
           question: userQuery,
@@ -390,8 +415,10 @@ export function createAgenticRetrievalTool(opts: {
           memoryConfig: cfg.memory,
           glossary: cfg.vocabulary.glossary,
           documentContexts,
-        }),
-        runRoutingPhase({
+        })),
+        withTiming(timings, "routingMs", () => runRoutingPhase({
+          timings,
+          mergedCall: engineV2 && v2.mergedRoutingCall,
           question: userQuery,
           enabledContexts,
           documentContexts,
@@ -402,9 +429,15 @@ export function createAgenticRetrievalTool(opts: {
           // detector must never treat these as filename hints.
           knownIdentifiers: cfg.vocabulary.identifiers.flatMap((i) => i.examples),
           model: utilityModel,
-        }),
+        })),
+        // engine v2: identifier pins depend only on the question, so they run alongside
+        // memory and routing instead of after them (re-run below if memory rewrote the question).
+        engineV2 && v2.parallelPins
+          ? withTiming(timings, "pinsParallelMs", () => pinsFor(userQuery))
+          : Promise.resolve(null),
       ]);
 
+      lap("memoryRoutingMs");
       // Merge steps from both phases
       for (const step of [...memResult.steps, ...routResult.steps]) {
         result.steps.push({
@@ -468,14 +501,11 @@ export function createAgenticRetrievalTool(opts: {
 
       // ── Identifier pins (upfront, before Phase 2) ────────────────────────
       const { pinsByContext: identifierPinsByContext, exactPinsByContext, steps: pinSteps } =
-        await resolveIdentifierPins({
-          question: updatedQuestion,
-          identifierSets: cfg.vocabulary.identifiers,
-          contextsById,
-          kbKindById,
-          model: utilityModel,
-        });
+        parallelPins && !needsPinRerun(userQuery, updatedQuestion)
+          ? parallelPins
+          : await pinsFor(updatedQuestion);
 
+      lap("pinsMs");
       for (const step of pinSteps) {
         result.steps.push({
           stepNumber: 1,
@@ -507,6 +537,8 @@ export function createAgenticRetrievalTool(opts: {
           rewrites: cfg.vocabulary.rewrites,
           styleHint: cfg.vocabulary.styleHint,
           maxQueries: cfg.tuning.maxQueriesPerContext,
+          timings,
+          timingPrefix: "search.main",
           skipPrefilter: false,
         }),
         fallbackContextsToSearch.length > 0 && !hasExplicitDocAndPage
@@ -528,11 +560,14 @@ export function createAgenticRetrievalTool(opts: {
               rewrites: cfg.vocabulary.rewrites,
               styleHint: cfg.vocabulary.styleHint,
               maxQueries: cfg.tuning.maxQueriesPerContext,
+              timings,
+              timingPrefix: "search.fallback",
               skipPrefilter: true,
             })
           : Promise.resolve({ chunks: [] }),
       ]);
 
+      lap("searchMs");
       // ── Build rerank state ────────────────────────────────────────────────
       // pinnedItemIds = memory ∪ exact identifier pins ∪ user pins ∪ project pins
       const pinnedItemIds = new Set<string>([
@@ -604,6 +639,7 @@ export function createAgenticRetrievalTool(opts: {
         tokens: 0,
       });
 
+      lap("rerankMs");
       // Accumulate main results (dedup by chunk_id, memory chunks already first)
       addChunks(result, mainRerank.limited_results);
       yield { result: serializeOutput(result, hideSources) };
@@ -673,6 +709,7 @@ export function createAgenticRetrievalTool(opts: {
         });
         result.reasoning.push({ text: "Fallback results reranked", tools: [] });
         addChunks(result, fallbackRerank.limited_results);
+        lap("fallbackRerankMs");
         yield { result: serializeOutput(result, hideSources) };
       }
 
@@ -704,10 +741,27 @@ export function createAgenticRetrievalTool(opts: {
         yield { result: serializeOutput(result, hideSources) };
       }
 
+      timings.totalMs = Date.now() - t0;
+      result.timings = timings;
+      result.steps.push({
+        stepNumber: 1,
+        text:
+          `Timing: memory+routing ${timings.memoryRoutingMs ?? 0}ms (memory ${timings.memoryMs ?? 0}ms, routing ${timings.routingMs ?? 0}ms), pins ${timings.pinsMs ?? 0}ms, ` +
+          `search ${timings.searchMs ?? 0}ms, rerank ${timings.rerankMs ?? 0}ms` +
+          (timings.fallbackRerankMs !== undefined ? `, fallback rerank ${timings.fallbackRerankMs}ms` : "") +
+          `, total ${timings.totalMs}ms`,
+        toolCalls: [],
+        chunks: [],
+        tokens: 0,
+      });
+
       if (cfg.logging) {
-        console.log("[EXULU pipeline] final result:", JSON.stringify({ steps: result.steps.length, chunks: result.chunks.length }));
+        console.log("[EXULU pipeline] final result:", JSON.stringify({ steps: result.steps.length, chunks: result.chunks.length, timings }));
       }
 
+      // The generator's return value is not consumed by the tool wrapper (for-await only sees
+      // yields), so the final payload — including the timing step — must be yielded.
+      yield { result: serializeOutput(result, hideSources) };
       return { result: serializeOutput(result, hideSources) };
       } catch (err) {
         console.warn("[EXULU pipeline] retrieval pipeline failed:", err);
