@@ -79,8 +79,8 @@ Both exec sites use the builder: `execAsync` (line 628) as today, and the
 ### 2. The secret inventory
 
 A declared inventory lists every `process.env` name the backend consumes, each
-classified `secret` or `runtime` with a one-line reason. 124 distinct names
-read across `src`/`ee` as of this date.
+classified `secret` or `runtime` with a one-line reason. 55 distinct names read
+across `src`/`ee` (non-test `.ts`) as of this date.
 
 Two tests give it teeth:
 
