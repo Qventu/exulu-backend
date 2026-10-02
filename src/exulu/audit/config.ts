@@ -15,7 +15,10 @@ export type AuditConfig = {
   flush?: { maxRecords?: number; maxIntervalMs?: number };
   payload?: { maxBytes?: number; captureOutput?: boolean; redactKeys?: string[] };
   failureMode?: "open" | "closed";
-  sources?: { toolCalls?: { enabled?: boolean; include?: string[]; exclude?: string[] } };
+  sources?: {
+    toolCalls?: { enabled?: boolean; include?: string[]; exclude?: string[] };
+    skillSandbox?: { enabled?: boolean };
+  };
 };
 
 export type ResolvedAuditConfig = {
@@ -29,6 +32,7 @@ export type ResolvedAuditConfig = {
   payload: { maxBytes: number; captureOutput: boolean; redactKeys: string[] };
   failureMode: "open" | "closed";
   toolCalls: { enabled: boolean; include: string[]; exclude: string[] };
+  skillSandbox: { enabled: boolean };
 };
 
 const normalizePrefix = (p?: string): string => {
@@ -84,6 +88,9 @@ export const resolveAuditConfig = (
       enabled: a.sources?.toolCalls?.enabled ?? true,
       include: a.sources?.toolCalls?.include ?? [],
       exclude: a.sources?.toolCalls?.exclude ?? [],
+    },
+    skillSandbox: {
+      enabled: a.sources?.skillSandbox?.enabled ?? false,
     },
   };
 };

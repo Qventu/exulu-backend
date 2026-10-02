@@ -10,6 +10,7 @@ export type AuditClient = {
 
 export const AUDIT_EVENT_TYPES = {
   TOOL_CALL: "tool.call",
+  SKILL_SANDBOX_CREATED: "skill.sandbox.created",
 } as const;
 
 export type AuditEvent = {
@@ -60,5 +61,20 @@ export type AuditToolCallInput = {
   output: unknown;
   status: "ok" | "error" | "auth_required";
   error?: unknown;
+  client?: AuditClient;
+};
+
+// Context handed to the skill-sandbox emitter (see emitters/skill-sandbox.ts).
+export type AuditSkillSandboxInput = {
+  sessionID?: string;
+  agent?: { id?: string; name?: string };
+  user?: { id?: unknown; email?: string; role?: { id?: unknown } };
+  projectId?: string;
+  skills: Array<{ id: string; name: string; version?: number }>;
+  grantedNames: string[];
+  withheldNames: string[];
+  skippedNames: string[];
+  strippedSecretCount: number;
+  degradedSandbox: boolean;
   client?: AuditClient;
 };
