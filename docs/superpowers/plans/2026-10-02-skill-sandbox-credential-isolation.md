@@ -1004,3 +1004,22 @@ git commit -m "feat(skills): startup warning for unclassified credential-shaped 
 3. Confirm a document-producing skill still renders correctly (fonts, umlauts, PDF output) — this is the regression the denylist design exists to prevent.
 4. With audit enabled, confirm one `skill.sandbox.created` record per sandbox, containing names and no values.
 5. Merge backend and frontend together.
+
+## Release communication — do not let this fall through
+
+The `BREAKING CHANGE:` footer on the backend commit feeds semantic-release on
+`main`/`next`, which reaches a private repo and an engineering changelog. **It does
+not reach client admins.** The customer-facing changelog is
+`mintlify-docs/changelog/index.mdx`, generated from a separately curated pipeline.
+
+Whoever curates this feature's entry there must include a breaking-change sentence
+for operators, mirroring the precedent set by `auto_approve_tools` at
+`mintlify-docs/changelog/index.mdx:156`:
+
+> After this release no variable is shared with skills until an administrator
+> enables it on that variable. Skills that depend on a variable will fail at their
+> next run; the server log names the withheld variables
+> (`[SKILLS] Session <id>: N variable(s) not shared with skills: ...`). Enable the
+> variables a skill needs on the Variables page.
+
+Two client instances are known to have installed skills.
