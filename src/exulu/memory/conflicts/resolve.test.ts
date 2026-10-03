@@ -54,6 +54,16 @@ describe("resolveConflict", () => {
     expect(usage.map((w: any) => w.op)).toEqual(["delete", "update"]);
     expect(usage[1].patch).toEqual({ memory_id: "merged-1" });
     expect(usage[1].where).toMatchObject({ context: "mem", memory_id__in: ["a", "b", "c"] });
+    // The collision predicate is member-aware: a usage row already pointing at the
+    // merged memory, or a sibling member row for the same message (keeping the
+    // lowest id), must be dropped before member rows are re-pointed.
+    expect(usage[0].raw.b).toEqual(["merged-1", ["a", "b", "c"]]);
+    expect(usage[0].raw.sql).toMatch(/ANY\(\?\)/);
+    expect(usage[0].raw.sql).toMatch(/m2\.id < memory_usages\.id/);
+    const conflictWrites = db.__writes.filter((w: any) => w.table === "memory_conflicts");
+    expect(conflictWrites).toHaveLength(2);
+    expect(conflictWrites[0].patch).toEqual({ merged_into: "merged-1" });
+    expect(conflictWrites[1].patch).toMatchObject({ status: "resolved", resolution: "merge", merged_into: "merged-1" });
     expect(db.__writes).toContainEqual(expect.objectContaining({ table: "memory_conflicts", patch: expect.objectContaining({ resolution: "merge", merged_into: "merged-1" }) }));
   });
   it("NOT_CONFLICT dismisses without touching memories", async () => {

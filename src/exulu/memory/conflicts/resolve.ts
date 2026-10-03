@@ -5,7 +5,6 @@ import { canEditMemory } from "@SRC/exulu/memory/access";
 import { creatorId } from "@SRC/exulu/memory/creator-id";
 import { displayName } from "@SRC/exulu/memory/recall-collector";
 import { getTableName } from "@SRC/exulu/table-names";
-import { pairKey } from "./detect";
 
 export type ResolveAction = "KEEP" | "MERGE" | "NOT_CONFLICT";
 export type ResolveInput = {
@@ -81,9 +80,24 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
   );
   const mergedId = item.id as string;
 
-  // Usage history follows the merged memory; rows that would collide on (message_id, memory_id) are dropped first.
+  // Persist the link before touching usage/members: if anything below fails, the
+  // group stays open with merged_into set, so a retry (spec §6) finds the memory
+  // already created instead of orphaning it.
+  await db("memory_conflicts").where({ id }).update({ merged_into: mergedId });
+
+  // Usage history follows the merged memory. recordMemoryUsage writes one row per
+  // recalled memory per message, so near-duplicates recalled together already hold
+  // (msg, a) and (msg, b); re-pointing both to mergedId would collide on
+  // memory_usages_message_memory_uidx (message_id, memory_id). Drop every member row
+  // that shares a message with a row already pointing at mergedId, or with another
+  // member row for the same message (keeping the lowest id), before the update.
   await db("memory_usages").where("context", context.id).whereIn("memory_id", group.members)
-    .whereRaw(`EXISTS (SELECT 1 FROM memory_usages m2 WHERE m2.message_id = memory_usages.message_id AND m2.memory_id = ?)`, [mergedId]).del();
+    .whereRaw(
+      `EXISTS (SELECT 1 FROM memory_usages m2
+                WHERE m2.message_id = memory_usages.message_id
+                  AND (m2.memory_id = ? OR (m2.memory_id = ANY(?) AND m2.id < memory_usages.id)))`,
+      [mergedId, group.members],
+    ).del();
   await db("memory_usages").where("context", context.id).whereIn("memory_id", group.members).update({ memory_id: mergedId });
 
   await archiveMembers(context, config, user, rows);

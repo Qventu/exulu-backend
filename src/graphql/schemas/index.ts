@@ -2680,8 +2680,10 @@ type EmbeddingModelOption {
   };
 
   const firstAgentModel = async (db: any, contextId: string): Promise<string> => {
-    const agent = await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select("model").first();
-    if (!agent?.model) throw new Error("No agent with a model uses this memory base; a conflict scan needs one");
+    const agent =
+      (await db("agents").where("memory", contextId).where("active", true).orderBy("createdAt", "asc").select("model").first()) ??
+      (await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select("model").first());
+    if (!agent?.model) throw new Error("No agent with a model uses this memory base; the conflict scan and the merge suggestion need one");
     return agent.model;
   };
   resolvers.Query["memoryConflicts"] = async (_, args, context) => {
@@ -2706,17 +2708,21 @@ type EmbeddingModelOption {
     return runScan({ db: context.db, context: target, user: context.user, judge });
   };
   resolvers.Mutation["memoryConflictResolve"] = async (_, args, context) => {
+    if (!hasAgentsWriteAccess(context.user)) throw new Error("Not allowed");
     const group = await context.db("memory_conflicts").where({ id: args.id }).first();
     const target = group ? memoryContextOf(group.context) : undefined;
-    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    if (!target) throw new Error("Not allowed");
     await resolveConflict({ db: context.db, context: target, config, user: context.user, id: args.id, action: args.action, keepId: args.keepId, merged: args.merged });
     const row = await context.db("memory_conflicts").where({ id: args.id }).first();
-    return hydrateConflictRow(context.db, target, row);
+    const hydrated = await hydrateConflictRow(context.db, target, row);
+    if (!hydrated) throw new Error(`Conflict ${args.id} has no members to show`);
+    return hydrated;
   };
   resolvers.Mutation["memoryConflictSuggestMerge"] = async (_, args, context) => {
+    if (!hasAgentsWriteAccess(context.user)) throw new Error("Not allowed");
     const group = await context.db("memory_conflicts").where({ id: args.id }).first();
     const target = group ? memoryContextOf(group.context) : undefined;
-    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    if (!target) throw new Error("Not allowed");
     const suggester = await makeMergeSuggester({ modelId: await firstAgentModel(context.db, target.id), user: context.user });
     return suggestMerge({ db: context.db, context: target, id: args.id, suggester });
   };
