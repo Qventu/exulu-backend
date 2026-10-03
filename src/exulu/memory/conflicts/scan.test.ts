@@ -83,6 +83,54 @@ describe("runScan", () => {
     expect(closes).toEqual([expect.objectContaining({ where: expect.objectContaining({ id__in: ["g2"] }), patch: expect.objectContaining({ status: "resolved", resolution: null }) })]);
   });
 
+  it("reopens a machine-closed group (resolved, no human resolution) that the scan reproduces", async () => {
+    const db = fakeDb({
+      pairs: [{ a_id: "c", b_id: "d", similarity: 0.8 }],
+      items: [{ id: "c" }, { id: "d" }],
+      judgements: [{ key: "mem:c,d", verdict: "contradict", reason: "stored" }],
+      conflicts: [{ id: "g3", key: "mem:contradiction:c,d", status: "resolved", resolution: null }],
+    });
+    const judge = stubJudge({});
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge, now: NOW });
+    expect(judge).not.toHaveBeenCalled();
+    const reopens = db.__writes.filter((w: any) => w.op === "update" && w.table === "memory_conflicts");
+    expect(reopens).toEqual([expect.objectContaining({
+      where: expect.objectContaining({ id: "g3" }),
+      patch: expect.objectContaining({ status: "open", resolved_at: null, resolved_by: null }),
+    })]);
+    expect(out.open).toBe(1);
+  });
+
+  it("leaves a resolved group with a human resolution untouched even when the scan reproduces it", async () => {
+    const db = fakeDb({
+      pairs: [{ a_id: "c", b_id: "d", similarity: 0.8 }],
+      items: [{ id: "c" }, { id: "d" }],
+      judgements: [{ key: "mem:c,d", verdict: "contradict", reason: "stored" }],
+      conflicts: [{ id: "g4", key: "mem:contradiction:c,d", status: "resolved", resolution: "merged" }],
+    });
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(db.__writes.filter((w: any) => w.op === "update" && w.table === "memory_conflicts")).toEqual([]);
+    expect(db.__writes.filter((w: any) => w.op === "insert" && w.table === "memory_conflicts")).toEqual([]);
+    expect(out.open).toBe(0);
+  });
+
+  it("caps the pairs fetched per scan and reports the dropped pair as skipped", async () => {
+    const pairs = Array.from({ length: 5001 }, (_, i) => ({ a_id: `t${i}a`, b_id: `t${i}b`, similarity: 0.5 }));
+    const db = fakeDb({ pairs, items: [], itemCount: 10 });
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(out).toMatchObject({ duplicateGroups: 0, contradictionGroups: 0, judged: 0, unjudged: 0, skipped: 1 });
+  });
+
+  it("inserts large result sets of new groups in chunks of 500", async () => {
+    const pairs = Array.from({ length: 1200 }, (_, i) => ({ a_id: `x${i}a`, b_id: `x${i}b`, similarity: 0.9 }));
+    const db = fakeDb({ pairs, items: [], itemCount: 10 });
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(out.duplicateGroups).toBe(1200);
+    const conflictInserts = db.__writes.filter((w: any) => w.op === "insert" && w.table === "memory_conflicts");
+    expect(conflictInserts).toHaveLength(3);
+    expect(conflictInserts.map((w: any) => w.rows.length)).toEqual([500, 500, 200]);
+  });
+
   it("caps judge calls per scan and reports the rest as unjudged; a failing judge leaves the pair unjudged", async () => {
     const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     try {

@@ -9,7 +9,8 @@ export type Judge = (a: string, b: string) => Promise<Judgement>;
 
 const schema = z.object({
   verdict: z.enum(["same", "contradict", "compatible"]),
-  reason: z.string().max(160),
+  // No .max(160) here: an over-long reason must not fail the whole call — truncate after.
+  reason: z.string(),
 });
 
 const SYSTEM = `You compare two short memories an assistant saved from conversations.
@@ -29,7 +30,7 @@ export async function makeModelJudge({ modelId, user }: { modelId: string; user?
       maxRetries: 1,
       output: Output.object({ schema }),
     });
-    return { verdict: output.verdict, reason: output.reason };
+    return { verdict: output.verdict, reason: output.reason.slice(0, 160) };
   };
 }
 
@@ -43,7 +44,7 @@ export async function makeMergeSuggester({ modelId, user }: { modelId: string; u
       system: "You merge near-duplicate memories into one. Keep every fact, drop repetition, keep the memories' language and tone, ≤ 400 characters. Answer with JSON { information }.",
       prompt: members.map((m, i) => `Memory ${i + 1}:\n${m.information}`).join("\n\n"),
       maxRetries: 1,
-      output: Output.object({ schema: z.object({ information: z.string().min(1).max(600) }) }),
+      output: Output.object({ schema: z.object({ information: z.string().min(1).max(400) }) }),
     });
     const types = members.map((m) => m.type).filter((t): t is string => !!t);
     const type = types.length ? [...types].sort((x, y) => types.filter((t) => t === y).length - types.filter((t) => t === x).length)[0] ?? null : null;
