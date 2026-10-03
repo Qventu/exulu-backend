@@ -30,7 +30,7 @@ import { createKbEditorPickerTool } from "@SRC/templates/tools/context-write-too
 import { GraphQLDate } from "@SRC/graphql/types";
 import { resolveAvailableQueues } from "@SRC/graphql/available-queues";
 import { getRequestedFields } from "@SRC/graphql/resolvers/utils";
-import { applyAccessControl, hasAgentsReadAccess } from "@SRC/graphql/utilities/access-control";
+import { applyAccessControl, hasAgentsReadAccess, hasAgentsWriteAccess } from "@SRC/graphql/utilities/access-control";
 import { RBACResolver } from "../../../ee/rbac-resolver.ts";
 import { createQueries } from "@SRC/graphql/resolvers";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
@@ -80,6 +80,10 @@ import { memoryBaseStats } from "@SRC/graphql/resolvers/memory-base-stats";
 import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contributors";
 import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
+import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
+import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
+import { runScan } from "@SRC/exulu/memory/conflicts/scan";
+import { makeMergeSuggester, makeModelJudge } from "@SRC/exulu/memory/conflicts/judge";
 
 /* 
 Auto generate schemas based on Exulu Table definitions in core-schema.ts
@@ -737,6 +741,9 @@ type PageInfo {
     memoryUsage(contextId: ID!, memoryId: ID!, limit: Int = 5): MemoryUsage
     memoryBaseUsage(contextId: ID!, staleDays: Int = 90): MemoryBaseUsage
     memoryBaseUnusedIds(contextId: ID!, mode: MemoryUnusedMode!, staleDays: Int = 90): [ID!]!
+    memoryConflicts(contextId: ID!): [MemoryConflict!]!
+    memoryConflictCounts(contextId: ID!): MemoryConflictCounts
+    memoryConflictsForMemory(contextId: ID!, memoryId: ID!): MemoryConflictsForMemory
     `;
 
   typeDefs += `
@@ -757,6 +764,12 @@ type PageInfo {
 
   mutationDefs += `
     setTranscriptsSettings(input: TranscriptsSettingsInput!): TranscriptsSettingsInfo!
+    `;
+
+  mutationDefs += `
+    memoryConflictsScan(contextId: ID!): MemoryConflictScanResult!
+    memoryConflictResolve(id: ID!, action: MemoryConflictAction!, keepId: ID, merged: MemoryMergeInput): MemoryConflict!
+    memoryConflictSuggestMerge(id: ID!): MemoryMergeSuggestion!
     `;
 
   modelDefs += `
@@ -2666,6 +2679,48 @@ type EmbeddingModelOption {
     return memoryBaseUnusedIds({ db: context.db, context: target, mode: args.mode, staleDays: args.staleDays ?? 90 });
   };
 
+  const firstAgentModel = async (db: any, contextId: string): Promise<string> => {
+    const agent = await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select("model").first();
+    if (!agent?.model) throw new Error("No agent with a model uses this memory base; a conflict scan needs one");
+    return agent.model;
+  };
+  resolvers.Query["memoryConflicts"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return [];
+    return memoryConflicts({ db: context.db, context: target });
+  };
+  resolvers.Query["memoryConflictCounts"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryConflictCounts({ db: context.db, context: target });
+  };
+  resolvers.Query["memoryConflictsForMemory"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsReadAccess(context.user) || !target) return null;
+    return memoryConflictsForMemory({ db: context.db, context: target, memoryId: args.memoryId });
+  };
+  resolvers.Mutation["memoryConflictsScan"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    const judge = await makeModelJudge({ modelId: await firstAgentModel(context.db, target.id), user: context.user });
+    return runScan({ db: context.db, context: target, user: context.user, judge });
+  };
+  resolvers.Mutation["memoryConflictResolve"] = async (_, args, context) => {
+    const group = await context.db("memory_conflicts").where({ id: args.id }).first();
+    const target = group ? memoryContextOf(group.context) : undefined;
+    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    await resolveConflict({ db: context.db, context: target, config, user: context.user, id: args.id, action: args.action, keepId: args.keepId, merged: args.merged });
+    const row = await context.db("memory_conflicts").where({ id: args.id }).first();
+    return hydrateConflictRow(context.db, target, row);
+  };
+  resolvers.Mutation["memoryConflictSuggestMerge"] = async (_, args, context) => {
+    const group = await context.db("memory_conflicts").where({ id: args.id }).first();
+    const target = group ? memoryContextOf(group.context) : undefined;
+    if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
+    const suggester = await makeMergeSuggester({ modelId: await firstAgentModel(context.db, target.id), user: context.user });
+    return suggestMerge({ db: context.db, context: target, id: args.id, suggester });
+  };
+
   resolvers.Query["tools"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     const { search, category, limit = 100, page = 0 } = args;
@@ -3056,6 +3111,14 @@ type MemoryBaseUsage {
     newPerWeek: [MemoryWeekBucket!]!
 }
 enum MemoryUnusedMode { NEVER  STALE }
+enum MemoryConflictAction { KEEP  MERGE  NOT_CONFLICT }
+input MemoryMergeInput { information: String!  type: String }
+type MemoryConflictMember { id: ID!  information: String!  type: String  author: MemoryBaseUser  createdAt: String!  usedCount: Int! }
+type MemoryConflict { id: ID!  kind: String!  status: String!  similarity: Float!  reason: String  members: [MemoryConflictMember!]!  scannedAt: String!  resolvedAt: String  resolution: String  mergedInto: ID }
+type MemoryConflictCounts { open: Int!  memoriesInvolved: Int!  lastScanAt: String }
+type MemoryConflictsForMemory { open: [MemoryConflict!]!  mergedFrom: [MemoryConflictMember!]! }
+type MemoryConflictScanResult { open: Int!  duplicateGroups: Int!  contradictionGroups: Int!  judged: Int!  unjudged: Int!  skipped: Int!  scannedAt: String! }
+type MemoryMergeSuggestion { information: String!  type: String }
 type Reranker {
     id: ID!
     name: String!
