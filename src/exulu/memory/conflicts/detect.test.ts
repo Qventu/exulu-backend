@@ -36,4 +36,10 @@ describe("groupDuplicates", () => {
     const two = groupDuplicates([p("c", "b", 0.92), p("b", "a", 0.9)], 6).groups;
     expect(one).toEqual(two);
   });
+  it("is orientation-independent: identical similarity pairs tie-break by canonical orientation", () => {
+    const one = groupDuplicates([p("a", "m", 0.9), p("a", "z", 0.9)], 2);
+    const two = groupDuplicates([p("m", "a", 0.9), p("a", "z", 0.9)], 2);
+    expect(one.groups).toEqual(two.groups);
+    expect(one.leftover).toEqual(two.leftover);
+  });
 });

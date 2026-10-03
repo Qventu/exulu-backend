@@ -25,6 +25,7 @@ export function splitBands(pairs: Pair[]): { duplicatePairs: Pair[]; candidatePa
  * the next scan. Output is sorted (members and groups) so keys are stable.
  */
 export function groupDuplicates(pairs: Pair[], cap: number): { groups: DuplicateGroup[]; leftover: Pair[] } {
+  const pairTieKey = (p: Pair): string => sortIds([p.a, p.b]).join(" ");
   const parent = new Map<string, string>();
   const find = (x: string): string => {
     if (!parent.has(x)) parent.set(x, x);
@@ -46,7 +47,7 @@ export function groupDuplicates(pairs: Pair[], cap: number): { groups: Duplicate
   const groups: DuplicateGroup[] = [];
   const leftover: Pair[] = [];
   for (const componentPairs of byRoot.values()) {
-    const sorted = [...componentPairs].sort((x, y) => y.similarity - x.similarity || `${x.a}${x.b}`.localeCompare(`${y.a}${y.b}`));
+    const sorted = [...componentPairs].sort((x, y) => y.similarity - x.similarity || pairTieKey(x).localeCompare(pairTieKey(y)));
     const members = new Set<string>();
     for (const pair of sorted) {
       const fresh = [pair.a, pair.b].filter((id) => !members.has(id)).length;
@@ -56,6 +57,6 @@ export function groupDuplicates(pairs: Pair[], cap: number): { groups: Duplicate
     groups.push({ members: sortIds([...members]), similarity: sorted[0]!.similarity });
   }
   groups.sort((x, y) => x.members[0]!.localeCompare(y.members[0]!));
-  leftover.sort((x, y) => `${x.a}${x.b}`.localeCompare(`${y.a}${y.b}`));
+  leftover.sort((x, y) => pairTieKey(x).localeCompare(pairTieKey(y)));
   return { groups, leftover };
 }
