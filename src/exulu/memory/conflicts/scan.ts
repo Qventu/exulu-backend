@@ -3,7 +3,7 @@ import type { ExuluContext } from "@SRC/exulu/context";
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import { groupDuplicates, groupKey, pairKey, sortIds, splitBands, type Pair } from "./detect";
 import type { Judge, Judgement } from "./judge";
-import { CANDIDATE_MIN_SIMILARITY, GROUP_MAX_MEMBERS, JUDGE_CALLS_PER_SCAN, SCAN_MAX_MEMORIES, SCAN_MAX_PAIRS } from "./thresholds";
+import { CANDIDATE_MIN_SIMILARITY, GROUP_MAX_MEMBERS, JUDGE_CALLS_PER_SCAN, JUDGE_CONCURRENCY, JUDGE_TIMEOUT_MS, SCAN_MAX_MEMORIES, SCAN_MAX_PAIRS } from "./thresholds";
 
 export type { Judge, Judgement };
 export type ScanResult = { open: number; duplicateGroups: number; contradictionGroups: number; judged: number; unjudged: number; skipped: number; scannedAt: string };
@@ -12,6 +12,19 @@ export type ScanResult = { open: number; duplicateGroups: number; contradictionG
 const INSERT_CHUNK = 500;
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
+
+/** Runs `worker` over `items` with at most `limit` in flight, in order. */
+const pool = async <T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> => {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      await worker(items[index]!);
+    }
+  });
+  await Promise.all(runners);
+};
 
 const insertInChunks = async (db: any, table: string, rows: any[]): Promise<void> => {
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
@@ -62,29 +75,45 @@ export async function runScan({ db, context, user, judge, now = new Date() }: { 
   const samePairs: Pair[] = [];
   const contradictions: { pair: Pair; reason: string }[] = [];
   const newJudgements: { key: string; verdict: string; reason: string }[] = [];
-  let judged = 0, unjudged = 0, calls = 0;
+  let judged = 0, unjudged = 0;
+
+  // Candidate pairs already inside one duplicate component need no judge: they
+  // end up in the same group either way (spec §3.3). Build the components from
+  // the duplicate band first, skip those pairs, and regroup below once the
+  // judge's `same` verdicts are in.
+  const component = new Map<string, number>();
+  groupDuplicates(duplicatePairs, GROUP_MAX_MEMBERS).groups.forEach((g, i) => { for (const m of g.members) component.set(m, i); });
+  const openCandidates = candidatePairs.filter((p) => !(component.has(p.a) && component.get(p.a) === component.get(p.b)));
+
   const wordings = new Map<string, string>();
-  const needWording = candidatePairs.filter((p) => !known.has(pairKey(context.id, p.a, p.b)));
-  if (needWording.length) {
-    const ids = [...new Set(needWording.flatMap((p) => [p.a, p.b]))];
+  const needJudgement = openCandidates.filter((p) => !known.has(pairKey(context.id, p.a, p.b)));
+  if (needJudgement.length) {
+    const ids = [...new Set(needJudgement.flatMap((p) => [p.a, p.b]))];
     for (const row of await db(items).whereIn("id", ids).select("id", "information")) wordings.set(row.id, String(row.information ?? ""));
   }
-  for (const pair of candidatePairs) {
+  // Most similar first (the pairs query orders by similarity), capped per scan;
+  // the rest are reported as unjudged. The pool keeps a handful of calls in
+  // flight so a scan does not sit on the request path one call at a time, and
+  // each call carries its own deadline — a timeout leaves the pair unjudged.
+  const toJudge = needJudgement.slice(0, JUDGE_CALLS_PER_SCAN);
+  unjudged += needJudgement.length - toJudge.length;
+  const fresh = new Map<string, Judgement>();
+  await pool(toJudge, JUDGE_CONCURRENCY, async (pair) => {
     const key = pairKey(context.id, pair.a, pair.b);
-    let verdict = known.get(key);
-    if (!verdict) {
-      if (calls >= JUDGE_CALLS_PER_SCAN) { unjudged += 1; continue; }
-      calls += 1;
-      try {
-        verdict = await judge(wordings.get(pair.a) ?? "", wordings.get(pair.b) ?? "");
-        judged += 1;
-        newJudgements.push({ key, verdict: verdict.verdict, reason: verdict.reason });
-      } catch (e) {
-        console.error("[EXULU] conflict judge failed", e instanceof Error ? e.message : String(e));
-        unjudged += 1;
-        continue;
-      }
+    try {
+      const verdict = await judge(wordings.get(pair.a) ?? "", wordings.get(pair.b) ?? "", AbortSignal.timeout(JUDGE_TIMEOUT_MS));
+      fresh.set(key, verdict);
+      judged += 1;
+      newJudgements.push({ key, verdict: verdict.verdict, reason: verdict.reason });
+    } catch (e) {
+      console.error("[EXULU] conflict judge failed", e instanceof Error ? e.message : String(e));
+      unjudged += 1;
     }
+  });
+  for (const pair of openCandidates) {
+    const key = pairKey(context.id, pair.a, pair.b);
+    const verdict = known.get(key) ?? fresh.get(key);
+    if (!verdict) continue;
     if (verdict.verdict === "same") samePairs.push(pair);
     else if (verdict.verdict === "contradict") contradictions.push({ pair, reason: verdict.reason });
   }
@@ -128,11 +157,20 @@ export async function runScan({ db, context, user, judge, now = new Date() }: { 
     return false; // new, already open, or machine-closed and just reopened above
   };
 
-  return {
+  const result: ScanResult = {
     open: [...produced.keys()].filter((k) => !stillClosed(k)).length,
     duplicateGroups: groups.length,
     contradictionGroups: contradictions.length,
     judged, unjudged, skipped: leftover.length + (truncated ? 1 : 0),
     scannedAt: now.toISOString(),
   };
+
+  // One row per base: a clean scan leaves no open group, so without this marker
+  // the page could not tell "never scanned" from "scanned, nothing found".
+  await db("memory_conflict_scans")
+    .insert({ context: context.id, scanned_at: now, open: result.open, judged, unjudged, skipped: result.skipped })
+    .onConflict("context")
+    .merge();
+
+  return result;
 }

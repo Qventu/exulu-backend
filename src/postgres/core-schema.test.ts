@@ -91,4 +91,13 @@ describe("memory conflict schemas", () => {
     expect(byName.reason).toMatchObject({ type: "text" });
     expect(byName.judged_at).toMatchObject({ type: "date", required: true });
   });
+  test("memory_conflict_scans keeps one dated row per base", () => {
+    const schema = coreSchemas.get().memoryConflictScansSchema();
+    expect(schema.name).toEqual({ plural: "memory_conflict_scans", singular: "memory_conflict_scan" });
+    expect(schema.RBAC).toBeFalsy();
+    const byName = Object.fromEntries(schema.fields.map((f) => [f.name, f]));
+    expect(byName.context).toMatchObject({ type: "text", required: true, unique: true });
+    expect(byName.scanned_at).toMatchObject({ type: "date", required: true });
+    for (const field of ["open", "judged", "unjudged", "skipped"]) expect(byName[field]).toMatchObject({ type: "number" });
+  });
 });

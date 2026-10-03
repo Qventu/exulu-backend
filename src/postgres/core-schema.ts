@@ -760,6 +760,24 @@ const memoryJudgementsSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * One row per memory base: the last conflict scan and what it found. A clean
+ * scan leaves no open group, so this marker is the only way the page can tell
+ * "never scanned" from "scanned, nothing found".
+ */
+const memoryConflictScansSchema: ExuluTableDefinition = {
+  type: "memory_conflict_scans",
+  name: { plural: "memory_conflict_scans", singular: "memory_conflict_scan" },
+  fields: [
+    { name: "context", type: "text", required: true, unique: true },
+    { name: "scanned_at", type: "date", required: true },
+    { name: "open", type: "number" },
+    { name: "judged", type: "number" },
+    { name: "unjudged", type: "number" },
+    { name: "skipped", type: "number" },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -1025,6 +1043,7 @@ export const coreSchemas = {
       memoryUsagesSchema: (): ExuluTableDefinition => addCoreFields(memoryUsagesSchema),
       memoryConflictsSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictsSchema),
       memoryJudgementsSchema: (): ExuluTableDefinition => addCoreFields(memoryJudgementsSchema),
+      memoryConflictScansSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictScansSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),

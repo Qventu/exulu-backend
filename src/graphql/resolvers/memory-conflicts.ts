@@ -13,7 +13,10 @@ const parseMembers = (raw: unknown): string[] => (Array.isArray(raw) ? raw : JSO
 async function hydrate(db: any, context: ExuluContext, rows: any[], opts: { includeArchived?: boolean } = {}): Promise<Conflict[]> {
   const ids = [...new Set(rows.flatMap((r) => parseMembers(r.members)))];
   if (ids.length === 0) return [];
-  let q = db(getTableName(context.id)).whereIn("id", ids).select("id", "information", "type", "created_by", "createdAt", "archived");
+  // Public rows only: a member made private after the scan must disappear from
+  // its group (and from `mergedFrom`) instead of showing private wording to
+  // everyone who can read the base.
+  let q = db(getTableName(context.id)).whereIn("id", ids).where("rights_mode", "public").select("id", "information", "type", "created_by", "createdAt", "archived");
   if (!opts.includeArchived) q = q.whereNot("archived", true);
   const items: any[] = await q;
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -43,7 +46,13 @@ export async function memoryConflicts({ db, context }: { db: any; context: Exulu
 export async function memoryConflictCounts({ db, context }: { db: any; context: ExuluContext }) {
   if (!(await db.schema.hasTable("memory_conflicts"))) return { open: 0, memoriesInvolved: 0, lastScanAt: null };
   const rows: any[] = await db("memory_conflicts").where({ context: context.id, status: "open" }).select("members", "scanned_at");
-  const last = await db("memory_conflicts").where("context", context.id).max("scanned_at as last").first();
+  // The scan's own marker (memory_conflict_scans), so a scan that found nothing
+  // still dates itself. Older bases scanned before that table existed fall back
+  // to the newest group the scan touched.
+  const scan = (await db.schema.hasTable("memory_conflict_scans"))
+    ? await db("memory_conflict_scans").where("context", context.id).select("scanned_at").first()
+    : null;
+  const last = scan?.scanned_at ? { last: scan.scanned_at } : await db("memory_conflicts").where("context", context.id).max("scanned_at as last").first();
   const involved = new Set(rows.flatMap((r) => parseMembers(r.members)));
   const newestOpen = rows.length ? new Date(Math.max(...rows.map((r) => new Date(r.scanned_at).getTime()))) : null;
   return { open: rows.length, memoriesInvolved: involved.size, lastScanAt: iso(last?.last) ?? (newestOpen ? newestOpen.toISOString() : null) };

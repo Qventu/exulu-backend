@@ -2679,12 +2679,14 @@ type EmbeddingModelOption {
     return memoryBaseUnusedIds({ db: context.db, context: target, mode: args.mode, staleDays: args.staleDays ?? 90 });
   };
 
-  const firstAgentModel = async (db: any, contextId: string): Promise<string> => {
+  /** The agent whose model backs the scan's judge and the merge suggestion; also carries the spend tags. */
+  const firstAgentModel = async (db: any, contextId: string): Promise<{ id: string; name: string; model: string }> => {
+    const cols = ["id", "name", "model"];
     const agent =
-      (await db("agents").where("memory", contextId).where("active", true).orderBy("createdAt", "asc").select("model").first()) ??
-      (await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select("model").first());
+      (await db("agents").where("memory", contextId).where("active", true).orderBy("createdAt", "asc").select(cols).first()) ??
+      (await db("agents").where("memory", contextId).orderBy("createdAt", "asc").select(cols).first());
     if (!agent?.model) throw new Error("No agent with a model uses this memory base; the conflict scan and the merge suggestion need one");
-    return agent.model;
+    return { id: String(agent.id), name: String(agent.name ?? ""), model: String(agent.model) };
   };
   resolvers.Query["memoryConflicts"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
@@ -2704,7 +2706,8 @@ type EmbeddingModelOption {
   resolvers.Mutation["memoryConflictsScan"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
     if (!hasAgentsWriteAccess(context.user) || !target) throw new Error("Not allowed");
-    const judge = await makeModelJudge({ modelId: await firstAgentModel(context.db, target.id), user: context.user });
+    const agent = await firstAgentModel(context.db, target.id);
+    const judge = await makeModelJudge({ modelId: agent.model, agent, user: context.user });
     return runScan({ db: context.db, context: target, user: context.user, judge });
   };
   resolvers.Mutation["memoryConflictResolve"] = async (_, args, context) => {
@@ -2723,7 +2726,8 @@ type EmbeddingModelOption {
     const group = await context.db("memory_conflicts").where({ id: args.id }).first();
     const target = group ? memoryContextOf(group.context) : undefined;
     if (!target) throw new Error("Not allowed");
-    const suggester = await makeMergeSuggester({ modelId: await firstAgentModel(context.db, target.id), user: context.user });
+    const agent = await firstAgentModel(context.db, target.id);
+    const suggester = await makeMergeSuggester({ modelId: agent.model, agent, user: context.user });
     return suggestMerge({ db: context.db, context: target, id: args.id, suggester });
   };
 

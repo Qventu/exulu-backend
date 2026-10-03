@@ -54,12 +54,13 @@ Remembers judged pairs so a rescan never asks the model twice: `context` (index)
 4. **Judge**: one `generateText` with `Output.object({ verdict: enum same|contradict|compatible, reason: string ≤ 160 chars })`, temperature 0, the model of the first agent using the base, resolved through `resolveModel({ modelId: agent.model, agent, user, rbacBypass: true })` (the entity extractor's pattern). The prompt carries the two wordings only — no authors, no ids. `same` adds the pair to the duplicate groups; `contradict` becomes a `contradiction` group; `compatible` is stored and never shown. A failed call leaves the pair unjudged (not stored).
 5. **Upsert** by `key`: new keys → `open` with `scanned_at`; existing `open` rows → `similarity`/`reason`/`scanned_at` refreshed; `dismissed`/`resolved` rows untouched. Open groups of this base whose key was **not** produced by this scan (a member archived, deleted, made private, or re-worded) are closed by the scan: `status = resolved`, `resolution = null`, `resolved_at = now` — nobody decided anything. Such machine-closed groups **reopen** when a later scan produces their key again (the memory came back or was re-shared); groups a person resolved or dismissed never reopen. The pairs query is bounded (`SCAN_MAX_PAIRS = 5000`, most similar first); when it hits the bound the result's `skipped` signals that another scan is needed.
 6. **Result**: `{ open, duplicateGroups, contradictionGroups, judged, unjudged, skipped }` plus `scannedAt`.
+7. **Last-scan marker**: every scan upserts one row per base in `memory_conflict_scans` (`context` unique, `scanned_at`, `open`, `judged`, `unjudged`, `skipped`). A clean scan leaves no open group, so this row is what tells "never scanned" from "scanned, nothing found"; `memoryConflictCounts.lastScanAt` reads it and falls back to the newest group's `scanned_at` for bases scanned before the table existed.
 
 Thresholds (0.70 / 0.88, cap 40, group cap 6, base cap 2,000) live as constants in `src/exulu/memory/conflicts/thresholds.ts`.
 
 ## 4. Resolution API
 
-All mutations require agents write **and** `canEditMemory` (sub-project 1's rule: creator, super admin, or an explicit write grant) on **every** member; otherwise the error names the first member the user may not change.
+All mutations (keep, merge, not a conflict) require agents write **and** `canEditMemory` (sub-project 1's rule: creator, super admin, or an explicit write grant) on **every** member; otherwise the error names the first member the user may not change. A member that is no longer `public` (made private after the scan) refuses every action with "run a scan to refresh the conflicts" before any side effect.
 
 ```graphql
 enum MemoryConflictAction { KEEP  MERGE  NOT_CONFLICT }

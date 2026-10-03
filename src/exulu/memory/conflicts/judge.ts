@@ -1,11 +1,15 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import type { ExuluAgent } from "@EXULU_TYPES/models/agent";
 import type { User } from "@EXULU_TYPES/models/user";
 import { resolveModel } from "@SRC/exulu/resolve-model";
 
 export type Verdict = "same" | "contradict" | "compatible";
 export type Judgement = { verdict: Verdict; reason: string };
-export type Judge = (a: string, b: string) => Promise<Judgement>;
+/** `signal` carries the caller's per-call deadline (scan.ts); an aborted call leaves the pair unjudged. */
+export type Judge = (a: string, b: string, signal?: AbortSignal) => Promise<Judgement>;
+/** The agent whose model is used, for the spend tags (`agent_id_`/`agent_name_`); only id and name are read. */
+export type JudgeAgent = Pick<ExuluAgent, "id" | "name" | "model">;
 
 const schema = z.object({
   verdict: z.enum(["same", "contradict", "compatible"]),
@@ -19,15 +23,16 @@ Answer with JSON: verdict = "same" when both state the same fact or instruction 
 "compatible" otherwise (different facts, or one is a special case of the other). reason: one sentence, ≤ 160 characters, in the memories' language.`;
 
 /** The model of the first agent using the base, resolved like the entity extractor does. */
-export async function makeModelJudge({ modelId, user }: { modelId: string; user?: User }): Promise<Judge> {
-  const { languageModel } = await resolveModel({ modelId, user, rbacBypass: true });
-  return async (a, b) => {
+export async function makeModelJudge({ modelId, agent, user }: { modelId: string; agent?: JudgeAgent; user?: User }): Promise<Judge> {
+  const { languageModel } = await resolveModel({ modelId, agent: agent as ExuluAgent | undefined, user, rbacBypass: true });
+  return async (a, b, signal) => {
     const { output } = await generateText({
       temperature: 0,
       model: languageModel,
       system: SYSTEM,
       prompt: `Memory A:\n${a}\n\nMemory B:\n${b}`,
       maxRetries: 1,
+      ...(signal ? { abortSignal: signal } : {}),
       output: Output.object({ schema }),
     });
     return { verdict: output.verdict, reason: output.reason.slice(0, 160) };
@@ -35,8 +40,8 @@ export async function makeModelJudge({ modelId, user }: { modelId: string; user?
 }
 
 /** Suggested wording for a merge (spec §4); same model, one call. */
-export async function makeMergeSuggester({ modelId, user }: { modelId: string; user?: User }) {
-  const { languageModel } = await resolveModel({ modelId, user, rbacBypass: true });
+export async function makeMergeSuggester({ modelId, agent, user }: { modelId: string; agent?: JudgeAgent; user?: User }) {
+  const { languageModel } = await resolveModel({ modelId, agent: agent as ExuluAgent | undefined, user, rbacBypass: true });
   return async (members: { information: string; type?: string | null }[]): Promise<{ information: string; type: string | null }> => {
     const { output } = await generateText({
       temperature: 0,

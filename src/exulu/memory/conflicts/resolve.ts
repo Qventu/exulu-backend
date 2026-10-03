@@ -17,7 +17,9 @@ const parseMembers = (raw: unknown): string[] => (Array.isArray(raw) ? raw : JSO
 async function loadGroup(db: any, context: ExuluContext, id: string) {
   const group = await db("memory_conflicts").where({ id, context: context.id }).first();
   if (!group) throw new Error(`Conflict ${id} not found`);
-  if (group.status !== "open") throw new Error(`Conflict ${id} is not open`);
+  // `merging` is a MERGE claim (see below) that never got its merged_into: the
+  // group is still undecided, so it resolves like an open one.
+  if (group.status !== "open" && group.status !== "merging") throw new Error(`Conflict ${id} is not open`);
   return { ...group, members: parseMembers(group.members) };
 }
 
@@ -27,17 +29,45 @@ async function assertWritable(db: any, context: ExuluContext, rows: any[], user:
   }
 }
 
-async function archiveMembers(context: ExuluContext, config: ExuluConfig, user: User, rows: any[], except?: string | null) {
+/**
+ * A member made private after the scan must not be resolvable: keeping it would
+ * archive a public sibling against a decision taken on a memory the group may
+ * no longer show, and merging would copy private wording into a public memory.
+ */
+function assertPublic(rows: any[]) {
+  for (const row of rows) {
+    if (row.rights_mode !== "public") throw new Error(`Memory ${row.id} is no longer public; run a scan to refresh the conflicts`);
+  }
+}
+
+/** Archives every row but `except`, returning the ids actually archived. */
+async function archiveMembers(context: ExuluContext, config: ExuluConfig, user: User, rows: any[], except?: string | null): Promise<string[]> {
+  const archived: string[] = [];
   for (const row of rows) {
     if (row.id === except || row.archived === true) continue;
     await context.updateItem({ id: row.id, archived: true } as any, config, user.id, user.role?.id, false, false);
+    archived.push(row.id);
   }
+  return archived;
 }
 
 async function dropJudgements(db: any, context: ExuluContext, memberIds: string[]) {
   // every judgement key containing one of the members: keys are "<ctx>:<a>,<b>"
   const likes = memberIds.map((id) => `%${id}%`);
   for (const like of likes) await db("memory_judgements").where("context", context.id).whereRaw("key LIKE ?", [like]).del();
+}
+
+/**
+ * A memory archived by this resolution can still sit in other open groups of the
+ * base. Those groups would show one live member (the page hides them) while the
+ * counts keep counting them, so close them the way a scan would: machine-closed,
+ * no human resolution, and they reopen if the memory ever comes back.
+ */
+async function closeGroupsWithArchivedMembers(db: any, context: ExuluContext, id: string, archivedIds: string[], now: Date) {
+  if (!archivedIds.length) return;
+  const others: any[] = await db("memory_conflicts").where({ context: context.id, status: "open" }).whereNot("id", id).select("id", "members");
+  const stale = others.filter((r) => parseMembers(r.members).some((m) => archivedIds.includes(m))).map((r) => r.id);
+  if (stale.length) await db("memory_conflicts").whereIn("id", stale).update({ status: "resolved", resolution: null, resolved_at: now, scanned_at: now });
 }
 
 export async function resolveConflict(input: ResolveInput): Promise<any> {
@@ -47,17 +77,19 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
   const rows: any[] = await db(items).whereIn("id", group.members).select("id", "information", "type", "rights_mode", "created_by", "archived");
   const now = new Date();
 
+  assertPublic(rows);
+  await assertWritable(db, context, rows, user);
+
   if (action === "NOT_CONFLICT") {
     await db("memory_conflicts").where({ id }).update({ status: "dismissed", resolution: "not_conflict", resolved_by: user.id, resolved_at: now });
     return { ...group, status: "dismissed", resolution: "not_conflict" };
   }
 
-  await assertWritable(db, context, rows, user);
-
   if (action === "KEEP") {
     if (!input.keepId || !group.members.includes(input.keepId)) throw new Error("keepId must be a member of the conflict");
-    await archiveMembers(context, config, user, rows, input.keepId);
+    const archived = await archiveMembers(context, config, user, rows, input.keepId);
     await dropJudgements(db, context, group.members.filter((m: string) => m !== input.keepId));
+    await closeGroupsWithArchivedMembers(db, context, id, archived, now);
     await db("memory_conflicts").where({ id }).update({ status: "resolved", resolution: "keep", resolved_by: user.id, resolved_at: now });
     return { ...group, status: "resolved", resolution: "keep" };
   }
@@ -66,24 +98,38 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
   if (group.kind !== "duplicate") throw new Error("Only duplicate groups can be merged");
   if (!input.merged?.information?.trim()) throw new Error("merged.information is required");
   const information = input.merged.information.trim();
-  const types = rows.map((r) => r.type).filter((t): t is string => !!t);
-  const type = input.merged.type ?? (types.length && types.every((t) => t === types[0]) ? types[0] : undefined);
-  const authorIds = [...new Set(rows.map((r) => creatorId(r.created_by)).filter((x): x is number => x !== null))];
-  const authors = authorIds.length ? await db("users").whereIn("id", authorIds).select("id", "firstname", "lastname", "email") : [];
-  const names = authors.map((u: any) => displayName(u));
-  const [me] = await db("users").whereIn("id", [user.id]).select("id", "firstname", "lastname", "email");
-  const description = `Merged from ${group.members.length} memories by ${me ? displayName(me) : user.id}${names.length ? `: ${names.join(", ")}` : ""}`;
 
-  const { item } = await context.createItem(
-    { name: information.slice(0, 80), information, ...(type ? { type } : {}), description, rights_mode: "public", created_by: user.id } as any,
-    config, user.id, user.role?.id, false,
-  );
-  const mergedId = item.id as string;
+  // A retried or concurrent MERGE must never create a second memory. An existing
+  // merged_into (a run that got past creation and then failed) is reused;
+  // otherwise the group is claimed with a compare-and-set before anything is
+  // created, so a second request in flight loses the claim and stops.
+  let mergedId: string = group.merged_into ?? "";
+  if (!mergedId) {
+    const claimed = await db("memory_conflicts").where({ id, status: "open", merged_into: null }).update({ status: "merging" });
+    if (!claimed) throw new Error("Conflict was resolved concurrently");
 
-  // Persist the link before touching usage/members: if anything below fails, the
-  // group stays open with merged_into set, so a retry (spec §6) finds the memory
-  // already created instead of orphaning it.
-  await db("memory_conflicts").where({ id }).update({ merged_into: mergedId });
+    const types = rows.map((r) => r.type).filter((t): t is string => !!t);
+    const commonType = types.length && types.every((t) => t === types[0]) ? types[0] : undefined;
+    // An explicit `type` wins, `null` included (it means "no type"); the members'
+    // common type is only a fallback for a request that left the key out.
+    const type = input.merged.type === undefined ? commonType : (input.merged.type ?? undefined);
+    const authorIds = [...new Set(rows.map((r) => creatorId(r.created_by)).filter((x): x is number => x !== null))];
+    const authors = authorIds.length ? await db("users").whereIn("id", authorIds).select("id", "firstname", "lastname", "email") : [];
+    const names = authors.map((u: any) => displayName(u));
+    const [me] = await db("users").whereIn("id", [user.id]).select("id", "firstname", "lastname", "email");
+    const description = `Merged from ${group.members.length} memories by ${me ? displayName(me) : user.id}${names.length ? `: ${names.join(", ")}` : ""}`;
+
+    const { item } = await context.createItem(
+      { name: information.slice(0, 80), information, ...(type ? { type } : {}), description, rights_mode: "public", created_by: user.id } as any,
+      config, user.id, user.role?.id, false,
+    );
+    mergedId = item.id as string;
+
+    // Link the memory to the group and release the claim: if anything below
+    // fails, the group is open again with merged_into set, so a retry (spec §6)
+    // finds the memory already created instead of orphaning it.
+    await db("memory_conflicts").where({ id }).update({ merged_into: mergedId, status: "open" });
+  }
 
   // Usage history follows the merged memory. recordMemoryUsage writes one row per
   // recalled memory per message, so near-duplicates recalled together already hold
@@ -100,8 +146,9 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
     ).del();
   await db("memory_usages").where("context", context.id).whereIn("memory_id", group.members).update({ memory_id: mergedId });
 
-  await archiveMembers(context, config, user, rows);
+  const archived = await archiveMembers(context, config, user, rows);
   await dropJudgements(db, context, group.members);
+  await closeGroupsWithArchivedMembers(db, context, id, archived, now);
   await db("memory_conflicts").where({ id }).update({ status: "resolved", resolution: "merge", resolved_by: user.id, resolved_at: now, merged_into: mergedId });
   return { ...group, status: "resolved", resolution: "merge", mergedInto: mergedId };
 }

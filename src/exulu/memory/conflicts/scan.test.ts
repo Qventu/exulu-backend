@@ -39,7 +39,13 @@ describe("runScan", () => {
     const db = fakeDb({ pairs: [], items: [{ id: "a" }] });
     const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
     expect(out).toMatchObject({ open: 0, duplicateGroups: 0, contradictionGroups: 0, judged: 0, unjudged: 0 });
-    expect(db.__writes.filter((w: any) => w.op === "insert")).toEqual([]);
+    expect(db.__writes.filter((w: any) => w.op === "insert" && w.table !== "memory_conflict_scans")).toEqual([]);
+    // A clean scan still dates itself: the marker is what tells "never scanned"
+    // from "scanned, nothing found".
+    expect(db.__writes).toContainEqual({
+      table: "memory_conflict_scans", op: "insert",
+      rows: { context: "mem", scanned_at: NOW, open: 0, judged: 0, unjudged: 0, skipped: 0 },
+    });
   });
 
   it("groups duplicates, judges the band once, stores judgements and upserts groups", async () => {
@@ -144,6 +150,35 @@ describe("runScan", () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it("judges the needed pairs through a pool, keeping at most four calls in flight", async () => {
+    const pairs = Array.from({ length: 8 }, (_, i) => ({ a_id: `a${i}`, b_id: `b${i}`, similarity: 0.8 - i * 0.001 }));
+    const items = pairs.flatMap((p) => [{ id: p.a_id, information: p.a_id }, { id: p.b_id, information: p.b_id }]);
+    let inFlight = 0, maxInFlight = 0;
+    const judge: Judge = jest.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return { verdict: "compatible", reason: "" };
+    });
+    const out = await runScan({ db: fakeDb({ pairs, items }), context, user: { id: 1 } as any, judge, now: NOW });
+    expect(judge).toHaveBeenCalledTimes(8);
+    expect(out).toMatchObject({ judged: 8, unjudged: 0 });
+    expect(maxInFlight).toBe(4);
+  });
+
+  it("skips candidate pairs whose members already sit in one duplicate group", async () => {
+    const db = fakeDb({
+      // a-b-c are one duplicate component; a-c is also a candidate pair and needs no judge
+      pairs: [{ a_id: "a", b_id: "b", similarity: 0.95 }, { a_id: "b", b_id: "c", similarity: 0.9 }, { a_id: "a", b_id: "c", similarity: 0.8 }],
+      items: ["a", "b", "c"].map((id) => ({ id, information: id })),
+    });
+    const judge = stubJudge({});
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge, now: NOW });
+    expect(judge).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ duplicateGroups: 1, judged: 0, unjudged: 0 });
   });
 
   it("refuses bases above the size cap", async () => {
