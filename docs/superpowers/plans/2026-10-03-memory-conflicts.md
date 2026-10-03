@@ -880,9 +880,19 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
   );
   const mergedId = item.id as string;
 
-  // Usage history follows the merged memory; rows that would collide on (message_id, memory_id) are dropped first.
+  // Record the link first so a failure below leaves the group open with merged_into set (spec §6 retry path).
+  await db("memory_conflicts").where({ id }).update({ merged_into: mergedId });
+
+  // Usage history follows the merged memory. Members recalled in the same answer share a message_id, so
+  // keep exactly one row per message among members ∪ merged (lowest id) before re-pointing — corrected
+  // 2026-10-03 after the Task 4 review: the original predicate tested the merged id, which no row has yet.
   await db("memory_usages").where("context", context.id).whereIn("memory_id", group.members)
-    .whereRaw(`EXISTS (SELECT 1 FROM memory_usages m2 WHERE m2.message_id = memory_usages.message_id AND m2.memory_id = ?)`, [mergedId]).del();
+    .whereRaw(
+      `EXISTS (SELECT 1 FROM memory_usages m2
+                WHERE m2.message_id = memory_usages.message_id
+                  AND (m2.memory_id = ? OR (m2.memory_id = ANY(?) AND m2.id < memory_usages.id)))`,
+      [mergedId, group.members],
+    ).del();
   await db("memory_usages").where("context", context.id).whereIn("memory_id", group.members).update({ memory_id: mergedId });
 
   await archiveMembers(context, config, user, rows);
