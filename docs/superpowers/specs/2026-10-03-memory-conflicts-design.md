@@ -72,7 +72,7 @@ memoryConflictSuggestMerge(id: ID!): MemoryMergeSuggestion!   # { information, t
 ```
 
 - `KEEP` (both kinds; `keepId` must be a member): every other member is archived through `context.updateItem({ id, archived: true }, config, user.id, role.id, false, false)` (no re-embed, no processor); status `resolved`, resolution `keep`.
-- `MERGE` (duplicates only): `context.createItem({ name: first 80 chars of the wording, information: merged.information, type: merged.type ?? the members' common type (else omitted), description: "Merged from N memories by <resolver>: <author names>", rights_mode: "public", created_by: user.id }, config, user.id, role.id, false)`; members archived as in KEEP; usage rows re-pointed: `update memory_usages set memory_id = <merged> where context = ? and memory_id in (members)` after deleting rows that would collide on (`message_id`, `memory_id`); `merged_into` set; status `resolved`, resolution `merge`. Judgements involving the members are deleted.
+- `MERGE` (duplicates only): `context.createItem({ name: first 80 chars of the wording, information: merged.information, type: merged.type when given (explicit null omits the type), else the members' common type, description: "Merged from N memories by <resolver>: <author names>", rights_mode: "public", created_by: user.id }, config, user.id, role.id, false)`; members archived as in KEEP; usage rows re-pointed: `update memory_usages set memory_id = <merged> where context = ? and memory_id in (members)` after deleting rows that would collide on (`message_id`, `memory_id`); `merged_into` set; status `resolved`, resolution `merge`. Judgements involving the members are deleted.
 - `NOT_CONFLICT`: status `dismissed`, resolution `not_conflict`. A dismissed key stays dismissed on every later scan.
 - Skip is client-side only.
 - `memoryConflictSuggestMerge`: one model call (same resolution as the judge) returning `{ information, type }` — a single wording that keeps every fact of the members, in the members' language, and the most common member type. Not stored.
@@ -122,6 +122,9 @@ Everything inside `app/(application)/memory/**` and the workbench memory section
 | Judge call fails | pair stays unjudged, counted in the result, retried next scan |
 | Pairwise query fails or the base is too large | the scan fails with a clear error; nothing is written |
 | Merge creates the memory but archiving a member fails | the group stays open with `merged_into` set and the error names the member; a retry of KEEP finishes the job |
+| `createItem` fails during MERGE | the claim is reverted, the group stays open |
+| A group left `merging` by a crash stays visible | KEEP/NOT_CONFLICT finish it; a scan refreshes or closes it |
+| KEEP on a group that already carries `merged_into` | leaves the merged memory live until the next scan pairs it again |
 | A member was archived since the scan | the next scan closes the group; a resolution on a stale group archives nothing twice (`archived` is idempotent) |
 | Suggestion call fails | the panel opens with the first member's wording and a notice |
 

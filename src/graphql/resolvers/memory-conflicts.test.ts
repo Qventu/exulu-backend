@@ -6,20 +6,25 @@ function fakeDb(t: Record<string, any[]>) {
     const eq: Record<string, any> = {};
     const not: Record<string, any> = {};
     let ids: string[] | null = null;
+    let statusIn: string[] | null = null;
     const chain: any = {};
     for (const m of ["orderBy", "select", "groupBy", "count", "max"]) chain[m] = () => chain;
     chain.where = (...a: any[]) => { if (typeof a[0] === "object") Object.assign(eq, a[0]); else if (a.length >= 2) eq[a[0]] = a[a.length - 1]; return chain; };
-    chain.whereIn = (col: string, values: any[]) => { if (col === "id") ids = values; return chain; };
+    chain.whereIn = (col: string, values: any[]) => { if (col === "id") ids = values; if (col === "status") statusIn = values; return chain; };
     chain.whereNot = (col: string, value: any) => { not[col] = value; return chain; };
     chain.first = async () => t[`${table}#first`]?.[0];
     // Item queries filter for real: hydrate's public/archived predicates are part of what these tests check.
+    // memory_conflicts rows aren't filtered by `context` (fixtures don't set it), but
+    // `status` is honoured so a test can tell "open only" from "open and merging" apart.
     chain.then = (res: any) => {
       const rows = t[table] ?? [];
       const out = table.endsWith("_items")
         ? rows.filter((r) => (ids === null || ids.includes(r.id))
           && Object.entries(eq).every(([k, v]) => r[k] === v)
           && Object.entries(not).every(([k, v]) => r[k] !== v))
-        : rows;
+        : statusIn
+          ? rows.filter((r) => statusIn!.includes(r.status))
+          : rows;
       return Promise.resolve(out).then(res);
     };
     return chain;
@@ -58,8 +63,24 @@ describe("memoryConflicts", () => {
     });
     expect(await memoryConflicts({ db, context })).toEqual([]);
   });
+  it("keeps a `merging` row visible in the list and counted — a crashed claim or a mid-merge group is still undecided", async () => {
+    const db = fakeDb({
+      memory_conflicts: [
+        { id: "g1", kind: "duplicate", status: "open", similarity: 0.9, reason: null, members: JSON.stringify(["a", "b"]), scanned_at: new Date("2026-10-03T10:00:00Z") },
+        { id: "g2", kind: "duplicate", status: "merging", similarity: 0.85, reason: null, members: JSON.stringify(["a", "c"]), scanned_at: new Date("2026-10-03T09:00:00Z") },
+        { id: "g3", kind: "duplicate", status: "dismissed", similarity: 0.7, reason: null, members: JSON.stringify(["a", "d"]), scanned_at: new Date("2026-10-03T08:00:00Z") },
+      ],
+      mem_items: [
+        { id: "a", information: "A", rights_mode: "public" }, { id: "b", information: "B", rights_mode: "public" },
+        { id: "c", information: "C", rights_mode: "public" }, { id: "d", information: "D", rights_mode: "public" },
+      ],
+      users: [], memory_usages: [],
+    });
+    expect((await memoryConflicts({ db, context })).map((g) => g.id)).toEqual(["g1", "g2"]);
+    expect(await memoryConflictCounts({ db, context })).toMatchObject({ open: 2, memoriesInvolved: 3 });
+  });
   it("counts open groups and distinct memories involved, dating the base by the scan's own marker", async () => {
-    const groups = [{ members: JSON.stringify(["a", "b"]), scanned_at: new Date("2026-10-03T10:00:00Z") }, { members: JSON.stringify(["b", "c", "d"]), scanned_at: new Date("2026-10-02T10:00:00Z") }];
+    const groups = [{ status: "open", members: JSON.stringify(["a", "b"]), scanned_at: new Date("2026-10-03T10:00:00Z") }, { status: "open", members: JSON.stringify(["b", "c", "d"]), scanned_at: new Date("2026-10-02T10:00:00Z") }];
     const marked = fakeDb({ memory_conflicts: groups, "memory_conflict_scans#first": [{ scanned_at: new Date("2026-10-03T12:30:00Z") }] });
     expect(await memoryConflictCounts({ db: marked, context })).toEqual({ open: 2, memoriesInvolved: 4, lastScanAt: "2026-10-03T12:30:00.000Z" });
     // No marker (a base last scanned before the table existed): the newest group the scan touched.

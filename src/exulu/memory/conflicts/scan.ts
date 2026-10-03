@@ -129,24 +129,30 @@ export async function runScan({ db, context, user, judge, now = new Date() }: { 
     produced.set(groupKey(context.id, "contradiction", members), { kind: "contradiction", members, similarity: pair.similarity, reason });
   }
 
-  const existing: any[] = await db("memory_conflicts").where("context", context.id).select("id", "key", "status", "resolution");
+  const existing: any[] = await db("memory_conflicts").where("context", context.id).select("id", "key", "status", "resolution", "merged_into");
   const byKey = new Map(existing.map((r) => [r.key, r]));
+  // A `merging` row with no `merged_into` is a crashed MERGE claim (resolve.ts
+  // reverted nothing because the process never got that far): still undecided,
+  // so a scan refreshes or closes it exactly like an `open` row. A `merging` row
+  // that does carry `merged_into` is mid-merge (claimed, memory created, link not
+  // yet released) and is left alone either way.
+  const treatAsOpen = (row: any) => row.status === "open" || (row.status === "merging" && row.merged_into == null);
   const inserts: any[] = [];
   for (const [key, g] of produced) {
     const row = byKey.get(key);
     if (!row) {
       inserts.push({ context: context.id, kind: g.kind, key, members: JSON.stringify(g.members), similarity: g.similarity, reason: g.reason, status: "open", scanned_at: now });
-    } else if (row.status === "open") {
+    } else if (treatAsOpen(row)) {
       await db("memory_conflicts").where({ id: row.id }).update({ similarity: g.similarity, reason: g.reason, scanned_at: now });
     } else if (row.status === "resolved" && row.resolution == null) {
       // Machine-closed (scan stopped reproducing it) and the scan reproduces it again:
       // reopen. A human `resolution` on a resolved row means it stays closed.
       await db("memory_conflicts").where({ id: row.id }).update({ status: "open", resolved_at: null, resolved_by: null, similarity: g.similarity, reason: g.reason, scanned_at: now });
     }
-    // dismissed, or resolved with a human resolution: untouched
+    // dismissed, resolved with a human resolution, or mid-merge: untouched
   }
   if (inserts.length) await insertInChunks(db, "memory_conflicts", inserts);
-  const toClose = existing.filter((r) => r.status === "open" && !produced.has(r.key)).map((r) => r.id);
+  const toClose = existing.filter((r) => treatAsOpen(r) && !produced.has(r.key)).map((r) => r.id);
   if (toClose.length) await db("memory_conflicts").whereIn("id", toClose).update({ status: "resolved", resolution: null, resolved_at: now, scanned_at: now });
 
   const stillClosed = (k: string): boolean => {

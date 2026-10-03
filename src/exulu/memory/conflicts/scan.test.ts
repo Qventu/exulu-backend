@@ -107,6 +107,50 @@ describe("runScan", () => {
     expect(out.open).toBe(1);
   });
 
+  it("refreshes a `merging`/no-merged_into row (a crashed MERGE claim) that the scan still reproduces, exactly like an open row", async () => {
+    const db = fakeDb({
+      pairs: [{ a_id: "c", b_id: "d", similarity: 0.8 }],
+      items: [{ id: "c" }, { id: "d" }],
+      judgements: [{ key: "mem:c,d", verdict: "contradict", reason: "stored" }],
+      conflicts: [{ id: "g5", key: "mem:contradiction:c,d", status: "merging", merged_into: null }],
+    });
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(db.__writes.filter((w: any) => w.op === "insert" && w.table === "memory_conflicts")).toEqual([]);
+    expect(db.__writes.filter((w: any) => w.op === "update" && w.table === "memory_conflicts")).toEqual([
+      expect.objectContaining({ where: expect.objectContaining({ id: "g5" }), patch: expect.objectContaining({ similarity: 0.8, scanned_at: NOW }) }),
+    ]);
+    expect(out.open).toBe(1);
+  });
+  it("closes a `merging`/no-merged_into row (a crashed MERGE claim) the scan no longer reproduces, exactly like an open row", async () => {
+    const db = fakeDb({
+      pairs: [],
+      items: [],
+      conflicts: [{ id: "g6", key: "mem:duplicate:x,y", status: "merging", merged_into: null }],
+    });
+    const out = await runScan({ db, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(db.__writes.filter((w: any) => w.op === "update" && w.table === "memory_conflicts")).toEqual([
+      expect.objectContaining({ where: expect.objectContaining({ id__in: ["g6"] }), patch: expect.objectContaining({ status: "resolved", resolution: null }) }),
+    ]);
+    expect(out.open).toBe(0);
+  });
+  it("leaves a `merging` row with `merged_into` set untouched either way — mid-merge, not a crashed claim", async () => {
+    const reproduced = fakeDb({
+      pairs: [{ a_id: "c", b_id: "d", similarity: 0.8 }],
+      items: [{ id: "c" }, { id: "d" }],
+      judgements: [{ key: "mem:c,d", verdict: "contradict", reason: "stored" }],
+      conflicts: [{ id: "g7", key: "mem:contradiction:c,d", status: "merging", merged_into: "merged-1" }],
+    });
+    await runScan({ db: reproduced, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(reproduced.__writes.filter((w: any) => w.table === "memory_conflicts")).toEqual([]);
+
+    const notReproduced = fakeDb({
+      pairs: [],
+      items: [],
+      conflicts: [{ id: "g8", key: "mem:duplicate:x,y", status: "merging", merged_into: "merged-2" }],
+    });
+    await runScan({ db: notReproduced, context, user: { id: 1 } as any, judge: stubJudge({}), now: NOW });
+    expect(notReproduced.__writes.filter((w: any) => w.table === "memory_conflicts")).toEqual([]);
+  });
   it("leaves a resolved group with a human resolution untouched even when the scan reproduces it", async () => {
     const db = fakeDb({
       pairs: [{ a_id: "c", b_id: "d", similarity: 0.8 }],

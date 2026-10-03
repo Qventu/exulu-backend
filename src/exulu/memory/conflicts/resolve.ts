@@ -65,7 +65,7 @@ async function dropJudgements(db: any, context: ExuluContext, memberIds: string[
  */
 async function closeGroupsWithArchivedMembers(db: any, context: ExuluContext, id: string, archivedIds: string[], now: Date) {
   if (!archivedIds.length) return;
-  const others: any[] = await db("memory_conflicts").where({ context: context.id, status: "open" }).whereNot("id", id).select("id", "members");
+  const others: any[] = await db("memory_conflicts").where({ context: context.id }).whereIn("status", ["open", "merging"]).whereNot("id", id).select("id", "members");
   const stale = others.filter((r) => parseMembers(r.members).some((m) => archivedIds.includes(m))).map((r) => r.id);
   if (stale.length) await db("memory_conflicts").whereIn("id", stale).update({ status: "resolved", resolution: null, resolved_at: now, scanned_at: now });
 }
@@ -119,10 +119,19 @@ export async function resolveConflict(input: ResolveInput): Promise<any> {
     const [me] = await db("users").whereIn("id", [user.id]).select("id", "firstname", "lastname", "email");
     const description = `Merged from ${group.members.length} memories by ${me ? displayName(me) : user.id}${names.length ? `: ${names.join(", ")}` : ""}`;
 
-    const { item } = await context.createItem(
-      { name: information.slice(0, 80), information, ...(type ? { type } : {}), description, rights_mode: "public", created_by: user.id } as any,
-      config, user.id, user.role?.id, false,
-    );
+    // If createItem throws, the claim is reverted before the error propagates:
+    // otherwise the group would be stuck `merging` with no memory to point to,
+    // invisible to a reader filtering on `open` alone and unreachable by a retry.
+    let item: any;
+    try {
+      ({ item } = await context.createItem(
+        { name: information.slice(0, 80), information, ...(type ? { type } : {}), description, rights_mode: "public", created_by: user.id } as any,
+        config, user.id, user.role?.id, false,
+      ));
+    } catch (e) {
+      await db("memory_conflicts").where({ id, status: "merging" }).update({ status: "open" });
+      throw e;
+    }
     mergedId = item.id as string;
 
     // Link the memory to the group and release the claim: if anything below

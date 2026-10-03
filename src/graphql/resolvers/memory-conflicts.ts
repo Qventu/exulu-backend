@@ -39,13 +39,15 @@ async function hydrate(db: any, context: ExuluContext, rows: any[], opts: { incl
 
 export async function memoryConflicts({ db, context }: { db: any; context: ExuluContext }): Promise<Conflict[]> {
   if (!(await db.schema.hasTable("memory_conflicts"))) return [];
-  const rows: any[] = await db("memory_conflicts").where({ context: context.id, status: "open" }).orderBy("scanned_at", "desc").select("*");
+  // `merging` included: a row mid-merge or a crashed claim is still undecided and
+  // must stay visible so KEEP/NOT_CONFLICT can finish it (see resolve.ts loadGroup).
+  const rows: any[] = await db("memory_conflicts").where({ context: context.id }).whereIn("status", ["open", "merging"]).orderBy("scanned_at", "desc").select("*");
   return hydrate(db, context, rows);
 }
 
 export async function memoryConflictCounts({ db, context }: { db: any; context: ExuluContext }) {
   if (!(await db.schema.hasTable("memory_conflicts"))) return { open: 0, memoriesInvolved: 0, lastScanAt: null };
-  const rows: any[] = await db("memory_conflicts").where({ context: context.id, status: "open" }).select("members", "scanned_at");
+  const rows: any[] = await db("memory_conflicts").where({ context: context.id }).whereIn("status", ["open", "merging"]).select("members", "scanned_at");
   // The scan's own marker (memory_conflict_scans), so a scan that found nothing
   // still dates itself. Older bases scanned before that table existed fall back
   // to the newest group the scan touched.
@@ -66,7 +68,7 @@ export async function hydrateConflictRow(db: any, context: ExuluContext, row: an
 
 export async function memoryConflictsForMemory({ db, context, memoryId }: { db: any; context: ExuluContext; memoryId: string }) {
   if (!(await db.schema.hasTable("memory_conflicts"))) return { open: [], mergedFrom: [] };
-  const openRows: any[] = (await db("memory_conflicts").where({ context: context.id, status: "open" }).select("*")).filter((r: any) => parseMembers(r.members).includes(memoryId));
+  const openRows: any[] = (await db("memory_conflicts").where({ context: context.id }).whereIn("status", ["open", "merging"]).select("*")).filter((r: any) => parseMembers(r.members).includes(memoryId));
   const open = await hydrate(db, context, openRows);
   const merge = await db("memory_conflicts").where({ context: context.id, merged_into: memoryId }).first();
   const mergedFrom = merge ? (await hydrate(db, context, [{ ...merge, id: merge.id, kind: "duplicate", status: "resolved" }], { includeArchived: true }))[0]?.members ?? [] : [];

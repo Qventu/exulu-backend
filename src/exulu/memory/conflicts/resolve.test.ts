@@ -86,6 +86,18 @@ describe("resolveConflict", () => {
     ]);
     expect(out.mergedInto).toBe("merged-9");
   });
+  it("MERGE reverts the claim and rethrows when createItem fails, leaving the group open for a retry", async () => {
+    const context = makeContext();
+    context.createItem = jest.fn(async () => { throw new Error("boom"); });
+    const db = fakeDb({ group, items });
+    await expect(resolveConflict({ db, context, config, user: admin, id: "g1", action: "MERGE", merged: { information: "A and B" } })).rejects.toThrow(/boom/);
+    const conflictWrites = db.__writes.filter((w: any) => w.table === "memory_conflicts");
+    expect(conflictWrites).toEqual([
+      expect.objectContaining({ where: { id: "g1", status: "open", merged_into: null }, patch: { status: "merging" } }),
+      expect.objectContaining({ where: { id: "g1", status: "merging" }, patch: { status: "open" } }),
+    ]);
+    expect(context.updateItem).not.toHaveBeenCalled();
+  });
   it("MERGE stops when the claim is lost to a concurrent resolution, before anything is created", async () => {
     const context = makeContext(); const db = fakeDb({ group, items, claimed: 0 });
     await expect(resolveConflict({ db, context, config, user: admin, id: "g1", action: "MERGE", merged: { information: "A and B" } })).rejects.toThrow(/concurrently/);
