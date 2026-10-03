@@ -173,6 +173,11 @@ const variablesSchema: ExuluTableDefinition = {
       type: "boolean",
       default: false,
     },
+    {
+      name: "allow_skill_access",
+      type: "boolean",
+      default: false,
+    },
   ],
 };
 

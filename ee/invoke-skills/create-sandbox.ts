@@ -10,6 +10,11 @@ import { promisify } from 'node:util'
 import { listS3ObjectsByPrefix, getS3ObjectBytes, uploadFile, getPresignedUrl, type S3FileObject } from '@SRC/uppy/index.ts'
 import { isIgnoredArtifactPath, capArtifacts, needsDownload } from './artifact-filter'
 import { getNpmGlobalRoot } from '@SRC/exulu/system-dependencies.ts'
+import { buildSkillEnv } from './skill-env'
+import { selectGrantedVariables, selectRowsToDecrypt, deriveWithheldNames } from './variable-grants'
+import { readLiteLLMOsEnvironNames } from '@SRC/exulu/litellm/os-environ-names'
+import { getAuditLogger } from '@SRC/exulu/audit/logger'
+import { buildSkillSandboxEvent } from '@SRC/exulu/audit/emitters/skill-sandbox'
 import type { ExuluConfig } from '@SRC/exulu/app/index.ts'
 import { createBashTool, type Sandbox } from "bash-tool";
 import { tool, type Tool } from "ai";
@@ -19,31 +24,46 @@ import CryptoJS from "crypto-js";
 import { postgresClient } from "@SRC/postgres/client";
 
 /**
- * Load every variable from the database with its decrypted value. Returns
- * a name → value map suitable for spreading into a child-process env.
+ * Load the variables an administrator has explicitly granted to the skill
+ * sandbox, decrypt only those, and report the withheld NAMES — never values —
+ * of every other row, so a broken skill is diagnosable from one log line.
+ *
+ * Filter before decrypting (per §1 of the design): rows are partitioned on
+ * `allow_skill_access === true` first, so a row nobody granted never has its
+ * ciphertext touched. `withheldNames` is derived from the UNFILTERED row-name
+ * list, which means a row whose decryption fails surfaces as withheld rather
+ * than vanishing from both sides of the report.
  *
  * Used by the skill sandbox to expose configured secrets to bash commands
  * (API keys, etc.) so skills can call external services without hard-coding
  * credentials. Decryption runs server-side; nothing encrypted leaves the
- * Node process.
+ * Node process. The grant filter (selectGrantedVariables) requires
+ * `allow_skill_access === true` — a row with no grant (including legacy rows
+ * with a null value from before this column existed) is never exposed.
  *
  * Variables whose name starts with `_` or contains `=` are skipped — those
  * shapes corrupt POSIX env parsing or shadow shell internals.
  */
-const getAllExuluVariables = async (): Promise<Record<string, string>> => {
+const getAllExuluVariables = async (): Promise<{
+    granted: Record<string, string>;
+    withheldNames: string[];
+}> => {
     const { db } = await postgresClient();
     const rows: Variable[] = await db.from("variables").select("*");
-    const out: Record<string, string> = {};
-    for (const row of rows) {
-        if (!row?.name) continue;
-        if (row.name.startsWith("_")) continue;
-        if (row.name.includes("=")) continue;
+
+    // Partition before decrypting: only granted rows have their ciphertext
+    // touched. `rows` stays the basis for withheldNames below.
+    const decrypted: Variable[] = [];
+    for (const row of selectRowsToDecrypt(rows)) {
         let value = row.value;
         if (row.encrypted) {
             try {
                 const bytes = CryptoJS.AES.decrypt(value, process.env.NEXTAUTH_SECRET);
                 value = bytes.toString(CryptoJS.enc.Utf8);
             } catch (err) {
+                // Non-fatal, as before: this row simply is not available to
+                // skills. deriveWithheldNames works off the unfiltered `rows`,
+                // so it is reported as withheld rather than disappearing.
                 console.error(
                     `[VARIABLES] Failed to decrypt variable "${row.name}"; skipping.`,
                     err,
@@ -51,15 +71,41 @@ const getAllExuluVariables = async (): Promise<Record<string, string>> => {
                 continue;
             }
         }
-        if (typeof value !== "string") continue;
-        out[row.name] = value;
+        decrypted.push({ ...row, value });
     }
-    return out;
+    const granted = selectGrantedVariables(decrypted);
+    return { granted, withheldNames: deriveWithheldNames(rows, granted) };
 }
 
 const execAsync = promisify(exec);
 // Sandbox commands can be very long (long deny lists) — bump default buffer.
 const EXEC_MAX_BUFFER = 32 * 1024 * 1024;
+
+/**
+ * Provider credentials the deployment's config.litellm.yaml names via
+ * `os.environ/NAME`. Stripped from the skill environment alongside the static
+ * inventory, which closes the open-ended provider-credential class without
+ * turning the filter into an allowlist.
+ *
+ * Memoized: the config path is process-level state, and re-reading it on every
+ * sandbox creation would buy nothing. Best-effort by construction — the helper
+ * returns [] and logs if the config is missing or unreadable, so a sandbox
+ * never fails to build because of it.
+ */
+let litellmSecretNamesCache: string[] | undefined;
+const litellmConfigSecretNames = (): string[] => {
+    if (litellmSecretNamesCache === undefined) {
+        litellmSecretNamesCache = readLiteLLMOsEnvironNames();
+        if (litellmSecretNamesCache.length) {
+            // Names only, logged once, so a skill broken by this strip is
+            // diagnosable from one line (design §5).
+            console.log(
+                `[SKILLS] ${litellmSecretNamesCache.length} provider credential name(s) from config.litellm.yaml are withheld from skills: ${litellmSecretNamesCache.join(", ")}.`,
+            )
+        }
+    }
+    return litellmSecretNamesCache;
+};
 
 /**
  * Probe whether bwrap can actually create a user namespace on this host.
@@ -85,7 +131,7 @@ function probeSandboxSupport(): Promise<SandboxProbeResult> {
             // Minimal bwrap invocation: bind / read-only and exit. If the host
             // refuses unprivileged user namespaces, this returns
             // "Operation not permitted" — same path SRT would hit on every command.
-            const child = spawn('bwrap', ['--dev-bind', '/', '/', '--', '/bin/true']);
+            const child = spawn('bwrap', ['--dev-bind', '/', '/', '--', '/bin/true'], { env: {} });
             let stderr = '';
             child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
             child.on('error', (err) => {
@@ -411,6 +457,12 @@ export async function createSessionSandbox(
     skills: SkillRef[],
     config: ExuluConfig,
     userId?: number | string,
+    /**
+     * The agent whose turn is building this sandbox, for the
+     * `skill.sandbox.created` audit event's §4 payload (id + name). Optional so
+     * callers outside the agent loop are unaffected.
+     */
+    agent?: { id?: string; name?: string; slug?: string },
 ): Promise<SessionSandboxHandle> {
     const cached = sandboxCache.get(sessionId)
 
@@ -584,8 +636,11 @@ export async function createSessionSandbox(
     // won't see the variables (an empty map is the same as nothing
     // configured).
     let configuredVariables: Record<string, string> = {}
+    let withheldNames: string[] = []
     try {
-        configuredVariables = await getAllExuluVariables()
+        const loaded = await getAllExuluVariables()
+        configuredVariables = loaded.granted
+        withheldNames = loaded.withheldNames
     } catch (err) {
         console.error(
             `[SKILLS] Failed to load configured variables for session ${sessionId}; bash env will not include them.`,
@@ -593,20 +648,68 @@ export async function createSessionSandbox(
         )
     }
 
-    // Environment for sandboxed bash invocations.
-    //   - Spread order matters: later spreads win.
-    //   - configuredVariables go first so process.env (PATH, HOME, etc.)
-    //     overrides them. If a variable accidentally collides with a system
-    //     env name, the system value stays authoritative.
-    //   - NODE_PATH is set last so it's always our resolved global root,
-    //     regardless of what process.env or variables already had.
-    const sandboxedExecEnv: NodeJS.ProcessEnv = {
-        ...configuredVariables,
-        ...process.env,
-        ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
-        ...(pythonVenvPath
-            ? { PATH: `${join(pythonVenvPath, 'bin')}:${process.env.PATH ?? ''}`, VIRTUAL_ENV: pythonVenvPath }
-            : {}),
+    // Environment for sandboxed bash invocations. buildSkillEnv is the only
+    // place this is composed: base runtime env (platform secrets stripped —
+    // both the static inventory and the deployment's own
+    // config.litellm.yaml `os.environ/` names) → granted variables → computed
+    // overrides (NODE_PATH / venv PATH last, so they always win regardless of
+    // what process.env or variables already had).
+    const { env: sandboxedExecEnv, strippedSecretNames, grantedNames, skippedNames } =
+        buildSkillEnv({
+            processEnv: process.env,
+            grantedVariables: configuredVariables,
+            extraSecretNames: litellmConfigSecretNames(),
+            overrides: {
+                ...(npmGlobalRoot ? { NODE_PATH: npmGlobalRoot } : {}),
+                ...(pythonVenvPath
+                    ? { PATH: `${join(pythonVenvPath, 'bin')}:${process.env.PATH ?? ''}`, VIRTUAL_ENV: pythonVenvPath }
+                    : {}),
+            },
+        })
+
+    if (skippedNames.length) {
+        console.warn(
+            `[SKILLS] Skipped ${skippedNames.length} variable(s) for session ${sessionId}: ${skippedNames.join(", ")} (invalid env name or collides with a runtime key).`,
+        )
+    }
+
+    // One audit event per sandbox creation, gated by
+    // sources.skillSandbox.enabled (off by default — see
+    // src/exulu/audit/config.ts). Every name array below is key-derived —
+    // grantedNames/skippedNames come from buildSkillEnv, withheldNames from
+    // getAllExuluVariables' row.name filter — never a row's value, so no
+    // credential value can ride along in this event.
+    const auditLogger = getAuditLogger(config)
+    if (auditLogger.shouldAuditSkillSandbox()) {
+        // An audit sink exception must never deny a user their skill: the
+        // sandbox is already built at this point, and the event is a record of
+        // it, not a precondition for it.
+        try {
+            auditLogger.record(
+                buildSkillSandboxEvent({
+                    sessionID: sessionId,
+                    agent,
+                    user: userId !== undefined ? { id: userId } : undefined,
+                    skills: skills.map((s) => ({ id: s.id, name: s.name, version: s.current_version })),
+                    grantedNames,
+                    withheldNames,
+                    skippedNames,
+                    strippedSecretCount: strippedSecretNames.length,
+                    degradedSandbox: useDirectExec,
+                }),
+            )
+        } catch (err) {
+            console.error(
+                `[SKILLS] audit: skill-sandbox emit failed for session ${sessionId}; continuing.`,
+                err,
+            )
+        }
+    }
+
+    if (withheldNames.length) {
+        console.log(
+            `[SKILLS] Session ${sessionId}: ${withheldNames.length} variable(s) not shared with skills: ${withheldNames.join(", ")}.`,
+        )
     }
 
     // Either wrap a command with bwrap/sandbox-exec or return it unchanged when
@@ -752,7 +855,7 @@ export async function createSessionSandbox(
                 `mkdir -p ${shellQuote(dirname(file.path))} && cat > ${shellQuote(file.path)}`,
             )
             await new Promise<void>((resolveSpawn, rejectSpawn) => {
-                const child = spawn('/bin/bash', ['-c', wrapped])
+                const child = spawn('/bin/bash', ['-c', wrapped], { env: sandboxedExecEnv })
                 let stderr = ''
                 child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
                 child.on('error', rejectSpawn)
