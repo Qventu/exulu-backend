@@ -1,4 +1,4 @@
-import { hasAgentsReadAccess } from "./access-control";
+import { hasAgentsReadAccess, hasAgentsWriteAccess } from "./access-control";
 
 describe("hasAgentsReadAccess", () => {
   it("allows super admins regardless of role", () => {
@@ -15,5 +15,14 @@ describe("hasAgentsReadAccess", () => {
     expect(hasAgentsReadAccess({ role: {} } as any)).toBe(false);
     expect(hasAgentsReadAccess({} as any)).toBe(false);
     expect(hasAgentsReadAccess(undefined)).toBe(false);
+  });
+});
+
+describe("hasAgentsWriteAccess", () => {
+  it("is true for super admins and agents:write only", () => {
+    expect(hasAgentsWriteAccess({ super_admin: true } as any)).toBe(true);
+    expect(hasAgentsWriteAccess({ role: { agents: "write" } } as any)).toBe(true);
+    expect(hasAgentsWriteAccess({ role: { agents: "read" } } as any)).toBe(false);
+    expect(hasAgentsWriteAccess(undefined)).toBe(false);
   });
 });

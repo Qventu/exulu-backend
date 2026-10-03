@@ -37,6 +37,8 @@ const {
   entityTypeSettingsSchema,
   promptFavoritesSchema,
   memoryUsagesSchema,
+  memoryConflictsSchema,
+  memoryJudgementsSchema,
   transcriptionJobsSchema,
   imageGenerationsSchema,
   sharedArtifactsSchema,
@@ -129,6 +131,8 @@ const up = async function (knex: Knex) {
     entityTypeSettingsSchema(),
     promptFavoritesSchema(),
     memoryUsagesSchema(),
+    memoryConflictsSchema(),
+    memoryJudgementsSchema(),
     transcriptionJobsSchema(),
     imageGenerationsSchema(),
     sharedArtifactsSchema(),
@@ -328,6 +332,11 @@ const up = async function (knex: Knex) {
       `CREATE INDEX IF NOT EXISTS memory_usages_context_created_idx
           ON memory_usages (context, "createdAt")`,
     );
+  }
+
+  // Memory conflicts (sub-project 3b): upsert idempotence via key, query by context+status.
+  if (await knex.schema.hasTable("memory_conflicts")) {
+    await knex.raw(`CREATE INDEX IF NOT EXISTS memory_conflicts_context_status_idx ON memory_conflicts (context, status)`);
   }
 
   /*  if (!await knex.schema.hasTable('sessions')) {

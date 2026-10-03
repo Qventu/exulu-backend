@@ -723,6 +723,43 @@ const memoryUsagesSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * Memory conflicts (sub-project 3b): one row per detected group (near-duplicates
+ * or a contradiction) and the decision taken on it. `key` makes the scan's
+ * upsert idempotent; `members` holds the sorted memory ids (2–6).
+ */
+const memoryConflictsSchema: ExuluTableDefinition = {
+  type: "memory_conflicts",
+  name: { plural: "memory_conflicts", singular: "memory_conflict" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "kind", type: "text", required: true },
+    { name: "key", type: "text", required: true, unique: true },
+    { name: "members", type: "json", required: true },
+    { name: "similarity", type: "number", required: true },
+    { name: "reason", type: "text" },
+    { name: "status", type: "text", required: true, default: "open" },
+    { name: "resolution", type: "text" },
+    { name: "resolved_by", type: "number" },
+    { name: "resolved_at", type: "date" },
+    { name: "merged_into", type: "uuid" },
+    { name: "scanned_at", type: "date", required: true },
+  ],
+};
+
+/** Judged pairs, so a rescan never asks the model twice about the same two memories. */
+const memoryJudgementsSchema: ExuluTableDefinition = {
+  type: "memory_judgements",
+  name: { plural: "memory_judgements", singular: "memory_judgement" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "key", type: "text", required: true, unique: true },
+    { name: "verdict", type: "text", required: true },
+    { name: "reason", type: "text" },
+    { name: "judged_at", type: "date", required: true },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -986,6 +1023,8 @@ export const coreSchemas = {
       entityTypeSettingsSchema: (): ExuluTableDefinition => addCoreFields(entityTypeSettingsSchema),
       promptFavoritesSchema: (): ExuluTableDefinition => addCoreFields(promptFavoritesSchema),
       memoryUsagesSchema: (): ExuluTableDefinition => addCoreFields(memoryUsagesSchema),
+      memoryConflictsSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictsSchema),
+      memoryJudgementsSchema: (): ExuluTableDefinition => addCoreFields(memoryJudgementsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
