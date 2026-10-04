@@ -102,6 +102,38 @@ const ftsPredicate = (
  */
 const SEARCH_COLUMNS = ["chunks.fts", "items.fts"];
 
+/**
+ * Whether an items table carries the generated `fts` column.
+ *
+ * This branch is the only reader of `items.fts` in the repo, and the boot
+ * migration in init-exulu-db.ts adds no such column — so an items table created
+ * before the generated column existed has none, and the disjunct failed the
+ * whole `contextMapPoints` field with 42703 instead of returning a degraded
+ * result. Probed once per table per process, and only when there is a search,
+ * so an unsearched map pays nothing.
+ */
+const itemsFtsProbes = new Map<string, boolean>();
+/** Testing seam: the answer is otherwise kept for the life of the process. */
+export function clearMapColumnProbes(): void { itemsFtsProbes.clear(); }
+
+const searchesItemNames = async (db: any, items: string): Promise<boolean> => {
+  const cached = itemsFtsProbes.get(items);
+  if (cached !== undefined) return cached;
+  let exists = false;
+  try {
+    exists = !!(await db.schema.hasColumn(items, "fts"));
+  } catch (e) {
+    // A failed probe is "no column": the fallback returns fewer matches, the
+    // disjunct returns none at all.
+    console.error(`[EXULU] could not check ${items} for an fts column; assuming it has none`, e instanceof Error ? e.message : String(e));
+  }
+  itemsFtsProbes.set(items, exists);
+  // Once per table, the first time it falls back - a map that silently stops
+  // matching titles is otherwise indistinguishable from one with no matches.
+  if (!exists) console.log(`[EXULU] ${items} has no fts column; map search matches chunk text only`);
+  return exists;
+};
+
 /** Points for the map (spec §5). Item-level access control, the same call vector search makes. */
 export async function contextMapPoints({
   db, context, user, mode = "DOCUMENTS", groupField, search, limit = POINTS_LIMIT_DEFAULT,
@@ -124,17 +156,43 @@ export async function contextMapPoints({
   // chunks the projection was actually fitted on.
   const salt = sanitizeName(context.id);
 
+  // Spec line 114: `search` narrows the map to matching items, so it decides
+  // membership, not position. In DOCUMENTS mode the predicate must therefore
+  // stay off the chunk rows AVG(chunks.px) averages — filtering them moved a
+  // document whose body only partly matched to the centroid of its matching
+  // chunks, i.e. a search dragged the cloud around. In PASSAGES mode each point
+  // IS a chunk, so there filtering the chunk rows is exactly right.
+  const trimmed = search?.trim() ? search.trim() : "";
+  let predicate: { sql: string; bindings: string[] } | null = null;
+  if (trimmed) {
+    const texts = resolveSearchQueryTexts(trimmed);
+    const chosen = chooseFullTextQuery({ strictMatches: false, strictText: trimmed, orText: texts.hybridOrQuery });
+    const byName = await searchesItemNames(db, items);
+    if (mode === "DOCUMENTS") {
+      const inner = ftsPredicate(languages, chosen.fn, chosen.text, ["s.fts"]);
+      // Correlated on the item, so it answers "does this document match?"
+      // without constraining the row set being averaged. The table name is
+      // sanitizeName(context.id) + "_chunks" (table-names.ts) and never carries
+      // a request value.
+      const parts = [
+        ...(byName ? [ftsPredicate(languages, chosen.fn, chosen.text, ["items.fts"])] : []),
+        {
+          sql: `EXISTS (SELECT 1 FROM "${chunks}" AS s WHERE s.source = items.id AND ${inner.sql})`,
+          bindings: inner.bindings,
+        },
+      ];
+      predicate = { sql: `(${parts.map((p) => p.sql).join(" OR ")})`, bindings: parts.flatMap((p) => p.bindings) };
+    } else {
+      predicate = ftsPredicate(languages, chosen.fn, chosen.text, byName ? SEARCH_COLUMNS : ["chunks.fts"]);
+    }
+  }
+
   const base = () => {
     let q = db(`${chunks} as chunks`)
       .join(`${items} as items`, "items.id", "chunks.source")
       .whereNotNull("chunks.px")
       .whereRaw("items.archived IS NOT TRUE");
-    if (search && search.trim()) {
-      const texts = resolveSearchQueryTexts(search.trim());
-      const chosen = chooseFullTextQuery({ strictMatches: false, strictText: search.trim(), orText: texts.hybridOrQuery });
-      const predicate = ftsPredicate(languages, chosen.fn, chosen.text, SEARCH_COLUMNS);
-      q = q.whereRaw(predicate.sql, predicate.bindings);
-    }
+    if (predicate) q = q.whereRaw(predicate.sql, predicate.bindings);
     return applyAccessControl(table, q, user, "items");
   };
 

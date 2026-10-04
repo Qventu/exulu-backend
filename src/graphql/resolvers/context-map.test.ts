@@ -10,10 +10,13 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
 }));
 
 import { EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS } from "@SRC/exulu/projection/constants";
-import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
+import { clearMapColumnProbes, contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
 
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
-function fakeDb(answers: Record<string, any[]>, opts: { hasTable?: (t: string) => boolean } = {}) {
+function fakeDb(
+  answers: Record<string, any[]>,
+  opts: { hasTable?: (t: string) => boolean; hasColumn?: (t: string, c: string) => boolean } = {},
+) {
   const log: any[] = [];
   const db: any = jest.fn((table: string) => {
     const key = table.split(" ")[0];
@@ -42,7 +45,10 @@ function fakeDb(answers: Record<string, any[]>, opts: { hasTable?: (t: string) =
       then: (res: any, rej: any) => Promise.resolve({ rows: answers["raw"] ?? [] }).then(res, rej),
     };
   };
-  db.schema = { hasTable: async (t: string) => (opts.hasTable ? opts.hasTable(t) : true) };
+  db.schema = {
+    hasTable: async (t: string) => (opts.hasTable ? opts.hasTable(t) : true),
+    hasColumn: async (t: string, c: string) => { log.push(["schema", "hasColumn", t, c]); return opts.hasColumn ? opts.hasColumn(t, c) : true; },
+  };
   db.__log = log;
   return db;
 }
@@ -61,7 +67,12 @@ const OWNER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 // applyAccessControl is one module-level jest.fn shared by every test here, so
 // any assertion about how it was called is meaningless until the counters are
 // reset between tests.
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  // The items.fts probe is cached per table for the life of the process, so one
+  // test's fake would otherwise answer for the next one's.
+  clearMapColumnProbes();
+});
 const accessControl = () => (require("@SRC/graphql/utilities/access-control") as any).applyAccessControl;
 /** The same base with two configured languages. */
 const bilingual = { ...context, configuration: { languages: ["english", "german"] } } as any;
@@ -106,9 +117,11 @@ describe("contextMapPoints", () => {
     await contextMapPoints({ db, context: bilingual, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
     const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("@@"));
     const sql = String(match?.[2]);
-    expect(sql).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+    // The chunk-text half is the subquery's `s.fts` in DOCUMENTS mode, because
+    // a membership test must not shrink the rows being averaged.
+    expect(sql).toContain("s.fts @@ websearch_to_tsquery('english', ?)");
     expect(sql).toContain("items.fts @@ websearch_to_tsquery('english', ?)");
-    expect(sql).toContain("chunks.fts @@ websearch_to_tsquery('german', ?)");
+    expect(sql).toContain("s.fts @@ websearch_to_tsquery('german', ?)");
     expect(sql).toContain("items.fts @@ websearch_to_tsquery('german', ?)");
     // Two languages × two columns, one binding each, all the same text.
     expect(match?.[3]).toHaveLength(4);
@@ -202,13 +215,78 @@ describe("contextMapPoints", () => {
     const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
     await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
     const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("@@"));
-    expect(String(match?.[2])).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+    expect(String(match?.[2])).toContain("s.fts @@ websearch_to_tsquery('english', ?)");
     expect(String(match?.[2])).toContain("items.fts @@ websearch_to_tsquery('english', ?)");
     expect(String(match?.[2])).toContain(" OR ");
     // The same preprocessed text, bound once per disjunct.
     expect(match?.[3]).toHaveLength(2);
     expect(match?.[3]?.[0]).toBe(match?.[3]?.[1]);
     expect(String(match?.[3]?.[0])).toContain("encoder");
+  });
+
+  // Spec line 114: `search` narrows the map to matching items. It filters
+  // membership, not position — and applying the predicate to the chunk rows that
+  // AVG(chunks.px) averages moved a document whose body only partly matched to
+  // the centroid of its matching chunks.
+  describe("search in DOCUMENTS mode", () => {
+    const searched = async (opts: { hasColumn?: (t: string, c: string) => boolean } = {}) => {
+      const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] }, opts);
+      await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
+      return db;
+    };
+    const predicate = (db: any) => db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("@@"));
+
+    it("tests membership with a correlated EXISTS, leaving the averaged rows alone", async () => {
+      const db = await searched();
+      const sql = String(predicate(db)?.[2]);
+      expect(sql).toContain("EXISTS (SELECT 1 FROM \"mem_chunks\" AS s WHERE s.source = items.id");
+      // Nothing in the predicate may constrain the aliased chunk rows the
+      // centroid is computed from; the only chunk-text test is the subquery's.
+      expect(sql).not.toContain("chunks.fts");
+      // And the centroid itself is still the average over every mapped chunk.
+      expect(db.__log.some((l: any[]) => l[0] === "raw" && String(l[1]) === "AVG(chunks.px) as x")).toBe(true);
+    });
+
+    it("still filters the chunk rows in PASSAGES mode, where a point IS a chunk", async () => {
+      const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+      await contextMapPoints({ db, context, user, mode: "PASSAGES", search: "encoder", limit: 10 });
+      const sql = String(predicate(db)?.[2]);
+      expect(sql).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+      expect(sql).not.toContain("EXISTS");
+    });
+
+    // This branch is the only reader of items.fts in the repo, and the boot
+    // migration adds no such column, so an items table created before the
+    // generated column existed has none — and a search failed the whole field
+    // with 42703 rather than returning a degraded result.
+    it("drops the items.fts disjunct, once and loudly, on a table without the column", async () => {
+      const spy = jest.spyOn(console, "log").mockImplementation(() => undefined);
+      const db = await searched({ hasColumn: () => false });
+      const sql = String(predicate(db)?.[2]);
+      expect(sql).not.toContain("items.fts");
+      expect(sql).toContain("s.fts @@ websearch_to_tsquery('english', ?)");
+      expect(predicate(db)?.[3]).toHaveLength(1);
+      // One line per table, not one per search: the fallback is a deployment
+      // fact, and query preprocessing is already noisy on this channel.
+      await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
+      const lines = spy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("no fts column"));
+      expect(lines).toEqual(["[EXULU] mem_items has no fts column; map search matches chunk text only"]);
+      spy.mockRestore();
+    });
+
+    it("probes for the column once per table, not once per query", async () => {
+      const probes = (db: any) => db.__log.filter((l: any[]) => l[1] === "hasColumn");
+      const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+      await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
+      await contextMapPoints({ db, context, user, mode: "PASSAGES", search: "encoder", limit: 10 });
+      expect(probes(db)).toEqual([["schema", "hasColumn", "mem_items", "fts"]]);
+    });
+
+    it("does not probe at all without a search", async () => {
+      const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+      await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
+      expect(db.__log.some((l: any[]) => l[1] === "hasColumn")).toBe(false);
+    });
   });
 });
 
