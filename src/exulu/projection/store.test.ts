@@ -37,8 +37,13 @@ describe("loadProjection", () => {
     expect((await loadProjection(db, "mem", 1000))?.dims).toBe(2);
     await loadProjection(db, "mem", 1000 + 59_000);
     expect(db.__reads).toHaveLength(1);
-    await loadProjection(db, "mem", 1000 + 61_000);
+    // The window is [loadedAt, loadedAt + TTL), so the boundary itself is a
+    // miss. Pinned exactly: a one-millisecond slip either way is a whole extra
+    // minute of stale coordinates for everything embedded after a refit.
+    await loadProjection(db, "mem", 1000 + 60_000);
     expect(db.__reads).toHaveLength(2);
+    await loadProjection(db, "mem", 1000 + 121_000);
+    expect(db.__reads).toHaveLength(3);
   });
   it("treats a version mismatch as not fitted, and caches that too", async () => {
     const db = fakeDb({ ...projection, version: 0 });
@@ -50,6 +55,21 @@ describe("loadProjection", () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await loadProjection(fakeDb(undefined, { throwOnSelect: true }), "mem", 1000)).toBeNull();
     expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+  // basis.length must match the row's own `components`, and a map is always 3
+  // rows. Either one wrong still projects to plausible finite numbers, so this
+  // is the only corruption class that fails silently rather than loudly.
+  it("treats a wrongly shaped row as not fitted, and caches that too", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = fakeDb({ ...projection, basis: [[1, 0]] });
+    expect(await loadProjection(db, "mem", 1000)).toBeNull();
+    await loadProjection(db, "mem", 1000);
+    expect(db.__reads).toHaveLength(1);
+    clearProjectionCache();
+    expect(await loadProjection(fakeDb({ ...projection, map: [[1, 0], [0, 1]] }), "mem", 1000)).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(String(spy.mock.calls[0]?.[0])).toContain("mem");
     spy.mockRestore();
   });
   // The fit script keys the row on sanitizeName(contextId), so a reader handed
@@ -90,6 +110,24 @@ describe("chunkCoordinates", () => {
     const spy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(await chunkCoordinates({ db: fakeDb(projection), contextId: "mem", vectors: [[]] })).toEqual([null]);
     expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+  // A null mean passes the shape guard (that one watches basis and map) and
+  // reaches Float32Array.from(null), which throws. The outer catch is all that
+  // stands between that TypeError and a failed embedding.
+  it("returns nulls when the stored projection blows up mid-computation", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const out = await chunkCoordinates({ db: fakeDb({ ...projection, mean: null }), contextId: "mem", vectors: [[1, 2], [3, 4]] });
+    expect(out).toEqual([null, null]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+  // Corrupt json fails earlier, inside loadProjection's JSON.parse, so it is
+  // reported there and arrives here as a plain "no projection".
+  it("returns nulls when the stored json is corrupt", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await chunkCoordinates({ db: fakeDb({ ...projection, mean: "{" }), contextId: "mem", vectors: [[1, 2]] })).toEqual([null]);
+    expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
 });

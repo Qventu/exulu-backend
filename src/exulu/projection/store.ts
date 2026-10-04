@@ -16,24 +16,36 @@ export async function loadProjection(db: any, contextId: string, now = Date.now(
   // The fit writes `context: sanitizeName(contextId)` (it is the only form the
   // `--all` entry point can recover from a table name), so readers sanitise
   // too - for the lookup and for the cache key, or "My Docs" and "my_docs"
-  // would each hold a separate entry for the same row.
-  const key = sanitizeName(contextId);
-  const hit = cache.get(key);
-  if (hit && now - hit.loadedAt < PROJECTION_CACHE_TTL_MS) return hit.projection;
+  // would each hold a separate entry for the same row. The call sits inside the
+  // try because a nullish id would throw out of a function that promises not to.
+  let key: string | undefined;
   let projection: StoredProjection | null = null;
   try {
+    key = sanitizeName(contextId);
+    const hit = cache.get(key);
+    if (hit && now - hit.loadedAt < PROJECTION_CACHE_TTL_MS) return hit.projection;
     const row = await db("context_projections").where({ context: key }).first();
     if (row && Number(row.version) === PROJECTION_VERSION) {
-      projection = {
+      const candidate = {
         ...row,
         mean: parse(row.mean), basis: parse(row.basis), map: parse(row.map), intercept: parse(row.intercept),
         dims: Number(row.dims), components: Number(row.components),
       } as StoredProjection;
+      // A truncated basis or a two-row map still projects to plausible finite
+      // numbers, so a shape mismatch is the one corruption class that would
+      // fail silently instead of loudly. Treat it as "not fitted".
+      const shaped = Array.isArray(candidate.basis) && candidate.basis.length === candidate.components
+        && Array.isArray(candidate.map) && candidate.map.length === 3;
+      if (shaped) projection = candidate;
+      else {
+        console.error(`[EXULU] the stored projection for ${contextId} has the wrong shape (basis ${Array.isArray(candidate.basis) ? candidate.basis.length : "?"} of ${candidate.components}, map ${Array.isArray(candidate.map) ? candidate.map.length : "?"} of 3); treating it as not fitted`);
+      }
     }
   } catch (e) {
     console.error("[EXULU] could not read the context projection", e instanceof Error ? e.message : String(e));
   }
-  cache.set(key, { projection, loadedAt: now });
+  // No key means sanitizeName itself threw, so there is nothing to cache under.
+  if (key !== undefined) cache.set(key, { projection, loadedAt: now });
   return projection;
 }
 
