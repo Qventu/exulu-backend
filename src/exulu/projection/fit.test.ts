@@ -1,7 +1,12 @@
-jest.mock("@SRC/exulu/table-names", () => ({
-  getTableName: (id: string) => `${id}_items`,
-  getChunksTableName: (id: string) => `${id}_chunks`,
-}));
+jest.mock("@SRC/exulu/table-names", () => {
+  // Mirrors the real module, which runs the id through sanitizeName; a context
+  // id with capitals or a space must yield the table name production would use.
+  const sanitize = (id: string) => id.toLowerCase().replace(/ /g, "_").trim();
+  return {
+    getTableName: (id: string) => `${sanitize(id)}_items`,
+    getChunksTableName: (id: string) => `${sanitize(id)}_chunks`,
+  };
+});
 
 import { fitContextProjection, listFittableContexts } from "./fit";
 
@@ -71,8 +76,8 @@ describe("fitContextProjection", () => {
     expect(out.residual).toBeLessThan(0.2);
     const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
     expect(stored.rows).toMatchObject({ context: "mem", dims: 6, components: 4, method: "umap+linear", version: 1, sample_size: 120 });
-    expect(JSON.parse(JSON.stringify(stored.rows.basis))).toHaveLength(4);
-    expect(stored.rows.map).toHaveLength(3);
+    expect(JSON.parse(stored.rows.basis)).toHaveLength(4);
+    expect(JSON.parse(stored.rows.map)).toHaveLength(3);
     expect(out.written).toBe(120);
   });
 
@@ -92,6 +97,50 @@ describe("fitContextProjection", () => {
     expect(db.__writes).toEqual([]);
   });
 
+  it("stores the jsonb matrices as strings, not as pg array literals", async () => {
+    const db = fakeDb({ rows });
+    await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
+    // node-pg would encode a raw JS array as `{0.1,0.2}`, which jsonb rejects
+    // with 22P02, so every matrix column has to leave here already stringified.
+    for (const field of ["mean", "basis", "map", "intercept"]) {
+      expect(typeof stored.rows[field]).toBe("string");
+      expect(stored.rows[field].startsWith("[")).toBe(true);
+      expect(() => JSON.parse(stored.rows[field])).not.toThrow();
+    }
+    expect(JSON.parse(stored.rows.mean)).toHaveLength(6);
+    expect(JSON.parse(stored.rows.intercept)).toHaveLength(3);
+    // Everything else stays a native value for the driver to bind.
+    expect(typeof stored.rows.dims).toBe("number");
+    expect(stored.rows.fitted_at).toBeInstanceOf(Date);
+  });
+
+  it("stores the sanitised context id, the one form --all can recover", async () => {
+    const db = fakeDb({ rows });
+    const out = await fitContextProjection({ db, contextId: "My Docs", sample: 1000, components: 4, umapFactory });
+    expect(out.fitted).toBe(true);
+    const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
+    expect(stored.rows.context).toBe("my_docs");
+  });
+
+  it("refuses a chunks table with no items sibling and writes nothing", async () => {
+    const db = fakeDb({ rows });
+    db.schema = { hasTable: async (table: string) => table.endsWith("_chunks") };
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    expect(out).toMatchObject({ fitted: false, reason: expect.stringMatching(/items table/i) });
+    expect(db.__writes).toEqual([]);
+  });
+
+  it("refuses a layout that collapses to a single place", async () => {
+    const db = fakeDb({ rows });
+    const collapsed = () => ({ fit: (input: number[][]) => input.map(() => [1, 1, 1]) });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory: collapsed });
+    // A constant target fits exactly, so without the scale check this would
+    // store as a residual-0 map that puts every chunk on the origin.
+    expect(out).toMatchObject({ fitted: false, reason: expect.stringMatching(/degenerate layout/i) });
+    expect(db.__writes).toEqual([]);
+  });
+
   it("dry run computes the fit but writes nothing", async () => {
     const db = fakeDb({ rows });
     const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, dryRun: true, umapFactory });
@@ -103,14 +152,17 @@ describe("fitContextProjection", () => {
 
 describe("listFittableContexts", () => {
   it("derives context ids from the chunk tables in the database", async () => {
+    const filters: any[][] = [];
     const db: any = jest.fn(() => {
       const chain: any = {};
       chain.where = () => chain;
-      chain.andWhere = () => chain;
+      chain.andWhere = (...args: any[]) => { filters.push(args); return chain; };
       chain.select = () => chain;
       chain.then = (res: any) => Promise.resolve([{ table_name: "mem_chunks" }, { table_name: "docs_chunks" }]).then(res);
       return chain;
     });
     expect(await listFittableContexts(db)).toEqual(["mem", "docs"]);
+    // Views and foreign tables match the name pattern too, and cannot be fitted.
+    expect(filters).toContainEqual(["table_type", "BASE TABLE"]);
   });
 });

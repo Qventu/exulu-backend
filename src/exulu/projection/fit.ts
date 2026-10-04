@@ -1,6 +1,7 @@
 import { UMAP } from "umap-js";
 
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
+import { sanitizeName } from "@SRC/utils/sanitize-name";
 import {
   BACKFILL_BATCH, COMPONENTS, FIT_SAMPLE, POWER_ITERATIONS, PROJECTION_METHOD,
   PROJECTION_VERSION, RIDGE_LAMBDA, UMAP_MIN_DIST, UMAP_NEIGHBORS,
@@ -23,9 +24,11 @@ type UmapLike = { fit: (rows: number[][]) => number[][] };
 /** pgvector returns "[1,2,3]"; a driver configured to parse it returns an array. */
 export function parseVector(value: unknown): number[] {
   if (Array.isArray(value)) return value as number[];
-  const text = String(value ?? "");
-  if (!text.startsWith("[")) return [];
-  return text.slice(1, -1).split(",").map(Number);
+  // Only a complete bracketed literal is a vector. Stringifying anything else
+  // would turn an object into "[object Object]" and a truncated value would
+  // silently lose its last component instead of being rejected.
+  if (typeof value !== "string" || !value.startsWith("[") || !value.endsWith("]")) return [];
+  return value.slice(1, -1).split(",").map(Number);
 }
 
 const seedFrom = (id: string): number => {
@@ -49,6 +52,9 @@ export async function listFittableContexts(db: any): Promise<string[]> {
   const rows: any[] = await db("information_schema.tables")
     .where({ table_schema: "public" })
     .andWhere("table_name", "like", "%\\_chunks")
+    // Views and foreign tables also live in information_schema.tables; a fit
+    // can only work against a real table.
+    .andWhere("table_type", "BASE TABLE")
     .select("table_name");
   return rows.map((r) => String(r.table_name).replace(/_chunks$/, ""));
 }
@@ -70,6 +76,10 @@ export async function fitContextProjection({
   const empty = (reason: string): FitResult => ({ fitted: false, reason, sampleSize: 0, components, residual: 0, written: 0 });
 
   if (!(await db.schema.hasTable(chunks))) return empty(`${contextId} has no chunks table`);
+  // The sample joins the items table to skip archived items. Without this
+  // check a stray `*_chunks` table (one left behind by a deleted context, say)
+  // raises a raw `relation ... does not exist` out of the join.
+  if (!(await db.schema.hasTable(items))) return empty(`${contextId} has no items table`);
 
   const sampleRows: any[] = await db(`${chunks} as chunks`)
     .join(`${items} as items`, "items.id", "chunks.source")
@@ -96,14 +106,24 @@ export async function fitContextProjection({
   if (!Number.isFinite(spread) || spread < 1e-8) return empty(`${contextId} has no variance in its embeddings`);
 
   log(`fitting ${contextId}: ${vectors.length} vectors, ${dims} dims → ${basis.length} components`);
+  // At FIT_SAMPLE vectors the layout runs for minutes; without these two lines
+  // it is indistinguishable from a hang.
+  log(`${contextId}: laying out ${reduced.length} points in 3d (the slow phase)`);
   const umap = (umapFactory ?? defaultUmap)(seed, reduced.length);
   const raw = umap.fit(reduced.map((z) => Array.from(z)));
-  const { points: layout } = normalizeLayout(raw);
+  const { points: layout, scale } = normalizeLayout(raw);
+  // scale 0 means the 99th-percentile radius was 0: the layout collapsed to a
+  // single place. The ridge fit of a constant target succeeds with residual 0,
+  // so without this check a useless map stores as a perfect one.
+  if (!Number.isFinite(scale) || scale <= 0) return empty(`${contextId} produced a degenerate layout (every point in one place)`);
+  log(`${contextId}: layout done, fitting the linear map`);
   const { map, intercept } = ridgeFit(reduced, layout, RIDGE_LAMBDA);
   const residual = fitResidual(reduced, layout, map, intercept, 1);
 
   const projection: StoredProjection = {
-    context: contextId, dims, components: basis.length,
+    // Keyed by the sanitised id: `--all` can only recover the table prefix, so
+    // this is the one form both entry points can agree on. Readers sanitise too.
+    context: sanitizeName(contextId), dims, components: basis.length,
     mean: Array.from(mean), basis: basis.map((b) => Array.from(b)), map, intercept,
     method: PROJECTION_METHOD, version: PROJECTION_VERSION,
     sample_size: vectors.length, residual, fitted_at: new Date(),
@@ -117,7 +137,20 @@ export async function fitContextProjection({
     return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0 };
   }
 
-  await db("context_projections").insert(projection).onConflict("context").merge();
+  // knex does not stringify, and node-pg encodes a JS array as a Postgres array
+  // literal (`{0.1,0.2}`), which jsonb rejects with 22P02. The repo's convention
+  // is to stringify at the boundary; StoredProjection stays number arrays in
+  // memory because backfillCoordinates reads them.
+  await db("context_projections")
+    .insert({
+      ...projection,
+      mean: JSON.stringify(projection.mean),
+      basis: JSON.stringify(projection.basis),
+      map: JSON.stringify(projection.map),
+      intercept: JSON.stringify(projection.intercept),
+    })
+    .onConflict("context")
+    .merge();
   const written = await backfillCoordinates({ db, contextId, projection, log });
   return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written };
 }
