@@ -1,3 +1,5 @@
+import { UMAP } from "umap-js";
+
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import {
   BACKFILL_BATCH, COMPONENTS, FIT_SAMPLE, POWER_ITERATIONS, PROJECTION_METHOD,
@@ -33,8 +35,6 @@ const seedFrom = (id: string): number => {
 };
 
 function defaultUmap(seed: number, n: number): UmapLike {
-  // Imported lazily so the fit module stays testable without the dependency.
-  const { UMAP } = require("umap-js") as typeof import("umap-js");
   const random = rng(seed);
   return new UMAP({
     nComponents: 3,

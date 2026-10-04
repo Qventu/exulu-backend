@@ -1,5 +1,5 @@
 import Knex from "knex";
-import { Knex as KnexType } from "knex";
+import type { Knex as KnexType } from "knex";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import pgvector from "pgvector/knex"; // Side-effect import: registers pgvector methods with knex
 let db: Record<string, KnexType | undefined> = {};
