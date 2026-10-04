@@ -113,10 +113,10 @@ contextProjectionStatus(contextId: ID!): ContextProjectionStatus
 - `groupField` is validated against the context's declared fields and returned as `group` (memory bases pass `type`); an unknown field is ignored rather than erroring.
 - `search` narrows to items whose name or text matches, through the existing full-text index.
 - `limit` defaults to 5,000 and is capped at 20,000. Above the cap the result is the same deterministic sample used by the fit, with `sampled: true` and the true `total`.
-- **Edges** take one node and return its strongest lexical neighbours. The node's first chunk is reduced to the twelve lexemes that carry it, by asking Postgres to unnest the chunk's own `tsvector` and keep the most frequent, longest ones. Those are OR-ed into one `to_tsquery`, matched against the other items' chunks through the tsvector index, ranked with `ts_rank`, the node itself excluded, best per item, capped by `limit`. A whole-graph edge mesh needs precomputed edges and is deliberately left to 3c-2's design.
+- **Edges** take one node and return its strongest lexical neighbours. The node's first chunk is reduced to the twelve lexemes that carry it, by asking Postgres to unnest the chunk's own `tsvector` and keep the most frequent, longest ones. Those are OR-ed into one `websearch_to_tsquery`, matched against the other items' chunks through the tsvector index, ranked with `ts_rank`, the node itself excluded, best per item, capped by `limit`. A whole-graph edge mesh needs precomputed edges and is deliberately left to 3c-2's design.
 
   Corrected on 2026-10-04 during execution (controller Ruling 24). The original design said the node's text was "turned into a query with the existing query-preprocessing helper". That helper deliberately refuses the lenient OR form above twelve terms and falls back to a strict AND over every lexeme, which it documents as acceptable because a semantic branch carries such queries in hybrid search. Edges have no semantic branch, so every node longer than a sentence would have returned nothing. The twelve-lexeme cap keeps the measured-safe term count the helper itself uses.
-- **Status** reports whether a usable projection exists (row present, version current, dimensions matching the context's model) and the coordinate coverage.
+- **Status** reports whether a usable projection exists (row present, version current, and the stored matrices the right shape for the recorded dimensions) and the coordinate coverage. A dimension mismatch against the context's live embedder is detected at write time, not here: the loader refuses the projection and the chunk gets null coordinates, which shows up in this query as coverage falling behind.
 
 ## 6. Privacy and error handling
 
@@ -124,7 +124,8 @@ contextProjectionStatus(contextId: ID!): ContextProjectionStatus
 |---|---|
 | Viewer may not read an item | its point and every edge touching it are absent; counts in `total` are scoped the same way |
 | Base never fitted | `fitted: false`, points empty, the UI shows "not mapped yet" |
-| Projection version or dimensions stale | treated as not fitted; the script refits |
+| Projection version stale, or its matrices the wrong shape | treated as not fitted; the script refits |
+| Projection dimensions stale against the live embedder | detected at write time; coordinates null and coverage stops growing |
 | Chunk without an embedding | null coordinates, excluded from points |
 | Projection fails at embedding time | coordinates null, one log line, the embedding still succeeds |
 | Edges query fails | the error surfaces on that query only; points are unaffected |

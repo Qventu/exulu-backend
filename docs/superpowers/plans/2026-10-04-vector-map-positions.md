@@ -1108,7 +1108,7 @@ git commit -m "feat(map): write chunk coordinates at embedding time from the cac
 > That is wrong for a whole-chunk seed: `chooseFullTextQuery` falls back to the strict
 > `plainto_tsquery` AND form above `MAX_OR_TERMS` (12), so a 600-character passage
 > matches only near-duplicates and the query returns nothing for almost every node.
-> As shipped, edges instead build one `to_tsquery` from the twelve most frequent,
+> As shipped, edges instead build one `websearch_to_tsquery` from the twelve most frequent,
 > longest lexemes of the node's own `tsvector` (`unnest(to_tsvector(...))`, ordered by
 > `array_length(positions, 1)` then `length(lexeme)`, capped by the new
 > `EDGE_QUERY_TERMS` constant), and match and rank with that string across every
