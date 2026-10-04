@@ -113,7 +113,15 @@ export async function contextMapPoints({
  * nothing but a near-duplicate satisfies. Their doc comment expects a semantic
  * branch to carry long passages, and an edge query has none. So Postgres picks
  * the terms instead: most frequent in the passage first, then longest, capped
- * at EDGE_QUERY_TERMS, OR-ed into one tsquery.
+ * at EDGE_QUERY_TERMS.
+ *
+ * Those lexemes are joined with " or " and consumed by `websearch_to_tsquery`,
+ * the same shape `buildFullTextOrQuery` already produces for the hybrid search.
+ * The point is that `websearch_to_tsquery` cannot raise a tsquery syntax error:
+ * a lexeme is not valid tsquery input, since the default parser emits url, email
+ * and file tokens carrying `&`, `?` or `=`, and `to_tsquery` rejects those with
+ * 42601. Re-tokenising such a lexeme can push the term count slightly past the
+ * cap, which is harmless.
  */
 export async function contextMapEdges({
   db, context, user, nodeId, limit,
@@ -132,17 +140,17 @@ export async function contextMapEdges({
   // way vector-search.ts applies one query string across languages.
   const primary = languages[0] ?? "english";
   const lexemes = await db.raw(
-    `SELECT string_agg(lexeme, ' | ') AS query
+    `SELECT string_agg(lexeme, ' or ') AS query
        FROM (SELECT lexeme
                FROM unnest(to_tsvector('${primary}', ?))
               ORDER BY array_length(positions, 1) DESC, length(lexeme) DESC
               LIMIT ${EDGE_QUERY_TERMS}) t`,
     [text],
   );
-  const tsquery = String(lexemes?.rows?.[0]?.query ?? "").trim();
+  const terms = String(lexemes?.rows?.[0]?.query ?? "").trim();
   // Null or blank: the passage carried nothing distinctive (stop words only, or
   // a tsvector the configured dictionary emptied). No edges, no ranking query.
-  if (!tsquery) return [];
+  if (!terms) return [];
 
   const table = convertContextToTableDefinition(context);
 
@@ -150,15 +158,15 @@ export async function contextMapEdges({
     .join(`${items} as items`, "items.id", "chunks.source")
     .whereNot("chunks.source", nodeId)
     .whereRaw("items.archived IS NOT TRUE")
-    .whereRaw(ftsMatch(languages, "to_tsquery"), languages.map(() => tsquery))
+    .whereRaw(ftsMatch(languages, "websearch_to_tsquery"), languages.map(() => terms))
     .groupBy("items.id")
     .orderByRaw("score DESC")
     .limit(Math.max(1, limit))
     .select([
       db.raw("items.id as id"),
       db.raw(
-        `MAX(GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, to_tsquery('${lang}', ?))`).join(", ")})) as score`,
-        languages.map(() => tsquery),
+        `MAX(GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, websearch_to_tsquery('${lang}', ?))`).join(", ")})) as score`,
+        languages.map(() => terms),
       ),
     ]);
   q = applyAccessControl(table, q, user, "items");

@@ -105,10 +105,13 @@ describe("contextMapPoints", () => {
 });
 
 describe("contextMapEdges", () => {
+  /** The seed passage, and the lexeme aggregate Postgres hands back for it. */
+  const SEED = "encoder speed display";
+  const LEXEMES = "encod or speed or display";
   /** A seed chunk plus the lexemes Postgres hands back for it. */
-  const edgeDb = (rows: any[], query: unknown = "encod | speed | display") => fakeDb({
+  const edgeDb = (rows: any[], query: unknown = LEXEMES) => fakeDb({
     mem_chunks: rows,
-    "mem_chunks#first": [{ text: "encoder speed display" }],
+    "mem_chunks#first": [{ text: SEED }],
     raw: [{ query }],
   });
 
@@ -134,11 +137,11 @@ describe("contextMapEdges", () => {
     await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
     const lexemes = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("unnest(to_tsvector("));
     expect(lexemes).toBeDefined();
-    expect(String(lexemes?.[1])).toContain("string_agg(lexeme, ' | ')");
+    expect(String(lexemes?.[1])).toContain("string_agg(lexeme, ' or ')");
     expect(String(lexemes?.[1])).toContain("ORDER BY array_length(positions, 1) DESC, length(lexeme) DESC");
     expect(String(lexemes?.[1])).toContain(`LIMIT ${EDGE_QUERY_TERMS}`);
     expect(String(lexemes?.[1])).toContain("to_tsvector('english', ?)");
-    expect(lexemes?.[2]).toEqual(["encoder speed display"]);
+    expect(lexemes?.[2]).toEqual([SEED]);
   });
 
   it("is empty, without ranking anything, when the node has no distinctive lexemes", async () => {
@@ -150,19 +153,24 @@ describe("contextMapEdges", () => {
     }
   });
 
-  it("matches and ranks with to_tsquery over the aggregated lexemes", async () => {
+  // Ruling 27: websearch_to_tsquery consumes the aggregate, because it cannot
+  // raise a tsquery syntax error at all - a lexeme carrying punctuation (a url
+  // or a file path token) is re-tokenised rather than rejected, where to_tsquery
+  // would fail with 42601. It also matches buildFullTextOrQuery's existing
+  // ' or '-joined shape.
+  it("matches and ranks with websearch_to_tsquery over the aggregated lexemes", async () => {
     const db = edgeDb([{ id: "i2", score: "0.42" }]);
     await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
     const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
-    expect(String(match?.[2])).toContain("to_tsquery('english', ?)");
-    expect(match?.[3]).toEqual(["encod | speed | display"]);
+    expect(String(match?.[2])).toContain("websearch_to_tsquery('english', ?)");
     const rank = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("ts_rank"));
-    expect(String(rank?.[1])).toContain("MAX(GREATEST(ts_rank(chunks.fts, to_tsquery('english', ?)))) as score");
-    expect(rank?.[2]).toEqual(["encod | speed | display"]);
-    // Neither preprocessing helper may be involved in an edge query any more.
-    const sql = JSON.stringify(db.__log);
-    expect(sql).not.toContain("plainto_tsquery");
-    expect(sql).not.toContain("websearch_to_tsquery");
+    expect(String(rank?.[1])).toContain("MAX(GREATEST(ts_rank(chunks.fts, websearch_to_tsquery('english', ?)))) as score");
+    // What is bound is the lexeme aggregate, never the seed passage: binding the
+    // passage itself is precisely the dead query this call site started as, and
+    // it would still satisfy an assertion about the function name alone.
+    expect(match?.[3]).toEqual([LEXEMES]);
+    expect(rank?.[2]).toEqual([LEXEMES]);
+    expect(JSON.stringify([match, rank])).not.toContain(SEED);
   });
 });
 
