@@ -16,9 +16,38 @@ const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
 const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : typeof d === "string" ? new Date(d).toISOString() : null);
 const languagesOf = (context: ExuluContext): string[] =>
   (context.configuration?.languages?.length ? context.configuration.languages : ["english"]) as string[];
-/** Only a declared field may be selected as the colouring value. */
-const groupColumn = (context: ExuluContext, field?: string | null): string | null =>
-  field && context.fields?.some((f: any) => f.name === field) ? field : null;
+/**
+ * The physical column to colour the points by, or null when the request's
+ * `groupField` cannot be honoured — in which case it is ignored, per spec §5,
+ * rather than failing the query.
+ *
+ * This is the only place a request value reaches raw SQL, and four separate
+ * things have to be true before it does:
+ *  - the field is declared on the context (an undeclared name is not a column);
+ *  - it is not `hidden`, this repo's write-only-secret contract (see
+ *    field-allow-list.ts) — grouping by one would return the secret for every
+ *    item the caller can read;
+ *  - it is not a `file` field, whose column is `<name>_s3key` (createItemsTable):
+ *    the declared name is not the column, and grouping by a storage key is
+ *    meaningless anyway;
+ *  - its sanitised name is a plain identifier. Columns are created as
+ *    `sanitizeName(field.name)`, so a declared "Doc Type" lives in `doc_type`,
+ *    and anything that still carries punctuation after sanitising is refused
+ *    instead of being interpolated.
+ * The declared and the sanitised spelling are both accepted as input, which also
+ * makes the answer independent of whether anything has mutated `field.name`.
+ */
+const groupColumn = (context: ExuluContext, field?: string | null): string | null => {
+  if (!field) return null;
+  const wanted = sanitizeName(field);
+  const declared = context.fields?.find((f: any) => {
+    const name = String(f?.name ?? "");
+    return name === field || sanitizeName(name) === wanted;
+  });
+  if (!declared || (declared as any).hidden === true || declared.type === "file") return null;
+  const column = sanitizeName(String(declared.name));
+  return /^[a-z0-9_]+$/.test(column) ? column : null;
+};
 
 /**
  * A full-text predicate and its bindings: one disjunct per configured language
@@ -88,13 +117,13 @@ export async function contextMapPoints({
 
   const rows: any[] = mode === "DOCUMENTS"
     ? await base()
-        .groupBy("items.id", "items.name", ...(group ? [`items.${group}`] : []))
+        .groupBy("items.id", "items.name", ...(group ? [`items.${group}`] : []))  // knex quotes these itself
         .orderByRaw("md5(items.id::text || ?)", [context.id])
         .limit(capped)
         .select([
           db.raw("items.id as id"), db.raw("items.id as \"itemId\""),
           db.raw("AVG(chunks.px) as x"), db.raw("AVG(chunks.py) as y"), db.raw("AVG(chunks.pz) as z"),
-          db.raw("items.name as label"), db.raw(group ? `items.${group} as "group"` : "NULL as \"group\""),
+          db.raw("items.name as label"), db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("COUNT(chunks.id) as chunks"),
         ])
     : await base()
@@ -104,7 +133,7 @@ export async function contextMapPoints({
           db.raw("chunks.id as id"), db.raw("chunks.source as \"itemId\""),
           db.raw("chunks.px as x"), db.raw("chunks.py as y"), db.raw("chunks.pz as z"),
           db.raw("LEFT(COALESCE(chunks.content, items.name), 120) as label"),
-          db.raw(group ? `items.${group} as "group"` : "NULL as \"group\""),
+          db.raw(group ? `items."${group}" as "group"` : "NULL as \"group\""),
           db.raw("1 as chunks"),
         ]);
 

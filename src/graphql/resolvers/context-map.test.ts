@@ -93,6 +93,52 @@ describe("contextMapPoints", () => {
     expect(db.__log.some((l: any[]) => l[1] === "limit" && l[2] === 5000)).toBe(true);
   });
 
+  // The grouping field is the one place a request value reaches raw SQL, so each
+  // rejection below is a query that would otherwise run - or fail - with it.
+  describe("groupField", () => {
+    const ctxWith = (fields: any[]) => ({ ...context, fields }) as any;
+    /** Every emitted `… as "group"` expression. */
+    const groupSql = (db: any) =>
+      db.__log.filter((l: any[]) => l[0] === "raw" && String(l[1]).includes('as "group"')).map((l: any[]) => String(l[1]));
+    const run = async (fields: any[], groupField: string) => {
+      const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+      await contextMapPoints({ db, context: ctxWith(fields), user, mode: "DOCUMENTS", groupField, limit: 10 });
+      return db;
+    };
+
+    // `hidden` is this repo's write-only-secret contract (see field-allow-list.ts).
+    // Grouping by one would hand the value back for every item the caller reads.
+    it("drops a hidden field", async () => {
+      const db = await run([{ name: "api_secret", type: "text", hidden: true }], "api_secret");
+      expect(JSON.stringify(db.__log)).not.toContain("api_secret");
+      expect(groupSql(db).every((sql: string) => sql.includes('NULL as "group"'))).toBe(true);
+    });
+
+    // Item columns are sanitizeName(field.name), so a declared "Doc Type" lives
+    // in `doc_type`; emitting `items.Doc Type` was a syntax error that failed the
+    // whole query where the spec says an unusable grouping field is ignored.
+    it("resolves a declared name to its sanitised, quoted column", async () => {
+      const db = await run([{ name: "Doc Type", type: "enum" }], "Doc Type");
+      expect(groupSql(db).some((sql: string) => sql.includes('items."doc_type" as "group"'))).toBe(true);
+      expect(db.__log.some((l: any[]) => l[1] === "groupBy" && l.includes("items.doc_type"))).toBe(true);
+    });
+
+    it("drops a declared name that does not sanitise to a safe identifier", async () => {
+      const db = await run([{ name: "Doc-Type", type: "enum" }], "Doc-Type");
+      expect(JSON.stringify(db.__log)).not.toContain("Doc-Type");
+      expect(JSON.stringify(db.__log)).not.toContain("doc-type");
+      expect(groupSql(db).every((sql: string) => sql.includes('NULL as "group"'))).toBe(true);
+    });
+
+    // A file field's column is `<name>_s3key`: grouping by a storage key is
+    // meaningless, and the declared name is not the column at all.
+    it("drops a file field", async () => {
+      const db = await run([{ name: "attachment", type: "file" }], "attachment");
+      expect(JSON.stringify(db.__log)).not.toContain("attachment");
+      expect(groupSql(db).every((sql: string) => sql.includes('NULL as "group"'))).toBe(true);
+    });
+  });
+
   it("is empty when the chunks table is missing", async () => {
     const db = fakeDb({}, { hasTable: () => false });
     expect(await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 })).toEqual({ points: [], total: 0, sampled: false });
