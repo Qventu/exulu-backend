@@ -82,6 +82,7 @@ import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-base
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
 import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
+import { POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
 import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
 import { runScan } from "@SRC/exulu/memory/conflicts/scan";
 import { makeMergeSuggester, makeModelJudge } from "@SRC/exulu/memory/conflicts/judge";
@@ -2750,7 +2751,10 @@ type EmbeddingModelOption {
     if (!context.user || !target) return { points: [], total: 0, sampled: false };
     return contextMapPoints({
       db: context.db, context: target, user: context.user,
-      mode: args.mode ?? "DOCUMENTS", groupField: args.groupField, search: args.search, limit: args.limit,
+      mode: args.mode ?? "DOCUMENTS", groupField: args.groupField, search: args.search,
+      // An explicit `limit: null` is legal for a nullable Int; it must mean
+      // "the default", not "one point" (ruling 25).
+      limit: args.limit ?? POINTS_LIMIT_DEFAULT,
     });
   };
   resolvers.Query["contextMapEdges"] = async (_, args, context) => {

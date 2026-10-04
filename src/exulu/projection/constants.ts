@@ -11,4 +11,8 @@ export const BACKFILL_BATCH = 500;
 export const POINTS_LIMIT_DEFAULT = 5000;
 export const POINTS_LIMIT_MAX = 20000;
 export const EDGE_LIMIT_DEFAULT = 8;
+/** Lexemes an edge query is built from. Matches the measured-safe bound behind
+ *  MAX_OR_TERMS in query-preprocessing: 12 OR terms ran in 1.0s on a 97k-chunk
+ *  corpus where 56 took 6.3s. */
+export const EDGE_QUERY_TERMS = 12;
 export const PROJECTION_CACHE_TTL_MS = 60_000;

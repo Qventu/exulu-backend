@@ -9,6 +9,7 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
   convertContextToTableDefinition: (c: any) => ({ name: { singular: c.id, plural: `${c.id}s` } }),
 }));
 
+import { EDGE_QUERY_TERMS } from "@SRC/exulu/projection/constants";
 import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
 
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
@@ -24,7 +25,16 @@ function fakeDb(answers: Record<string, any[]>, opts: { hasTable?: (t: string) =
     chain.then = (res: any, rej: any) => Promise.resolve(answers[key] ?? []).then(res, rej);
     return chain;
   });
-  db.raw = (sql: string, bindings?: any) => ({ sql, bindings, toString: () => sql });
+  // `raw` serves two jobs: a select/predicate fragment (inspected through the
+  // log) and a standalone statement the resolver awaits for its rows — which is
+  // how the edges query asks Postgres for the node's own lexemes.
+  db.raw = (sql: string, bindings?: any) => {
+    log.push(["raw", sql, bindings]);
+    return {
+      sql, bindings, toString: () => sql,
+      then: (res: any, rej: any) => Promise.resolve({ rows: answers["raw"] ?? [] }).then(res, rej),
+    };
+  };
   db.schema = { hasTable: async (t: string) => (opts.hasTable ? opts.hasTable(t) : true) };
   db.__log = log;
   return db;
@@ -68,6 +78,14 @@ describe("contextMapPoints", () => {
     expect(db.__log.some((l: any[]) => JSON.stringify(l).includes("nope"))).toBe(false);
   });
 
+  // Ruling 25: `limit` is a nullable Int in the schema, so an explicit null used
+  // to reach Math.max(1, Math.min(null, MAX)) and return a single point.
+  it("falls back to the default cap for a null limit", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+    await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: null });
+    expect(db.__log.some((l: any[]) => l[1] === "limit" && l[2] === 5000)).toBe(true);
+  });
+
   it("is empty when the chunks table is missing", async () => {
     const db = fakeDb({}, { hasTable: () => false });
     expect(await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 })).toEqual({ points: [], total: 0, sampled: false });
@@ -87,11 +105,15 @@ describe("contextMapPoints", () => {
 });
 
 describe("contextMapEdges", () => {
+  /** A seed chunk plus the lexemes Postgres hands back for it. */
+  const edgeDb = (rows: any[], query: unknown = "encod | speed | display") => fakeDb({
+    mem_chunks: rows,
+    "mem_chunks#first": [{ text: "encoder speed display" }],
+    raw: [{ query }],
+  });
+
   it("ranks other items lexically and never returns the node itself", async () => {
-    const db = fakeDb({
-      mem_chunks: [{ id: "i2", score: "0.42" }, { id: "i3", score: "0.2" }],
-      "mem_chunks#first": [{ text: "encoder speed display" }],
-    });
+    const db = edgeDb([{ id: "i2", score: "0.42" }, { id: "i3", score: "0.2" }]);
     const out = await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
     expect(out).toEqual([{ source: "i1", target: "i2", score: 0.42 }, { source: "i1", target: "i3", score: 0.2 }]);
     expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(true);
@@ -101,6 +123,46 @@ describe("contextMapEdges", () => {
   });
   it("is empty when the node has no text", async () => {
     expect(await contextMapEdges({ db: fakeDb({ "mem_chunks#first": [] }), context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+  });
+
+  // Ruling 24. The preprocessing helpers are built for short user queries: fed a
+  // 600-character passage they exceed MAX_OR_TERMS and fall back to the strict
+  // AND form, which only ever matches a near-duplicate. So the node's own
+  // tsvector picks the terms, ordered by in-passage frequency then length.
+  it("asks Postgres for the node's own lexemes, capped and ordered by frequency", async () => {
+    const db = edgeDb([]);
+    await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
+    const lexemes = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("unnest(to_tsvector("));
+    expect(lexemes).toBeDefined();
+    expect(String(lexemes?.[1])).toContain("string_agg(lexeme, ' | ')");
+    expect(String(lexemes?.[1])).toContain("ORDER BY array_length(positions, 1) DESC, length(lexeme) DESC");
+    expect(String(lexemes?.[1])).toContain(`LIMIT ${EDGE_QUERY_TERMS}`);
+    expect(String(lexemes?.[1])).toContain("to_tsvector('english', ?)");
+    expect(lexemes?.[2]).toEqual(["encoder speed display"]);
+  });
+
+  it("is empty, without ranking anything, when the node has no distinctive lexemes", async () => {
+    for (const query of [null, "   "]) {
+      const db = edgeDb([{ id: "i2", score: "0.9" }], query);
+      expect(await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+      expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
+      expect(JSON.stringify(db.__log)).not.toContain("ts_rank");
+    }
+  });
+
+  it("matches and ranks with to_tsquery over the aggregated lexemes", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.42" }]);
+    await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
+    const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
+    expect(String(match?.[2])).toContain("to_tsquery('english', ?)");
+    expect(match?.[3]).toEqual(["encod | speed | display"]);
+    const rank = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("ts_rank"));
+    expect(String(rank?.[1])).toContain("MAX(GREATEST(ts_rank(chunks.fts, to_tsquery('english', ?)))) as score");
+    expect(rank?.[2]).toEqual(["encod | speed | display"]);
+    // Neither preprocessing helper may be involved in an edge query any more.
+    const sql = JSON.stringify(db.__log);
+    expect(sql).not.toContain("plainto_tsquery");
+    expect(sql).not.toContain("websearch_to_tsquery");
   });
 });
 

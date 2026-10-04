@@ -1,6 +1,6 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
-import { POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX, PROJECTION_VERSION } from "@SRC/exulu/projection/constants";
+import { EDGE_QUERY_TERMS, POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX, PROJECTION_VERSION } from "@SRC/exulu/projection/constants";
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
@@ -21,11 +21,12 @@ const groupColumn = (context: ExuluContext, field?: string | null): string | nul
   field && context.fields?.some((f: any) => f.name === field) ? field : null;
 
 /**
- * The full-text predicate over the generated `fts` column, one disjunct per
- * configured language. The language is interpolated as a SQL literal and only
- * the query text is bound — the shape vector-search.ts already uses, because a
- * bound `regconfig` parameter is untested here and the languages come from the
- * context configuration, never from the request.
+ * The full-text predicate over the generated `fts` column: one disjunct per
+ * configured language, each binding the same query string. The language is
+ * interpolated as a SQL literal and only the text is bound — the shape
+ * vector-search.ts already uses, because a bound `regconfig` parameter is
+ * untested here and the languages come from the context configuration, never
+ * from the request.
  */
 const ftsMatch = (languages: string[], fn: string): string =>
   `(${languages.map((lang) => `chunks.fts @@ ${fn}('${lang}', ?)`).join(" OR ")})`;
@@ -35,14 +36,19 @@ export async function contextMapPoints({
   db, context, user, mode = "DOCUMENTS", groupField, search, limit = POINTS_LIMIT_DEFAULT,
 }: {
   db: any; context: ExuluContext; user: User | undefined; mode?: MapMode;
-  groupField?: string | null; search?: string | null; limit?: number;
+  groupField?: string | null; search?: string | null; limit?: number | null;
 }): Promise<MapPoints> {
   const chunks = getChunksTableName(context.id);
   const items = getTableName(context.id);
   if (!(await db.schema.hasTable(chunks))) return { points: [], total: 0, sampled: false };
 
   const table = convertContextToTableDefinition(context);
-  const capped = Math.max(1, Math.min(limit, POINTS_LIMIT_MAX));
+  // `limit` is a nullable Int in the schema, so an explicit null arrives as null
+  // (a parameter default only catches undefined) and Math.min(null, MAX) is 0 —
+  // one point, silently. Nothing finite means the caller did not ask, so use the
+  // default; the nullish test is explicit because Number(null) is a finite 0.
+  const asked = limit == null ? NaN : Number(limit);
+  const capped = Math.max(1, Math.min(Number.isFinite(asked) ? asked : POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX));
   const group = groupColumn(context, groupField);
   const languages = languagesOf(context);
 
@@ -97,7 +103,18 @@ export async function contextMapPoints({
   };
 }
 
-/** A node's strongest lexical neighbours, from the generated tsvector index. */
+/**
+ * A node's strongest lexical neighbours, from the generated tsvector index.
+ *
+ * The query is built from the node's OWN lexemes, not through
+ * query-preprocessing: those helpers are made for short user queries, and a
+ * 600-character passage blows past their MAX_OR_TERMS bound, which falls back
+ * to the strict AND form — an "every lexeme of this passage" predicate that
+ * nothing but a near-duplicate satisfies. Their doc comment expects a semantic
+ * branch to carry long passages, and an edge query has none. So Postgres picks
+ * the terms instead: most frequent in the passage first, then longest, capped
+ * at EDGE_QUERY_TERMS, OR-ed into one tsquery.
+ */
 export async function contextMapEdges({
   db, context, user, nodeId, limit,
 }: { db: any; context: ExuluContext; user: User | undefined; nodeId: string; limit: number }): Promise<MapEdge[]> {
@@ -109,24 +126,39 @@ export async function contextMapEdges({
   const text = String(seed?.text ?? "").trim();
   if (!text) return [];
 
-  const texts = resolveSearchQueryTexts(text);
-  const chosen = chooseFullTextQuery({ strictMatches: false, strictText: text, orText: texts.hybridOrQuery });
   const languages = languagesOf(context);
+  // The terms are lexed in the first configured language; the resulting tsquery
+  // is then matched against every language's share of the generated column, the
+  // way vector-search.ts applies one query string across languages.
+  const primary = languages[0] ?? "english";
+  const lexemes = await db.raw(
+    `SELECT string_agg(lexeme, ' | ') AS query
+       FROM (SELECT lexeme
+               FROM unnest(to_tsvector('${primary}', ?))
+              ORDER BY array_length(positions, 1) DESC, length(lexeme) DESC
+              LIMIT ${EDGE_QUERY_TERMS}) t`,
+    [text],
+  );
+  const tsquery = String(lexemes?.rows?.[0]?.query ?? "").trim();
+  // Null or blank: the passage carried nothing distinctive (stop words only, or
+  // a tsvector the configured dictionary emptied). No edges, no ranking query.
+  if (!tsquery) return [];
+
   const table = convertContextToTableDefinition(context);
 
   let q = db(`${chunks} as chunks`)
     .join(`${items} as items`, "items.id", "chunks.source")
     .whereNot("chunks.source", nodeId)
     .whereRaw("items.archived IS NOT TRUE")
-    .whereRaw(ftsMatch(languages, chosen.fn), languages.map(() => chosen.text))
+    .whereRaw(ftsMatch(languages, "to_tsquery"), languages.map(() => tsquery))
     .groupBy("items.id")
     .orderByRaw("score DESC")
     .limit(Math.max(1, limit))
     .select([
       db.raw("items.id as id"),
       db.raw(
-        `MAX(GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, ${chosen.fn}('${lang}', ?))`).join(", ")})) as score`,
-        languages.map(() => chosen.text),
+        `MAX(GREATEST(${languages.map((lang) => `ts_rank(chunks.fts, to_tsquery('${lang}', ?))`).join(", ")})) as score`,
+        languages.map(() => tsquery),
       ),
     ]);
   q = applyAccessControl(table, q, user, "items");
