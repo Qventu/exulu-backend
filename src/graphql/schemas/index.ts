@@ -81,6 +81,7 @@ import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contr
 import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
+import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
 import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
 import { runScan } from "@SRC/exulu/memory/conflicts/scan";
 import { makeMergeSuggester, makeModelJudge } from "@SRC/exulu/memory/conflicts/judge";
@@ -744,6 +745,15 @@ type PageInfo {
     memoryConflicts(contextId: ID!): [MemoryConflict!]!
     memoryConflictCounts(contextId: ID!): MemoryConflictCounts
     memoryConflictsForMemory(contextId: ID!, memoryId: ID!): MemoryConflictsForMemory
+    `;
+
+  // Vector map (3c-1 spec §5): the 3d cloud of a knowledge or memory base.
+  // Gated on a signed-in user only - the rows themselves are filtered by
+  // item-level access control, the same call <ctx>_itemsPagination makes.
+  typeDefs += `
+    contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = 5000): ContextMapPoints
+    contextMapEdges(contextId: ID!, nodeId: ID!, limit: Int = 8): [ContextMapEdge!]!
+    contextProjectionStatus(contextId: ID!): ContextProjectionStatus
     `;
 
   typeDefs += `
@@ -2731,6 +2741,29 @@ type EmbeddingModelOption {
     return suggestMerge({ db: context.db, context: target, id: args.id, suggester });
   };
 
+  // Vector map (3c-1 spec §5). memoryContextOf is reused as-is: despite the
+  // name it is just `contexts.find`, and the map serves knowledge bases too.
+  // No hasAgentsReadAccess gate here on purpose - access is decided per item
+  // inside the resolvers, by applyAccessControl with the "items" prefix.
+  resolvers.Query["contextMapPoints"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return { points: [], total: 0, sampled: false };
+    return contextMapPoints({
+      db: context.db, context: target, user: context.user,
+      mode: args.mode ?? "DOCUMENTS", groupField: args.groupField, search: args.search, limit: args.limit,
+    });
+  };
+  resolvers.Query["contextMapEdges"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return [];
+    return contextMapEdges({ db: context.db, context: target, user: context.user, nodeId: args.nodeId, limit: args.limit ?? 8 });
+  };
+  resolvers.Query["contextProjectionStatus"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return null;
+    return contextProjectionStatus({ db: context.db, context: target });
+  };
+
   resolvers.Query["tools"] = async (_, args, context, info) => {
     const requestedFields = getRequestedFields(info);
     const { search, category, limit = 100, page = 0 } = args;
@@ -3129,6 +3162,30 @@ type MemoryConflictCounts { open: Int!  memoriesInvolved: Int!  lastScanAt: Stri
 type MemoryConflictsForMemory { open: [MemoryConflict!]!  mergedFrom: [MemoryConflictMember!]! }
 type MemoryConflictScanResult { open: Int!  duplicateGroups: Int!  contradictionGroups: Int!  judged: Int!  unjudged: Int!  skipped: Int!  scannedAt: String! }
 type MemoryMergeSuggestion { information: String!  type: String }
+enum ContextMapMode { DOCUMENTS  PASSAGES }
+type ContextMapPoint {
+    id: ID!
+    itemId: ID!
+    x: Float!
+    y: Float!
+    z: Float!
+    label: String!
+    group: String
+    chunks: Int!
+}
+type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
+type ContextMapEdge { source: ID!  target: ID!  score: Float! }
+type ContextProjectionStatus {
+    fitted: Boolean!
+    method: String
+    fittedAt: String
+    sampleSize: Int
+    dims: Int
+    components: Int
+    residual: Float
+    mappedChunks: Int!
+    totalChunks: Int!
+}
 type Reranker {
     id: ID!
     name: String!

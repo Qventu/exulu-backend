@@ -1,0 +1,134 @@
+jest.mock("@SRC/graphql/utilities/access-control", () => ({
+  applyAccessControl: jest.fn((_t: unknown, q: any, _u: unknown, prefix?: string) => { q.__scoped = prefix ?? true; return q; }),
+}));
+jest.mock("@SRC/exulu/table-names", () => ({
+  getTableName: (id: string) => `${id}_items`,
+  getChunksTableName: (id: string) => `${id}_chunks`,
+}));
+jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
+  convertContextToTableDefinition: (c: any) => ({ name: { singular: c.id, plural: `${c.id}s` } }),
+}));
+
+import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
+
+/** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
+function fakeDb(answers: Record<string, any[]>, opts: { hasTable?: (t: string) => boolean } = {}) {
+  const log: any[] = [];
+  const db: any = jest.fn((table: string) => {
+    const key = table.split(" ")[0];
+    const chain: any = { __table: key, __scoped: false };
+    for (const m of ["join", "where", "whereIn", "whereNot", "whereNotNull", "whereRaw", "groupBy", "orderBy", "orderByRaw", "limit", "select", "count", "countDistinct", "andWhere", "pluck"]) {
+      chain[m] = (...args: any[]) => { log.push([key, m, ...args.filter((a) => typeof a !== "function")]); return chain; };
+    }
+    chain.first = async () => (answers[`${key}#first`] ?? [])[0];
+    chain.then = (res: any, rej: any) => Promise.resolve(answers[key] ?? []).then(res, rej);
+    return chain;
+  });
+  db.raw = (sql: string, bindings?: any) => ({ sql, bindings, toString: () => sql });
+  db.schema = { hasTable: async (t: string) => (opts.hasTable ? opts.hasTable(t) : true) };
+  db.__log = log;
+  return db;
+}
+
+const context = {
+  id: "mem", name: "Memory", configuration: { languages: ["english"] },
+  fields: [{ name: "type", type: "enum" }, { name: "information", type: "text" }],
+} as any;
+const user = { id: 4 } as any;
+
+describe("contextMapPoints", () => {
+  it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
+    const db = fakeDb({
+      mem_chunks: [
+        { id: "i1", itemId: "i1", x: "0.5", y: "-0.25", z: "0", label: "Encoder", group: "FACT", chunks: "3" },
+      ],
+      "mem_chunks#first": [{ c: "1" }],
+    });
+    const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", groupField: "type", limit: 10 });
+    expect(out).toEqual({
+      points: [{ id: "i1", itemId: "i1", x: 0.5, y: -0.25, z: 0, label: "Encoder", group: "FACT", chunks: 3 }],
+      total: 1, sampled: false,
+    });
+    expect(db.__log.some((l: any[]) => l[1] === "whereNotNull" && String(l[2]).includes("px"))).toBe(true);
+    expect((require("@SRC/graphql/utilities/access-control") as any).applyAccessControl).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), user, "items",
+    );
+  });
+
+  it("flags a sampled result when the base is larger than the limit", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "900" }] });
+    const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
+    expect(out).toMatchObject({ total: 900, sampled: true });
+  });
+
+  it("ignores an unknown groupField and clamps the limit", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+    await contextMapPoints({ db, context, user, mode: "PASSAGES", groupField: "nope", limit: 99999 });
+    expect(db.__log.some((l: any[]) => l[1] === "limit" && l[2] === 20000)).toBe(true);
+    expect(db.__log.some((l: any[]) => JSON.stringify(l).includes("nope"))).toBe(false);
+  });
+
+  it("is empty when the chunks table is missing", async () => {
+    const db = fakeDb({}, { hasTable: () => false });
+    expect(await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 })).toEqual({ points: [], total: 0, sampled: false });
+  });
+
+  // Ruling 17: the language is interpolated as a SQL literal and only the query
+  // text is bound, the pattern vector-search.ts already uses. A bound regconfig
+  // parameter is an untested shape in this repo, and the languages come from the
+  // context configuration, never from the request.
+  it("interpolates the language as a literal and binds only the search text", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+    await contextMapPoints({ db, context, user, mode: "PASSAGES", search: "encoder speed", limit: 10 });
+    const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
+    expect(String(match?.[2])).toContain("('english', ?)");
+    expect(match?.[3]).toHaveLength(1);
+  });
+});
+
+describe("contextMapEdges", () => {
+  it("ranks other items lexically and never returns the node itself", async () => {
+    const db = fakeDb({
+      mem_chunks: [{ id: "i2", score: "0.42" }, { id: "i3", score: "0.2" }],
+      "mem_chunks#first": [{ text: "encoder speed display" }],
+    });
+    const out = await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
+    expect(out).toEqual([{ source: "i1", target: "i2", score: 0.42 }, { source: "i1", target: "i3", score: 0.2 }]);
+    expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(true);
+    expect((require("@SRC/graphql/utilities/access-control") as any).applyAccessControl).toHaveBeenCalled();
+    // Ruling 17 again, for the match predicate and the ts_rank expression.
+    expect(JSON.stringify(db.__log)).toContain("('english', ?)");
+  });
+  it("is empty when the node has no text", async () => {
+    expect(await contextMapEdges({ db: fakeDb({ "mem_chunks#first": [] }), context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+  });
+});
+
+describe("contextProjectionStatus", () => {
+  it("reports a fitted projection with coverage", async () => {
+    const db = fakeDb({
+      "context_projections#first": [{ context: "mem", dims: 1536, components: 50, method: "umap+linear", version: 1, sample_size: 900, residual: 0.08, fitted_at: new Date("2026-10-04T10:00:00Z") }],
+      "mem_chunks#first": [{ total: "120", mapped: "118" }],
+    });
+    expect(await contextProjectionStatus({ db, context })).toEqual({
+      fitted: true, method: "umap+linear", fittedAt: "2026-10-04T10:00:00.000Z",
+      sampleSize: 900, dims: 1536, components: 50, residual: 0.08, mappedChunks: 118, totalChunks: 120,
+    });
+  });
+  it("reports not fitted for a missing row, a stale version, or no chunks table", async () => {
+    expect((await contextProjectionStatus({ db: fakeDb({ "mem_chunks#first": [{ total: "0", mapped: "0" }] }), context }))!.fitted).toBe(false);
+    const stale = fakeDb({ "context_projections#first": [{ version: 0 }], "mem_chunks#first": [{ total: "1", mapped: "0" }] });
+    expect((await contextProjectionStatus({ db: stale, context }))!.fitted).toBe(false);
+    const none = fakeDb({}, { hasTable: () => false });
+    expect(await contextProjectionStatus({ db: none, context })).toMatchObject({ fitted: false, totalChunks: 0 });
+  });
+  // Ruling 11: the fit writes `context: sanitizeName(contextId)` (fit.ts), so a
+  // display-form id like "My Docs" has to be sanitised before the lookup or the
+  // status of every spaced context reads as "never fitted".
+  it("looks the projection row up by the sanitised context id", async () => {
+    const db = fakeDb({ "context_projections#first": [{ version: 1, method: "umap+linear" }] });
+    const out = await contextProjectionStatus({ db, context: { ...context, id: "My Docs" } });
+    expect(out.fitted).toBe(true);
+    expect(db.__log).toEqual(expect.arrayContaining([["context_projections", "where", { context: "my_docs" }]]));
+  });
+});
