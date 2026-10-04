@@ -70,7 +70,7 @@ const groupColumn = (context: ExuluContext, field?: string | null): string | nul
     const name = String(f?.name ?? "");
     return name === field || sanitizeName(name) === wanted;
   });
-  if (!declared || (declared as any).hidden === true || declared.type === "file") return null;
+  if (!declared || declared.hidden === true || declared.type === "file") return null;
   const column = sanitizeName(String(declared.name));
   return /^[a-z0-9_]+$/.test(column) ? column : null;
 };
