@@ -680,6 +680,8 @@ Expected: FAIL — module not found.
 `src/exulu/projection/fit.ts`:
 
 ```ts
+import { UMAP } from "umap-js";
+
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import {
   BACKFILL_BATCH, COMPONENTS, FIT_SAMPLE, POWER_ITERATIONS, PROJECTION_METHOD,
@@ -715,8 +717,10 @@ const seedFrom = (id: string): number => {
 };
 
 function defaultUmap(seed: number, n: number): UmapLike {
-  // Imported lazily so the fit module stays testable without the dependency.
-  const { UMAP } = require("umap-js") as typeof import("umap-js");
+  // Static import (top of file): `import { UMAP } from "umap-js";`. The backend
+  // package is "type": "module", so `require` is not defined here — corrected
+  // 2026-10-04 after the Task 3 implementer hit it. umap-js is commonjs and its
+  // named export is visible to Node's ESM-from-CJS interop.
   const random = rng(seed);
   return new UMAP({
     nComponents: 3,
