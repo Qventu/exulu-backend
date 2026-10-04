@@ -76,7 +76,7 @@ Agents can also write items to a context from within a chat conversation. When t
 
 ## Map
 
-Every chunk can carry a position in three dimensions, computed from its embedding, so a base can be drawn as a cloud where near means similar. An administrator fits a base once with `npx tsx scripts/fit-context-projection.ts --context <id>`; from then on, anything newly embedded is placed automatically. Refitting redraws the layout, which moves existing points. The visualisation itself arrives with the memory map.
+Every chunk can carry a position in three dimensions, computed from its embedding, so a base can be drawn as a cloud where near means similar. An administrator fits a base once — from a backend checkout with `npx tsx scripts/fit-context-projection.ts --context <id>`, or from an application that embeds this package by calling the exported `fitContextProjection`. From then on, anything newly embedded is placed automatically. Refitting redraws the layout, which moves existing points. The visualisation itself arrives with the memory map.
 
 ## Next steps
 
