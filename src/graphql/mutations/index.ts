@@ -1399,6 +1399,12 @@ export function createMutations(
           // other callers that want the plain behaviour, so the idempotence
           // lives here. Do not "simplify" this back to a bare call.
           createChunksTable: async (c) => {
+            // Also drop the projection here, not only in the two destructive
+            // deps: a context whose chunks table was dropped before the map
+            // shipped still carries a row describing vectors that no longer
+            // exist, and this is the one dep that path reaches. Idempotent.
+            const { db } = await postgresClient();
+            await dropProjection(db, c.id);
             if (await c.chunksTableExists()) return;
             await c.createChunksTable();
           },

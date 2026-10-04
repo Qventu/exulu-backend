@@ -130,7 +130,9 @@ const searchesItemNames = async (db: any, items: string): Promise<boolean> => {
   itemsFtsProbes.set(items, exists);
   // Once per table, the first time it falls back - a map that silently stops
   // matching titles is otherwise indistinguishable from one with no matches.
-  if (!exists) console.log(`[EXULU] ${items} has no fts column; map search matches chunk text only`);
+  // The answer is cached for the life of the process, so adding the column to
+  // an older table needs a restart before map search picks it up.
+  if (!exists) console.log(`[EXULU] ${items} has no fts column; map search matches chunk text only until this process restarts`);
   return exists;
 };
 
@@ -365,6 +367,10 @@ export async function contextProjectionStatus({ db, context }: { db: any; contex
   try {
     // The fit keys the row on the sanitised id (fit.ts), the only form its
     // `--all` entry point can recover from a table name.
+    // The whole row on purpose: the shape check below reads the four matrix
+    // columns, so narrowing this to the scalar columns would report every
+    // fitted base as unfitted. Narrow it only by moving the shape check into
+    // SQL (jsonb_array_length), never by trimming the select alone.
     row = await db("context_projections").where({ context: sanitizeName(context.id) }).first();
   } catch {
     row = undefined;

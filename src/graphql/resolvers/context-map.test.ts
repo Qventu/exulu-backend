@@ -277,7 +277,9 @@ describe("contextMapPoints", () => {
       // fact, and query preprocessing is already noisy on this channel.
       await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
       const lines = spy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("no fts column"));
-      expect(lines).toEqual(["[EXULU] mem_items has no fts column; map search matches chunk text only"]);
+      expect(lines).toEqual([
+        "[EXULU] mem_items has no fts column; map search matches chunk text only until this process restarts",
+      ]);
       spy.mockRestore();
     });
 
