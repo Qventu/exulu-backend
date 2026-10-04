@@ -18,8 +18,15 @@ function fakeDb(answers: Record<string, any[]>, opts: { hasTable?: (t: string) =
   const db: any = jest.fn((table: string) => {
     const key = table.split(" ")[0];
     const chain: any = { __table: key, __scoped: false };
-    for (const m of ["join", "where", "whereIn", "whereNot", "whereNotNull", "whereRaw", "groupBy", "orderBy", "orderByRaw", "limit", "select", "count", "countDistinct", "andWhere", "pluck"]) {
-      chain[m] = (...args: any[]) => { log.push([key, m, ...args.filter((a) => typeof a !== "function")]); return chain; };
+    for (const m of ["join", "where", "orWhere", "whereIn", "whereNot", "whereNotNull", "whereRaw", "groupBy", "orderBy", "orderByRaw", "limit", "select", "count", "countDistinct", "andWhere", "pluck"]) {
+      chain[m] = (...args: any[]) => {
+        // A grouped predicate - `.where(b => b.where(…).orWhere(…))` - builds on
+        // the builder it is handed, so running it here puts its disjuncts in the
+        // log. Without this the whole group is invisible to every assertion.
+        for (const a of args) if (typeof a === "function") a(chain);
+        log.push([key, m, ...args.filter((a) => typeof a !== "function")]);
+        return chain;
+      };
     }
     chain.first = async () => (answers[`${key}#first`] ?? [])[0];
     chain.then = (res: any, rej: any) => Promise.resolve(answers[key] ?? []).then(res, rej);
@@ -47,6 +54,9 @@ const context = {
 const user = { id: 4 } as any;
 /** chunks.source is a uuid column, so a node id has to be one. */
 const NODE = "11111111-2222-4333-8444-555555555555";
+/** A chunk id and the item it belongs to: a PASSAGES point is identified by the former. */
+const CHUNK = "99999999-8888-4777-8666-555555555555";
+const OWNER = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
 // applyAccessControl is one module-level jest.fn shared by every test here, so
 // any assertion about how it was called is meaningless until the counters are
@@ -222,6 +232,44 @@ describe("contextMapEdges", () => {
     // Ruling 17 again, for the match predicate and the ts_rank expression.
     expect(JSON.stringify(db.__log)).toContain("('english', ?)");
   });
+  // Spec §5 defines a point's id as the chunk id in PASSAGES mode, and the 3D
+  // view wires a point's id straight in. Seeding on chunks.source alone returned
+  // [] for every passage node, with no error and nothing to debug from.
+  it("seeds from an item id, and excludes that item from the targets", async () => {
+    const db = fakeDb({
+      mem_chunks: [{ id: "i2", score: "0.42" }],
+      "mem_chunks#first": [{ text: SEED, itemId: NODE }],
+      raw: [{ query: LEXEMES }],
+    });
+    expect(await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 }))
+      .toEqual([{ source: NODE, target: "i2", score: 0.42 }]);
+    expect(db.__log).toEqual(expect.arrayContaining([
+      ["mem_chunks", "where", "chunks.source", NODE],
+      ["mem_chunks", "orWhere", "chunks.id", NODE],
+      ["mem_chunks", "whereNot", "chunks.source", NODE],
+    ]));
+  });
+
+  it("seeds from a chunk id, and excludes the item that chunk belongs to", async () => {
+    const db = fakeDb({
+      mem_chunks: [{ id: "i2", score: "0.42" }],
+      "mem_chunks#first": [{ text: SEED, itemId: OWNER }],
+      raw: [{ query: LEXEMES }],
+    });
+    // The caller's id is still what each edge reports as its source, whatever
+    // kind of id it was.
+    expect(await contextMapEdges({ db, context, user, nodeId: CHUNK, limit: 5 }))
+      .toEqual([{ source: CHUNK, target: "i2", score: 0.42 }]);
+    expect(db.__log).toEqual(expect.arrayContaining([
+      ["mem_chunks", "where", "chunks.source", CHUNK],
+      ["mem_chunks", "orWhere", "chunks.id", CHUNK],
+      // The seed's OWN item: `chunks.source <> <a chunk id>` excludes nothing,
+      // so the node's strongest neighbour would be the document it is part of.
+      ["mem_chunks", "whereNot", "chunks.source", OWNER],
+    ]));
+    expect(db.__log).not.toEqual(expect.arrayContaining([["mem_chunks", "whereNot", "chunks.source", CHUNK]]));
+  });
+
   it("is empty when the node has no text, without asking for its lexemes", async () => {
     // The fake would answer the lexeme round trip happily, so the guard is only
     // pinned by proving the round trip never happens.
@@ -352,9 +400,23 @@ describe("contextMapEdges", () => {
 });
 
 describe("contextProjectionStatus", () => {
+  /**
+   * The matrix columns of a well-shaped row. Status agrees with loadProjection
+   * on what "fitted" means (Ruling: spec lines 119/127), so a row has to carry a
+   * usable shape before any of the fields below are reported at all.
+   */
+  const shaped = (dims: number, components: number) => ({
+    dims,
+    components,
+    mean: Array.from({ length: dims }, () => 0),
+    basis: Array.from({ length: components }, () => Array.from({ length: dims }, () => 0)),
+    map: [0, 1, 2].map(() => Array.from({ length: components }, () => 0)),
+    intercept: [0, 0, 0],
+  });
+
   it("reports a fitted projection with coverage", async () => {
     const db = fakeDb({
-      "context_projections#first": [{ context: "mem", dims: 1536, components: 50, method: "umap+linear", version: 1, sample_size: 900, residual: 0.08, fitted_at: new Date("2026-10-04T10:00:00Z") }],
+      "context_projections#first": [{ ...shaped(1536, 50), context: "mem", method: "umap+linear", version: 1, sample_size: 900, residual: 0.08, fitted_at: new Date("2026-10-04T10:00:00Z") }],
       "mem_chunks#first": [{ total: "120", mapped: "118" }],
     });
     expect(await contextProjectionStatus({ db, context })).toEqual({
@@ -375,21 +437,46 @@ describe("contextProjectionStatus", () => {
   // two counts keep coercing to 0 — "no chunks" is a true count.
   it("reports a null for a nullable field that is null, and 0 for the counts", async () => {
     const db = fakeDb({
-      "context_projections#first": [{ version: 1, method: "umap+linear", dims: 1536, components: null, sample_size: null, residual: null, fitted_at: null }],
+      "context_projections#first": [{ ...shaped(1536, 50), version: 1, method: "umap+linear", sample_size: null, residual: null, fitted_at: null }],
       "mem_chunks#first": [{ total: null, mapped: null }],
     });
     expect(await contextProjectionStatus({ db, context })).toEqual({
       fitted: true, method: "umap+linear", fittedAt: null,
-      sampleSize: null, dims: 1536, components: null, residual: null,
+      sampleSize: null, dims: 1536, components: 50, residual: null,
       mappedChunks: 0, totalChunks: 0,
     });
+  });
+
+  // Spec lines 119 and 127: a wrong-shape row is "not fitted". loadProjection
+  // already refuses one, so without the same check here a corrupt row reported
+  // fitted: true and full confidence while coverage never grew and the loader
+  // logged on every cache miss.
+  it("reports not fitted for a row whose shape the loader would refuse", async () => {
+    const broken = [
+      { ...shaped(4, 3), basis: [[0, 0, 0, 0]] },              // basis truncated
+      { ...shaped(4, 3), map: [[0, 0, 0], [0, 0, 0]] },         // two-row map
+      { ...shaped(4, 3), components: null },                    // no declared width
+      { ...shaped(4, 3), basis: "{" },                          // unreadable json
+      { version: 1, method: "umap+linear" },                    // no matrices at all
+    ];
+    for (const row of broken) {
+      const db = fakeDb({
+        "context_projections#first": [{ version: 1, method: "umap+linear", ...row }],
+        "mem_chunks#first": [{ total: "10", mapped: "10" }],
+      });
+      const out = await contextProjectionStatus({ db, context });
+      expect(out).toMatchObject({ fitted: false, method: null, residual: null, components: null });
+      // The coverage counts are facts about the chunks table, not claims about
+      // the fit, so they keep being reported.
+      expect(out.totalChunks).toBe(10);
+    }
   });
 
   // new Date("whenever").toISOString() throws a RangeError, inside the one
   // function whose entire job is to report status.
   it("reports a null fittedAt for an unparseable timestamp instead of throwing", async () => {
     const db = fakeDb({
-      "context_projections#first": [{ version: 1, method: "umap+linear", fitted_at: "whenever" }],
+      "context_projections#first": [{ ...shaped(2, 2), version: 1, method: "umap+linear", fitted_at: "whenever" }],
       "mem_chunks#first": [{ total: "1", mapped: "1" }],
     });
     await expect(contextProjectionStatus({ db, context })).resolves.toMatchObject({ fitted: true, fittedAt: null });
@@ -400,7 +487,7 @@ describe("contextProjectionStatus", () => {
   // a minute-stale "not fitted" exactly while the UI polls after a fit.
   it("re-reads the projection row on every call, never a cached one", async () => {
     const db = fakeDb({
-      "context_projections#first": [{ version: 1, method: "umap+linear" }],
+      "context_projections#first": [{ ...shaped(2, 2), version: 1, method: "umap+linear" }],
       "mem_chunks#first": [{ total: "1", mapped: "1" }],
     });
     expect((await contextProjectionStatus({ db, context })).fitted).toBe(true);
@@ -412,7 +499,7 @@ describe("contextProjectionStatus", () => {
   // display-form id like "My Docs" has to be sanitised before the lookup or the
   // status of every spaced context reads as "never fitted".
   it("looks the projection row up by the sanitised context id", async () => {
-    const db = fakeDb({ "context_projections#first": [{ version: 1, method: "umap+linear" }] });
+    const db = fakeDb({ "context_projections#first": [{ ...shaped(2, 2), version: 1, method: "umap+linear" }] });
     const out = await contextProjectionStatus({ db, context: { ...context, id: "My Docs" } });
     expect(out.fitted).toBe(true);
     expect(db.__log).toEqual(expect.arrayContaining([["context_projections", "where", { context: "my_docs" }]]));

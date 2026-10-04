@@ -11,6 +11,46 @@ export function clearProjectionCache(): void { cache.clear(); }
 
 const parse = (value: unknown): any => (typeof value === "string" ? JSON.parse(value) : value);
 
+/** A stored row read as a projection, or the reason it is unusable. */
+export type ProjectionRowRead =
+  | { projection: StoredProjection; problem?: undefined }
+  | { projection?: undefined; problem: string };
+
+/**
+ * Reads a `context_projections` row, refusing one whose shape cannot be used.
+ *
+ * Both readers go through this, so "fitted" means the same thing to the embed
+ * path (`loadProjection`) and to `contextProjectionStatus`: without it a corrupt
+ * row reported a healthy fit from status while coverage never grew and the
+ * loader refused the same row on every cache miss.
+ *
+ * A truncated basis or a two-row map still projects to plausible finite
+ * numbers, so a shape mismatch is the one corruption class that would fail
+ * silently instead of loudly.
+ *
+ * Never throws: status calls it on every poll, and unreadable json is a shape
+ * problem like any other.
+ */
+export function readProjectionRow(row: any): ProjectionRowRead {
+  let candidate: StoredProjection;
+  try {
+    candidate = {
+      ...row,
+      mean: parse(row?.mean), basis: parse(row?.basis), map: parse(row?.map), intercept: parse(row?.intercept),
+      dims: Number(row?.dims), components: Number(row?.components),
+    } as StoredProjection;
+  } catch (e) {
+    return { problem: `unreadable json (${e instanceof Error ? e.message : String(e)})` };
+  }
+  const { components } = candidate;
+  // -1, not 0: a missing matrix must not accidentally match a zero width.
+  const width = (value: unknown): number => (Array.isArray(value) ? value.length : -1);
+  const problems: string[] = [];
+  if (width(candidate.basis) !== components) problems.push(`basis ${width(candidate.basis)} of ${components}`);
+  if (width(candidate.map) !== 3) problems.push(`map ${width(candidate.map)} of 3`);
+  return problems.length > 0 ? { problem: problems.join(", ") } : { projection: candidate };
+}
+
 /**
  * Forgets a context's fitted projection: the stored row and this process's
  * cached copy of it.
@@ -52,20 +92,9 @@ export async function loadProjection(db: any, contextId: string, now = Date.now(
     if (hit && now - hit.loadedAt < PROJECTION_CACHE_TTL_MS) return hit.projection;
     const row = await db("context_projections").where({ context: key }).first();
     if (row && Number(row.version) === PROJECTION_VERSION) {
-      const candidate = {
-        ...row,
-        mean: parse(row.mean), basis: parse(row.basis), map: parse(row.map), intercept: parse(row.intercept),
-        dims: Number(row.dims), components: Number(row.components),
-      } as StoredProjection;
-      // A truncated basis or a two-row map still projects to plausible finite
-      // numbers, so a shape mismatch is the one corruption class that would
-      // fail silently instead of loudly. Treat it as "not fitted".
-      const shaped = Array.isArray(candidate.basis) && candidate.basis.length === candidate.components
-        && Array.isArray(candidate.map) && candidate.map.length === 3;
-      if (shaped) projection = candidate;
-      else {
-        console.error(`[EXULU] the stored projection for ${contextId} has the wrong shape (basis ${Array.isArray(candidate.basis) ? candidate.basis.length : "?"} of ${candidate.components}, map ${Array.isArray(candidate.map) ? candidate.map.length : "?"} of 3); treating it as not fitted`);
-      }
+      const read = readProjectionRow(row);
+      if (read.projection) projection = read.projection;
+      else console.error(`[EXULU] the stored projection for ${contextId} has an unusable shape (${read.problem}); treating it as not fitted`);
     }
   } catch (e) {
     console.error("[EXULU] could not read the context projection", e instanceof Error ? e.message : String(e));

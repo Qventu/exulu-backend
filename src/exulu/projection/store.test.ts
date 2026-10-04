@@ -141,8 +141,9 @@ describe("chunkCoordinates", () => {
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
-  // Corrupt json fails earlier, inside loadProjection's JSON.parse, so it is
-  // reported there and arrives here as a plain "no projection".
+  // Corrupt json is a shape problem like any other: readProjectionRow catches
+  // the parse failure, loadProjection reports it, and it arrives here as a plain
+  // "no projection".
   it("returns nulls when the stored json is corrupt", async () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await chunkCoordinates({ db: fakeDb({ ...projection, mean: "{" }), contextId: "mem", vectors: [[1, 2]] })).toEqual([null]);

@@ -4,6 +4,7 @@ import {
   EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS,
   POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX, PROJECTION_VERSION,
 } from "@SRC/exulu/projection/constants";
+import { readProjectionRow } from "@SRC/exulu/projection/store";
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
@@ -214,17 +215,26 @@ export async function contextMapEdges({
     table,
     db(`${chunks} as chunks`)
       .join(`${items} as items`, "items.id", "chunks.source")
-      .where("chunks.source", nodeId)
+      // Spec §5 gives a point the chunk id in PASSAGES mode and the item id in
+      // DOCUMENTS mode, and the 3D view wires a point's id straight in — so both
+      // have to seed. Grouped, so the access-control and archived predicates
+      // still AND over the pair instead of OR-ing past them.
+      .where((b: any) => b.where("chunks.source", nodeId).orWhere("chunks.id", nodeId))
       .whereRaw("items.archived IS NOT TRUE")
+      // Deterministic for an item id: its first chunk.
       .orderBy("chunks.chunk_index")
       .limit(1)
-      .select(db.raw("LEFT(chunks.content, 600) as text")),
+      .select(db.raw("LEFT(chunks.content, 600) as text"), db.raw("chunks.source as \"itemId\"")),
     user,
     "items",
   ).first();
   const text = String(seed?.text ?? "").trim();
   // No visible seed, or an empty one: no lexemes to ask for, no edges.
   if (!text) return [];
+  // The seed's OWN item, which for an item id is nodeId itself. With a chunk id
+  // `chunks.source <> nodeId` excludes nothing, so the node's strongest
+  // neighbour would come back as the document it is part of.
+  const seedItem = String(seed?.itemId ?? nodeId);
 
   const languages = languagesOf(context);
   // The terms are lexed in the first configured language; the resulting tsquery
@@ -247,7 +257,7 @@ export async function contextMapEdges({
   const predicate = ftsPredicate(languages, "websearch_to_tsquery", terms, ["chunks.fts"]);
   let q = db(`${chunks} as chunks`)
     .join(`${items} as items`, "items.id", "chunks.source")
-    .whereNot("chunks.source", nodeId)
+    .whereNot("chunks.source", seedItem)
     .whereRaw("items.archived IS NOT TRUE")
     .whereRaw(predicate.sql, predicate.bindings)
     .groupBy("items.id")
@@ -273,6 +283,10 @@ export async function contextMapEdges({
  * Reads `context_projections` directly rather than through Task 4's
  * loadProjection: this is what the UI polls right after a fit, and a
  * minute-long cached "not fitted" would be a lie exactly when it is watched.
+ *
+ * The row still goes through `readProjectionRow`, the loader's own shape check,
+ * so "fitted" means one thing in both places (spec lines 119 and 127). What is
+ * skipped is the cache, not the verdict.
  */
 export async function contextProjectionStatus({ db, context }: { db: any; context: ExuluContext }) {
   const chunks = getChunksTableName(context.id);
@@ -288,7 +302,9 @@ export async function contextProjectionStatus({ db, context }: { db: any; contex
   } catch {
     row = undefined;
   }
-  const fitted = !!row && Number(row.version) === PROJECTION_VERSION;
+  // A wrong-shape row is "not fitted" here exactly as it is for the loader: it
+  // would otherwise report full confidence while coverage never grew.
+  const fitted = !!row && Number(row.version) === PROJECTION_VERSION && !readProjectionRow(row).problem;
   return {
     fitted,
     method: fitted ? String(row.method) : null,
