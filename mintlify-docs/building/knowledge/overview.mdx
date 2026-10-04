@@ -74,6 +74,10 @@ Clicking a context opens its workspace with three tabs:
 
 Agents can also write items to a context from within a chat conversation. When the **Knowledge base editor** tool is enabled for an agent, the agent can create and update items during a session — subject to per-context access grants and optional user approval. See [Tools and skills](/building/agents/tools-and-skills) for how to enable and configure the tool.
 
+## Map
+
+Every chunk can carry a position in three dimensions, computed from its embedding, so a base can be drawn as a cloud where near means similar. An administrator fits a base once with `npx tsx scripts/fit-context-projection.ts --context <id>`; from then on, anything newly embedded is placed automatically. Refitting redraws the layout, which moves existing points. The visualisation itself arrives with the memory map.
+
 ## Next steps
 
 <Columns cols={2}>
