@@ -1,4 +1,4 @@
-import { chunkCoordinates, clearProjectionCache, loadProjection } from "./store";
+import { chunkCoordinates, clearProjectionCache, dropProjection, loadProjection } from "./store";
 
 const projection = {
   context: "mem", dims: 2, components: 2,
@@ -26,6 +26,25 @@ function fakeDbKeyedOn(expected: string, row: any) {
     }),
   }));
   db.__reads = calls;
+  return db;
+}
+
+/** Answers the read and records the delete, so one fake covers both readers. */
+function fakeWriteDb(row: any, opts: { throwOnDelete?: boolean } = {}) {
+  const reads: number[] = [];
+  const deletes: any[] = [];
+  const db: any = jest.fn((table: string) => ({
+    where: (criteria: any) => ({
+      first: async () => { reads.push(1); return row; },
+      delete: async () => {
+        if (opts.throwOnDelete) throw new Error(`relation "${table}" does not exist`);
+        deletes.push({ table, criteria });
+        return 1;
+      },
+    }),
+  }));
+  db.__reads = reads;
+  db.__deletes = deletes;
   return db;
 }
 
@@ -128,6 +147,37 @@ describe("chunkCoordinates", () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
     expect(await chunkCoordinates({ db: fakeDb({ ...projection, mean: "{" }), contextId: "mem", vectors: [[1, 2]] })).toEqual([null]);
     expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+});
+
+describe("dropProjection", () => {
+  // An embedder swap at the same vector width re-embeds every chunk through a
+  // different model, and the dimension check is all chunkCoordinates has: the
+  // old basis would place the new vectors at finite, plausible, meaningless
+  // coordinates while status still reported a healthy fit. So the row goes with
+  // the chunks it was fitted on.
+  it("deletes the row by the sanitised context id and drops the cached copy", async () => {
+    const db = fakeWriteDb(projection);
+    expect((await loadProjection(db, "My Docs", 1000))?.dims).toBe(2);
+    await dropProjection(db, "My Docs");
+    expect(db.__deletes).toEqual([{ table: "context_projections", criteria: { context: "my_docs" } }]);
+    // The next read has to go back to the database, or this replica keeps
+    // placing chunks with the projection that was just deleted.
+    await loadProjection(db, "My Docs", 1000);
+    expect(db.__reads).toHaveLength(2);
+  });
+
+  // It runs mid-rebuild, next to dropChunksTable: a context that was never
+  // fitted, or a deployment whose core tables predate context_projections, must
+  // not fail an embedder change.
+  it("survives a missing table or row, and still clears the cache", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = fakeWriteDb(projection, { throwOnDelete: true });
+    expect((await loadProjection(db, "mem", 1000))?.dims).toBe(2);
+    await expect(dropProjection(db, "mem")).resolves.toBeUndefined();
+    await loadProjection(db, "mem", 1000);
+    expect(db.__reads).toHaveLength(2);
     spy.mockRestore();
   });
 });

@@ -142,6 +142,13 @@ export async function fitContextProjection({
     return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0 };
   }
 
+  // Backfill FIRST, from the projection in hand — it does not need the row.
+  // The row is what makes chunkCoordinates start answering, and context.ts
+  // spreads those coordinates into an unwrapped chunk insert, so a row that
+  // survives a failed backfill turns every later ingestion into this context
+  // into an error. If the write below is the one that cannot work, the caller
+  // sees it with nothing committed.
+  const written = await backfillCoordinates({ db, contextId, projection, log });
   // knex does not stringify, and node-pg encodes a JS array as a Postgres array
   // literal (`{0.1,0.2}`), which jsonb rejects with 22P02. The repo's convention
   // is to stringify at the boundary; StoredProjection stays number arrays in
@@ -156,7 +163,6 @@ export async function fitContextProjection({
     })
     .onConflict("context")
     .merge();
-  const written = await backfillCoordinates({ db, contextId, projection, log });
   return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written };
 }
 

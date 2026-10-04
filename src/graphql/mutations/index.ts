@@ -23,6 +23,7 @@ import { handleRBACUpdate } from "../../../ee/rbac-update.ts";
 import { applyAgentGuestFieldTransforms } from "../utilities/agent-guest-fields";
 import { shouldGenerateEmbeddings } from "./should-generate-embeddings";
 import { changeContextEmbedder } from "@SRC/exulu/embedder-change";
+import { dropProjection } from "@SRC/exulu/projection/store";
 import {
   clearEmbedderSetting,
   resolveContextEmbedder,
@@ -1388,6 +1389,8 @@ export function createMutations(
           dropChunksTable: async (c) => {
             const { db } = await postgresClient();
             await db.schema.dropTableIfExists(getChunksTableName(c.id));
+            // The fitted map describes the vectors that just went away.
+            await dropProjection(db, c.id);
           },
           // Deliberately NOT c.createChunksTable() on its own. Two admins
           // changing the same context interleave as drop/drop/create/create,
@@ -1402,6 +1405,9 @@ export function createMutations(
           deleteAllChunks: async (c) => {
             const { db } = await postgresClient();
             await db.from(getChunksTableName(c.id)).delete();
+            // Same width, different model: the re-embedded vectors occupy a
+            // different space, so this map is as stale as a dropped table's.
+            await dropProjection(db, c.id);
           },
           persist: async (id, m, q) =>
             m ? setEmbedderSetting(id, m, q) : clearEmbedderSetting(id),

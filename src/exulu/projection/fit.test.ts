@@ -83,6 +83,26 @@ describe("fitContextProjection", () => {
     expect(out.written).toBe(120);
   });
 
+  // The row is what makes chunkCoordinates start answering, and context.ts
+  // spreads those coordinates straight into an unwrapped chunk insert. Commit
+  // the row only once the backfill has proved the columns take a write, or a
+  // chunks table that genuinely lacks px/py/pz fails every later ingestion into
+  // that context. The backfill works from the in-memory projection and does not
+  // need the row.
+  it("backfills before it commits the row", async () => {
+    const db = fakeDb({ rows });
+    await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    expect(db.__writes.map((w: any) => w.op)).toEqual(["raw", "insert"]);
+  });
+
+  it("leaves no projection row behind when the backfill fails", async () => {
+    const db = fakeDb({ rows });
+    db.raw = async () => { throw new Error('column "px" of relation "mem_chunks" does not exist'); };
+    await expect(fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory }))
+      .rejects.toThrow(/px/);
+    expect(db.__writes).toEqual([]);
+  });
+
   it("refuses a base with too few vectors and writes nothing", async () => {
     const db = fakeDb({ rows: rows.slice(0, 3) });
     const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });

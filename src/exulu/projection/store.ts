@@ -11,6 +11,32 @@ export function clearProjectionCache(): void { cache.clear(); }
 
 const parse = (value: unknown): any => (typeof value === "string" ? JSON.parse(value) : value);
 
+/**
+ * Forgets a context's fitted projection: the stored row and this process's
+ * cached copy of it.
+ *
+ * Called wherever a context's chunks are dropped or cleared. A re-embed through
+ * a different model lands in a different space, and `chunkCoordinates` only
+ * compares vector width — so a surviving row would place the new vectors at
+ * finite, plausible, geometrically meaningless coordinates while
+ * `contextProjectionStatus` still reported a healthy fit. A refit is required
+ * either way, including when the width itself changed.
+ *
+ * Never throws: it runs mid-rebuild, and a context that was never fitted (or a
+ * deployment whose core tables predate `context_projections`) must not fail an
+ * embedder change.
+ */
+export async function dropProjection(db: any, contextId: string): Promise<void> {
+  try {
+    await db("context_projections").where({ context: sanitizeName(contextId) }).delete();
+  } catch (e) {
+    console.error("[EXULU] could not delete the context projection", e instanceof Error ? e.message : String(e));
+  }
+  // Outside the try: a delete that failed still has to leave this process
+  // without a cached projection, because the chunks it described are gone.
+  clearProjectionCache();
+}
+
 /** The context's projection, or null when it is missing, stale or unreadable. Never throws. */
 export async function loadProjection(db: any, contextId: string, now = Date.now()): Promise<StoredProjection | null> {
   // The fit writes `context: sanitizeName(contextId)` (it is the only form the
