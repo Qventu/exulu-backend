@@ -149,8 +149,8 @@ export async function fitContextProjection({
   // not a smaller map.
   const { map, intercept } = ridgeFit(reduced, layout, RIDGE_LAMBDA);
   const residual = scoring
-    ? fitResidual(reduced.slice(trainCount), layout.slice(trainCount), scoring.map, scoring.intercept, 1)
-    : fitResidual(reduced, layout, map, intercept, 1);
+    ? fitResidual(reduced.slice(trainCount), layout.slice(trainCount), scoring.map, scoring.intercept)
+    : fitResidual(reduced, layout, map, intercept);
 
   const projection: StoredProjection = {
     // Keyed by the sanitised id: `--all` can only recover the table prefix, so

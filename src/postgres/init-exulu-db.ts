@@ -370,14 +370,15 @@ const contextDatabases = async (contexts: ExuluContext[]) => {
         contextFieldsForSync(context),
       );
     }
-    const chunksTableExists = await context.chunksTableExists();
-    if (!chunksTableExists && context.embedder) {
+    let hasChunksTable = await context.chunksTableExists();
+    if (!hasChunksTable && context.embedder) {
       console.log("[EXULU] chunks table does not exist, creating it.");
       await context.createChunksTable();
+      hasChunksTable = true;
     }
     // Vector map (3c-1): chunk tables have no field-sync path, so the three
     // coordinate columns are added here. Idempotent on every boot.
-    if (await context.chunksTableExists()) {
+    if (hasChunksTable) {
       const chunksTable = getChunksTableName(context.id);
       for (const column of ["px", "py", "pz"]) {
         await knex.raw(`ALTER TABLE ?? ADD COLUMN IF NOT EXISTS ?? real`, [chunksTable, column]);

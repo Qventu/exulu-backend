@@ -786,8 +786,9 @@ const memoryConflictScansSchema: ExuluTableDefinition = {
 /**
  * Vector map (sub-project 3c-1): one fitted projection per context — the mean,
  * the linear reduction and the learned map that turn an embedding into a point
- * in three dimensions. Read once per process and cached; ~1 MB of JSON for a
- * 1536-dimension model.
+ * in three dimensions. Read once per process and cached; measured at ~1.6 MB of
+ * JSON for a 1536-dimension model at 50 components, because every float
+ * serialises as a full double.
  */
 const contextProjectionsSchema: ExuluTableDefinition = {
   type: "context_projections",

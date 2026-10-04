@@ -1,6 +1,7 @@
 // Fits a context's 3D projection and backfills chunk coordinates (spec 3c-1 §3).
 // Usage: npx tsx scripts/fit-context-projection.ts --context <id> [--all]
 //        [--sample 20000] [--components 50] [--dry-run]
+// Every flag that takes a value accepts --flag=value as well as --flag value.
 //
 // Contexts are declared by the consuming application, so this script works from
 // the database: --context names one, --all fits every base that has a chunks table.
@@ -9,6 +10,10 @@ import { fitContextProjection, listFittableContexts, residualScope } from "../sr
 import { COMPONENTS, FIT_SAMPLE } from "../src/exulu/projection/constants";
 
 const arg = (name: string): string | undefined => {
+  // `--flag=value` first: it was silently unrecognised, so `--sample=5000` fitted
+  // the 20000-vector default while looking like it had been asked for 5000.
+  const inline = process.argv.find((a) => a.startsWith(`--${name}=`));
+  if (inline !== undefined) return inline.slice(`--${name}=`.length);
   const i = process.argv.indexOf(`--${name}`);
   return i === -1 ? undefined : process.argv[i + 1];
 };

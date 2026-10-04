@@ -5,9 +5,28 @@ import { applyMap, l2normalize, projectComponents } from "./math";
 
 type Loaded = { projection: StoredProjection | null; loadedAt: number };
 const cache = new Map<string, Loaded>();
+/** Contexts already reported as unfitted in this process (see announceUnfitted). */
+const announced = new Set<string>();
 
-/** Testing seam and a hook for the fit script to drop stale state in-process. */
-export function clearProjectionCache(): void { cache.clear(); }
+/**
+ * Drops this process's cached projections, and with them the "already said so"
+ * markers below. The embedder-change mutation reaches it through
+ * `dropProjection`, which runs in the serving process; the fit script runs in
+ * its own and has nothing to clear. Also the testing seam.
+ */
+export function clearProjectionCache(): void { cache.clear(); announced.clear(); }
+
+/**
+ * One line per context per process when there is no usable projection (spec §4).
+ * The row is deleted along with the chunks on an embedder change, so without
+ * this the failure mode is silence: coordinates simply stop appearing. Guarded
+ * by a module-level Set, so the cost stays zero per embed.
+ */
+function announceUnfitted(key: string, contextId: string, reason: string): void {
+  if (announced.has(key)) return;
+  announced.add(key);
+  console.log(`[EXULU] ${contextId} has no usable projection (${reason}); its chunks are embedded without coordinates until it is fitted`);
+}
 
 const parse = (value: unknown): any => (typeof value === "string" ? JSON.parse(value) : value);
 
@@ -42,12 +61,20 @@ export function readProjectionRow(row: any): ProjectionRowRead {
   } catch (e) {
     return { problem: `unreadable json (${e instanceof Error ? e.message : String(e)})` };
   }
-  const { components } = candidate;
+  const { dims, components } = candidate;
   // -1, not 0: a missing matrix must not accidentally match a zero width.
   const width = (value: unknown): number => (Array.isArray(value) ? value.length : -1);
   const problems: string[] = [];
+  // Inner widths as well as outer ones: a basis whose rows were truncated has
+  // the right number of rows, and projectComponents then reads the missing
+  // dimensions as 0 - wrong-but-finite coordinates, which is the whole class
+  // this guard exists to catch.
+  if (width(candidate.mean) !== dims) problems.push(`mean ${width(candidate.mean)} of ${dims}`);
   if (width(candidate.basis) !== components) problems.push(`basis ${width(candidate.basis)} of ${components}`);
+  else if (candidate.basis.some((row) => width(row) !== dims)) problems.push(`a basis row is not ${dims} wide`);
   if (width(candidate.map) !== 3) problems.push(`map ${width(candidate.map)} of 3`);
+  else if (candidate.map.some((row) => width(row) !== components)) problems.push(`a map row is not ${components} wide`);
+  if (width(candidate.intercept) !== 3) problems.push(`intercept ${width(candidate.intercept)} of 3`);
   return problems.length > 0 ? { problem: problems.join(", ") } : { projection: candidate };
 }
 
@@ -91,7 +118,10 @@ export async function loadProjection(db: any, contextId: string, now = Date.now(
     const hit = cache.get(key);
     if (hit && now - hit.loadedAt < PROJECTION_CACHE_TTL_MS) return hit.projection;
     const row = await db("context_projections").where({ context: key }).first();
-    if (row && Number(row.version) === PROJECTION_VERSION) {
+    if (!row) announceUnfitted(key, contextId, "never fitted");
+    else if (Number(row.version) !== PROJECTION_VERSION) {
+      announceUnfitted(key, contextId, `stored version ${String(row.version)}, this build reads ${PROJECTION_VERSION}`);
+    } else {
       const read = readProjectionRow(row);
       if (read.projection) projection = read.projection;
       else console.error(`[EXULU] the stored projection for ${contextId} has an unusable shape (${read.problem}); treating it as not fitted`);

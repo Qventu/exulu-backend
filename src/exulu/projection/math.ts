@@ -62,22 +62,6 @@ export function meanVector(rows: ArrayLike<number>[], dims: number): Float32Arra
   return out;
 }
 
-export function subtract(v: ArrayLike<number>, mean: ArrayLike<number>): Float32Array {
-  const out = new Float32Array(v.length);
-  for (let i = 0; i < v.length; i += 1) {
-    const vi = v[i];
-    const mi = mean[i];
-    // A contaminated component centres to 0, i.e. "at the mean" - the neutral
-    // choice here. Reading it as 0 instead would assert the data was 0 there,
-    // which for a centred vector is a real displacement from the centroid.
-    // A *missing* mean component still defaults to 0, as documented above.
-    if (vi === undefined || !Number.isFinite(vi)) continue;
-    if (mi !== undefined && !Number.isFinite(mi)) continue;
-    out[i] = vi - finite(mi);
-  }
-  return out;
-}
-
 function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Array[] {
   const out: Float32Array[] = [];
   for (const candidate of vectors) {
@@ -295,9 +279,14 @@ export function normalizeLayout(points: number[][]): { points: number[][]; cente
   };
 }
 
-/** Mean placement error of the learned map, relative to the cloud radius. */
+/**
+ * Mean placement error of the learned map, in the layout's own units — which
+ * `normalizeLayout` has already scaled so that the cloud's 99th-percentile
+ * radius is 1, so the number is relative to the cloud without being divided by
+ * anything here.
+ */
 export function fitResidual(
-  Z: ArrayLike<number>[], Y: number[][], map: number[][], intercept: number[], radius: number,
+  Z: ArrayLike<number>[], Y: number[][], map: number[][], intercept: number[],
 ): number {
   if (Z.length === 0) return 0;
   let total = 0;
@@ -307,6 +296,5 @@ export function fitResidual(
     const [x, y, z] = applyMap(zi, map, intercept);
     total += Math.hypot(x - finite(yi[0]), y - finite(yi[1]), z - finite(yi[2]));
   }
-  const mean = total / Z.length;
-  return finite(radius > 1e-9 ? mean / radius : mean);
+  return finite(total / Z.length);
 }

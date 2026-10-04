@@ -91,6 +91,27 @@ describe("loadProjection", () => {
     expect(String(spy.mock.calls[0]?.[0])).toContain("mem");
     spy.mockRestore();
   });
+  // The outer lengths are not enough: a basis whose ROWS were truncated passes
+  // every outer check, and projectComponents then reads the missing dimensions
+  // as 0 - wrong-but-finite coordinates, exactly the class the guard exists to
+  // catch.
+  it("treats a row with a truncated inner row as not fitted", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const broken: Record<string, unknown>[] = [
+      { mean: [0] },                              // one dimension short
+      { basis: [[1, 0], [0]] },                   // a basis row truncated
+      { map: [[1, 0], [0], [0, 0]] },             // a map row truncated
+      { intercept: [0, 0] },                      // an intercept of two
+      { mean: null },                             // no mean at all
+    ];
+    for (const change of broken) {
+      clearProjectionCache();
+      expect(await loadProjection(fakeDb({ ...projection, ...change }), "mem", 1000)).toBeNull();
+    }
+    expect(spy).toHaveBeenCalledTimes(broken.length);
+    spy.mockRestore();
+  });
+
   // The fit script keys the row on sanitizeName(contextId), so a reader handed
   // the display form of the id has to sanitise before it looks up or caches.
   it("looks the row up by the sanitised context id, and caches under it", async () => {
@@ -98,6 +119,28 @@ describe("loadProjection", () => {
     expect((await loadProjection(db, "My Docs", 1000))?.dims).toBe(2);
     expect((await loadProjection(db, "my_docs", 1000))?.dims).toBe(2);
     expect(db.__reads).toHaveLength(1);
+  });
+
+  // Spec §4 promises a line when there is no usable projection, and now that the
+  // projection is deleted with the chunks (embedder-change), silence is the
+  // failure mode: coordinates simply stop appearing. One line per context per
+  // process, so the cost stays zero per embed.
+  it("says so once per context when there is no usable projection", async () => {
+    const spy = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    const said = () => spy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("no usable projection"));
+    const missing = fakeDb(undefined);
+    expect(await loadProjection(missing, "mem", 1000)).toBeNull();
+    // Past the ttl, so this is a second real read of the same absent row.
+    expect(await loadProjection(missing, "mem", 1000 + 60_000)).toBeNull();
+    expect(missing.__reads).toHaveLength(2);
+    expect(said()).toHaveLength(1);
+    expect(said()[0]).toContain("mem");
+    // A version-stale row is the same silence, and another context is another
+    // line.
+    expect(await loadProjection(fakeDb({ ...projection, version: 0 }), "docs", 1000)).toBeNull();
+    expect(said()).toHaveLength(2);
+    expect(said()[1]).toContain("docs");
+    spy.mockRestore();
   });
 });
 
@@ -131,12 +174,13 @@ describe("chunkCoordinates", () => {
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
-  // A null mean passes the shape guard (that one watches basis and map) and
-  // reaches Float32Array.from(null), which throws. The outer catch is all that
-  // stands between that TypeError and a failed embedding.
-  it("returns nulls when the stored projection blows up mid-computation", async () => {
+  // The shape guard refuses a corrupt stored matrix before it is ever used, so
+  // what still reaches the outer catch is the caller's own input. The guarantee
+  // is the same either way: embedding never fails because of the map.
+  it("returns nulls instead of throwing, whatever it is handed", async () => {
     const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
-    const out = await chunkCoordinates({ db: fakeDb({ ...projection, mean: null }), contextId: "mem", vectors: [[1, 2], [3, 4]] });
+    // A hole in the vector list: reading `.length` off it is a TypeError.
+    const out = await chunkCoordinates({ db: fakeDb(projection), contextId: "mem", vectors: [null as any, [1, 2]] });
     expect(out).toEqual([null, null]);
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();

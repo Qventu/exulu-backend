@@ -152,8 +152,11 @@ export async function contextMapPoints({
   const capped = clamp(limit, POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX);
   const group = groupColumn(context, groupField);
   const languages = languagesOf(context);
-  // The same salt the fit samples with (fit.ts), so that a sampled map shows the
-  // chunks the projection was actually fitted on.
+  // The fit's own sample salt (fit.ts). In PASSAGES mode the expression is
+  // identical — md5(chunks.id::text || salt) — so a sampled map really does show
+  // the chunks the projection was fitted on. In DOCUMENTS mode it salts
+  // items.id instead, which only makes the item sample deterministic and stable
+  // between calls; that sample has nothing to do with the fit's.
   const salt = sanitizeName(context.id);
 
   // Spec line 114: `search` narrows the map to matching items, so it decides
@@ -349,9 +352,15 @@ export async function contextMapEdges({
 export async function contextProjectionStatus({ db, context }: { db: any; context: ExuluContext }) {
   const chunks = getChunksTableName(context.id);
   const hasChunks = await db.schema.hasTable(chunks);
-  const counts = hasChunks
-    ? await db(chunks).select(db.raw("COUNT(*) as total"), db.raw("COUNT(px) as mapped")).first()
-    : undefined;
+  let counts: any;
+  try {
+    // Wrapped like the projection read below: a chunks table that predates the
+    // px/py/pz columns raises 42703 here, and "nothing mapped yet" is the
+    // honest answer rather than a failed field.
+    if (hasChunks) counts = await db(chunks).select(db.raw("COUNT(*) as total"), db.raw("COUNT(px) as mapped")).first();
+  } catch {
+    counts = undefined;
+  }
   let row: any;
   try {
     // The fit keys the row on the sanitised id (fit.ts), the only form its

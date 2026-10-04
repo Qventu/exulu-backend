@@ -1,6 +1,6 @@
 import {
   applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, projectComponents,
-  randomizedPCA, ridgeFit, rng, subtract,
+  randomizedPCA, ridgeFit, rng,
 } from "./math";
 
 const near = (a: number, b: number, eps = 1e-5) => expect(Math.abs(a - b)).toBeLessThan(eps);
@@ -117,18 +117,8 @@ describe("fitResidual", () => {
     const Z = [Float32Array.from([1, 0]), Float32Array.from([0, 1])];
     const map = [[1, 0], [0, 1], [0, 0]];
     const Y = [[1, 0, 0], [0, 1, 0]];
-    near(fitResidual(Z, Y, map, [0, 0, 0], 1), 0);
-    expect(fitResidual(Z, [[2, 0, 0], [0, 2, 0]], map, [0, 0, 0], 1)).toBeGreaterThan(0.5);
-  });
-});
-
-describe("subtract", () => {
-  it("centres a vector without touching its inputs", () => {
-    const v = Float32Array.from([5, 7, 9]);
-    const mean = Float32Array.from([1, 2, 3]);
-    expect(Array.from(subtract(v, mean))).toEqual([4, 5, 6]);
-    expect(Array.from(v)).toEqual([5, 7, 9]);
-    expect(Array.from(mean)).toEqual([1, 2, 3]);
+    near(fitResidual(Z, Y, map, [0, 0, 0]), 0);
+    expect(fitResidual(Z, [[2, 0, 0], [0, 2, 0]], map, [0, 0, 0])).toBeGreaterThan(0.5);
   });
 });
 
@@ -172,17 +162,13 @@ describe("finite results for contaminated input", () => {
     near(center[0], 4 / 3);
   });
 
-  it("subtract and projectComponents do not pass NaN through", () => {
-    // A NaN component lands at the mean (0 once centred), not at "the data was 0".
-    expect(Array.from(subtract(Float32Array.from([NaN, 2]), Float32Array.from([1, 1])))).toEqual([0, 1]);
-    expect(Array.from(subtract(Float32Array.from([Infinity, 2]), Float32Array.from([1, 1])))).toEqual([0, 1]);
-    expect(Array.from(subtract(Float32Array.from([5, 2]), Float32Array.from([NaN, 1])))).toEqual([0, 1]);
+  it("projectComponents does not pass NaN through", () => {
     const z = projectComponents(Float32Array.from([NaN, 1]), Float32Array.from([0, 0]), [Float32Array.from([1, 1])]);
     for (const c of z) expect(Number.isFinite(c)).toBe(true);
   });
 
   it("fitResidual stays finite for a corrupt target", () => {
-    const residual = fitResidual([Float32Array.from([1])], [[NaN, 0, 0]], [[1], [0], [0]], [0, 0, 0], 1);
+    const residual = fitResidual([Float32Array.from([1])], [[NaN, 0, 0]], [[1], [0], [0]], [0, 0, 0]);
     expect(Number.isFinite(residual)).toBe(true);
   });
 });

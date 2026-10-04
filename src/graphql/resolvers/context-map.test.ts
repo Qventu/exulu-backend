@@ -15,7 +15,11 @@ import { clearMapColumnProbes, contextMapEdges, contextMapPoints, contextProject
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
 function fakeDb(
   answers: Record<string, any[]>,
-  opts: { hasTable?: (t: string) => boolean; hasColumn?: (t: string, c: string) => boolean } = {},
+  opts: {
+    hasTable?: (t: string) => boolean;
+    hasColumn?: (t: string, c: string) => boolean;
+    failFirstOn?: (t: string) => boolean;
+  } = {},
 ) {
   const log: any[] = [];
   const db: any = jest.fn((table: string) => {
@@ -31,7 +35,10 @@ function fakeDb(
         return chain;
       };
     }
-    chain.first = async () => (answers[`${key}#first`] ?? [])[0];
+    chain.first = async () => {
+      if (opts.failFirstOn?.(key)) throw new Error(`column "px" does not exist`);
+      return (answers[`${key}#first`] ?? [])[0];
+    };
     chain.then = (res: any, rej: any) => Promise.resolve(answers[key] ?? []).then(res, rej);
     return chain;
   });
@@ -536,6 +543,10 @@ describe("contextProjectionStatus", () => {
       { ...shaped(4, 3), components: null },                    // no declared width
       { ...shaped(4, 3), basis: "{" },                          // unreadable json
       { version: 1, method: "umap+linear" },                    // no matrices at all
+      { ...shaped(4, 3), mean: [0, 0] },                        // mean two dimensions short
+      { ...shaped(4, 3), basis: [[0, 0, 0, 0], [0, 0], [0, 0, 0, 0]] },  // a basis row truncated
+      { ...shaped(4, 3), map: [[0, 0, 0], [0, 0], [0, 0, 0]] }, // a map row truncated
+      { ...shaped(4, 3), intercept: [0, 0] },                   // an intercept of two
     ];
     for (const row of broken) {
       const db = fakeDb({
@@ -548,6 +559,19 @@ describe("contextProjectionStatus", () => {
       // the fit, so they keep being reported.
       expect(out.totalChunks).toBe(10);
     }
+  });
+
+  // A chunks table that predates the px/py/pz columns raises 42703 on the
+  // coverage count, and that read was the one thing in here not wrapped - so the
+  // whole status field failed where it should report "nothing mapped yet".
+  it("reports zero coverage when the chunks table has no coordinate columns", async () => {
+    const db = fakeDb(
+      { "context_projections#first": [{ ...shaped(2, 2), version: 1, method: "umap+linear" }] },
+      { failFirstOn: (t) => t === "mem_chunks" },
+    );
+    expect(await contextProjectionStatus({ db, context })).toMatchObject({
+      fitted: true, mappedChunks: 0, totalChunks: 0,
+    });
   });
 
   // new Date("whenever").toISOString() throws a RangeError, inside the one
