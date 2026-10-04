@@ -9,7 +9,7 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
   convertContextToTableDefinition: (c: any) => ({ name: { singular: c.id, plural: `${c.id}s` } }),
 }));
 
-import { EDGE_QUERY_TERMS } from "@SRC/exulu/projection/constants";
+import { EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS } from "@SRC/exulu/projection/constants";
 import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
 
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
@@ -246,6 +246,37 @@ describe("contextMapEdges", () => {
     expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
   });
 
+  // chunks.source is a uuid column: a malformed id reaches Postgres as 22P02
+  // (invalid input syntax for type uuid), i.e. a failed field rather than "no
+  // edges".
+  it("is empty for a node id that is not a uuid, before touching the database", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.9" }]);
+    expect(await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+    expect(await contextMapEdges({ db, context, user, nodeId: "", limit: 5 })).toEqual([]);
+    expect(db.__log).toEqual([]);
+  });
+
+  // An unbounded limit is a grouped full-text scan the client sizes itself.
+  it("clamps the limit and defaults a missing one", async () => {
+    const big = edgeDb([]);
+    await contextMapEdges({ db: big, context, user, nodeId: NODE, limit: 10_000_000 });
+    expect(big.__log.some((l: any[]) => l[1] === "limit" && l[2] === EDGE_LIMIT_MAX)).toBe(true);
+    const none = edgeDb([]);
+    await contextMapEdges({ db: none, context, user, nodeId: NODE, limit: null as any });
+    expect(none.__log.some((l: any[]) => l[1] === "limit" && l[2] === EDGE_LIMIT_DEFAULT)).toBe(true);
+  });
+
+  // `ORDER BY score DESC` resolves to an input column when one exists, so a
+  // context declaring a field named `score` turned the query into a grouping
+  // error. The positional form always means the select list's second item.
+  it("orders by the score's position, not by its name", async () => {
+    const db = edgeDb([]);
+    await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
+    const order = db.__log.filter((l: any[]) => l[1] === "orderByRaw").map((l: any[]) => String(l[2]));
+    expect(order).toContain("2 DESC");
+    expect(JSON.stringify(order)).not.toContain("score DESC");
+  });
+
   // Ruling 27: websearch_to_tsquery consumes the aggregate, because it cannot
   // raise a tsquery syntax error at all - a lexeme carrying punctuation (a url
   // or a file path token) is re-tokenised rather than rejected, where to_tsquery
@@ -285,6 +316,32 @@ describe("contextProjectionStatus", () => {
     const none = fakeDb({}, { hasTable: () => false });
     expect(await contextProjectionStatus({ db: none, context })).toMatchObject({ fitted: false, totalChunks: 0 });
   });
+  // The four nullable fields are nullable for a reason: a row written before a
+  // column existed has nulls in it, and reporting residual 0 / sample size 0 is
+  // a claim about the fit rather than an admission that it is not recorded. The
+  // two counts keep coercing to 0 — "no chunks" is a true count.
+  it("reports a null for a nullable field that is null, and 0 for the counts", async () => {
+    const db = fakeDb({
+      "context_projections#first": [{ version: 1, method: "umap+linear", dims: 1536, components: null, sample_size: null, residual: null, fitted_at: null }],
+      "mem_chunks#first": [{ total: null, mapped: null }],
+    });
+    expect(await contextProjectionStatus({ db, context })).toEqual({
+      fitted: true, method: "umap+linear", fittedAt: null,
+      sampleSize: null, dims: 1536, components: null, residual: null,
+      mappedChunks: 0, totalChunks: 0,
+    });
+  });
+
+  // new Date("whenever").toISOString() throws a RangeError, inside the one
+  // function whose entire job is to report status.
+  it("reports a null fittedAt for an unparseable timestamp instead of throwing", async () => {
+    const db = fakeDb({
+      "context_projections#first": [{ version: 1, method: "umap+linear", fitted_at: "whenever" }],
+      "mem_chunks#first": [{ total: "1", mapped: "1" }],
+    });
+    await expect(contextProjectionStatus({ db, context })).resolves.toMatchObject({ fitted: true, fittedAt: null });
+  });
+
   // Ruling 11: the fit writes `context: sanitizeName(contextId)` (fit.ts), so a
   // display-form id like "My Docs" has to be sanitised before the lookup or the
   // status of every spaced context reads as "never fitted".

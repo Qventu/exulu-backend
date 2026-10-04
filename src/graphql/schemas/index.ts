@@ -82,7 +82,7 @@ import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-base
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
 import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
-import { POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
+import { EDGE_LIMIT_DEFAULT, POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
 import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
 import { runScan } from "@SRC/exulu/memory/conflicts/scan";
 import { makeMergeSuggester, makeModelJudge } from "@SRC/exulu/memory/conflicts/judge";
@@ -752,8 +752,8 @@ type PageInfo {
   // Gated on a signed-in user only - the rows themselves are filtered by
   // item-level access control, the same call <ctx>_itemsPagination makes.
   typeDefs += `
-    contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = 5000): ContextMapPoints
-    contextMapEdges(contextId: ID!, nodeId: ID!, limit: Int = 8): [ContextMapEdge!]!
+    contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = ${POINTS_LIMIT_DEFAULT}): ContextMapPoints
+    contextMapEdges(contextId: ID!, nodeId: ID!, limit: Int = ${EDGE_LIMIT_DEFAULT}): [ContextMapEdge!]!
     contextProjectionStatus(contextId: ID!): ContextProjectionStatus
     `;
 
@@ -2760,7 +2760,7 @@ type EmbeddingModelOption {
   resolvers.Query["contextMapEdges"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
     if (!context.user || !target) return [];
-    return contextMapEdges({ db: context.db, context: target, user: context.user, nodeId: args.nodeId, limit: args.limit ?? 8 });
+    return contextMapEdges({ db: context.db, context: target, user: context.user, nodeId: args.nodeId, limit: args.limit ?? EDGE_LIMIT_DEFAULT });
   };
   resolvers.Query["contextProjectionStatus"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);

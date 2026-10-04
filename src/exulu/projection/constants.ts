@@ -11,6 +11,8 @@ export const BACKFILL_BATCH = 500;
 export const POINTS_LIMIT_DEFAULT = 5000;
 export const POINTS_LIMIT_MAX = 20000;
 export const EDGE_LIMIT_DEFAULT = 8;
+/** Hard ceiling for an edge request: the ranking query is a grouped full-text scan. */
+export const EDGE_LIMIT_MAX = 50;
 /** Lexemes an edge query is built from. Matches the measured-safe bound behind
  *  MAX_OR_TERMS in query-preprocessing: 12 OR terms ran in 1.0s on a 97k-chunk
  *  corpus where 56 took 6.3s. */

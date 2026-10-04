@@ -1,6 +1,9 @@
 import type { User } from "@EXULU_TYPES/models/user";
 import type { ExuluContext } from "@SRC/exulu/context";
-import { EDGE_QUERY_TERMS, POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX, PROJECTION_VERSION } from "@SRC/exulu/projection/constants";
+import {
+  EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS,
+  POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX, PROJECTION_VERSION,
+} from "@SRC/exulu/projection/constants";
 import { getChunksTableName, getTableName } from "@SRC/exulu/table-names";
 import { applyAccessControl } from "@SRC/graphql/utilities/access-control";
 import { convertContextToTableDefinition } from "@SRC/graphql/utilities/convert-context-to-table-definition";
@@ -12,8 +15,31 @@ export type MapPoint = { id: string; itemId: string; x: number; y: number; z: nu
 export type MapPoints = { points: MapPoint[]; total: number; sampled: boolean };
 export type MapEdge = { source: string; target: string; score: number };
 
+/** For counts: "no rows" is a true 0, and null means the same thing. */
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0) || 0);
-const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : typeof d === "string" ? new Date(d).toISOString() : null);
+/**
+ * For the nullable status fields: a null column is "not recorded", and
+ * answering 0 would be a claim about the fit (a residual of 0 is a perfect map).
+ */
+const maybeNum = (v: unknown): number | null => {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+/** Never throws: `new Date("whenever").toISOString()` is a RangeError. */
+const iso = (d: unknown): string | null => {
+  const date = d instanceof Date ? d : typeof d === "string" || typeof d === "number" ? new Date(d) : null;
+  return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+};
+/** chunks.source is a uuid column; anything else is 22P02, not "no edges". */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** One clamp for both read APIs: a missing or unusable limit is the default. */
+const clamp = (limit: number | null | undefined, fallback: number, max: number): number => {
+  // The nullish test is explicit because Number(null) is a finite 0, which would
+  // clamp to 1 instead of falling back.
+  const asked = limit == null ? NaN : Number(limit);
+  return Math.max(1, Math.min(Number.isFinite(asked) ? asked : fallback, max));
+};
 const languagesOf = (context: ExuluContext): string[] =>
   (context.configuration?.languages?.length ? context.configuration.languages : ["english"]) as string[];
 /**
@@ -87,14 +113,15 @@ export async function contextMapPoints({
   if (!(await db.schema.hasTable(chunks))) return { points: [], total: 0, sampled: false };
 
   const table = convertContextToTableDefinition(context);
-  // `limit` is a nullable Int in the schema, so an explicit null arrives as null
-  // (a parameter default only catches undefined) and Math.min(null, MAX) is 0 —
-  // one point, silently. Nothing finite means the caller did not ask, so use the
-  // default; the nullish test is explicit because Number(null) is a finite 0.
-  const asked = limit == null ? NaN : Number(limit);
-  const capped = Math.max(1, Math.min(Number.isFinite(asked) ? asked : POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX));
+  // `limit` is a nullable Int in the schema, so an explicit null arrives here as
+  // null (a parameter default only catches undefined) and used to clamp to one
+  // single point.
+  const capped = clamp(limit, POINTS_LIMIT_DEFAULT, POINTS_LIMIT_MAX);
   const group = groupColumn(context, groupField);
   const languages = languagesOf(context);
+  // The same salt the fit samples with (fit.ts), so that a sampled map shows the
+  // chunks the projection was actually fitted on.
+  const salt = sanitizeName(context.id);
 
   const base = () => {
     let q = db(`${chunks} as chunks`)
@@ -118,7 +145,7 @@ export async function contextMapPoints({
   const rows: any[] = mode === "DOCUMENTS"
     ? await base()
         .groupBy("items.id", "items.name", ...(group ? [`items.${group}`] : []))  // knex quotes these itself
-        .orderByRaw("md5(items.id::text || ?)", [context.id])
+        .orderByRaw("md5(items.id::text || ?)", [salt])
         .limit(capped)
         .select([
           db.raw("items.id as id"), db.raw("items.id as \"itemId\""),
@@ -127,7 +154,7 @@ export async function contextMapPoints({
           db.raw("COUNT(chunks.id) as chunks"),
         ])
     : await base()
-        .orderByRaw("md5(chunks.id::text || ?)", [context.id])
+        .orderByRaw("md5(chunks.id::text || ?)", [salt])
         .limit(capped)
         .select([
           db.raw("chunks.id as id"), db.raw("chunks.source as \"itemId\""),
@@ -170,7 +197,10 @@ export async function contextMapPoints({
  */
 export async function contextMapEdges({
   db, context, user, nodeId, limit,
-}: { db: any; context: ExuluContext; user: User | undefined; nodeId: string; limit: number }): Promise<MapEdge[]> {
+}: { db: any; context: ExuluContext; user: User | undefined; nodeId: string; limit?: number | null }): Promise<MapEdge[]> {
+  // Before anything else: a node id that is not a uuid cannot match a
+  // `chunks.source`, and handing it to Postgres raises 22P02.
+  if (!UUID.test(String(nodeId ?? ""))) return [];
   const chunks = getChunksTableName(context.id);
   const items = getTableName(context.id);
   if (!(await db.schema.hasTable(chunks))) return [];
@@ -221,8 +251,10 @@ export async function contextMapEdges({
     .whereRaw("items.archived IS NOT TRUE")
     .whereRaw(predicate.sql, predicate.bindings)
     .groupBy("items.id")
-    .orderByRaw("score DESC")
-    .limit(Math.max(1, limit))
+    // Positional, because `score` would otherwise resolve to an input column of
+    // that name if the context declares one, which makes it a grouping error.
+    .orderByRaw("2 DESC")
+    .limit(clamp(limit, EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX))
     .select([
       db.raw("items.id as id"),
       db.raw(
@@ -261,10 +293,10 @@ export async function contextProjectionStatus({ db, context }: { db: any; contex
     fitted,
     method: fitted ? String(row.method) : null,
     fittedAt: fitted ? iso(row.fitted_at) : null,
-    sampleSize: fitted ? num(row.sample_size) : null,
-    dims: fitted ? num(row.dims) : null,
-    components: fitted ? num(row.components) : null,
-    residual: fitted ? num(row.residual) : null,
+    sampleSize: fitted ? maybeNum(row.sample_size) : null,
+    dims: fitted ? maybeNum(row.dims) : null,
+    components: fitted ? maybeNum(row.components) : null,
+    residual: fitted ? maybeNum(row.residual) : null,
     mappedChunks: num(counts?.mapped),
     totalChunks: num(counts?.total),
   };

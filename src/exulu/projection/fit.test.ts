@@ -21,11 +21,12 @@ const toSql = (v: number[]) => `[${v.join(",")}]`;
  */
 function fakeDb(state: { rows: Row[] }) {
   const writes: any[] = [];
+  const calls: any[] = [];
   const db: any = jest.fn((table: string) => {
     const key = table.split(" ")[0];
     const chain: any = { __table: key, __where: {} };
     for (const m of ["whereNotNull", "whereRaw", "join", "orderByRaw", "orderBy", "select", "andWhere"]) {
-      chain[m] = () => chain;
+      chain[m] = (...args: any[]) => { calls.push([key, m, ...args]); return chain; };
     }
     chain.where = (...args: any[]) => {
       if (typeof args[0] === "object") Object.assign(chain.__where, args[0]);
@@ -49,6 +50,7 @@ function fakeDb(state: { rows: Row[] }) {
   db.raw = async (_sql: string, _b?: any[]) => { writes.push({ op: "raw" }); return { rowCount: 0 }; };
   db.schema = { hasTable: async () => true };
   db.__writes = writes;
+  db.__calls = calls;
   return db;
 }
 
@@ -121,6 +123,26 @@ describe("fitContextProjection", () => {
     expect(out.fitted).toBe(true);
     const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
     expect(stored.rows.context).toBe("my_docs");
+  });
+
+  // Ruling 29. `--all` can only recover the sanitised id from a table name, so
+  // both the sample salt and the layout seed have to be taken from that form —
+  // otherwise `--context "My Docs"` and `--all` fit the same base differently,
+  // and the resolver, which samples by the sanitised id, samples something else
+  // again.
+  it("salts the sample and seeds the layout with the sanitised context id", async () => {
+    const seeds: number[] = [];
+    const seeded = (seed: number) => { seeds.push(seed); return umapFactory(); };
+    const spaced = fakeDb({ rows });
+    await fitContextProjection({ db: spaced, contextId: "My Docs", sample: 1000, components: 4, umapFactory: seeded });
+    const sanitised = fakeDb({ rows });
+    await fitContextProjection({ db: sanitised, contextId: "my_docs", sample: 1000, components: 4, umapFactory: seeded });
+
+    const salt = (db: any) => db.__calls.find((c: any[]) => c[1] === "orderByRaw")?.[3];
+    expect(salt(spaced)).toEqual(["my_docs"]);
+    expect(salt(sanitised)).toEqual(["my_docs"]);
+    expect(seeds).toHaveLength(2);
+    expect(seeds[0]).toBe(seeds[1]);
   });
 
   it("refuses a chunks table with no items sibling and writes nothing", async () => {

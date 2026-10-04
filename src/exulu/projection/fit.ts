@@ -85,7 +85,11 @@ export async function fitContextProjection({
     .join(`${items} as items`, "items.id", "chunks.source")
     .whereNotNull("chunks.embedding")
     .whereRaw("items.archived IS NOT TRUE")
-    .orderByRaw("md5(chunks.id::text || ?)", [contextId])
+    // Salted with the sanitised id, not the id as typed: `--all` only ever has
+    // the sanitised form (it recovers it from the table name), and the read API
+    // samples by it too. Any other spelling fits a different sample than the
+    // one the map then draws.
+    .orderByRaw("md5(chunks.id::text || ?)", [sanitizeName(contextId)])
     .limit(sample)
     .select("chunks.id as id", "chunks.embedding as embedding");
 
@@ -96,7 +100,8 @@ export async function fitContextProjection({
   const dims = (vectors[0] ?? new Float32Array()).length;
   if (vectors.some((v) => v.length !== dims)) return empty(`${contextId} has chunks of mixed dimensionality`);
 
-  const seed = seedFrom(contextId);
+  // Same reason as the sample salt above: one id spelling, one layout.
+  const seed = seedFrom(sanitizeName(contextId));
   const mean = meanVector(vectors, dims);
   const basis = randomizedPCA(vectors, dims, Math.min(components, dims, vectors.length - 1), seed, POWER_ITERATIONS);
   if (basis.length === 0) return empty(`${contextId} has no variance in its embeddings`);
