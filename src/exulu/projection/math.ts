@@ -54,7 +54,9 @@ export function meanVector(rows: ArrayLike<number>[], dims: number): Float32Arra
   // significant digits, and this mean is the origin of the whole map.
   const sum = new Float64Array(dims);
   for (const row of rows) {
-    for (let d = 0; d < dims; d += 1) sum[d] = (sum[d] ?? 0) + (row[d] ?? 0);
+    // `finite`, not `?? 0`: one NaN or Infinity component in one row would
+    // otherwise poison that component of the mean, and the mean is persisted.
+    for (let d = 0; d < dims; d += 1) sum[d] = (sum[d] ?? 0) + finite(row[d]);
   }
   for (let d = 0; d < dims; d += 1) out[d] = (sum[d] ?? 0) / rows.length;
   return out;
@@ -62,14 +64,27 @@ export function meanVector(rows: ArrayLike<number>[], dims: number): Float32Arra
 
 export function subtract(v: ArrayLike<number>, mean: ArrayLike<number>): Float32Array {
   const out = new Float32Array(v.length);
-  for (let i = 0; i < v.length; i += 1) out[i] = finite(v[i]) - finite(mean[i]);
+  for (let i = 0; i < v.length; i += 1) {
+    const vi = v[i];
+    const mi = mean[i];
+    // A contaminated component centres to 0, i.e. "at the mean" - the neutral
+    // choice here. Reading it as 0 instead would assert the data was 0 there,
+    // which for a centred vector is a real displacement from the centroid.
+    // A *missing* mean component still defaults to 0, as documented above.
+    if (vi === undefined || !Number.isFinite(vi)) continue;
+    if (mi !== undefined && !Number.isFinite(mi)) continue;
+    out[i] = vi - finite(mi);
+  }
   return out;
 }
 
-function orthonormalize(vectors: Float32Array[], dims: number): Float32Array[] {
+function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Array[] {
   const out: Float32Array[] = [];
   for (const candidate of vectors) {
-    const v = Float32Array.from(candidate);
+    // Gram-Schmidt runs in float64; the result is narrowed to float32 only when
+    // a direction is accepted into the basis.
+    const v = new Float64Array(dims);
+    for (let d = 0; d < dims; d += 1) v[d] = candidate[d] ?? 0;
     for (const basis of out) {
       let dot = 0;
       for (let d = 0; d < dims; d += 1) dot += (v[d] ?? 0) * (basis[d] ?? 0);
@@ -82,8 +97,9 @@ function orthonormalize(vectors: Float32Array[], dims: number): Float32Array[] {
     }
     norm = Math.sqrt(norm);
     if (!Number.isFinite(norm) || norm < 1e-8) continue;   // degenerate direction, drop it
-    for (let d = 0; d < dims; d += 1) v[d] = (v[d] ?? 0) / norm;
-    out.push(v);
+    const unit = new Float32Array(dims);
+    for (let d = 0; d < dims; d += 1) unit[d] = (v[d] ?? 0) / norm;
+    out.push(unit);
   }
   return out;
 }
@@ -109,7 +125,9 @@ export function randomizedPCA(
     dims,
   );
   for (let pass = 0; pass < iterations && basis.length > 0; pass += 1) {
-    const next = basis.map(() => new Float32Array(dims));
+    // float64 accumulator: this sums `rows` outer-product contributions at
+    // larger magnitudes than meanVector does, so float32 would drift further.
+    const next = basis.map(() => new Float64Array(dims));
     for (const row of rows) {
       const centered = new Float64Array(dims);
       for (let d = 0; d < dims; d += 1) centered[d] = (row[d] ?? 0) - (mean[d] ?? 0);
@@ -263,9 +281,12 @@ export function normalizeLayout(points: number[][]): { points: number[][]; cente
   const radii = points
     .map((p) => Math.hypot(finite(p[0]) - cx, finite(p[1]) - cy, finite(p[2]) - cz))
     .sort((a, b) => a - b);
-  // Nearest-rank 99th percentile, which saturates to the largest radius for
-  // small clouds. Zero spread leaves scale 0, collapsing the cloud to a point.
-  const p99 = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.99))] ?? 0;
+  // Nearest-rank 99th percentile: 1-based rank ceil(0.99n), so index that minus
+  // one. The previous `floor(0.99n)` sat one rank high, which made every cloud
+  // of 100 points or fewer scale by its single largest radius - exactly the
+  // small, fresh memory base the percentile is meant to protect from outliers.
+  // Zero spread leaves scale 0, collapsing the cloud to a point.
+  const p99 = radii[Math.max(0, Math.ceil(radii.length * 0.99) - 1)] ?? 0;
   const scale = p99 > 1e-9 ? 1 / p99 : 0;
   return {
     points: points.map((p) => [0, 1, 2].map((j) => (finite(p[j]) - (center[j] ?? 0)) * scale)),

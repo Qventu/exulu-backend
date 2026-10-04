@@ -53,12 +53,21 @@ describe("randomizedPCA", () => {
       const captured = Math.hypot(b[0], b[1]);
       expect(captured).toBeGreaterThan(0.99);
     }
-    // reconstruction keeps almost all the variance
+    // reconstruction keeps almost all the variance: the rows live in a 2-plane,
+    // so projecting onto the 2-vector basis and back should lose only the noise.
     const z = projectComponents(rows[0], mean, basis);
     expect(z).toHaveLength(2);
+    let residual = 0, centredNorm = 0;
+    for (let d = 0; d < dims; d += 1) {
+      const centred = rows[0][d] - mean[d];
+      const rebuilt = basis.reduce((acc, b, bi) => acc + z[bi] * b[d], 0);
+      residual += (centred - rebuilt) ** 2;
+      centredNorm += centred * centred;
+    }
+    expect(Math.sqrt(residual / centredNorm)).toBeLessThan(0.01);
   });
 
-  it("returns an empty basis for degenerate input instead of NaN", () => {
+  it("yields a finite basis for zero-variance input instead of NaN", () => {
     const rows = Array.from({ length: 10 }, () => Float32Array.from([1, 1, 1]));
     const basis = randomizedPCA(rows, 3, 2, 1, 3);
     for (const b of basis) for (const x of b) expect(Number.isFinite(x)).toBe(true);
@@ -132,6 +141,16 @@ describe("finite results for contaminated input", () => {
     expect(Array.from(l2normalize([NaN, 1]))).toEqual([0, 0]);
   });
 
+  it("meanVector ignores a corrupt row component", () => {
+    const withNaN = meanVector([[1, 2, 3], [NaN, 2, 3], [1, 2, 3]], 3);
+    for (const c of withNaN) expect(Number.isFinite(c)).toBe(true);
+    // The bad component reads as 0, so the first mean is (1 + 0 + 1) / 3.
+    near(withNaN[0], 2 / 3); near(withNaN[1], 2); near(withNaN[2], 3);
+    const withInf = meanVector([[1, 2, 3], [Infinity, 2, 3], [-Infinity, 2, 3]], 3);
+    for (const c of withInf) expect(Number.isFinite(c)).toBe(true);
+    near(withInf[0], 1 / 3);
+  });
+
   it("ridgeFit returns a finite intercept when a row is corrupt", () => {
     const Z = [Float32Array.from([1, 2]), Float32Array.from([NaN, 1]), Float32Array.from([0, 3])];
     const Y = [[1, 1, 1], [2, 2, 2], [3, 3, 3]];
@@ -154,7 +173,10 @@ describe("finite results for contaminated input", () => {
   });
 
   it("subtract and projectComponents do not pass NaN through", () => {
-    expect(Array.from(subtract(Float32Array.from([NaN, 2]), Float32Array.from([1, 1])))).toEqual([-1, 1]);
+    // A NaN component lands at the mean (0 once centred), not at "the data was 0".
+    expect(Array.from(subtract(Float32Array.from([NaN, 2]), Float32Array.from([1, 1])))).toEqual([0, 1]);
+    expect(Array.from(subtract(Float32Array.from([Infinity, 2]), Float32Array.from([1, 1])))).toEqual([0, 1]);
+    expect(Array.from(subtract(Float32Array.from([5, 2]), Float32Array.from([NaN, 1])))).toEqual([0, 1]);
     const z = projectComponents(Float32Array.from([NaN, 1]), Float32Array.from([0, 0]), [Float32Array.from([1, 1])]);
     for (const c of z) expect(Number.isFinite(c)).toBe(true);
   });
