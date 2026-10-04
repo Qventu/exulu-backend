@@ -12,6 +12,7 @@ import type { ExuluContextProcessor } from "@EXULU_TYPES/context-processor";
 import type { ChunkerOperation } from "./chunker";
 import { defaultChunker } from "./chunker";
 import { resolveEmbedder } from "./resolve-embedder";
+import { chunkCoordinates } from "./projection/store";
 import { getEmbeddingModelInfo } from "./litellm/parse-embedding-models";
 import { exuluApp } from "@SRC/exulu/app/singleton";
 import { refreshContextEmbeddersIfStale } from "./hydrate-embedders";
@@ -571,6 +572,10 @@ export class ExuluContext {
       vector: vectors[i] ?? [],
     }));
 
+    // Vector map (3c-1): a position for every chunk, from the context's fitted
+    // projection. Null when the context was never fitted; never fails the embed.
+    const coordinates = await chunkCoordinates({ db, contextId: this.id, vectors: chunks.map((c) => c.vector) });
+
     // Capture the entities linked to this item BEFORE deleting its chunks. The
     // junction's ON DELETE CASCADE clears those mention rows when chunks are
     // deleted, so we grab the affected entity ids first to recompute their
@@ -603,7 +608,7 @@ export class ExuluContext {
       };
 
       await db.from(getChunksTableName(this.id)).insert(
-        chunks.map((chunk) => ({
+        chunks.map((chunk, index) => ({
           // Sanitize source to remove null bytes
           source: sanitizeString(source),
           // Sanitize metadata to remove null bytes from string values
@@ -612,6 +617,11 @@ export class ExuluContext {
           content: sanitizeString(chunk.content),
           chunk_index: chunk.index,
           embedding: pgvector.toSql(chunk.vector),
+          // Written only when a projection exists, so the insert stays valid on
+          // a chunks table that predates the px/py/pz columns.
+          ...(coordinates[index]
+            ? { px: coordinates[index]!.x, py: coordinates[index]!.y, pz: coordinates[index]!.z }
+            : {}),
         })),
       );
     }
