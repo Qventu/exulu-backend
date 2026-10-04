@@ -63,7 +63,7 @@ The payload is roughly 1 MB of JSON for a 1536-dimension model with `k = 50`. It
 8. **Store** the projection row (`version` bumped on pipeline changes).
 9. **Backfill**: stream every chunk of the context in batches of 500, project, write `px`, `py`, `pz`. Chunks without an embedding keep null coordinates.
 
-`--all` fits every context that has an embedder and at least `components + 1` chunks. `--dry-run` reports sample size, residual and how many chunks would be written, and stores nothing.
+Contexts are declared by the consuming application, not by this package, so the script works from the database: `--context` names one, `--all` fits every base that has a chunks table, and a base with fewer than `components + 1` embedded chunks is skipped with a reason. `--dry-run` reports sample size, residual and how many chunks would be written, and stores nothing.
 
 Refitting moves existing points. That is inherent to a layout algorithm; the API reports `fittedAt` so the UI can say when the picture was last redrawn.
 
