@@ -8,7 +8,19 @@ jest.mock("@SRC/exulu/table-names", () => {
   };
 });
 
+// Passthrough spy: the solve itself is the real one, but the residual has to be
+// scored from a solve that never saw the rows it is scored on, and the row
+// counts of each call are the only place that is observable.
+jest.mock("./math", () => {
+  const actual = jest.requireActual("./math");
+  return { ...actual, ridgeFit: jest.fn(actual.ridgeFit) };
+});
+
 import { fitContextProjection, listFittableContexts } from "./fit";
+import { ridgeFit } from "./math";
+
+const solveSizes = () => (ridgeFit as unknown as jest.Mock).mock.calls.map((c: any[]) => c[0].length);
+beforeEach(() => (ridgeFit as unknown as jest.Mock).mockClear());
 
 type Row = { id: string; embedding: number[] };
 /** Rows come back from pg as the pgvector text form; the fake mirrors that. */
@@ -66,8 +78,14 @@ function cluster(n: number, centre: number[], spread: number, seed: number, offs
   }));
 }
 
+/** A one-hot centre in `dims` dimensions. */
+const axis = (dims: number, at: number) => Array.from({ length: dims }, (_, i) => (i === at ? 1 : 0));
+
 describe("fitContextProjection", () => {
   const rows = [...cluster(60, [1, 0, 0, 0, 0, 0], 0.2, 1, 0), ...cluster(60, [0, 1, 0, 0, 0, 0], 0.2, 2, 60)];
+  /** 60 vectors in 12 dimensions: wide enough that `dims` is not what caps the
+   *  component count, small enough that the sample is. */
+  const small = [...cluster(30, axis(12, 0), 0.2, 3, 0), ...cluster(30, axis(12, 1), 0.2, 4, 30)];
 
   it("fits, stores a projection and backfills coordinates", async () => {
     const db = fakeDb({ rows });
@@ -101,6 +119,48 @@ describe("fitContextProjection", () => {
     await expect(fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory }))
       .rejects.toThrow(/px/);
     expect(db.__writes).toEqual([]);
+  });
+
+  // Measured against real umap-js on synthetic 1536-dimension bases: 50 free
+  // parameters on 60 vectors reported 0.020 while actually placing new points
+  // with 0.261 error. One component per ten vectors instead, never more than
+  // asked for; the stored `components` has to be the value used, because the
+  // shape guard and the loader both read it.
+  it("scales the component count to the sample it loaded, and stores what it used", async () => {
+    const db = fakeDb({ rows: small });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 50, umapFactory });
+    expect(out.fitted).toBe(true);
+    expect(out.sampleSize).toBe(60);
+    expect(out.components).toBe(6);
+    const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
+    expect(stored.rows.components).toBe(6);
+    expect(JSON.parse(stored.rows.basis)).toHaveLength(6);
+    for (const row of JSON.parse(stored.rows.map)) expect(row).toHaveLength(6);
+  });
+
+  it("never scales the component count up", async () => {
+    const db = fakeDb({ rows });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    expect(out.components).toBe(4);
+  });
+
+  it("scores the residual on rows the solve never saw", async () => {
+    const db = fakeDb({ rows });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    // 20% of 120 held out: the scoring solve sees 96 rows, the stored map all 120.
+    expect(solveSizes()).toEqual([96, 120]);
+    expect(out.heldOut).toBe(24);
+  });
+
+  // With more parameters than training rows there is nothing to hold out, so the
+  // number stays in-sample - and the script's summary has to say so rather than
+  // present it as an out-of-sample score.
+  it("falls back to an in-sample residual, flagged, when the sample is too small", async () => {
+    const db = fakeDb({ rows: rows.slice(0, 3) });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 2, umapFactory });
+    expect(out.fitted).toBe(true);
+    expect(out.heldOut).toBe(0);
+    expect(solveSizes()).toEqual([3]);
   });
 
   it("refuses a base with too few vectors and writes nothing", async () => {

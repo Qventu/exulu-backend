@@ -18,6 +18,9 @@ export type StoredProjection = {
 };
 export type FitResult = {
   fitted: boolean; reason?: string; sampleSize: number; components: number; residual: number; written: number;
+  /** Vectors withheld from the solve the `residual` was scored on; 0 means the
+   *  sample was too small to hold any out and the number is in-sample. */
+  heldOut: number;
 };
 type UmapLike = { fit: (rows: number[][]) => number[][] };
 
@@ -73,7 +76,7 @@ export async function fitContextProjection({
 }): Promise<FitResult> {
   const chunks = getChunksTableName(contextId);
   const items = getTableName(contextId);
-  const empty = (reason: string): FitResult => ({ fitted: false, reason, sampleSize: 0, components, residual: 0, written: 0 });
+  const empty = (reason: string): FitResult => ({ fitted: false, reason, sampleSize: 0, components, residual: 0, written: 0, heldOut: 0 });
 
   if (!(await db.schema.hasTable(chunks))) return empty(`${contextId} has no chunks table`);
   // The sample joins the items table to skip archived items. Without this
@@ -95,15 +98,24 @@ export async function fitContextProjection({
 
   const vectors = sampleRows.map((r) => l2normalize(parseVector(r.embedding))).filter((v) => v.length > 0);
   if (vectors.length < components + 1) {
-    return empty(`${contextId} needs at least ${components + 1} embedded chunks to fit ${components} components (has ${vectors.length})`);
+    return empty(`${contextId} needs at least ${components + 1} embedded chunks for a ${components}-component request (has ${vectors.length})`);
   }
   const dims = (vectors[0] ?? new Float32Array()).length;
   if (vectors.some((v) => v.length !== dims)) return empty(`${contextId} has chunks of mixed dimensionality`);
 
+  // Measured against real umap-js on synthetic 1536-dimension bases: 50 free
+  // parameters fitted on 60 vectors memorise the sample, reporting 0.020 while
+  // actually placing new points with 0.261 error. So the intermediate
+  // dimensionality follows the data — one component per ten vectors, never more
+  // than requested and never fewer than two. `components` stays the request;
+  // what is stored is `basis.length`, the number actually used, because the
+  // shape guard and the loader both read it.
+  const budget = Math.min(components, Math.max(2, Math.floor(vectors.length / 10)));
+
   // Same reason as the sample salt above: one id spelling, one layout.
   const seed = seedFrom(sanitizeName(contextId));
   const mean = meanVector(vectors, dims);
-  const basis = randomizedPCA(vectors, dims, Math.min(components, dims, vectors.length - 1), seed, POWER_ITERATIONS);
+  const basis = randomizedPCA(vectors, dims, Math.min(budget, dims, vectors.length - 1), seed, POWER_ITERATIONS);
   if (basis.length === 0) return empty(`${contextId} has no variance in its embeddings`);
 
   const reduced = vectors.map((v) => projectComponents(v, mean, basis));
@@ -122,8 +134,23 @@ export async function fitContextProjection({
   // so without this check a useless map stores as a perfect one.
   if (!Number.isFinite(scale) || scale <= 0) return empty(`${contextId} produced a degenerate layout (every point in one place)`);
   log(`${contextId}: layout done, fitting the linear map`);
+  // The residual has to answer "how far off will the NEXT chunk land", so it is
+  // scored on a slice the solve never saw. The sample arrives in md5-salted
+  // order (see the query above), which makes a tail slice a random hold-out.
+  // With fewer training rows than parameters there is nothing to hold out: the
+  // number stays in-sample and `heldOut` 0 says so.
+  const holdOut = Math.max(1, Math.floor(reduced.length * 0.2));
+  const trainCount = reduced.length - holdOut;
+  const heldOut = trainCount >= basis.length + 1 ? holdOut : 0;
+  const scoring = heldOut > 0
+    ? ridgeFit(reduced.slice(0, trainCount), layout.slice(0, trainCount), RIDGE_LAMBDA)
+    : null;
+  // The STORED map is fitted on everything: the hold-out buys an honest number,
+  // not a smaller map.
   const { map, intercept } = ridgeFit(reduced, layout, RIDGE_LAMBDA);
-  const residual = fitResidual(reduced, layout, map, intercept, 1);
+  const residual = scoring
+    ? fitResidual(reduced.slice(trainCount), layout.slice(trainCount), scoring.map, scoring.intercept, 1)
+    : fitResidual(reduced, layout, map, intercept, 1);
 
   const projection: StoredProjection = {
     // Keyed by the sanitised id: `--all` can only recover the table prefix, so
@@ -138,8 +165,8 @@ export async function fitContextProjection({
   }
 
   if (dryRun) {
-    log(`dry run: residual ${residual.toFixed(3)}, would store a ${basis.length}×${dims} projection`);
-    return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0 };
+    log(`dry run: residual ${residual.toFixed(3)} ${residualScope(heldOut)}, would store a ${basis.length}×${dims} projection`);
+    return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0, heldOut };
   }
 
   // Backfill FIRST, from the projection in hand — it does not need the row.
@@ -163,8 +190,12 @@ export async function fitContextProjection({
     })
     .onConflict("context")
     .merge();
-  return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written };
+  return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written, heldOut };
 }
+
+/** How a reported residual was scored, for the script's summary and the dry run. */
+export const residualScope = (heldOut: number): string =>
+  (heldOut > 0 ? `(out of sample, ${heldOut} vectors held out)` : "(in sample: too few vectors to hold any out)");
 
 /** Streams every embedded chunk of the context and writes its coordinates. */
 export async function backfillCoordinates({

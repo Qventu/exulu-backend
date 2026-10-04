@@ -5,7 +5,7 @@
 // Contexts are declared by the consuming application, so this script works from
 // the database: --context names one, --all fits every base that has a chunks table.
 import { postgresClient } from "../src/postgres/client";
-import { fitContextProjection, listFittableContexts } from "../src/exulu/projection/fit";
+import { fitContextProjection, listFittableContexts, residualScope } from "../src/exulu/projection/fit";
 import { COMPONENTS, FIT_SAMPLE } from "../src/exulu/projection/constants";
 
 const arg = (name: string): string | undefined => {
@@ -54,7 +54,7 @@ async function main() {
       });
       console.log(
         result.fitted
-          ? `[EXULU] ${contextId}: fitted ${result.components} components on ${result.sampleSize} vectors, residual ${result.residual.toFixed(3)}, ${result.written} chunks written${dryRun ? " (dry run)" : ""}`
+          ? `[EXULU] ${contextId}: fitted ${result.components} components on ${result.sampleSize} vectors, residual ${result.residual.toFixed(3)} ${residualScope(result.heldOut)}, ${result.written} chunks written${dryRun ? " (dry run)" : ""}`
           : `[EXULU] ${contextId}: skipped — ${result.reason}`,
       );
     } catch (error) {
