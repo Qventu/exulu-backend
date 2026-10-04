@@ -26,7 +26,7 @@ Three nullable `real` columns on every `<ctx>_chunks` table: `px`, `py`, `pz`.
 
 - `createChunksTable` (`src/exulu/context.ts`) adds them for new contexts.
 - Existing chunk tables have no field-sync path, so the init-db context loop gains an idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for each of the three, next to the existing "create the chunks table if missing" step.
-- A partial index `(<ctx>_chunks) WHERE px IS NOT NULL` is **not** created; the map always reads by `source`/item and the existing `source` index covers it.
+- A partial index `(<ctx>_chunks) WHERE px IS NOT NULL` is **not** created. The points query scans the chunks table, joins the items, aggregates per item and orders every group by an `md5(...)` expression, so no index on the coordinates can serve it. Correction (2026-10-05): the original justification claimed the map "always reads by `source`/item and the existing `source` index covers it", which is simply not what the query does. The conclusion stands; the reason was wrong.
 
 ### 2.2 `context_projections` (new core table, no RBAC flag)
 
@@ -44,10 +44,10 @@ One row per context, holding everything needed to place a vector.
 | `method` | text | `umap+linear` |
 | `version` | number | bumped when the pipeline changes; a mismatch means "refit needed" |
 | `sample_size` | number | vectors the fit used |
-| `residual` | number | mean placement error of the linear map relative to the cloud radius (0 = perfect) |
+| `residual` | number | **out-of-sample** mean placement error of the linear map, relative to the cloud radius (0 = perfect). Scored on a held-out slice of the sample that the ridge solve never saw |
 | `fitted_at` | date | |
 
-The payload is roughly 1 MB of JSON for a 1536-dimension model with `k = 50`. It is read once per process and cached per context, invalidated by `fitted_at`.
+The payload is about 1.6 MB of JSON for a 1536-dimension model with `k = 50` — the basis alone is 1.59 MB, because every float serialises as a full double. It is read once per process and cached per context for the duration of the cache window.
 
 ## 3. The fit
 
@@ -60,6 +60,8 @@ The payload is roughly 1 MB of JSON for a 1536-dimension model with `k = 50`. It
 5. **Lay out** the reduced vectors with UMAP to three components (cosine metric, 15 neighbours, min distance 0.1, seeded).
 6. **Normalise the layout** so the cloud is centred on the origin and its 99th-percentile radius is 1. Every base then frames identically in the camera.
 7. **Learn the map**: ridge least squares from the `k`-dimensional vectors onto the layout, solving the `k × k` normal equations by Gaussian elimination. Store the 3 × k matrix, the intercept and the residual.
+
+   `k` follows the data: `min(requested, max(2, floor(n / 10)))`. Fifty components fitted to sixty vectors reproduce their own training targets almost perfectly and place anything new far worse — measured on synthetic 1536-dimension bases, a sixty-vector fit reported 0.030 while actually placing held-out points at 0.304. The residual is therefore scored on a held-out slice the solve never saw, and the stored `components` is the count actually used, which is what both readers validate the stored matrices against.
 8. **Store** the projection row (`version` bumped on pipeline changes).
 9. **Backfill**: stream every chunk of the context in batches of 500, project, write `px`, `py`, `pz`. Chunks without an embedding keep null coordinates.
 
