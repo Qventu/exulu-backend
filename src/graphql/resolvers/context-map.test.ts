@@ -52,6 +52,9 @@ const NODE = "11111111-2222-4333-8444-555555555555";
 // any assertion about how it was called is meaningless until the counters are
 // reset between tests.
 beforeEach(() => jest.clearAllMocks());
+const accessControl = () => (require("@SRC/graphql/utilities/access-control") as any).applyAccessControl;
+/** The same base with two configured languages. */
+const bilingual = { ...context, configuration: { languages: ["english", "german"] } } as any;
 
 describe("contextMapPoints", () => {
   it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
@@ -67,15 +70,39 @@ describe("contextMapPoints", () => {
       total: 1, sampled: false,
     });
     expect(db.__log.some((l: any[]) => l[1] === "whereNotNull" && String(l[2]).includes("px"))).toBe(true);
-    expect((require("@SRC/graphql/utilities/access-control") as any).applyAccessControl).toHaveBeenCalledWith(
-      expect.anything(), expect.anything(), user, "items",
-    );
+    expect(accessControl()).toHaveBeenCalledWith(expect.anything(), expect.anything(), user, "items");
+    // Once for the total, once for the rows. Without the count, dropping the
+    // gate from one of the two paths would still satisfy "was called".
+    expect(accessControl()).toHaveBeenCalledTimes(2);
   });
 
   it("flags a sampled result when the base is larger than the limit", async () => {
     const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "900" }] });
     const out = await contextMapPoints({ db, context, user, mode: "DOCUMENTS", limit: 10 });
     expect(out).toMatchObject({ total: 900, sampled: true });
+  });
+
+  it("flags a sampled result in PASSAGES mode too, against the capped limit", async () => {
+    const over = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "900" }] });
+    expect(await contextMapPoints({ db: over, context, user, mode: "PASSAGES", limit: 10 })).toMatchObject({ total: 900, sampled: true });
+    const under = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "5" }] });
+    expect(await contextMapPoints({ db: under, context, user, mode: "PASSAGES", limit: 10 })).toMatchObject({ total: 5, sampled: false });
+  });
+
+  // (14) Multi-language bases are the reason the predicate is a disjunction at
+  // all, and one language exercises neither the OR join nor the GREATEST join.
+  it("ORs the search predicate across every configured language", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+    await contextMapPoints({ db, context: bilingual, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
+    const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("@@"));
+    const sql = String(match?.[2]);
+    expect(sql).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+    expect(sql).toContain("items.fts @@ websearch_to_tsquery('english', ?)");
+    expect(sql).toContain("chunks.fts @@ websearch_to_tsquery('german', ?)");
+    expect(sql).toContain("items.fts @@ websearch_to_tsquery('german', ?)");
+    // Two languages × two columns, one binding each, all the same text.
+    expect(match?.[3]).toHaveLength(4);
+    expect(new Set(match?.[3] as string[]).size).toBe(1);
   });
 
   it("ignores an unknown groupField and clamps the limit", async () => {
@@ -195,8 +222,13 @@ describe("contextMapEdges", () => {
     // Ruling 17 again, for the match predicate and the ts_rank expression.
     expect(JSON.stringify(db.__log)).toContain("('english', ?)");
   });
-  it("is empty when the node has no text", async () => {
-    expect(await contextMapEdges({ db: fakeDb({ "mem_chunks#first": [] }), context, user, nodeId: NODE, limit: 5 })).toEqual([]);
+  it("is empty when the node has no text, without asking for its lexemes", async () => {
+    // The fake would answer the lexeme round trip happily, so the guard is only
+    // pinned by proving the round trip never happens.
+    const db = fakeDb({ "mem_chunks#first": [{ text: "   " }], raw: [{ query: "encod or speed" }] });
+    expect(await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 })).toEqual([]);
+    expect(db.__log.some((l: any[]) => l[0] === "raw" && String(l[1]).includes("unnest(to_tsvector("))).toBe(false);
+    expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
   });
 
   // Ruling 24. The preprocessing helpers are built for short user queries: fed a
@@ -244,6 +276,27 @@ describe("contextMapEdges", () => {
     const db = fakeDb({ "mem_chunks#first": [], raw: [{ query: "encod" }] });
     expect(await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 })).toEqual([]);
     expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
+    // The gate ran on the seed read itself, which is the only query issued.
+    expect(accessControl()).toHaveBeenCalledTimes(1);
+    expect(accessControl()).toHaveBeenCalledWith(expect.anything(), expect.anything(), user, "items");
+  });
+
+  // (14) Two languages: the predicate ORs, the rank GREATESTs, and the lexemes
+  // are lexed in the first configured language only.
+  it("ORs the match and GREATESTs the rank across every configured language", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.42" }]);
+    await contextMapEdges({ db, context: bilingual, user, nodeId: NODE, limit: 5 });
+    const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
+    expect(String(match?.[2])).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+    expect(String(match?.[2])).toContain("chunks.fts @@ websearch_to_tsquery('german', ?)");
+    expect(String(match?.[2])).not.toContain("items.fts");
+    expect(match?.[3]).toEqual([LEXEMES, LEXEMES]);
+    const rank = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("ts_rank"));
+    expect(String(rank?.[1])).toContain("ts_rank(chunks.fts, websearch_to_tsquery('english', ?)), ts_rank(chunks.fts, websearch_to_tsquery('german', ?))");
+    expect(rank?.[2]).toEqual([LEXEMES, LEXEMES]);
+    const lexemes = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("unnest(to_tsvector("));
+    expect(String(lexemes?.[1])).toContain("to_tsvector('english', ?)");
+    expect(String(lexemes?.[1])).not.toContain("german");
   });
 
   // chunks.source is a uuid column: a malformed id reaches Postgres as 22P02
@@ -340,6 +393,19 @@ describe("contextProjectionStatus", () => {
       "mem_chunks#first": [{ total: "1", mapped: "1" }],
     });
     await expect(contextProjectionStatus({ db, context })).resolves.toMatchObject({ fitted: true, fittedAt: null });
+  });
+
+  // Ruling 18, pinned by behaviour rather than by a docstring: swapping in the
+  // cached loadProjection satisfies every other assertion here, and then reports
+  // a minute-stale "not fitted" exactly while the UI polls after a fit.
+  it("re-reads the projection row on every call, never a cached one", async () => {
+    const db = fakeDb({
+      "context_projections#first": [{ version: 1, method: "umap+linear" }],
+      "mem_chunks#first": [{ total: "1", mapped: "1" }],
+    });
+    expect((await contextProjectionStatus({ db, context })).fitted).toBe(true);
+    expect((await contextProjectionStatus({ db, context })).fitted).toBe(true);
+    expect(db.__log.filter((l: any[]) => l[0] === "context_projections" && l[1] === "where")).toHaveLength(2);
   });
 
   // Ruling 11: the fit writes `context: sanitizeName(contextId)` (fit.ts), so a
