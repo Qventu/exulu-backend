@@ -12,6 +12,12 @@ import type { User } from "@EXULU_TYPES/models/user";
 export const hasAgentsReadAccess = (user?: User): boolean =>
   user?.super_admin === true || user?.role?.agents === "read" || user?.role?.agents === "write";
 
+/**
+ * Write-access variant: super admins or agents:write only (not agents:read).
+ */
+export const hasAgentsWriteAccess = (user?: User): boolean =>
+  user?.super_admin === true || user?.role?.agents === "write";
+
 export const applyAccessControl = (
   table: ExuluTableDefinition,
   query: any,
