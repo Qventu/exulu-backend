@@ -1103,6 +1103,20 @@ git commit -m "feat(map): write chunk coordinates at embedding time from the cac
 
 ### Task 5: The read API
 
+> **Corrected during execution (controller Ruling 24).** This task's `contextMapEdges`
+> code below builds its query with `resolveSearchQueryTexts` / `chooseFullTextQuery`.
+> That is wrong for a whole-chunk seed: `chooseFullTextQuery` falls back to the strict
+> `plainto_tsquery` AND form above `MAX_OR_TERMS` (12), so a 600-character passage
+> matches only near-duplicates and the query returns nothing for almost every node.
+> As shipped, edges instead build one `to_tsquery` from the twelve most frequent,
+> longest lexemes of the node's own `tsvector` (`unnest(to_tsvector(...))`, ordered by
+> `array_length(positions, 1)` then `length(lexeme)`, capped by the new
+> `EDGE_QUERY_TERMS` constant), and match and rank with that string across every
+> configured language, as `vector-search.ts` does. `contextMapPoints` keeps the
+> preprocessing helpers: its input is a short user search string, which is what they
+> are built for.
+
+
 **Files:**
 - Create: `src/graphql/resolvers/context-map.ts`, `src/graphql/resolvers/context-map.test.ts`
 - Modify: `src/graphql/schemas/index.ts` (import; Query typedefs; types + enum; resolvers)
