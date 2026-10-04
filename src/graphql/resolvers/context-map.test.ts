@@ -45,6 +45,13 @@ const context = {
   fields: [{ name: "type", type: "enum" }, { name: "information", type: "text" }],
 } as any;
 const user = { id: 4 } as any;
+/** chunks.source is a uuid column, so a node id has to be one. */
+const NODE = "11111111-2222-4333-8444-555555555555";
+
+// applyAccessControl is one module-level jest.fn shared by every test here, so
+// any assertion about how it was called is meaningless until the counters are
+// reset between tests.
+beforeEach(() => jest.clearAllMocks());
 
 describe("contextMapPoints", () => {
   it("returns one point per item in DOCUMENTS mode, scoped to the viewer's items", async () => {
@@ -100,7 +107,25 @@ describe("contextMapPoints", () => {
     await contextMapPoints({ db, context, user, mode: "PASSAGES", search: "encoder speed", limit: 10 });
     const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
     expect(String(match?.[2])).toContain("('english', ?)");
-    expect(match?.[3]).toHaveLength(1);
+    // One binding per language × searched column (chunks.fts and items.fts).
+    expect(match?.[3]).toHaveLength(2);
+  });
+
+  // Spec §5: "items whose name or text matches". The items table carries its own
+  // generated vector over name, description and external id, and searching only
+  // chunks.fts means a document found by its title finds nothing unless the
+  // title happens to recur in the body.
+  it("matches the item's name as well as the chunk text", async () => {
+    const db = fakeDb({ mem_chunks: [], "mem_chunks#first": [{ c: "0" }] });
+    await contextMapPoints({ db, context, user, mode: "DOCUMENTS", search: "encoder", limit: 10 });
+    const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("@@"));
+    expect(String(match?.[2])).toContain("chunks.fts @@ websearch_to_tsquery('english', ?)");
+    expect(String(match?.[2])).toContain("items.fts @@ websearch_to_tsquery('english', ?)");
+    expect(String(match?.[2])).toContain(" OR ");
+    // The same preprocessed text, bound once per disjunct.
+    expect(match?.[3]).toHaveLength(2);
+    expect(match?.[3]?.[0]).toBe(match?.[3]?.[1]);
+    expect(String(match?.[3]?.[0])).toContain("encoder");
   });
 });
 
@@ -117,15 +142,15 @@ describe("contextMapEdges", () => {
 
   it("ranks other items lexically and never returns the node itself", async () => {
     const db = edgeDb([{ id: "i2", score: "0.42" }, { id: "i3", score: "0.2" }]);
-    const out = await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
-    expect(out).toEqual([{ source: "i1", target: "i2", score: 0.42 }, { source: "i1", target: "i3", score: 0.2 }]);
+    const out = await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
+    expect(out).toEqual([{ source: NODE, target: "i2", score: 0.42 }, { source: NODE, target: "i3", score: 0.2 }]);
     expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(true);
     expect((require("@SRC/graphql/utilities/access-control") as any).applyAccessControl).toHaveBeenCalled();
     // Ruling 17 again, for the match predicate and the ts_rank expression.
     expect(JSON.stringify(db.__log)).toContain("('english', ?)");
   });
   it("is empty when the node has no text", async () => {
-    expect(await contextMapEdges({ db: fakeDb({ "mem_chunks#first": [] }), context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+    expect(await contextMapEdges({ db: fakeDb({ "mem_chunks#first": [] }), context, user, nodeId: NODE, limit: 5 })).toEqual([]);
   });
 
   // Ruling 24. The preprocessing helpers are built for short user queries: fed a
@@ -134,7 +159,7 @@ describe("contextMapEdges", () => {
   // tsvector picks the terms, ordered by in-passage frequency then length.
   it("asks Postgres for the node's own lexemes, capped and ordered by frequency", async () => {
     const db = edgeDb([]);
-    await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
+    await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
     const lexemes = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("unnest(to_tsvector("));
     expect(lexemes).toBeDefined();
     expect(String(lexemes?.[1])).toContain("string_agg(lexeme, ' or ')");
@@ -147,10 +172,32 @@ describe("contextMapEdges", () => {
   it("is empty, without ranking anything, when the node has no distinctive lexemes", async () => {
     for (const query of [null, "   "]) {
       const db = edgeDb([{ id: "i2", score: "0.9" }], query);
-      expect(await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 })).toEqual([]);
+      expect(await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 })).toEqual([]);
       expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
       expect(JSON.stringify(db.__log)).not.toContain("ts_rank");
     }
+  });
+
+  // Spec §6: an item the viewer may not read has "its point and every edge
+  // touching it" absent. The targets were scoped from the start; the seed read
+  // was not, so any signed-in caller holding an item id could retrieve that
+  // item's lexical neighbourhood and confirm the item exists.
+  it("scopes the seed read to the viewer's items, archived ones excluded", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.42" }]);
+    await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
+    const access = (require("@SRC/graphql/utilities/access-control") as any).applyAccessControl;
+    // Twice: once for the seed read, once for the ranking query.
+    expect(access).toHaveBeenCalledTimes(2);
+    expect(access).toHaveBeenCalledWith(expect.anything(), expect.anything(), user, "items");
+    expect(db.__log.filter((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("items.archived IS NOT TRUE"))).toHaveLength(2);
+    expect(db.__log.filter((l: any[]) => l[1] === "join" && String(l[2]).includes("mem_items as items"))).toHaveLength(2);
+  });
+
+  it("is empty when the seed item is not visible to the viewer", async () => {
+    // The scoped seed read finds nothing: no text, so no lexemes and no ranking.
+    const db = fakeDb({ "mem_chunks#first": [], raw: [{ query: "encod" }] });
+    expect(await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 })).toEqual([]);
+    expect(db.__log.some((l: any[]) => l[1] === "whereNot")).toBe(false);
   });
 
   // Ruling 27: websearch_to_tsquery consumes the aggregate, because it cannot
@@ -160,7 +207,7 @@ describe("contextMapEdges", () => {
   // ' or '-joined shape.
   it("matches and ranks with websearch_to_tsquery over the aggregated lexemes", async () => {
     const db = edgeDb([{ id: "i2", score: "0.42" }]);
-    await contextMapEdges({ db, context, user, nodeId: "i1", limit: 5 });
+    await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
     const match = db.__log.find((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("chunks.fts @@"));
     expect(String(match?.[2])).toContain("websearch_to_tsquery('english', ?)");
     const rank = db.__log.find((l: any[]) => l[0] === "raw" && String(l[1]).includes("ts_rank"));

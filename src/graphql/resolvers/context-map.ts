@@ -21,15 +21,30 @@ const groupColumn = (context: ExuluContext, field?: string | null): string | nul
   field && context.fields?.some((f: any) => f.name === field) ? field : null;
 
 /**
- * The full-text predicate over the generated `fts` column: one disjunct per
- * configured language, each binding the same query string. The language is
- * interpolated as a SQL literal and only the text is bound — the shape
- * vector-search.ts already uses, because a bound `regconfig` parameter is
- * untested here and the languages come from the context configuration, never
- * from the request.
+ * A full-text predicate and its bindings: one disjunct per configured language
+ * × searched column, each binding the same query string. Kept as one function
+ * so the SQL and the binding list cannot drift apart.
+ *
+ * The language is interpolated as a SQL literal and only the text is bound —
+ * the shape vector-search.ts already uses, because a bound `regconfig`
+ * parameter is untested here and the languages come from the context
+ * configuration, never from the request.
  */
-const ftsMatch = (languages: string[], fn: string): string =>
-  `(${languages.map((lang) => `chunks.fts @@ ${fn}('${lang}', ?)`).join(" OR ")})`;
+const ftsPredicate = (
+  languages: string[], fn: string, text: string, columns: string[],
+): { sql: string; bindings: string[] } => ({
+  sql: `(${languages.flatMap((lang) => columns.map((col) => `${col} @@ ${fn}('${lang}', ?)`)).join(" OR ")})`,
+  bindings: languages.flatMap(() => columns.map(() => text)),
+});
+
+/**
+ * Spec §5 is "items whose name or text matches", so a point search spans the
+ * items table's own generated vector as well as the chunks'. That column covers
+ * name, description and external id (see createItemsTable), and without it a
+ * document found by its title matches nothing unless the title recurs in the
+ * body. Edges search chunk text only: a neighbour is a passage, not a title.
+ */
+const SEARCH_COLUMNS = ["chunks.fts", "items.fts"];
 
 /** Points for the map (spec §5). Item-level access control, the same call vector search makes. */
 export async function contextMapPoints({
@@ -60,7 +75,8 @@ export async function contextMapPoints({
     if (search && search.trim()) {
       const texts = resolveSearchQueryTexts(search.trim());
       const chosen = chooseFullTextQuery({ strictMatches: false, strictText: search.trim(), orText: texts.hybridOrQuery });
-      q = q.whereRaw(ftsMatch(languages, chosen.fn), languages.map(() => chosen.text));
+      const predicate = ftsPredicate(languages, chosen.fn, chosen.text, SEARCH_COLUMNS);
+      q = q.whereRaw(predicate.sql, predicate.bindings);
     }
     return applyAccessControl(table, q, user, "items");
   };
@@ -130,8 +146,25 @@ export async function contextMapEdges({
   const items = getTableName(context.id);
   if (!(await db.schema.hasTable(chunks))) return [];
 
-  const seed = await db(chunks).where({ source: nodeId }).orderBy("chunk_index").limit(1).select(db.raw("LEFT(content, 600) as text")).first();
+  const table = convertContextToTableDefinition(context);
+  // The seed read carries the same gate as the targets. Spec §6 promises that an
+  // item the viewer may not read has its point and every edge touching it
+  // absent; an unscoped seed would let any signed-in caller holding an item id
+  // retrieve that item's lexical neighbourhood, and so confirm it exists.
+  const seed = await applyAccessControl(
+    table,
+    db(`${chunks} as chunks`)
+      .join(`${items} as items`, "items.id", "chunks.source")
+      .where("chunks.source", nodeId)
+      .whereRaw("items.archived IS NOT TRUE")
+      .orderBy("chunks.chunk_index")
+      .limit(1)
+      .select(db.raw("LEFT(chunks.content, 600) as text")),
+    user,
+    "items",
+  ).first();
   const text = String(seed?.text ?? "").trim();
+  // No visible seed, or an empty one: no lexemes to ask for, no edges.
   if (!text) return [];
 
   const languages = languagesOf(context);
@@ -152,13 +185,12 @@ export async function contextMapEdges({
   // a tsvector the configured dictionary emptied). No edges, no ranking query.
   if (!terms) return [];
 
-  const table = convertContextToTableDefinition(context);
-
+  const predicate = ftsPredicate(languages, "websearch_to_tsquery", terms, ["chunks.fts"]);
   let q = db(`${chunks} as chunks`)
     .join(`${items} as items`, "items.id", "chunks.source")
     .whereNot("chunks.source", nodeId)
     .whereRaw("items.archived IS NOT TRUE")
-    .whereRaw(ftsMatch(languages, "websearch_to_tsquery"), languages.map(() => terms))
+    .whereRaw(predicate.sql, predicate.bindings)
     .groupBy("items.id")
     .orderByRaw("score DESC")
     .limit(Math.max(1, limit))
