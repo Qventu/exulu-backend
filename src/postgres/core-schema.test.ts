@@ -101,3 +101,25 @@ describe("memory conflict schemas", () => {
     for (const field of ["open", "judged", "unjudged", "skipped"]) expect(byName[field]).toMatchObject({ type: "number" });
   });
 });
+
+describe("context_projections schema", () => {
+  test("holds one fitted projection per context, without RBAC", () => {
+    const schema = coreSchemas.get().contextProjectionsSchema();
+    expect(schema.name).toEqual({ plural: "context_projections", singular: "context_projection" });
+    expect(schema.RBAC).toBeFalsy();
+    const byName = Object.fromEntries(schema.fields.map((f) => [f.name, f]));
+    expect(byName.context).toMatchObject({ type: "text", required: true, unique: true });
+    expect(byName.dims).toMatchObject({ type: "number", required: true });
+    expect(byName.components).toMatchObject({ type: "number", required: true });
+    expect(byName.mean).toMatchObject({ type: "json", required: true });
+    expect(byName.basis).toMatchObject({ type: "json", required: true });
+    expect(byName.map).toMatchObject({ type: "json", required: true });
+    expect(byName.intercept).toMatchObject({ type: "json", required: true });
+    expect(byName.method).toMatchObject({ type: "text", required: true });
+    expect(byName.version).toMatchObject({ type: "number", required: true });
+    expect(byName.sample_size).toMatchObject({ type: "number" });
+    expect(byName.residual).toMatchObject({ type: "number" });
+    expect(byName.fitted_at).toMatchObject({ type: "date", required: true });
+    expect(byName.created_by).toBeUndefined();
+  });
+});

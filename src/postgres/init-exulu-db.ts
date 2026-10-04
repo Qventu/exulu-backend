@@ -8,7 +8,7 @@ import type { ExuluTableDefinition } from "@EXULU_TYPES/exulu-table-definition";
 import type { ExuluContext } from "@SRC/exulu/context";
 import { ensureEntityTables } from "@SRC/exulu/entities";
 import { contextFieldsForSync } from "@SRC/exulu/context-fields-for-sync";
-import { getTableName } from "@SRC/exulu/table-names";
+import { getTableName, getChunksTableName } from "@SRC/exulu/table-names";
 import { hydrateContextEmbedders } from "@SRC/exulu/hydrate-embedders";
 
 const {
@@ -34,6 +34,7 @@ const {
   jobResultsSchema,
   promptLibrarySchema,
   contextPresetsSchema,
+  contextProjectionsSchema,
   entityTypeSettingsSchema,
   promptFavoritesSchema,
   memoryUsagesSchema,
@@ -129,6 +130,7 @@ const up = async function (knex: Knex) {
     jobResultsSchema(),
     promptLibrarySchema(),
     contextPresetsSchema(),
+    contextProjectionsSchema(),
     entityTypeSettingsSchema(),
     promptFavoritesSchema(),
     memoryUsagesSchema(),
@@ -372,6 +374,14 @@ const contextDatabases = async (contexts: ExuluContext[]) => {
     if (!chunksTableExists && context.embedder) {
       console.log("[EXULU] chunks table does not exist, creating it.");
       await context.createChunksTable();
+    }
+    // Vector map (3c-1): chunk tables have no field-sync path, so the three
+    // coordinate columns are added here. Idempotent on every boot.
+    if (await context.chunksTableExists()) {
+      const chunksTable = getChunksTableName(context.id);
+      for (const column of ["px", "py", "pz"]) {
+        await knex.raw(`ALTER TABLE ?? ADD COLUMN IF NOT EXISTS ?? real`, [chunksTable, column]);
+      }
     }
     // Create the entity-layer tables/columns for graph-enabled contexts.
     // No-op when the entity layer is disabled (no types declared/configured).

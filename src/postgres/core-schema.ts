@@ -783,6 +783,31 @@ const memoryConflictScansSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * Vector map (sub-project 3c-1): one fitted projection per context — the mean,
+ * the linear reduction and the learned map that turn an embedding into a point
+ * in three dimensions. Read once per process and cached; ~1 MB of JSON for a
+ * 1536-dimension model.
+ */
+const contextProjectionsSchema: ExuluTableDefinition = {
+  type: "context_projections",
+  name: { plural: "context_projections", singular: "context_projection" },
+  fields: [
+    { name: "context", type: "text", required: true, unique: true, index: true },
+    { name: "dims", type: "number", required: true },
+    { name: "components", type: "number", required: true },
+    { name: "mean", type: "json", required: true },
+    { name: "basis", type: "json", required: true },
+    { name: "map", type: "json", required: true },
+    { name: "intercept", type: "json", required: true },
+    { name: "method", type: "text", required: true },
+    { name: "version", type: "number", required: true },
+    { name: "sample_size", type: "number" },
+    { name: "residual", type: "number" },
+    { name: "fitted_at", type: "date", required: true },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -1049,6 +1074,7 @@ export const coreSchemas = {
       memoryConflictsSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictsSchema),
       memoryJudgementsSchema: (): ExuluTableDefinition => addCoreFields(memoryJudgementsSchema),
       memoryConflictScansSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictScansSchema),
+      contextProjectionsSchema: (): ExuluTableDefinition => addCoreFields(contextProjectionsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),

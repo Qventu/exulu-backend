@@ -1334,6 +1334,12 @@ export class ExuluContext {
       table.integer("chunk_index");
       table.specificType("embedding", `vector(${dimensionality})`);
 
+      // Vector map (3c-1): the chunk's position in three dimensions, written by
+      // the projection at embedding time. Null until the context is fitted.
+      table.specificType("px", "real");
+      table.specificType("py", "real");
+      table.specificType("pz", "real");
+
       // Generated tsvector column (PG 12+)
       const languages = this.configuration.languages?.length
         ? this.configuration.languages
