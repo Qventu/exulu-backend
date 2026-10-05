@@ -64,7 +64,9 @@ With nothing selected it does not open. Selecting a passage opens it with the pa
 
 ### 5.4 Controls appear when they do something
 
-The links control is shown only while a passage is selected, which is the only time it changes anything. Pause and reset stay, reduced to icons with labels, in the canvas corner rather than the card header.
+The links control is shown only while a passage is selected, and the faint whole-cloud web it governs is gated on that selection too. Pause and reset stay, reduced to icons with labels, in the canvas corner rather than the card header.
+
+Corrected on 2026-10-05 during execution. This paragraph originally justified hiding the control by claiming it "only changes anything with a selection". That is false: the renderer draws the web from its own geometry whenever the control is set, with no reference to the selection, so hiding the control alone would have left a web on screen that nothing could turn off. Gating the web with its control keeps the viewer's choice for their next selection, where resetting it on deselect would silently discard it.
 
 ### 5.5 The caption says what the numbers are
 
