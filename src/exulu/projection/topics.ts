@@ -178,9 +178,9 @@ export async function computeTopics({
     .filter((r) => r.count > 0)
     // Filter out any region whose coordinates are not all finite
     .filter((r) => {
-      const finite = Number.isFinite(r.centre[0] ?? 0) && Number.isFinite(r.centre[1] ?? 0) && Number.isFinite(r.centre[2] ?? 0);
-      if (!finite) console.error(`[EXULU] Dropped topic region with non-finite coordinates from context ${contextId}`);
-      return finite;
+      const allFinite = Number.isFinite(r.centre[0] ?? 0) && Number.isFinite(r.centre[1] ?? 0) && Number.isFinite(r.centre[2] ?? 0);
+      if (!allFinite) console.error(`[EXULU] Dropped topic region with non-finite coordinates from context ${contextId}`);
+      return allFinite;
     });
 
   const rows = filtered.map(({ centre, index: origIndex, count }, newIndex) => ({

@@ -37,7 +37,7 @@ describe("kmeans", () => {
     const sizes = new Map<number, number>();
     for (const a of assignments) sizes.set(a, (sizes.get(a) ?? 0) + 1);
     expect(sizes.size).toBe(1); // Only one cluster is used
-    const clusterKey = [...sizes.keys()][0] ?? 0;
+    const clusterKey = [...sizes.keys()][0]!;
     expect(clusterKey).toBe(0); // The first cluster
     expect(sizes.get(clusterKey)).toBe(10); // All points in that cluster
   });
@@ -198,10 +198,10 @@ describe("computeTopics", () => {
     });
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
 
-    // Inject a clustering function that returns a deliberately non-finite centroid
+    // Inject a clustering function that returns a deliberately non-finite centroid and one all-finite
     const malformedCluster = (points: number[][], k: number, seed: number) => ({
-      assignments: [0, 0],
-      centroids: [[NaN, Infinity, 5], [1, 1, 1]], // First centroid is bad
+      assignments: [0, 1], // Point 0 in cluster 0 (non-finite), point 1 in cluster 1 (finite)
+      centroids: [[NaN, Infinity, 5], [1, 1, 1]],
     });
 
     await computeTopics({
@@ -211,8 +211,9 @@ describe("computeTopics", () => {
       seed: 1, fittedAt: new Date(),
       clusteringFn: malformedCluster,
     });
-    // Row with non-finite coordinates should be filtered out
-    // Only the second (all-finite) centroid's row should be inserted, or none if that one is also empty
-    expect(inserted.every((r: any) => [r.x, r.y, r.z].every(Number.isFinite))).toBe(true);
+    // Non-finite cluster 0 should be filtered out; finite cluster 1 survives and is renumbered to topic_index 0
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]?.topic_index).toBe(0);
+    expect(inserted[0]?.label).toBe("Topic 1");
   });
 });
