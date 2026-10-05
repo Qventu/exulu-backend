@@ -59,7 +59,7 @@ async function main() {
       });
       console.log(
         result.fitted
-          ? `[EXULU] ${contextId}: fitted ${result.components} components on ${result.sampleSize} vectors, residual ${result.residual.toFixed(3)} ${residualScope(result.heldOut)}, ${result.written} chunks written${dryRun ? " (dry run)" : ""}`
+          ? `[EXULU] ${contextId}: fitted ${result.components} components on ${result.sampleSize} vectors, residual ${result.residual.toFixed(3)} ${residualScope(result.heldOut)}, ${result.written} chunks written, ${result.topics} regions named${dryRun ? " (dry run)" : ""}`
           : `[EXULU] ${contextId}: skipped — ${result.reason}`,
       );
     } catch (error) {

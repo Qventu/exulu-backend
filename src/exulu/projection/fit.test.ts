@@ -26,14 +26,39 @@ type Row = { id: string; embedding: number[] };
 /** Rows come back from pg as the pgvector text form; the fake mirrors that. */
 const toSql = (v: number[]) => `[${v.join(",")}]`;
 
+/** The two-cluster sample most tests fit, for a test that only cares about the writes. */
+const defaultRows = (): Row[] =>
+  [...cluster(60, [1, 0, 0, 0, 0, 0], 0.2, 1, 0), ...cluster(60, [0, 1, 0, 0, 0, 0], 0.2, 2, 60)];
+
 /**
  * Knex is called as `db("mem_chunks as chunks")` for the fit query and
  * `db("mem_chunks")` for the backfill, so the fake keys on the first word, and
  * it honours the keyset (`where("id", ">", …)`) so the backfill loop terminates.
+ *
+ * `db.transaction` hands its callback a chain-compatible stand-in, because the
+ * topics and the projection row are written inside one. The topic-table writes
+ * and the lexeme query land in `__topicWrites`, kept apart from `__writes` so
+ * that stays what it has always been — the backfill and the projection row —
+ * and the three `on*` hooks record the order the phases actually run in.
+ *
+ * `rows` gives parsed vectors; `embeddings` gives the raw pgvector strings with
+ * generated ids, so a test can include one that does not parse. Neither given
+ * means the default sample.
  */
-function fakeDb(state: { rows: Row[] }) {
+function fakeDb(state: {
+  rows?: Row[];
+  embeddings?: string[];
+  onBackfill?: () => void;
+  onProjection?: () => void;
+  onTopics?: () => void;
+}) {
   const writes: any[] = [];
+  const topicWrites: any[] = [];
   const calls: any[] = [];
+  const sample: { id: string; embedding: string }[] = state.embeddings
+    ? state.embeddings.map((embedding, i) => ({ id: `id-${i}`, embedding }))
+    : (state.rows ?? defaultRows()).map((r) => ({ id: r.id, embedding: toSql(r.embedding) }));
+
   const db: any = jest.fn((table: string) => {
     const key = table.split(" ")[0];
     const chain: any = { __table: key, __where: {} };
@@ -50,19 +75,55 @@ function fakeDb(state: { rows: Row[] }) {
     chain.insert = (rows: any) => { writes.push({ table: key, op: "insert", rows }); return { onConflict: () => ({ merge: async () => undefined }) }; };
     chain.then = (resolve: any, reject: any) => {
       if (!key.endsWith("_chunks")) return Promise.resolve([]).then(resolve, reject);
+      // Keyset by position rather than by string compare: the backfill orders by
+      // id, and `id-10` sorts before `id-2` as text, which would hand the loop
+      // rows it had already written. Sorted ids behave exactly as before.
       const after = chain.__after;
-      const rows = state.rows
-        .filter((r) => after === undefined || r.id > after)
-        .slice(0, chain.__limit ?? state.rows.length)
-        .map((r) => ({ id: r.id, embedding: toSql(r.embedding) }));
-      return Promise.resolve(rows).then(resolve, reject);
+      const start = after === undefined ? 0 : sample.findIndex((r) => r.id === after) + 1;
+      return Promise.resolve(sample.slice(start, start + (chain.__limit ?? sample.length))).then(resolve, reject);
     };
     return chain;
   });
-  db.raw = async (_sql: string, _b?: any[]) => { writes.push({ op: "raw" }); return { rowCount: 0 }; };
+  db.raw = async (_sql: string, _b?: any[]) => { state.onBackfill?.(); writes.push({ op: "raw" }); return { rowCount: 0 }; };
   db.schema = { hasTable: async () => true };
+
+  // computeTopics writes the topic table twice (it replaces the context's set),
+  // so the hook fires on the first of those operations: one phase, not two.
+  let announced = false;
+  const topicPhase = () => { if (!announced) { announced = true; state.onTopics?.(); } };
+  db.transaction = async (fn: (trx: any) => Promise<void>) => {
+    db.__transactions += 1;
+    const trx: any = jest.fn((table: string) => {
+      const chain: any = {};
+      chain.where = () => chain;
+      chain.delete = async () => { topicPhase(); topicWrites.push({ table, op: "delete" }); };
+      chain.insert = (rows: any) => {
+        if (table === "context_map_topics") { topicPhase(); topicWrites.push({ table, op: "insert", rows }); }
+        else { if (table === "context_projections") state.onProjection?.(); writes.push({ table, op: "insert", rows, inTransaction: true }); }
+        // Awaited directly by the topics insert, chained by the projection upsert.
+        const out: any = { onConflict: () => ({ merge: async () => undefined }) };
+        out.then = (resolve: any, reject: any) => Promise.resolve(undefined).then(resolve, reject);
+        return out;
+      };
+      return chain;
+    });
+    // The only raw query inside the fit's transaction is the lexeme count, and
+    // the sampled ids are its first binding.
+    trx.raw = async (_sql: string, bindings: any[] = []) => {
+      topicPhase();
+      const ids = Array.isArray(bindings[0]) ? (bindings[0] as unknown[]).map(String) : [];
+      db.__onTopicIds?.(ids);
+      topicWrites.push({ op: "raw", ids });
+      return { rows: [] };
+    };
+    trx.schema = db.schema;
+    return fn(trx);
+  };
+
   db.__writes = writes;
+  db.__topicWrites = topicWrites;
   db.__calls = calls;
+  db.__transactions = 0;
   return db;
 }
 
@@ -249,6 +310,46 @@ describe("fitContextProjection", () => {
     expect(out.fitted).toBe(true);
     expect(out.written).toBe(0);
     expect(db.__writes).toEqual([]);
+  });
+
+  it("writes topics after the backfill, inside the same transaction as the projection", async () => {
+    const order: string[] = [];
+    const db = fakeDb({ onBackfill: () => order.push("backfill"), onProjection: () => order.push("projection"), onTopics: () => order.push("topics") });
+    const result = await fitContextProjection({ db, contextId: "mem", umapFactory });
+    expect(result.fitted).toBe(true);
+    expect(result.topics).toBeGreaterThan(0);
+    expect(order).toEqual(["backfill", "topics", "projection"]);
+    // Order alone would also hold for three separate statements: the topic set
+    // and the projection row have to be committed together, or a context ends up
+    // describing one layout by its coordinates and another by its region names.
+    expect(db.__transactions).toBe(1);
+    expect(db.__writes.find((w: any) => w.table === "context_projections").inTransaction).toBe(true);
+    expect(db.__topicWrites.map((w: any) => w.op)).toEqual(["raw", "delete", "insert"]);
+  });
+
+  it("stores no topics on a dry run", async () => {
+    const order: string[] = [];
+    const db = fakeDb({ onTopics: () => order.push("topics") });
+    const result = await fitContextProjection({ db, contextId: "mem", dryRun: true, umapFactory });
+    expect(result.fitted).toBe(true);
+    expect(result.topics).toBe(0);
+    expect(order).toEqual([]);
+  });
+
+  it("keeps sample ids aligned with their vectors when a row has no parseable embedding", async () => {
+    // The middle row's embedding is unparseable, so it drops out of `vectors`.
+    // If ids were taken from the raw rows, every later id would be off by one and
+    // topics would be clustered against the wrong chunks.
+    const db = fakeDb({
+      embeddings: ["[1,0]", "not a vector", "[0,1]", "[1,1]", "[2,1]", "[1,2]", "[3,1]", "[1,3]", "[1,-1]", "[-1,2]", "[2,-1]", "[0.5,2]"],
+    });
+    const seen: string[] = [];
+    db.__onTopicIds = (ids: string[]) => seen.push(...ids);
+    await fitContextProjection({ db, contextId: "mem", components: 2, umapFactory });
+    expect(seen).not.toContain("id-1");
+    // The ids have to reach the clustering at all, and all eleven that parsed
+    // have to reach it: an empty list would satisfy the line above on its own.
+    expect(seen).toHaveLength(11);
   });
 });
 

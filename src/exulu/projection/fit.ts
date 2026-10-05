@@ -10,6 +10,7 @@ import {
   applyMap, fitResidual, l2normalize, meanVector, normalizeLayout, projectComponents,
   randomizedPCA, ridgeFit, rng,
 } from "./math";
+import { computeTopics } from "./topics";
 
 export type StoredProjection = {
   context: string; dims: number; components: number;
@@ -21,6 +22,8 @@ export type FitResult = {
   /** Vectors withheld from the solve the `residual` was scored on; 0 means the
    *  sample was too small to hold any out and the number is in-sample. */
   heldOut: number;
+  /** Named regions stored for the base; 0 when nothing was written. */
+  topics: number;
 };
 type UmapLike = { fit: (rows: number[][]) => number[][] };
 
@@ -76,7 +79,7 @@ export async function fitContextProjection({
 }): Promise<FitResult> {
   const chunks = getChunksTableName(contextId);
   const items = getTableName(contextId);
-  const empty = (reason: string): FitResult => ({ fitted: false, reason, sampleSize: 0, components, residual: 0, written: 0, heldOut: 0 });
+  const empty = (reason: string): FitResult => ({ fitted: false, reason, sampleSize: 0, components, residual: 0, written: 0, heldOut: 0, topics: 0 });
 
   if (!(await db.schema.hasTable(chunks))) return empty(`${contextId} has no chunks table`);
   // The sample joins the items table to skip archived items. Without this
@@ -96,7 +99,13 @@ export async function fitContextProjection({
     .limit(sample)
     .select("chunks.id as id", "chunks.embedding as embedding");
 
-  const vectors = sampleRows.map((r) => l2normalize(parseVector(r.embedding))).filter((v) => v.length > 0);
+  // Pairs, not two lists: filtering vectors alone would leave `sampleRows`
+  // longer, and every id after the first unparseable embedding would then
+  // describe a different chunk than its coordinates.
+  const sampled = sampleRows
+    .map((r) => ({ id: String(r.id), vector: l2normalize(parseVector(r.embedding)) }))
+    .filter((s) => s.vector.length > 0);
+  const vectors = sampled.map((s) => s.vector);
   if (vectors.length < components + 1) {
     return empty(`${contextId} needs at least ${components + 1} embedded chunks for a ${components}-component request (has ${vectors.length})`);
   }
@@ -166,31 +175,49 @@ export async function fitContextProjection({
 
   if (dryRun) {
     log(`dry run: residual ${residual.toFixed(3)} ${residualScope(heldOut)}, would store a ${basis.length}×${dims} projection`);
-    return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0, heldOut };
+    return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0, heldOut, topics: 0 };
   }
 
   // Backfill FIRST, from the projection in hand — it does not need the row.
   // The row is what makes chunkCoordinates start answering, and context.ts
   // spreads those coordinates into an unwrapped chunk insert, so a row that
   // survives a failed backfill turns every later ingestion into this context
-  // into an error. If the write below is the one that cannot work, the caller
+  // into an error. If the writes below are the ones that cannot work, the caller
   // sees it with nothing committed.
   const written = await backfillCoordinates({ db, contextId, projection, log });
-  // knex does not stringify, and node-pg encodes a JS array as a Postgres array
-  // literal (`{0.1,0.2}`), which jsonb rejects with 22P02. The repo's convention
-  // is to stringify at the boundary; StoredProjection stays number arrays in
-  // memory because backfillCoordinates reads them.
-  await db("context_projections")
-    .insert({
-      ...projection,
-      mean: JSON.stringify(projection.mean),
-      basis: JSON.stringify(projection.basis),
-      map: JSON.stringify(projection.map),
-      intercept: JSON.stringify(projection.intercept),
-    })
-    .onConflict("context")
-    .merge();
-  return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written, heldOut };
+
+  let topics = 0;
+  // One transaction for the topics and the projection row: computeTopics
+  // replaces the context's whole topic set, so a context whose topics were
+  // replaced but whose projection write then failed would describe two
+  // different layouts at once — the old coordinates under the new region names.
+  await db.transaction(async (trx: any) => {
+    log(`${contextId}: naming regions`);
+    // Clustered on the coordinates the map actually draws — applyMap of the
+    // reduced vectors, the same values the backfill writes — not the raw
+    // layout, so a label sits where its dots are.
+    topics = await computeTopics({
+      db: trx, contextId, ids: sampled.map((s) => s.id),
+      coordinates: reduced.map((z) => [...applyMap(z, map, intercept)]),
+      seed, fittedAt: projection.fitted_at,
+    });
+    // knex does not stringify, and node-pg encodes a JS array as a Postgres array
+    // literal (`{0.1,0.2}`), which jsonb rejects with 22P02. The repo's convention
+    // is to stringify at the boundary; StoredProjection stays number arrays in
+    // memory because backfillCoordinates reads them.
+    await trx("context_projections")
+      .insert({
+        ...projection,
+        mean: JSON.stringify(projection.mean),
+        basis: JSON.stringify(projection.basis),
+        map: JSON.stringify(projection.map),
+        intercept: JSON.stringify(projection.intercept),
+      })
+      .onConflict("context")
+      .merge();
+  });
+  log(`${contextId}: ${topics} regions`);
+  return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written, heldOut, topics };
 }
 
 /** How a reported residual was scored, for the script's summary and the dry run. */
