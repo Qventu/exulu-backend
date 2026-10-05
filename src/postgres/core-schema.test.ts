@@ -123,3 +123,19 @@ describe("context_projections schema", () => {
     expect(byName.created_by).toBeUndefined();
   });
 });
+
+describe("context_map_topics", () => {
+  it("is registered with the fields the map reads", () => {
+    const schema = coreSchemas.get().contextMapTopicsSchema();
+    expect(schema.type).toBe("context_map_topics");
+    expect(schema.RBAC).toBeFalsy();
+    const names = schema.fields.map((f) => f.name);
+    for (const field of ["context", "topic_index", "label", "count", "x", "y", "z", "version", "fitted_at"]) {
+      expect(names).toContain(field);
+    }
+    // Many rows per context: a unique context would make a refit fail on the
+    // second cluster instead of replacing the set.
+    expect(schema.fields.find((f) => f.name === "context")?.unique).toBeFalsy();
+    expect(schema.fields.find((f) => f.name === "context")?.index).toBe(true);
+  });
+});

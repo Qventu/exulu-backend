@@ -809,6 +809,27 @@ const contextProjectionsSchema: ExuluTableDefinition = {
   ],
 };
 
+/**
+ * One row per topic per context (3c-2). Replaced wholesale on every fit, so a
+ * context's rows always describe one layout. Not RBAC-scoped: a topic count
+ * describes the base, not the reader's slice of it.
+ */
+const contextMapTopicsSchema: ExuluTableDefinition = {
+  type: "context_map_topics",
+  name: { plural: "context_map_topics", singular: "context_map_topic" },
+  fields: [
+    { name: "context", type: "text", required: true, index: true },
+    { name: "topic_index", type: "number", required: true },
+    { name: "label", type: "text", required: true },
+    { name: "count", type: "number", required: true },
+    { name: "x", type: "number", required: true },
+    { name: "y", type: "number", required: true },
+    { name: "z", type: "number", required: true },
+    { name: "version", type: "number", required: true },
+    { name: "fitted_at", type: "date", required: true },
+  ],
+};
+
 const transcriptionJobsSchema: ExuluTableDefinition = {
   type: "transcription_jobs",
   name: {
@@ -1076,6 +1097,7 @@ export const coreSchemas = {
       memoryJudgementsSchema: (): ExuluTableDefinition => addCoreFields(memoryJudgementsSchema),
       memoryConflictScansSchema: (): ExuluTableDefinition => addCoreFields(memoryConflictScansSchema),
       contextProjectionsSchema: (): ExuluTableDefinition => addCoreFields(contextProjectionsSchema),
+      contextMapTopicsSchema: (): ExuluTableDefinition => addCoreFields(contextMapTopicsSchema),
       contextPresetsSchema: (): ExuluTableDefinition => addCoreFields(contextPresetsSchema),
       sharedArtifactsSchema: (): ExuluTableDefinition => addCoreFields(sharedArtifactsSchema),
       transcriptionJobsSchema: (): ExuluTableDefinition => addCoreFields(transcriptionJobsSchema),
