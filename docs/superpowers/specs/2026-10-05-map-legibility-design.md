@@ -28,7 +28,7 @@ The side panel repeats the chip row verbatim. The counts appear twice and never 
 
 | Decision | Choice |
 |---|---|
-| What colour encodes | **the region**, on every base. Twelve regions, twelve colours, matching the chips |
+| What colour encodes | **the region**, on every base, matching the chips. The palette cycles where regions outnumber it (see §5.1) |
 | What a sampled passage's coordinates are | **its true layout position**, not the linear approximation |
 | What the linear map is still for | passages that arrive after the fit, and only those |
 | Where the memory `type` goes | the panel, on selection — it stops being a colour channel |
