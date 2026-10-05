@@ -100,18 +100,20 @@ export const migrateUserCredentialsDataColumn = async (knex: Knex): Promise<void
   }
 };
 
-export const migrateWorkflowTriggersToSecret = async (knex: Knex): Promise<void> => {
-  const hasAddress = await knex.schema.hasColumn("workflow_triggers", "address");
-  if (hasAddress) {
-    // Unshipped feature: old rows carry Mailgun addresses that no longer route.
-    // Clear them so addMissingFields can add the NOT NULL UNIQUE `secret` column.
-    console.log("[EXULU] Migrating workflow_triggers address -> secret (clearing unshipped dev rows).");
-    await knex("workflow_triggers").del();
-    await knex.schema.alterTable("workflow_triggers", (t) => t.dropColumn("address"));
-  }
-  // Remove the retired platform-level inbound config (spec §3.2).
-  await knex("platform_configurations").where({ config_key: "email_inbound" }).del();
-};
+/*
+ * There is deliberately no migration from the retired `workflow_triggers.address`
+ * column to `secret`, and none removing the retired `email_inbound` platform
+ * config. Removed 2026-10-05 (see init-exulu-db.destructive.test.ts).
+ *
+ * The delete was never needed: addMissingFields drops `required` and emits a
+ * nullable column, and Postgres allows many nulls in a unique index, so `secret`
+ * adds cleanly to a table that already has rows. Those rows then carry a null
+ * secret, which the webhook lookup can never match — visibly inert, rather than
+ * silently deleted. The stale `address` column and the orphan config row are
+ * read by nothing and are left in place on purpose: leaving dead data costs a
+ * column and a row, while guessing which deployments are disposable costs
+ * somebody's configuration.
+ */
 
 const up = async function (knex: Knex) {
   console.log("[EXULU] Database up.");
@@ -178,13 +180,13 @@ const up = async function (knex: Knex) {
     await createTable(schema);
   }
 
-  // User credentials table replaces oauth_tokens. No backfill is required —
-  // the feature had no production users. DROP IF EXISTS with CASCADE handles
-  // dev installs that had the earlier oauth_tokens table.
-  await knex.raw("DROP TABLE IF EXISTS oauth_tokens CASCADE;");
+  // The user_credentials table replaces the earlier oauth_tokens one. The drop
+  // that used to stand here was removed 2026-10-05: nothing in this package
+  // reads oauth_tokens any more, so an installation that still has it carries a
+  // dead table, which is cheaper to leave than a CASCADE is to get wrong — it
+  // would take whatever depends on the table with it.
   await knex.raw(userCredentialsSchema());
   await migrateUserCredentialsDataColumn(knex);
-  await migrateWorkflowTriggersToSecret(knex);
 
   // Email-trigger dedup (spec §4.4.5): Message-ID lookups per routine are
   // DB-backed so webhook retries, intake-job retries, and Redis restarts can
