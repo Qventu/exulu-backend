@@ -17,8 +17,9 @@
  * collapses to zeros rather than NaN.
  */
 
-/** A missing or non-finite component, read as 0. */
-function finite(x: number | undefined): number {
+/** A missing or non-finite component, read as 0. NaN that reaches the database
+ * poisons a whole map silently, so every exported function must coerce to finite. */
+export function finite(x: number | undefined): number {
   return x !== undefined && Number.isFinite(x) ? x : 0;
 }
 
