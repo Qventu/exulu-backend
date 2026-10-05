@@ -90,6 +90,8 @@ type ContextMapTopic { id: ID!  label: String!  count: Int!  x: Float!  y: Float
 contextMapTopics(contextId: ID!): [ContextMapTopic!]!
 ```
 
+`id` is `topic_index` as a string. It identifies a topic only within one fit, which is all the chip row and the `?topic=` parameter need; a refit may renumber.
+
 Counts are the fit's counts, so they are **not** access-scoped and do not change per viewer. That is deliberate and matches `contextProjectionStatus`: a topic count describes the base, not the reader's slice of it. The chip row states this with the same footnote the mockup uses for private memories.
 
 ### 3.2 Edges must return passages
@@ -108,9 +110,13 @@ In `PASSAGES` the ranking groups by chunk id and returns chunk ids as `target`; 
 
 Title **Memory map** (**Knowledge map** on a knowledge base). Caption: *Similar passages sit close together. Lines join passages that share distinctive wording. Drag to rotate.* Three controls in the card's toolbar, as the mockup has them: a segmented **All links / Selection only**, a **pause** toggle for the idle rotation, and a **reset** for the camera. Below the canvas: the topic chips, then the legend, then the footnote.
 
-The card follows the existing heavy-widget contract — title, description, toolbar, loading, error with retry — reusing `ChartCard` if its fixed skeleton height can be overridden, and otherwise a feature-local card with the identical contract and visual language. The plan settles that by reading the component.
+The frame is the existing `ChartCard` primitive, which already takes a title, description, toolbar slot and an inline error with Retry, and accepts a class name for height. Its built-in loading skeleton is a fixed short height, so the map drives its own skeleton through children at the canvas's height instead, and the card does not jump when the data arrives. The primitive is not modified.
 
-### 4.2 Rendering
+### 4.2 What the view asks for
+
+On mount, per base: `contextMapPoints(contextId, mode: PASSAGES, groupField: <the colour field>, limit: 20000)` once, `contextMapTopics(contextId)` once, and `contextProjectionStatus(contextId)` once for coverage and the not-fitted state. `contextMapEdges(contextId, nodeId, mode: PASSAGES)` runs on each selection. Nothing polls. A memory base additionally reuses the conflicts query the Conflicts route already issues, to ring the passages in a conflict group.
+
+### 4.3 Rendering
 
 The app has never rendered WebGL: there is no canvas, no render loop and no pan-zoom handler anywhere in it. This is genuinely new, and it is the only new dependency: **three.js with its React renderer**, with orbit controls taken from three's own examples rather than adding a helper library. The canvas component is loaded through `next/dynamic` with server rendering off, the one precedent the repo already has, so the library never reaches another route.
 
@@ -122,23 +128,23 @@ The app has never rendered WebGL: there is no canvas, no render loop and no pan-
 
 **Colour cannot come from CSS in WebGL.** The palette is resolved from the theme's chart tokens with `getComputedStyle` at mount and again when the theme changes. Two tokens are excluded: `--chart-2` and `--chart-9` are violet, which is not used in this product's design work. `--chart-5` is grey and reserved for "no value". That leaves seven categorical colours, which is more than the memory contract's declared types need.
 
-### 4.3 Interaction
+### 4.4 Interaction
 
 Drag orbits, wheel zooms within clamped bounds, and the cloud rotates slowly on its own until the pointer touches it or the pause control stops it. Reset restores the initial framing. The existing reduced-motion convention applies: when the viewer prefers reduced motion there is no idle rotation and the toggle starts paused.
 
-Hovering a dot raises a tooltip with the first line of the passage. Selecting one fills the panel, draws its neighbour lines, and writes `?selected=` so the view is linkable. **All links** versus **Selection only** controls whether unselected passages keep faint lines to their nearest neighbour or the cloud stays clean until something is selected; it defaults to Selection only, because a base of any size turns a full web into a hairball.
+Hovering a dot raises a tooltip with the first line of the passage. Selecting one fills the panel, draws its neighbour lines, and writes `?selected=` so the view is linkable. **All links** versus **Selection only** controls whether unselected passages keep faint lines to their nearest neighbour or the cloud stays clean until something is selected; it defaults to Selection only. The mockup shows the opposite segment active, but that draft assumed entity lines, which are far sparser than lexical ones; a base of any size turns a full lexical web into a hairball.
 
-### 4.4 Topics
+### 4.5 Topics
 
 Topic labels float over the cloud as HTML positioned by projecting each centroid, which keeps them crisp and lets them use the same type tokens as the rest of the page. Labels that would overlap are resolved greedily in favour of the larger cluster, and a label behind the camera is hidden.
 
 The chip row lists the same topics with their counts. Selecting a chip dims every passage outside that cluster and writes `?topic=`. Selecting a chip and selecting a dot are independent; the dot's lines stay visible through a topic filter.
 
-### 4.5 The panel
+### 4.6 The panel
 
 A docked resizable panel on large screens, a sheet below, reusing the existing primitive. With nothing selected it shows the base's shape: the topic list with counts and the sampled caption. With a passage selected it shows the passage text, its type, the item it belongs to with a link to the item page, the author and when it was saved, the number of times it has been used on a memory base, and then **Closest by wording** — the neighbours from the edges query, each with its score, highlighting its line on hover and selecting it on click.
 
-### 4.6 Legend
+### 4.7 Legend
 
 Generated from the base's own declared enum, in declared order, by the existing helper that reads a memory base's `type` values — never a hardcoded list, because each base declares its own. A knowledge base uses its first declared enum field, or no legend when it has none. Memory bases with conflicts add the ringed entry the mockup shows.
 
