@@ -50,31 +50,41 @@ describe("kmeans", () => {
 });
 
 describe("pickLabel", () => {
+  // Every expectation below is derived by hand from
+  //   score = (df / clusterSize) * ln(sampleSize / corpusDf)
+  // and the figure is quoted next to the lexeme it belongs to.
   it("prefers a word frequent here and rare elsewhere over one frequent everywhere", () => {
     const inCluster = new Map([["steuerblock", 8], ["ventil", 6], ["anlage", 8]]);
     const corpus = new Map([["steuerblock", 9], ["ventil", 7], ["anlage", 400]]);
     const clusterSize = 22; // Production: number of chunks in the cluster
-    expect(pickLabel(inCluster, corpus, 0, clusterSize)).toBe("Steuerblock & Ventil");
+    const sampleSize = 500; // Production: number of chunks the fit sampled
+    // steuerblock (8/22)·ln(500/9) = 1.461 · ventil (6/22)·ln(500/7) = 1.164
+    // anlage (8/22)·ln(500/400) = 0.081 — four fifths of the base carries it
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Steuerblock & Ventil");
   });
 
   it("ignores words under the document-frequency and length floors", () => {
     const inCluster = new Map([["ab", 50], ["rare", 1], ["encoder", 4]]);
     const corpus = new Map([["ab", 50], ["rare", 1], ["encoder", 5]]);
     const clusterSize = 55; // Production: number of chunks in the cluster
-    expect(pickLabel(inCluster, corpus, 0, clusterSize)).toBe("Encoder");
+    const sampleSize = 60;  // Production: number of chunks the fit sampled
+    // Only encoder survives the floors: (4/55)·ln(60/5) = 0.181
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Encoder");
   });
 
   it("falls back to an ordinal when nothing qualifies", () => {
     const clusterSize = 9; // Production: number of chunks in the cluster
-    expect(pickLabel(new Map([["x", 9]]), new Map([["x", 9]]), 3, clusterSize)).toBe("Topic 4");
+    expect(pickLabel(new Map([["x", 9]]), new Map([["x", 9]]), 3, clusterSize, 20)).toBe("Topic 4");
   });
 
   it("skips a lexeme that is a prefix of or prefixed by an earlier one", () => {
     const inCluster = new Map([["motor", 5], ["moto", 4], ["ventil", 3]]);
     const corpus = new Map([["motor", 6], ["moto", 4], ["ventil", 4]]);
     const clusterSize = 12; // Production: number of chunks in the cluster
-    // "motor" scores highest, "moto" is skipped as a prefix, "ventil" is second
-    expect(pickLabel(inCluster, corpus, 0, clusterSize)).toBe("Motor & Ventil");
+    const sampleSize = 100; // Production: number of chunks the fit sampled
+    // motor (5/12)·ln(100/6) = 1.172 beats moto (4/12)·ln(100/4) = 1.073 on
+    // coverage, so "moto" is the one skipped as a prefix; ventil 0.805 is second
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Motor & Ventil");
   });
 
   it("sorts by score regardless of insertion order", () => {
@@ -83,7 +93,7 @@ describe("pickLabel", () => {
     const inCluster = new Map([["anlage", 8], ["steuerblock", 8], ["ventil", 6]]);
     const corpus = new Map([["anlage", 400], ["steuerblock", 9], ["ventil", 7]]);
     const clusterSize = 22; // Production: number of chunks in the cluster
-    expect(pickLabel(inCluster, corpus, 0, clusterSize)).toBe("Steuerblock & Ventil");
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, 500)).toBe("Steuerblock & Ventil");
   });
 
   it("ignores prefix ties regardless of insertion order", () => {
@@ -91,7 +101,38 @@ describe("pickLabel", () => {
     const inCluster = new Map([["moto", 4], ["motor", 5], ["ventil", 3]]);
     const corpus = new Map([["moto", 4], ["motor", 6], ["ventil", 4]]);
     const clusterSize = 12; // Production: number of chunks in the cluster
-    expect(pickLabel(inCluster, corpus, 0, clusterSize)).toBe("Motor & Ventil");
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, 100)).toBe("Motor & Ventil");
+  });
+
+  // The case the old rarity factor got wrong, and the one that matters most:
+  // k-means on this kind of cloud routinely produces one dominant cluster, and
+  // the base's configured language often does not match its content, so German
+  // function words survive into the lexemes. (df/corpusDf) is not rarity — for
+  // a lexeme spread evenly it is the cluster's share of the corpus — so on a
+  // large cluster a word in every chunk of the base beat every exclusive term.
+  it("gives the largest cluster a distinctive name rather than a corpus-universal one", () => {
+    const inCluster = new Map([["und", 800], ["hydraulik", 120]]);
+    const corpus = new Map([["und", 1000], ["hydraulik", 130]]);
+    const clusterSize = 800; // four fifths of the sample in one region
+    const sampleSize = 1000;
+    // und (800/800)·ln(1000/1000) = 0 exactly · hydraulik (120/800)·ln(1000/130) = 0.306
+    expect(pickLabel(inCluster, corpus, 0, clusterSize, sampleSize)).toBe("Hydraulik");
+  });
+
+  it("will not name a region after a lexeme every sampled chunk carries", () => {
+    // Scoring zero is not the same as scoring lowest: with nothing else in the
+    // cluster the ordinal is the honest answer.
+    expect(pickLabel(new Map([["und", 50]]), new Map([["und", 50]]), 0, 50, 50)).toBe("Topic 1");
+  });
+
+  it("never names a region after a token with no letter in it", () => {
+    // Years, part numbers and identifiers are lexemes like any other, and a
+    // cluster-exclusive one outscores real words on coverage.
+    const inCluster = new Map([["2019", 10], ["2019-2020", 8], ["ventil", 3]]);
+    const corpus = new Map([["2019", 10], ["2019-2020", 8], ["ventil", 12]]);
+    // 2019 (10/20)·ln(100/10) = 1.151 and 2019-2020 (8/20)·ln(100/8) = 1.010
+    // both outscore ventil (3/20)·ln(100/12) = 0.318, and neither may be a label
+    expect(pickLabel(inCluster, corpus, 0, 20, 100)).toBe("Ventil");
   });
 });
 

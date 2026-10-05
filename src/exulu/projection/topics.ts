@@ -74,22 +74,49 @@ export function kmeans(
 
 const titleCase = (word: string): string => word.charAt(0).toUpperCase() + word.slice(1);
 
+/** A lexeme with no letter in it is a year, a part number or an identifier. */
+const hasLetter = (lexeme: string): boolean => /\p{L}/u.test(lexeme);
+
 /**
- * Names a cluster from words frequent inside it and rare outside. The score weights
- * the lexeme's rarity in the corpus by its coverage within the cluster: (df / corpusDf) * (df / clusterSize).
- * This implements both "rare outside" and "frequent inside", and avoids cluster-exclusive
- * singletons outscoring common terms.
+ * Names a cluster from words frequent inside it and rare outside:
+ *
+ *     score = (df / clusterSize) * ln(sampleSize / corpusDf)
+ *
+ * Coverage inside the cluster times inverse document frequency over the fit's
+ * whole sample. The second factor is rarity proper, which the first version of
+ * this (`df / corpusDf`) was not: for a lexeme spread evenly across the corpus
+ * that ratio is just the cluster's share of it, so on a large cluster a word
+ * present in every chunk of the base scored that share and beat any exclusive
+ * term not covering more than it. German function words survive into the
+ * lexemes whenever a base's configured language does not match its content,
+ * which is common, and k-means on this kind of cloud routinely produces one
+ * dominant cluster — so the region whose name matters most was the one most
+ * likely to end up called "und".
+ *
+ * Under idf a lexeme the whole sample carries scores exactly zero and is
+ * dropped, while a rare term still has to earn its place through coverage.
+ * Lexemes with no letter in them are dropped too: a cluster-exclusive year or
+ * part number outscores real words on coverage alone and names nothing.
  */
 export function pickLabel(
-  inCluster: Map<string, number>, corpus: Map<string, number>, index: number, clusterSize: number,
+  inCluster: Map<string, number>, corpus: Map<string, number>, index: number,
+  clusterSize: number, sampleSize: number,
 ): string {
   const scored = [...inCluster.entries()]
-    .filter(([lexeme, df]) => df >= TOPIC_MIN_DF && lexeme.length >= TOPIC_MIN_LEXEME)
+    .filter(([lexeme, df]) =>
+      df >= TOPIC_MIN_DF && lexeme.length >= TOPIC_MIN_LEXEME && hasLetter(lexeme))
     .map(([lexeme, df]) => {
       const corpusDf = Math.max(1, corpus.get(lexeme) ?? 1);
       const size = Math.max(1, clusterSize);
-      return { lexeme, df, score: (df / corpusDf) * (df / size) };
+      const sample = Math.max(1, sampleSize);
+      return { lexeme, df, score: (df / size) * Math.log(sample / corpusDf) };
     })
+    // Zero is not merely the lowest score: a lexeme the whole sample carries
+    // says nothing about one region, so the ordinal fallback is the honest name.
+    // (A corpus count above the sample size cannot happen — df is counted over
+    // the sampled chunks — but it would read as a negative score, so guard it
+    // here rather than trust the arithmetic.)
+    .filter((s) => s.score > 0)
     .sort((a, b) =>
       (b.score - a.score) ||
       (b.df - a.df) ||
@@ -251,7 +278,7 @@ export async function computeTopics({
   const rows = filtered.map(({ centre, index: origIndex, count }, newIndex) => ({
     context: sanitizeName(contextId),
     topic_index: newIndex,
-    label: pickLabel(counts.get(origIndex) ?? new Map(), corpus, newIndex, count),
+    label: pickLabel(counts.get(origIndex) ?? new Map(), corpus, newIndex, count, ids.length),
     count,
     x: centre[0] ?? 0, y: centre[1] ?? 0, z: centre[2] ?? 0,
     version: PROJECTION_VERSION,
