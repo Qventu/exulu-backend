@@ -142,7 +142,9 @@ The chip row lists the same topics with their counts. Selecting a chip dims ever
 
 ### 4.6 The panel
 
-A docked resizable panel on large screens, a sheet below, reusing the existing primitive. With nothing selected it shows the base's shape: the topic list with counts and the sampled caption. With a passage selected it shows the passage text, its type, the item it belongs to with a link to the item page, the author and when it was saved, the number of times it has been used on a memory base, and then **Closest by wording** — the neighbours from the edges query, each with its score, highlighting its line on hover and selecting it on click.
+A docked resizable panel on large screens, a sheet below, reusing the existing primitive. With nothing selected it shows the base's shape: the topic list with counts and the sampled caption. With a passage selected it shows the passage text, its type, the item it belongs to with a link to the item page, the author and when it was saved, the number of times it has been used on a memory base, and then **Closest by wording** — the neighbours from the edges query, highlighting a line on hover and selecting it on click.
+
+  Corrected on 2026-10-05 during execution (controller Ruling 22). The original text showed each neighbour "with its score". The score is a raw text-ranking value whose magnitude depends on the query's own term count, so it is comparable within one list and meaningless on its own. The ordering already carries everything a reader can act on, so the number is not shown.
 
 ### 4.7 Legend
 
