@@ -140,10 +140,74 @@ export async function lexemeCounts({
   return out;
 }
 
+const TOPICS_TABLE = "context_map_topics";
+
+/**
+ * Whether a failed statement failed because the relation is not there, as
+ * opposed to for any reason worth failing a fit over. `code` is what pg sets;
+ * the message is the fallback for a driver (or a fake) that carries none.
+ */
+const isMissingTable = (e: unknown): boolean => {
+  if ((e as { code?: unknown } | null)?.code === "42P01") return true;
+  return /relation .*does not exist/i.test(e instanceof Error ? e.message : String(e));
+};
+
+/** The one line a fit logs when the base is mapped without regions. */
+const announceMissingTable = (contextId: string): void => {
+  console.log(`[EXULU] ${contextId} was fitted without regions: ${TOPICS_TABLE} is not there yet (it is created when the server boots this build)`);
+};
+
+/**
+ * Whether this connection can see the topic table.
+ *
+ * `context_map_topics` is created by the boot migration, and the fit script
+ * opens its own pool and runs none — so a fit against a database whose server
+ * has not yet booted this build finds no table. The probe is what makes that
+ * survivable rather than fatal: a statement that raises inside a transaction
+ * aborts the whole transaction, so the catch in `replaceTopics` would come too
+ * late to save the projection row the caller writes next (fit.ts). The read
+ * side probes for exactly the same reason (`contextMapTopics`).
+ *
+ * A connection with no schema builder cannot be probed — only a test stub is
+ * ever shaped that way — and so is assumed able to take the write, which then
+ * carries the guard on its own.
+ */
+async function topicTableExists(db: any): Promise<boolean> {
+  if (typeof db?.schema?.hasTable !== "function") return true;
+  try {
+    return await db.schema.hasTable(TOPICS_TABLE);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Replaces the context's topic rows, treating a missing table as "this base has
+ * no regions" rather than as a failure. Anything else is re-thrown: a deadlock
+ * or a constraint violation swallowed here would commit a projection row whose
+ * regions had been deleted and never replaced, with nothing said about it.
+ */
+async function replaceTopics(db: any, contextId: string, rows: any[]): Promise<number> {
+  const context = sanitizeName(contextId);
+  try {
+    await db(TOPICS_TABLE).where({ context }).delete();
+    if (rows.length) await db(TOPICS_TABLE).insert(rows);
+    return rows.length;
+  } catch (e) {
+    if (!isMissingTable(e)) throw e;
+    announceMissingTable(contextId);
+    return 0;
+  }
+}
+
 /**
  * Clusters the sampled coordinates, names every region and replaces the
  * context's topic rows. Runs inside the caller's transaction, so a failure
  * leaves the previous topics untouched rather than half-replaced.
+ *
+ * Returns 0 without writing when the topic table does not exist: a base without
+ * regions is a supported state (the cloud simply draws without labels), and the
+ * fit that found no table has already backfilled every coordinate.
  */
 export async function computeTopics({
   db, contextId, ids, coordinates, seed, fittedAt, clusteringFn = kmeans,
@@ -151,10 +215,11 @@ export async function computeTopics({
   db: any; contextId: string; ids: string[]; coordinates: number[][]; seed: number; fittedAt: Date;
   clusteringFn?: (points: number[][], k: number, seed: number) => { assignments: number[]; centroids: number[][] };
 }): Promise<number> {
-  if (ids.length === 0) {
-    await db("context_map_topics").where({ context: sanitizeName(contextId) }).delete();
+  if (!(await topicTableExists(db))) {
+    announceMissingTable(contextId);
     return 0;
   }
+  if (ids.length === 0) return replaceTopics(db, contextId, []);
   if (ids.length !== coordinates.length) {
     console.error(`[EXULU] Length mismatch in computeTopics: ${ids.length} ids but ${coordinates.length} coordinates`);
     throw new Error("ids and coordinates must have equal length");
@@ -193,7 +258,5 @@ export async function computeTopics({
     fitted_at: fittedAt,
   }));
 
-  await db("context_map_topics").where({ context: sanitizeName(contextId) }).delete();
-  if (rows.length) await db("context_map_topics").insert(rows);
-  return rows.length;
+  return replaceTopics(db, contextId, rows);
 }

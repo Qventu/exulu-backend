@@ -138,6 +138,10 @@ describe("computeTopics", () => {
       insert: async (values: any[]) => undefined,
     });
     dbFn.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    // A real knex transaction carries a schema builder, and computeTopics probes
+    // it for the topic table before writing; a stub without one would skip that
+    // probe and prove nothing about it.
+    dbFn.schema = { hasTable: async () => true };
     return dbFn;
   };
 
@@ -154,6 +158,7 @@ describe("computeTopics", () => {
       insert: async (values: any[]) => { operations.push("insert"); },
     });
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
     await computeTopics({
       db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
     });
@@ -179,6 +184,7 @@ describe("computeTopics", () => {
     // topicCount(10) = 3, so k-means will try 3 clusters
     // Ten identical points will all be assigned to cluster 0, leaving clusters 1 and 2 empty
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
     await computeTopics({
       db, contextId: "ctx-1",
       ids: Array.from({ length: 10 }, (_, i) => `id-${i}`),
@@ -197,6 +203,7 @@ describe("computeTopics", () => {
       insert: async (values: any[]) => { inserted.push(...values); },
     });
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+    db.schema = { hasTable: async () => true };
 
     // Inject a clustering function that returns a deliberately non-finite centroid and one all-finite
     const malformedCluster = (points: number[][], k: number, seed: number) => ({
@@ -215,5 +222,67 @@ describe("computeTopics", () => {
     expect(inserted).toHaveLength(1);
     expect(inserted[0]?.topic_index).toBe(0);
     expect(inserted[0]?.label).toBe("Topic 1");
+  });
+
+  /** Records every topic-table operation, and can be told to fail them. */
+  const guardDb = (options: { exists?: boolean; fail?: () => never } = {}) => {
+    const operations: string[] = [];
+    const db: any = (table: string) => ({
+      where: () => ({
+        delete: async () => { operations.push(`delete ${table}`); options.fail?.(); },
+      }),
+      insert: async () => { operations.push(`insert ${table}`); options.fail?.(); },
+    });
+    db.raw = async () => ({ rows: [] });
+    if (options.exists !== undefined) db.schema = { hasTable: async () => options.exists };
+    db.__operations = operations;
+    return db;
+  };
+
+  // The table is created by the boot migration; the fit script opens its own
+  // pool and runs none. Probing first is what lets the caller's transaction
+  // commit the projection row: a statement that raises inside a transaction
+  // aborts it, so a catch would come too late.
+  it("writes nothing and returns 0 when the topic table does not exist", async () => {
+    const db = guardDb({ exists: false });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual([]);
+  });
+
+  it("returns 0 for an empty base without touching a table that is not there", async () => {
+    const db = guardDb({ exists: false });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: [], coordinates: [], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual([]);
+  });
+
+  it("survives a missing-table error from the write itself", async () => {
+    // A connection with no schema builder cannot be probed, and the table could
+    // be dropped between the probe and the write.
+    const db = guardDb({
+      fail: () => { throw Object.assign(new Error('relation "context_map_topics" does not exist'), { code: "42P01" }); },
+    });
+    const topics = await computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    });
+    expect(topics).toBe(0);
+    expect(db.__operations).toEqual(["delete context_map_topics"]);
+  });
+
+  it("still fails the fit when the topic write fails for any other reason", async () => {
+    // Swallowing everything would commit a projection row whose regions were
+    // deleted and never replaced, with nothing said about it.
+    const db = guardDb({
+      exists: true,
+      fail: () => { throw Object.assign(new Error("deadlock detected"), { code: "40P01" }); },
+    });
+    await expect(computeTopics({
+      db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
+    })).rejects.toThrow(/deadlock/);
   });
 });

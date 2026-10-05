@@ -51,6 +51,10 @@ function fakeDb(state: {
   onBackfill?: () => void;
   onProjection?: () => void;
   onTopics?: () => void;
+  /** The schema probe answers that `context_map_topics` is not there. */
+  topicsAbsent?: boolean;
+  /** Every `context_map_topics` statement raises undefined_table. */
+  topicsReject?: boolean;
 }) {
   const writes: any[] = [];
   const topicWrites: any[] = [];
@@ -96,9 +100,15 @@ function fakeDb(state: {
     const trx: any = jest.fn((table: string) => {
       const chain: any = {};
       chain.where = () => chain;
-      chain.delete = async () => { topicPhase(); topicWrites.push({ table, op: "delete" }); };
+      chain.delete = async () => {
+        topicPhase(); topicWrites.push({ table, op: "delete" });
+        if (state.topicsReject && table === "context_map_topics") throw missingTable();
+      };
       chain.insert = (rows: any) => {
-        if (table === "context_map_topics") { topicPhase(); topicWrites.push({ table, op: "insert", rows }); }
+        if (table === "context_map_topics") {
+          topicPhase(); topicWrites.push({ table, op: "insert", rows });
+          if (state.topicsReject) throw missingTable();
+        }
         else { if (table === "context_projections") state.onProjection?.(); writes.push({ table, op: "insert", rows, inTransaction: true }); }
         // Awaited directly by the topics insert, chained by the projection upsert.
         const out: any = { onConflict: () => ({ merge: async () => undefined }) };
@@ -116,7 +126,9 @@ function fakeDb(state: {
       topicWrites.push({ op: "raw", ids });
       return { rows: [] };
     };
-    trx.schema = db.schema;
+    trx.schema = state.topicsAbsent
+      ? { hasTable: async (table: string) => table !== "context_map_topics" }
+      : db.schema;
     return fn(trx);
   };
 
@@ -126,6 +138,10 @@ function fakeDb(state: {
   db.__transactions = 0;
   return db;
 }
+
+/** What pg raises for a relation that is not there (undefined_table). */
+const missingTable = () =>
+  Object.assign(new Error('relation "context_map_topics" does not exist'), { code: "42P01" });
 
 /** Stand-in layout: the first two components, so the linear map can fit it exactly. */
 const umapFactory = () => ({ fit: (rows: number[][]) => rows.map((r) => [r[0] ?? 0, r[1] ?? 0, 0]) });
@@ -325,6 +341,39 @@ describe("fitContextProjection", () => {
     expect(db.__transactions).toBe(1);
     expect(db.__writes.find((w: any) => w.table === "context_projections").inTransaction).toBe(true);
     expect(db.__topicWrites.map((w: any) => w.op)).toEqual(["raw", "delete", "insert"]);
+  });
+
+  // `context_map_topics` is created by the boot migration, and the fit script
+  // opens its own pool and runs none. Fitting against a database whose server
+  // has not booted this build must still map the base: the backfill has already
+  // written every coordinate, and a base without regions is a supported state.
+  it("still commits the projection row when the topic table does not exist", async () => {
+    const db = fakeDb({ rows, topicsAbsent: true });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    expect(out.fitted).toBe(true);
+    expect(out.topics).toBe(0);
+    const stored = db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert");
+    expect(stored).toBeDefined();
+    expect(stored.inTransaction).toBe(true);
+    // Nothing was sent to the table that is not there: inside a transaction a
+    // statement that raises aborts it, so the probe has to come first.
+    expect(db.__topicWrites.filter((w: any) => w.table === "context_map_topics")).toEqual([]);
+  });
+
+  // The same outcome when the probe cannot see it coming — a connection with no
+  // schema builder, or the table dropped between the probe and the write. This
+  // fake's transaction does not abort on a failed statement, so what this pins
+  // is the catch and the returned count; the test above is the one that pins the
+  // probe, which is what makes the real transaction commit.
+  it("still commits the projection row when the topic write raises undefined_table", async () => {
+    const db = fakeDb({ rows, topicsReject: true });
+    const out = await fitContextProjection({ db, contextId: "mem", sample: 1000, components: 4, umapFactory });
+    expect(out.fitted).toBe(true);
+    expect(out.topics).toBe(0);
+    expect(db.__writes.find((w: any) => w.table === "context_projections" && w.op === "insert")).toBeDefined();
+    // The write was genuinely attempted: without this the fixture would prove
+    // nothing about the error path.
+    expect(db.__topicWrites).toContainEqual({ table: "context_map_topics", op: "delete" });
   });
 
   it("stores no topics on a dry run", async () => {
