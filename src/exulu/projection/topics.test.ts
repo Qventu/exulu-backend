@@ -1,4 +1,5 @@
 import { computeTopics, kmeans, lexemeCounts, pickLabel, topicCount } from "./topics";
+import { TOPIC_MIN_LEXEME } from "./constants";
 
 describe("topicCount", () => {
   it("follows the data between its bounds", () => {
@@ -32,11 +33,13 @@ describe("kmeans", () => {
     const points = Array.from({ length: 10 }, () => [1, 1, 1]);
     const { assignments, centroids } = kmeans(points, 4, 3);
     expect(centroids.every((c) => c.every(Number.isFinite))).toBe(true);
-    // Ten identical points collapse to one cluster; topicCount(10) is 2, so one remains empty
+    // Ten identical points collapse to one cluster
     const sizes = new Map<number, number>();
     for (const a of assignments) sizes.set(a, (sizes.get(a) ?? 0) + 1);
     expect(sizes.size).toBe(1); // Only one cluster is used
-    expect(sizes.get([...sizes.keys()][0] ?? 0)).toBe(10); // All points in first cluster
+    const clusterKey = [...sizes.keys()][0] ?? 0;
+    expect(clusterKey).toBe(0); // The first cluster
+    expect(sizes.get(clusterKey)).toBe(10); // All points in that cluster
   });
 
   it("coerces non-finite coordinates to finite centres", () => {
@@ -122,26 +125,28 @@ describe("lexemeCounts", () => {
     expect(bindings[0]).toEqual(["a", "b", "c"]); // ids array
     expect(bindings[1]).toEqual([0, 0, 1]); // assignments array
     expect(bindings[2]).toBe("mem_chunks"); // table name
-    expect(bindings[3]).toBe(3); // TOPIC_MIN_LEXEME
+    expect(bindings[3]).toBe(TOPIC_MIN_LEXEME);
   });
 });
 
 describe("computeTopics", () => {
-  const mockDb = (rows: any[] = []) => {
+  const mockDb = () => {
     const dbFn: any = (table: string) => ({
       where: (filter: any) => ({
         delete: async () => undefined,
       }),
       insert: async (values: any[]) => undefined,
     });
-    dbFn.raw = async (sql: string, bindings?: any[]) => ({ rows });
+    dbFn.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
     return dbFn;
   };
 
   it("deletes old topics for the context before inserting new ones", async () => {
     const operations: string[] = [];
+    const deletedContexts: any[] = [];
     const db: any = (table: string) => ({
       where: (filter: any) => {
+        deletedContexts.push(filter);
         return {
           delete: async () => { operations.push("delete"); },
         };
@@ -153,6 +158,7 @@ describe("computeTopics", () => {
       db, contextId: "ctx-1", ids: ["a", "b"], coordinates: [[0, 0, 0], [1, 1, 1]], seed: 1, fittedAt: new Date(),
     });
     expect(operations).toEqual(["delete", "insert"]);
+    expect(deletedContexts[0]?.context).toBe("ctx-1");
   });
 
   it("throws when ids and coordinates lengths differ", async () => {
@@ -170,8 +176,8 @@ describe("computeTopics", () => {
       where: () => ({ delete: async () => undefined }),
       insert: async (values: any[]) => { inserted.push(...values); },
     });
-    // topicCount(10) = 2, so k-means will try 2 clusters
-    // Ten identical points will all be assigned to cluster 0, leaving cluster 1 empty
+    // topicCount(10) = 3, so k-means will try 3 clusters
+    // Ten identical points will all be assigned to cluster 0, leaving clusters 1 and 2 empty
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
     await computeTopics({
       db, contextId: "ctx-1",
@@ -179,25 +185,34 @@ describe("computeTopics", () => {
       coordinates: Array.from({ length: 10 }, () => [0, 0, 0]),
       seed: 1, fittedAt: new Date(),
     });
-    // Should emit only 1 row (the non-empty cluster), not 2
+    // Should emit only 1 row (the non-empty cluster), not 3
     expect(inserted).toHaveLength(1);
     expect(inserted[0]?.count).toBe(10);
   });
 
-  it("does not emit rows with non-finite coordinates", async () => {
+  it("filters out rows with non-finite coordinates when clustering returns them", async () => {
     const inserted: any[] = [];
     const db: any = (table: string) => ({
       where: () => ({ delete: async () => undefined }),
       insert: async (values: any[]) => { inserted.push(...values); },
     });
     db.raw = async (sql: string, bindings?: any[]) => ({ rows: [] });
+
+    // Inject a clustering function that returns a deliberately non-finite centroid
+    const malformedCluster = (points: number[][], k: number, seed: number) => ({
+      assignments: [0, 0],
+      centroids: [[NaN, Infinity, 5], [1, 1, 1]], // First centroid is bad
+    });
+
     await computeTopics({
       db, contextId: "ctx-1",
       ids: ["a", "b"],
-      coordinates: [[NaN, 5, 5], [2, 2, 2]],
+      coordinates: [[0, 0, 0], [1, 1, 1]],
       seed: 1, fittedAt: new Date(),
+      clusteringFn: malformedCluster,
     });
-    // All inserted rows should have finite coordinates
+    // Row with non-finite coordinates should be filtered out
+    // Only the second (all-finite) centroid's row should be inserted, or none if that one is also empty
     expect(inserted.every((r: any) => [r.x, r.y, r.z].every(Number.isFinite))).toBe(true);
   });
 });

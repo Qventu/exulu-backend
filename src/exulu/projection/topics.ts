@@ -86,8 +86,9 @@ export function pickLabel(
   const scored = [...inCluster.entries()]
     .filter(([lexeme, df]) => df >= TOPIC_MIN_DF && lexeme.length >= TOPIC_MIN_LEXEME)
     .map(([lexeme, df]) => {
-      const corpusDf = corpus.get(lexeme) ?? 1;
-      return { lexeme, df, score: (df / corpusDf) * (df / clusterSize) };
+      const corpusDf = Math.max(1, corpus.get(lexeme) ?? 1);
+      const size = Math.max(1, clusterSize);
+      return { lexeme, df, score: (df / corpusDf) * (df / size) };
     })
     .sort((a, b) =>
       (b.score - a.score) ||
@@ -145,9 +146,10 @@ export async function lexemeCounts({
  * leaves the previous topics untouched rather than half-replaced.
  */
 export async function computeTopics({
-  db, contextId, ids, coordinates, seed, fittedAt,
+  db, contextId, ids, coordinates, seed, fittedAt, clusteringFn = kmeans,
 }: {
   db: any; contextId: string; ids: string[]; coordinates: number[][]; seed: number; fittedAt: Date;
+  clusteringFn?: (points: number[][], k: number, seed: number) => { assignments: number[]; centroids: number[][] };
 }): Promise<number> {
   if (ids.length === 0) {
     await db("context_map_topics").where({ context: sanitizeName(contextId) }).delete();
@@ -157,7 +159,7 @@ export async function computeTopics({
     console.error(`[EXULU] Length mismatch in computeTopics: ${ids.length} ids but ${coordinates.length} coordinates`);
     throw new Error("ids and coordinates must have equal length");
   }
-  const { assignments, centroids } = kmeans(coordinates, topicCount(ids.length), seed);
+  const { assignments, centroids } = clusteringFn(coordinates, topicCount(ids.length), seed);
   const counts = await lexemeCounts({ db, chunksTable: getChunksTableName(contextId), ids, assignments });
 
   const corpus = new Map<string, number>();
@@ -173,7 +175,13 @@ export async function computeTopics({
       centre, index, count: size[index] ?? 0,
     }))
     // An empty cluster is an artefact of k-means++ on a tiny base, not a region.
-    .filter((r) => r.count > 0);
+    .filter((r) => r.count > 0)
+    // Filter out any region whose coordinates are not all finite
+    .filter((r) => {
+      const finite = Number.isFinite(r.centre[0] ?? 0) && Number.isFinite(r.centre[1] ?? 0) && Number.isFinite(r.centre[2] ?? 0);
+      if (!finite) console.error(`[EXULU] Dropped topic region with non-finite coordinates from context ${contextId}`);
+      return finite;
+    });
 
   const rows = filtered.map(({ centre, index: origIndex, count }, newIndex) => ({
     context: sanitizeName(contextId),
@@ -183,9 +191,7 @@ export async function computeTopics({
     x: centre[0] ?? 0, y: centre[1] ?? 0, z: centre[2] ?? 0,
     version: PROJECTION_VERSION,
     fitted_at: fittedAt,
-  }))
-    // Filter out any row whose coordinates are not all finite
-    .filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.z));
+  }));
 
   await db("context_map_topics").where({ context: sanitizeName(contextId) }).delete();
   if (rows.length) await db("context_map_topics").insert(rows);
