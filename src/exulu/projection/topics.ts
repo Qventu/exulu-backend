@@ -39,8 +39,8 @@ export function kmeans(
     let target = random() * total;
     let picked = n - 1;
     for (let i = 0; i < n; i += 1) { target -= d[i] ?? 0; if (target <= 0) { picked = i; break; } }
-    const picked_point = points[picked] ?? [0, 0, 0];
-    centroids.push([finite(picked_point[0]), finite(picked_point[1]), finite(picked_point[2])]);
+    const pickedPoint = points[picked] ?? [0, 0, 0];
+    centroids.push([finite(pickedPoint[0]), finite(pickedPoint[1]), finite(pickedPoint[2])]);
   }
 
   const assignments = new Array<number>(n).fill(0);
@@ -89,7 +89,10 @@ export function pickLabel(
       const corpusDf = corpus.get(lexeme) ?? 1;
       return { lexeme, df, score: (df / corpusDf) * (df / clusterSize) };
     })
-    .sort((a, b) => b.score - a.score || b.df - a.df || a.lexeme < b.lexeme ? 1 : -1);
+    .sort((a, b) =>
+      (b.score - a.score) ||
+      (b.df - a.df) ||
+      (a.lexeme < b.lexeme ? -1 : a.lexeme > b.lexeme ? 1 : 0));
 
   const selected: string[] = [];
   for (const s of scored) {
@@ -122,9 +125,9 @@ export async function lexemeCounts({
        FROM unnest(?::uuid[], ?::int[]) AS a(id, cluster)
        JOIN ?? ch ON ch.id = a.id
        CROSS JOIN LATERAL unnest(ch.fts) AS l(lexeme, positions, weights)
-      WHERE length(l.lexeme) >= 3
+      WHERE length(l.lexeme) >= ?
       GROUP BY 1, 2`,
-    [ids, assignments, chunksTable],
+    [ids, assignments, chunksTable, TOPIC_MIN_LEXEME],
   );
   const rows: any[] = result?.rows ?? result ?? [];
   const out = new Map<number, Map<string, number>>();
@@ -151,7 +154,7 @@ export async function computeTopics({
     return 0;
   }
   if (ids.length !== coordinates.length) {
-    console.error(`Length mismatch in computeTopics: ${ids.length} ids but ${coordinates.length} coordinates`);
+    console.error(`[EXULU] Length mismatch in computeTopics: ${ids.length} ids but ${coordinates.length} coordinates`);
     throw new Error("ids and coordinates must have equal length");
   }
   const { assignments, centroids } = kmeans(coordinates, topicCount(ids.length), seed);
@@ -180,7 +183,9 @@ export async function computeTopics({
     x: centre[0] ?? 0, y: centre[1] ?? 0, z: centre[2] ?? 0,
     version: PROJECTION_VERSION,
     fitted_at: fittedAt,
-  }));
+  }))
+    // Filter out any row whose coordinates are not all finite
+    .filter((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.z));
 
   await db("context_map_topics").where({ context: sanitizeName(contextId) }).delete();
   if (rows.length) await db("context_map_topics").insert(rows);
