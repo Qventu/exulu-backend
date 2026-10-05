@@ -340,7 +340,13 @@ describe("fitContextProjection", () => {
     // describing one layout by its coordinates and another by its region names.
     expect(db.__transactions).toBe(1);
     expect(db.__writes.find((w: any) => w.table === "context_projections").inTransaction).toBe(true);
-    expect(db.__topicWrites.map((w: any) => w.op)).toEqual(["raw", "delete", "insert"]);
+    // What matters is that the region write replaced rather than appended, and
+    // that it happened through the transaction. The exact statement sequence is
+    // computeTopics' business and is pinned in its own suite: asserting it here
+    // broke this test the moment that module asked Postgres one more question.
+    const topicOps = db.__topicWrites.map((w: any) => w.op);
+    expect(topicOps.filter((op: string) => op === "delete" || op === "insert")).toEqual(["delete", "insert"]);
+    expect(topicOps).toContain("raw");
   });
 
   // `context_map_topics` is created by the boot migration, and the fit script

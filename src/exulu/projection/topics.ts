@@ -96,6 +96,34 @@ const titleCase = (word: string): string => word.charAt(0).toUpperCase() + word.
 const hasLetter = (lexeme: string): boolean => /\p{L}/u.test(lexeme);
 
 /**
+ * A fragment of a uuid or hash, not a word. Document ids embedded in chunk text
+ * make ideal-looking labels — they sit in few chunks, so idf rates them highly,
+ * and they cluster together, so coverage does too. Measured on a real corpus
+ * (1,134-chunk hydraulics base): five of twelve regions were named by these
+ * before the rule, two of them by the same fragment.
+ *
+ * All hexadecimal, carrying both a letter and a digit, eight characters or more.
+ * The floor stays at eight because four to seven is where the domain lives:
+ * measured on this corpus, that band holds EU directive references, position
+ * codes ("c2a1", "d2b16") and document numbers ("31256de") — 755 distinct
+ * lexemes at length four alone. Lowering it to catch the short uuid pieces
+ * would delete the vocabulary to remove the noise.
+ * The rule caught all 298 such lexemes across three real bases and kept every
+ * product-code shape in them. It can only harm a code built solely from the
+ * letters a-f and digits, and only by barring it from NAMING a region: nothing
+ * here touches search, retrieval or display, so an over-rejection costs a region
+ * its second-choice word while an under-rejection shows a reader "6adc924b".
+ */
+const isIdentifierFragment = (lexeme: string): boolean => {
+  // Hyphens and underscores only, never slashes. Measured on a real standards
+  // corpus: uuids separate with hyphens ("ac-8b9d-1ddabdf2c341"), while EU
+  // directive references separate with slashes ("2002/91/ec", "89/655/eec") and
+  // collapse to something indistinguishable from a hash if slashes go too.
+  const bare = lexeme.replace(/[-_]/g, "");
+  return bare.length >= 8 && /^[0-9a-f]+$/.test(bare) && /[0-9]/.test(bare) && /[a-f]/.test(bare);
+};
+
+/**
  * Names a cluster from words frequent inside it and rare outside:
  *
  *     score = (df / clusterSize) * ln(sampleSize / corpusDf)
@@ -118,11 +146,12 @@ const hasLetter = (lexeme: string): boolean => /\p{L}/u.test(lexeme);
  */
 export function pickLabel(
   inCluster: Map<string, number>, corpus: Map<string, number>, index: number,
-  clusterSize: number, sampleSize: number,
+  clusterSize: number, sampleSize: number, taken: Set<string> = new Set(),
 ): string {
   const scored = [...inCluster.entries()]
     .filter(([lexeme, df]) =>
-      df >= TOPIC_MIN_DF && lexeme.length >= TOPIC_MIN_LEXEME && hasLetter(lexeme))
+      df >= TOPIC_MIN_DF && lexeme.length >= TOPIC_MIN_LEXEME && hasLetter(lexeme)
+      && !isIdentifierFragment(lexeme) && !taken.has(lexeme))
     .map(([lexeme, df]) => {
       const corpusDf = Math.max(1, corpus.get(lexeme) ?? 1);
       const size = Math.max(1, clusterSize);
@@ -162,6 +191,63 @@ export function pickLabel(
  * because computeTopics sums the per-cluster maps to get the corpus denominator,
  * and dropping singletons there would inflate every score.
  */
+export async function configuredLanguages(db: any, chunksTable: string): Promise<string[]> {
+  // The fit works from the database, not from the declared contexts, so the
+  // languages come from the generated column itself: it is built as one
+  // to_tsvector per configured language, concatenated.
+  try {
+    const result = await db.raw(
+      `SELECT pg_get_expr(a.attgenerated_expr, a.attrelid) AS expr
+         FROM (SELECT attrelid, attname,
+                      (SELECT adbin FROM pg_attrdef d
+                        WHERE d.adrelid = at.attrelid AND d.adnum = at.attnum) AS attgenerated_expr
+                 FROM pg_attribute at
+                WHERE at.attrelid = ?::regclass AND at.attname = 'fts') a`,
+      [chunksTable],
+    );
+    const expr = String((result?.rows ?? result ?? [])[0]?.expr ?? "");
+    const found = [...expr.matchAll(/'([a-z_]+)'::regconfig/g)].map((m) => m[1] as string);
+    return [...new Set(found)];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Lexemes any configured language treats as a stop word.
+ *
+ * A base indexed in more than one language concatenates one to_tsvector per
+ * language, and each language only removes ITS OWN stop words — so on a German
+ * base also indexed in English, every German function word survives in the
+ * English half, where it is just an unknown word. Measured on a real 1,134-chunk
+ * base, "Fährt" and "Nein" named regions; the umlaut gives away which half they
+ * came from. Rarity cannot remove them: they are not universal enough for idf
+ * to flatten.
+ *
+ * Postgres answers this directly — converting a stop word yields an empty
+ * vector — so ask it once for the whole candidate set rather than guessing at a
+ * word list.
+ */
+export async function stopLexemes(db: any, languages: string[], lexemes: string[]): Promise<Set<string>> {
+  if (languages.length === 0 || lexemes.length === 0) return new Set();
+  try {
+    // The language is a SQL literal, never a binding: regconfig is a type, and
+    // these names come from the column definition, never from a request.
+    const anyEmpty = languages.map((lang) => `to_tsvector('${lang}', w) = ''`).join(" OR ");
+    const result = await db.raw(
+      `SELECT w FROM unnest(?::text[]) AS w WHERE ${anyEmpty}`,
+      [lexemes],
+    );
+    return new Set((result?.rows ?? result ?? []).map((r: any) => String(r.w)));
+  } catch (error) {
+    console.error(
+      "[EXULU] could not check lexemes for stop words; labels may include them",
+      error instanceof Error ? error.message : String(error),
+    );
+    return new Set();
+  }
+}
+
 export async function lexemeCounts({
   db, chunksTable, ids, assignments,
 }: { db: any; chunksTable: string; ids: string[]; assignments: number[] }): Promise<Map<number, Map<string, number>>> {
@@ -277,6 +363,16 @@ export async function computeTopics({
     for (const [lexeme, df] of perCluster) corpus.set(lexeme, (corpus.get(lexeme) ?? 0) + df);
   }
 
+  // Drop every lexeme any configured language calls a stop word. Done here
+  // rather than in the counting query so the corpus denominator above is still
+  // the true count: removing candidates must not change how rare the survivors
+  // look.
+  const languages = await configuredLanguages(db, getChunksTableName(contextId));
+  const stop = await stopLexemes(db, languages, [...corpus.keys()]);
+  if (stop.size > 0) {
+    for (const perCluster of counts.values()) for (const lexeme of stop) perCluster.delete(lexeme);
+  }
+
   const size = centroids.map(() => 0);
   for (const a of assignments) size[a] = (size[a] ?? 0) + 1;
 
@@ -293,10 +389,28 @@ export async function computeTopics({
       return allFinite;
     });
 
+  // Label the largest region first and never let a second one reuse a word: two
+  // regions carrying the same name is worse than one carrying its second choice,
+  // because a chip row then shows the same label twice with nothing to tell them
+  // apart. Measured on a real base, two of twelve pairs collided.
+  const taken = new Set<string>();
+  const labels = new Map<number, string>();
+  // The ordinal fallback has to read the index the ROW will carry, not the one
+  // the cluster had before empty regions were dropped, or a legend shows
+  // "Topic 4" on the row stored as 2.
+  const finalIndex = new Map(filtered.map((r, i) => [r.index, i]));
+  for (const { index: origIndex, count } of [...filtered].sort((a, b) => b.count - a.count)) {
+    const label = pickLabel(
+      counts.get(origIndex) ?? new Map(), corpus, finalIndex.get(origIndex) ?? 0, count, ids.length, taken,
+    );
+    labels.set(origIndex, label);
+    for (const word of label.split(" & ")) taken.add(word.toLowerCase());
+  }
+
   const rows = filtered.map(({ centre, index: origIndex, count }, newIndex) => ({
     context: sanitizeName(contextId),
     topic_index: newIndex,
-    label: pickLabel(counts.get(origIndex) ?? new Map(), corpus, newIndex, count, ids.length),
+    label: labels.get(origIndex) ?? `Topic ${newIndex + 1}`,
     count,
     x: centre[0] ?? 0, y: centre[1] ?? 0, z: centre[2] ?? 0,
     version: PROJECTION_VERSION,
