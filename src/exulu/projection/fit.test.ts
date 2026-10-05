@@ -16,8 +16,9 @@ jest.mock("./math", () => {
   return { ...actual, ridgeFit: jest.fn(actual.ridgeFit) };
 });
 
-import { fitContextProjection, listFittableContexts } from "./fit";
-import { ridgeFit } from "./math";
+import { backfillCoordinates, fitContextProjection, listFittableContexts } from "./fit";
+import type { StoredProjection } from "./fit";
+import { normalizeLayout, ridgeFit } from "./math";
 
 const solveSizes = () => (ridgeFit as unknown as jest.Mock).mock.calls.map((c: any[]) => c[0].length);
 beforeEach(() => (ridgeFit as unknown as jest.Mock).mockClear());
@@ -39,7 +40,10 @@ const defaultRows = (): Row[] =>
  * topics and the projection row are written inside one. The topic-table writes
  * and the lexeme query land in `__topicWrites`, kept apart from `__writes` so
  * that stays what it has always been — the backfill and the projection row —
- * and the three `on*` hooks record the order the phases actually run in.
+ * and `onBackfill`, `onProjection` and `onTopics` record the order the phases
+ * actually run in. `__topicRows` reads the inserted topic rows out of
+ * `__topicWrites`, and `onCoordinateWrite` decodes the backfill's bindings, so
+ * a test can ask where one named chunk or one region actually landed.
  *
  * `rows` gives parsed vectors; `embeddings` gives the raw pgvector strings with
  * generated ids, so a test can include one that does not parse. Neither given
@@ -49,6 +53,10 @@ function fakeDb(state: {
   rows?: Row[];
   embeddings?: string[];
   onBackfill?: () => void;
+  /** Each (id, px, py, pz) tuple the backfill binds, decoded from its raw
+   *  UPDATE. The fit stores a sampled chunk's true layout position and a later
+   *  arrival's linear estimate, so which of the two an id got is the point. */
+  onCoordinateWrite?: (id: string, xyz: number[]) => void;
   onProjection?: () => void;
   onTopics?: () => void;
   /** The schema probe answers that `context_map_topics` is not there. */
@@ -88,7 +96,15 @@ function fakeDb(state: {
     };
     return chain;
   });
-  db.raw = async (_sql: string, _b?: any[]) => { state.onBackfill?.(); writes.push({ op: "raw" }); return { rowCount: 0 }; };
+  db.raw = async (_sql: string, bindings: any[] = []) => {
+    state.onBackfill?.();
+    // The backfill binds the table name, then four values per row.
+    for (let i = 1; i + 3 < bindings.length; i += 4) {
+      state.onCoordinateWrite?.(String(bindings[i]), [bindings[i + 1], bindings[i + 2], bindings[i + 3]]);
+    }
+    writes.push({ op: "raw" });
+    return { rowCount: 0 };
+  };
   db.schema = { hasTable: async () => true };
 
   // computeTopics writes the topic table twice (it replaces the context's set),
@@ -134,6 +150,13 @@ function fakeDb(state: {
 
   db.__writes = writes;
   db.__topicWrites = topicWrites;
+  // The rows computeTopics inserted, flattened. A getter because the insert
+  // happens long after this function has returned.
+  Object.defineProperty(db, "__topicRows", {
+    get: () => topicWrites
+      .filter((w) => w.table === "context_map_topics" && w.op === "insert")
+      .flatMap((w) => w.rows),
+  });
   db.__calls = calls;
   db.__transactions = 0;
   return db;
@@ -145,6 +168,33 @@ const missingTable = () =>
 
 /** Stand-in layout: the first two components, so the linear map can fit it exactly. */
 const umapFactory = () => ({ fit: (rows: number[][]) => rows.map((r) => [r[0] ?? 0, r[1] ?? 0, 0]) });
+
+/**
+ * A layout no linear map can reproduce, which is what lets a stored coordinate
+ * say whether it came from the layout or from the map. `pairedRows` feeds the
+ * fit pairs of identical embeddings and this puts the two halves of each pair in
+ * opposite lobes — so nothing computed from an embedding can tell them apart,
+ * and the best linear estimate for every chunk of that fixture is the midpoint
+ * between the lobes, a full lobe radius from where the layout put it.
+ */
+const LOBE = 10;
+const lobeLayout = (n: number): number[][] =>
+  Array.from({ length: n }, (_, i) => [i % 2 === 0 ? LOBE : -LOBE, 0, 0]);
+const lobeUmap = () => ({ fit: (rows: number[][]) => lobeLayout(rows.length) });
+
+/** Five embeddings, each of them twice; ids the backfill's keyset can order. */
+const PAIRED_SAMPLE = 10;
+const pairedRows = (): Row[] =>
+  [[1, 0, 0], [0, 1, 0], [1, 1, 0], [2, 1, 0], [1, 2, 0]]
+    .flatMap((embedding, pair) => [0, 1].map((half) => ({ id: `id-${pair * 2 + half}`, embedding })));
+
+// Where the fit stores a sampled chunk of that fixture, once normalizeLayout has
+// centred the two lobes on the origin and scaled their radius to 1. Derived from
+// the fake layout rather than written out, so the expectation is the fake's own
+// definition and not a second one that could drift from it.
+const normalizedLobes = normalizeLayout(lobeLayout(PAIRED_SAMPLE)).points;
+const LAYOUT_OF_ID_0 = normalizedLobes[0] ?? [];        // [1, 0, 0]
+const LAYOUT_OF_ID_1 = normalizedLobes[1] ?? [];        // [-1, 0, 0]
 
 function cluster(n: number, centre: number[], spread: number, seed: number, offset: number): Row[] {
   let s = seed;
@@ -405,6 +455,135 @@ describe("fitContextProjection", () => {
     // The ids have to reach the clustering at all, and all eleven that parsed
     // have to reach it: an empty list would satisfy the line above on its own.
     expect(seen).toHaveLength(11);
+  });
+
+  // The fit computes a true position for every sampled chunk and then learns a
+  // linear map, which is what places the chunks that arrive after it. Storing
+  // the approximation for the sampled ones too is what flattened the first real
+  // base (measured there: corr(px, py) = -0.80), because a linear map cannot
+  // reproduce a non-linear embedding and collapses it toward its dominant
+  // direction.
+  it("stores the layout position for a sampled chunk and the linear map for the rest", async () => {
+    // Two kinds of chunk: ten in the fit's sample, one that arrived after it.
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({
+      rows: [...pairedRows(), { id: "id-unsampled", embedding: [1, 0.5, 0] }],
+      onCoordinateWrite: (id, xyz) => { written[id] = xyz; },
+    });
+    const out = await fitContextProjection({
+      db, contextId: "mem", sample: PAIRED_SAMPLE, components: 2, umapFactory: lobeUmap,
+    });
+    expect(out.fitted).toBe(true);
+    // Each sampled chunk sits exactly where the layout put it, in its own lobe.
+    expect(written["id-0"]).toEqual(LAYOUT_OF_ID_0);
+    expect(written["id-1"]).toEqual(LAYOUT_OF_ID_1);
+    expect(written["id-8"]).toEqual(LAYOUT_OF_ID_0);
+    // The chunk the fit never saw is the one the map is for, and on this fixture
+    // the map can only guess the midpoint between the lobes — so it lands at the
+    // origin, which is exactly where every sampled chunk would have gone too if
+    // the approximation were still being stored for them.
+    expect(written["id-unsampled"]).not.toEqual(LAYOUT_OF_ID_0);
+    expect(written["id-unsampled"]).not.toEqual(LAYOUT_OF_ID_1);
+    for (const v of written["id-unsampled"] ?? []) expect(v).toBeCloseTo(0, 9);
+    expect(out.written).toBe(PAIRED_SAMPLE + 1);
+  });
+
+  // Regions are drawn over the dots, so they have to be clustered on the same
+  // coordinates the dots are stored at. No spy is needed: with the layout and
+  // the linear map a full lobe radius apart, the stored centroids say which of
+  // the two the k-means saw — one region per lobe, or a single region stranded
+  // between them where nothing is drawn.
+  it("clusters the layout, not the approximation", async () => {
+    const db = fakeDb({ rows: pairedRows() });
+    const out = await fitContextProjection({ db, contextId: "mem", components: 2, umapFactory: lobeUmap });
+    expect(out.fitted).toBe(true);
+    // The map explains none of this layout: a full lobe radius of error per point.
+    expect(out.residual).toBeCloseTo(1, 9);
+    expect(out.topics).toBe(2);
+    const xs = db.__topicRows.map((r: any) => r.x).sort((a: number, b: number) => a - b);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBeCloseTo(LAYOUT_OF_ID_1[0] ?? 0, 9);
+    expect(xs[1]).toBeCloseTo(LAYOUT_OF_ID_0[0] ?? 0, 9);
+    // Both regions are real — five chunks each, and on the lobes' own axis.
+    for (const row of db.__topicRows) {
+      expect(row.count).toBe(5);
+      expect(row.y).toBeCloseTo(0, 9);
+      expect(row.z).toBeCloseTo(0, 9);
+    }
+  });
+
+  // Every chunk is in the sample, so nothing is stored through the linear map —
+  // but a passage added tomorrow still needs one, so it is fitted and stored
+  // anyway.
+  it("still learns and stores a map on a base smaller than the sample", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({ rows: pairedRows(), onCoordinateWrite: (id, xyz) => { written[id] = xyz; } });
+    const result = await fitContextProjection({ db, contextId: "mem", components: 2, umapFactory: lobeUmap });
+    expect(result.fitted).toBe(true);
+    const projection = db.__writes.find((w: any) => w.table === "context_projections");
+    expect(JSON.parse(projection.rows.map)).toHaveLength(3);
+    // And none of these chunks went through it: every coordinate is a lobe.
+    expect(Object.keys(written)).toHaveLength(PAIRED_SAMPLE);
+    for (const [id, xyz] of Object.entries(written)) {
+      expect(xyz).toEqual(Number(id.slice(3)) % 2 === 0 ? LAYOUT_OF_ID_0 : LAYOUT_OF_ID_1);
+    }
+  });
+});
+
+describe("backfillCoordinates", () => {
+  /** A one-component projection in three dimensions: px is the first component,
+   *  py and pz are 0, so a mapped row is readable at a glance. */
+  const projection: StoredProjection = {
+    context: "mem", dims: 3, components: 1,
+    mean: [0, 0, 0], basis: [[1, 0, 0]], map: [[1], [0], [0]], intercept: [0, 0, 0],
+    method: "umap+linear", version: 1, sample_size: 2, residual: 0, fitted_at: new Date(),
+  };
+  const layoutOf = (entries: [string, [number, number, number]][]) =>
+    new Map<string, [number, number, number]>(entries);
+
+  // Two chunks carrying the SAME embedding, one of them in the layout: the
+  // coordinates they get have to differ, because the only thing that separates
+  // them is that the fit laid one of them out and can only estimate the other.
+  it("prefers the layout position it was given, and maps the rows it was not", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({
+      embeddings: ["[1,0,0]", "[1,0,0]"],
+      onCoordinateWrite: (id, xyz) => { written[id] = xyz; },
+    });
+    const count = await backfillCoordinates({
+      db, contextId: "mem", projection, layout: layoutOf([["id-0", [7, 7, 7]]]),
+    });
+    expect(count).toBe(2);
+    expect(written["id-0"]).toEqual([7, 7, 7]);
+    expect(written["id-1"]).toEqual([1, 0, 0]);
+  });
+
+  // A chunk re-embedded by another model since the fit is what this guards: its
+  // layout position describes a cloud its vector no longer belongs to, so the
+  // dimension check has to stay ahead of the lookup and skip it outright rather
+  // than write it from a stale layout.
+  it("skips a chunk whose embedding no longer matches the projection, layout position or not", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({
+      embeddings: ["[1,0,0]", "[1,0]"],
+      onCoordinateWrite: (id, xyz) => { written[id] = xyz; },
+    });
+    const count = await backfillCoordinates({
+      db, contextId: "mem", projection,
+      layout: layoutOf([["id-0", [7, 7, 7]], ["id-1", [9, 9, 9]]]),
+    });
+    expect(count).toBe(1);
+    expect(written["id-0"]).toEqual([7, 7, 7]);
+    expect(written["id-1"]).toBeUndefined();
+  });
+
+  // Exported from the package entry point, so a caller that passes no layout has
+  // to keep getting what it got before: the linear map for every row.
+  it("maps every row when it is given no layout at all", async () => {
+    const written: Record<string, number[]> = {};
+    const db = fakeDb({ embeddings: ["[1,0,0]"], onCoordinateWrite: (id, xyz) => { written[id] = xyz; } });
+    expect(await backfillCoordinates({ db, contextId: "mem", projection })).toBe(1);
+    expect(written["id-0"]).toEqual([1, 0, 0]);
   });
 });
 

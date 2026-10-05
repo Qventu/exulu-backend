@@ -178,13 +178,25 @@ export async function fitContextProjection({
     return { fitted: true, sampleSize: vectors.length, components: basis.length, residual, written: 0, heldOut, topics: 0 };
   }
 
+  // The fit computed a true position for every sampled chunk. Storing the linear
+  // approximation for those too is what flattened the cloud: a linear map cannot
+  // reproduce a non-linear embedding, so it collapses the structure toward its
+  // dominant direction (measured on a real base: corr(px, py) = -0.80). The map
+  // is still what places a chunk that arrives after the fit, which is all it was
+  // ever learned for.
+  const sampledLayout = new Map<string, [number, number, number]>();
+  for (const [i, s] of sampled.entries()) {
+    const p = layout[i];
+    if (p) sampledLayout.set(s.id, [p[0] ?? 0, p[1] ?? 0, p[2] ?? 0]);
+  }
+
   // Backfill FIRST, from the projection in hand — it does not need the row.
   // The row is what makes chunkCoordinates start answering, and context.ts
   // spreads those coordinates into an unwrapped chunk insert, so a row that
   // survives a failed backfill turns every later ingestion into this context
   // into an error. If the writes below are the ones that cannot work, the caller
   // sees it with nothing committed.
-  const written = await backfillCoordinates({ db, contextId, projection, log });
+  const written = await backfillCoordinates({ db, contextId, projection, layout: sampledLayout, log });
 
   let topics = 0;
   // One transaction for the topics and the projection row: computeTopics
@@ -193,12 +205,13 @@ export async function fitContextProjection({
   // different layouts at once — the old coordinates under the new region names.
   await db.transaction(async (trx: any) => {
     log(`${contextId}: naming regions`);
-    // Clustered on the coordinates the map actually draws — applyMap of the
-    // reduced vectors, the same values the backfill writes — not the raw
-    // layout, so a label sits where its dots are.
+    // Cluster where the points will actually be drawn. The layout is the real
+    // structure and is what the backfill now stores for these chunks; applyMap
+    // is its linear shadow, and clustering the shadow puts the centroids
+    // somewhere the dots are not.
     topics = await computeTopics({
       db: trx, contextId, ids: sampled.map((s) => s.id),
-      coordinates: reduced.map((z) => [...applyMap(z, map, intercept)]),
+      coordinates: layout.map((p) => [...p]),
       seed, fittedAt: projection.fitted_at,
     });
     // knex does not stringify, and node-pg encodes a JS array as a Postgres array
@@ -224,11 +237,21 @@ export async function fitContextProjection({
 export const residualScope = (heldOut: number): string =>
   (heldOut > 0 ? `(out of sample, ${heldOut} vectors held out)` : "(in sample: too few vectors to hold any out)");
 
-/** Streams every embedded chunk of the context and writes its coordinates. */
+/**
+ * Streams every embedded chunk of the context and writes its coordinates.
+ *
+ * `layout` carries the true layout position of each chunk the fit sampled, and
+ * is preferred wherever it has one; the linear map places the rest, which is
+ * what it was learned for. It is optional because this is exported from the
+ * package entry point: given none, every row goes through the map, exactly as
+ * before.
+ */
 export async function backfillCoordinates({
-  db, contextId, projection, batch = BACKFILL_BATCH, log = () => undefined,
+  db, contextId, projection, layout, batch = BACKFILL_BATCH, log = () => undefined,
 }: {
-  db: any; contextId: string; projection: StoredProjection; batch?: number; log?: (line: string) => void;
+  db: any; contextId: string; projection: StoredProjection;
+  layout?: Map<string, [number, number, number]>;
+  batch?: number; log?: (line: string) => void;
 }): Promise<number> {
   const chunks = getChunksTableName(contextId);
   const mean = Float32Array.from(projection.mean);
@@ -244,8 +267,14 @@ export async function backfillCoordinates({
     const bindings: any[] = [];
     for (const row of rows) {
       const raw = parseVector(row.embedding);
+      // Ahead of the layout lookup on purpose: a chunk re-embedded by another
+      // model since the fit has a stored position describing a cloud its vector
+      // no longer belongs to, so it is skipped rather than written from it.
       if (raw.length !== projection.dims) continue;
-      const [x, y, z] = applyMap(projectComponents(l2normalize(raw), mean, basis), projection.map, projection.intercept);
+      const known = layout?.get(String(row.id));
+      const [x, y, z] = known ?? applyMap(
+        projectComponents(l2normalize(raw), mean, basis), projection.map, projection.intercept,
+      );
       values.push("(?::uuid, ?::real, ?::real, ?::real)");
       bindings.push(row.id, x, y, z);
     }
