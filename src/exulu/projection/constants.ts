@@ -18,3 +18,13 @@ export const EDGE_LIMIT_MAX = 50;
  *  corpus where 56 took 6.3s. */
 export const EDGE_QUERY_TERMS = 12;
 export const PROJECTION_CACHE_TTL_MS = 60_000;
+/** Topic regions (3c-2). k follows the data; these are its bounds. */
+export const TOPIC_MIN = 3;
+export const TOPIC_MAX = 12;
+export const TOPIC_ITERATIONS = 25;
+/** A lexeme must carry at least this many of a cluster's chunks to name it. */
+export const TOPIC_MIN_DF = 2;
+/** Stems shorter than this read as noise ("ab", "st"). */
+export const TOPIC_MIN_LEXEME = 3;
+/** Words in a label, joined with " & " — the shape the design shows. */
+export const TOPIC_LABEL_WORDS = 2;
