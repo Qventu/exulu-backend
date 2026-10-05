@@ -146,6 +146,8 @@ A docked resizable panel on large screens, a sheet below, reusing the existing p
 
   Corrected on 2026-10-05 during execution (controller Ruling 22). The original text showed each neighbour "with its score". The score is a raw text-ranking value whose magnitude depends on the query's own term count, so it is comparable within one list and meaningless on its own. The ordering already carries everything a reader can act on, so the number is not shown.
 
+  Corrected on 2026-10-05 during the final fix wave. The original text also listed the author, when the passage was saved, and the number of times it has been used. Nothing carries them to the map: a point is an id, an item id, three coordinates, the chunk's first 120 characters, the grouping value and a chunk count, and that is the whole answer. Adding three fields means widening it for every one of up to twenty thousand rows to serve the one passage a reader selects — the opening text alone is already most of that payload. They are on the item's own page, which the panel links to. So what the panel shows for a selected passage is the passage's **opening**, its type, the link to the item, and the neighbours: the text is marked with an ellipsis and a line saying it is only the opening whenever it reaches the 120-character width, because a reader cannot tell a cut passage from a short one by looking at it.
+
 ### 4.7 Legend
 
 Generated from the base's own declared enum, in declared order, by the existing helper that reads a memory base's `type` values — never a hardcoded list, because each base declares its own. A knowledge base uses its first declared enum field, or no legend when it has none. Memory bases with conflicts add the ringed entry the mockup shows.
