@@ -18,6 +18,14 @@ A base greyed out with "not configured correctly" is missing a required field; a
 
 Click a base to see its memories with search, a Mine filter, and filters for visibility, type and creator. Select rows to change access or delete in bulk — the same dialogs as in Knowledge. "Open in Knowledge" reaches the generic item tools.
 
+## Map
+
+A base's **Overview** tab draws the base as a cloud: one dot per passage of a memory, placed from its embedding so that near means similar, and rotatable. Named regions float over the cloud and are listed as chips underneath with how many passages each holds — a region is a cluster of positions, named from the words that set it apart from the rest of the base, read out of the text index the search already keeps. No model is asked, so a region's name is the base's own vocabulary, in the clipped form the index stores it in. Selecting a chip dims everything outside that region, and memories in a conflict group are ringed.
+
+Selecting a dot draws lines to the passages worded most like it and opens a panel with the opening of the passage, its type, its closest neighbours and a link to the memory. The panel shows an opening rather than the whole passage, and says so.
+
+Only passages you may read are drawn, so a base with private memories draws fewer dots than it has passages; the counts under the cloud cover the whole base and never show content you may not see. A large base is sampled, with the caption saying how many of how many passages are drawn. A base has to be mapped once before any of this appears, and until then the tab says so — see [Map](/building/knowledge/overview#map) in Knowledge for what an administrator runs.
+
 ## Usage
 
 Every time an agent is given a memory for an answer, that use is recorded — the memory, the agent, the conversation and the time, never the content. A base's page shows how many memories were never used, the list has a **Last used** column and a **Usage** filter (never used, not used in 90 days), and selected memories can be **archived** in bulk: they leave recall and the counts, and can be restored in Knowledge. A memory's page lists its recent conversations; the link opens only conversations you may read. Guest chats count too, shown as "Guest".

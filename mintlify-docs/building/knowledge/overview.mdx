@@ -64,19 +64,26 @@ Contexts are defined in code by your development team. The library page shows co
 
 ## Inside a context workspace
 
-Clicking a context opens its workspace with three tabs:
+Clicking a context opens its workspace with four tabs:
 
 | Tab | What it shows |
 | --- | --- |
 | **Items** | The table of items in this context. See [Items](/building/knowledge/items). |
 | **Pipeline** | The Sources → Processor → Embedder stage cards and activity log. See [Pipeline](/building/knowledge/pipeline). |
 | **Entities** | Entity types for structured extraction. See [Entities](/building/knowledge/entities). |
+| **Map** | The base drawn as a cloud of passages. See [Map](#map) below. |
 
 Agents can also write items to a context from within a chat conversation. When the **Knowledge base editor** tool is enabled for an agent, the agent can create and update items during a session — subject to per-context access grants and optional user approval. See [Tools and skills](/building/agents/tools-and-skills) for how to enable and configure the tool.
 
 ## Map
 
-Every chunk can carry a position in three dimensions, computed from its embedding, so a base can be drawn as a cloud where near means similar. An administrator fits a base once — from a backend checkout with `npx tsx scripts/fit-context-projection.ts --context <id>`, or from an application that embeds this package by calling the exported `fitContextProjection`. From then on, anything newly embedded is placed automatically. Refitting redraws the layout, which moves existing points. The visualisation itself arrives with the memory map.
+Every chunk can carry a position in three dimensions, computed from its embedding, so a base can be drawn as a cloud where near means similar. An administrator fits a base once — from a backend checkout with `npx tsx scripts/fit-context-projection.ts --context <id>`, or from an application that embeds this package by calling the exported `fitContextProjection`. From then on, anything newly embedded is placed automatically. Refitting redraws the layout, which moves existing points.
+
+The **Map** tab draws that cloud. One dot is one passage, not one item, and the cloud rotates. Named regions float over it, and are listed as chips underneath with how many passages each holds: a region is a cluster of positions, named from the words that set it apart from the rest of the base, read out of the text index the search already keeps. No model is asked, so a region's name is the base's own vocabulary, in the clipped form the index stores it in. Selecting a chip dims everything outside that region.
+
+Selecting a dot draws lines to the passages worded most like it and opens a panel with the opening of the passage, its type, its closest neighbours and a link to the item it came from. The panel shows an opening rather than the whole passage, and says so.
+
+Only passages you may read are drawn. A large base is sampled and the caption says how many of how many passages are drawn, as it does when some of them have no position yet. A base that has never been fitted says so instead of drawing an empty cloud.
 
 ## Next steps
 
