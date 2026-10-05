@@ -9,8 +9,8 @@ jest.mock("@SRC/graphql/utilities/convert-context-to-table-definition", () => ({
   convertContextToTableDefinition: (c: any) => ({ name: { singular: c.id, plural: `${c.id}s` } }),
 }));
 
-import { EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS } from "@SRC/exulu/projection/constants";
-import { clearMapColumnProbes, contextMapEdges, contextMapPoints, contextProjectionStatus } from "./context-map";
+import { EDGE_LIMIT_DEFAULT, EDGE_LIMIT_MAX, EDGE_QUERY_TERMS, PROJECTION_VERSION } from "@SRC/exulu/projection/constants";
+import { clearMapColumnProbes, contextMapEdges, contextMapPoints, contextMapTopics, contextProjectionStatus } from "./context-map";
 
 /** Keys on the first word, because the resolvers call `db("mem_chunks as chunks")`. */
 function fakeDb(
@@ -486,6 +486,67 @@ describe("contextMapEdges", () => {
   });
 });
 
+// Spec §5 gives a point the chunk id in PASSAGES mode, so an edge between two
+// passage points has to be identified by chunk ids too: grouped by the item,
+// the query hands back ids no point in that mode owns, and every line on the
+// cloud attaches to nothing.
+describe("contextMapEdges in PASSAGES mode", () => {
+  const SEED = "encoder speed display";
+  const LEXEMES = "encod or speed or display";
+  /** Another chunk of another document: the neighbour a passage edge points at. */
+  const CHUNK_2 = "77777777-6666-4555-8444-333333333333";
+  /**
+   * A visible seed chunk, the item it belongs to, and the lexeme aggregate
+   * Postgres hands back for it — all three, because an unparsed node id, an
+   * invisible seed and a null aggregate each return [] from an earlier guard,
+   * and an assertion about the grouping would then hold for any implementation.
+   */
+  const edgeDb = (rows: any[]) => fakeDb({
+    mem_chunks: rows,
+    "mem_chunks#first": [{ text: SEED, itemId: OWNER }],
+    raw: [{ query: LEXEMES }],
+  });
+  const grouping = (db: any) => db.__log.filter((l: any[]) => l[1] === "groupBy").map((l: any[]) => String(l[2]));
+  /** The ranking query's id column, as a select fragment. */
+  const selectedId = (db: any) => db.__log
+    .filter((l: any[]) => l[0] === "raw" && String(l[1]).endsWith(" as id"))
+    .map((l: any[]) => String(l[1]));
+
+  it("ranks and returns chunk ids, so a passage point can be joined to its line", async () => {
+    const db = edgeDb([{ id: CHUNK_2, score: "0.42" }]);
+    const out = await contextMapEdges({ db, context, user, nodeId: CHUNK, mode: "PASSAGES", limit: 5 });
+    expect(out).toEqual([{ source: CHUNK, target: CHUNK_2, score: 0.42 }]);
+    expect(grouping(db)).toEqual(["chunks.id"]);
+    // The grouping alone is not the edge's identity: the select list has to hand
+    // the chunk id back as well, or the targets are still document ids.
+    expect(selectedId(db)).toEqual(["chunks.id as id"]);
+    // The exclusion stays on the owner item in both modes: sibling passages of
+    // the same document share the node's lexemes and would fill every line.
+    expect(db.__log).toEqual(expect.arrayContaining([["mem_chunks", "whereNot", "chunks.source", OWNER]]));
+    // Item-level access control is unchanged by the mode - once for the seed
+    // read, once for the ranking query.
+    expect(accessControl()).toHaveBeenCalledTimes(2);
+    expect(accessControl()).toHaveBeenCalledWith(expect.anything(), expect.anything(), user, "items");
+  });
+
+  it("still groups by item in DOCUMENTS mode", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.3" }]);
+    const out = await contextMapEdges({ db, context, user, nodeId: NODE, mode: "DOCUMENTS", limit: 5 });
+    expect(out).toEqual([{ source: NODE, target: "i2", score: 0.3 }]);
+    expect(grouping(db)).toEqual(["items.id"]);
+    expect(selectedId(db)).toEqual(["items.id as id"]);
+  });
+
+  // The schema default is DOCUMENTS, and so is the argument's: the existing
+  // callers pass no mode at all and must keep getting document edges.
+  it("groups by item when no mode is asked for", async () => {
+    const db = edgeDb([{ id: "i2", score: "0.3" }]);
+    await contextMapEdges({ db, context, user, nodeId: NODE, limit: 5 });
+    expect(grouping(db)).toEqual(["items.id"]);
+    expect(selectedId(db)).toEqual(["items.id as id"]);
+  });
+});
+
 describe("contextProjectionStatus", () => {
   /**
    * The matrix columns of a well-shaped row. Status agrees with loadProjection
@@ -607,5 +668,65 @@ describe("contextProjectionStatus", () => {
     const out = await contextProjectionStatus({ db, context: { ...context, id: "My Docs" } });
     expect(out.fitted).toBe(true);
     expect(db.__log).toEqual(expect.arrayContaining([["context_projections", "where", { context: "my_docs" }]]));
+  });
+});
+
+// The base's named regions (3c-2 spec §3.1). Counts and labels, no content, so
+// this query is deliberately not access-scoped: a region describes the base, not
+// the reader's slice of it, exactly as contextProjectionStatus reports coverage.
+describe("contextMapTopics", () => {
+  it("returns the context's regions, keyed by the sanitised id, ordered by index", async () => {
+    const db = fakeDb({
+      context_map_topics: [
+        { topic_index: 1, label: "Encoder & Anzeige", count: 12, x: 0.2, y: -0.1, z: 0, version: 1 },
+        { topic_index: 0, label: "Steuerblock & Ventil", count: 30, x: -0.4, y: 0.2, z: 0.1, version: 1 },
+      ],
+    });
+    const out = await contextMapTopics({ db, context: { ...context, id: "My Docs" } as any });
+    expect(db.__log.some((l: any[]) => JSON.stringify(l).includes("my_docs"))).toBe(true);
+    expect(db.__log.some((l: any[]) => l[1] === "orderBy" && l[2] === "topic_index")).toBe(true);
+    expect(out[0]).toEqual({ id: "1", label: "Encoder & Anzeige", count: 12, x: 0.2, y: -0.1, z: 0 });
+    // Not scoped, and not by omission: the counts are the fit's counts, over
+    // every chunk sampled, and scoping them would report a region as smaller
+    // than it is to a reader who may not see all of it.
+    expect(accessControl()).not.toHaveBeenCalled();
+  });
+
+  it("filters on the current projection version, so a stale row reads as no topics", async () => {
+    const db = fakeDb({ context_map_topics: [] });
+    await contextMapTopics({ db, context });
+    expect(db.__log.some((l: any[]) => JSON.stringify(l).includes("version"))).toBe(true);
+    // Pinned as the whole criteria: "version" appearing anywhere in the log
+    // would also be satisfied by selecting the column.
+    expect(db.__log).toEqual(expect.arrayContaining([
+      ["context_map_topics", "where", { context: "mem", version: PROJECTION_VERSION }],
+    ]));
+  });
+
+  it("is empty rather than an error when the table is missing", async () => {
+    const db = fakeDb({}, { hasTable: () => false });
+    expect(await contextMapTopics({ db, context })).toEqual([]);
+    // The guard is the point: a deployment whose core tables predate
+    // context_map_topics must not fail the map page.
+    expect(db.__log).toEqual([]);
+  });
+
+  // A count column is NUMERIC over the wire and a coordinate arrives as a
+  // string, which would make every region's position NaN on the client.
+  it("coerces the numeric columns and tolerates a null label", async () => {
+    const db = fakeDb({
+      context_map_topics: [{ topic_index: 0, label: null, count: "30", x: "-0.4", y: "0.2", z: null }],
+    });
+    expect(await contextMapTopics({ db, context })).toEqual([
+      { id: "0", label: "", count: 30, x: -0.4, y: 0.2, z: 0 },
+    ]);
+  });
+
+  it("is empty, and says so once, when the read itself fails", async () => {
+    const spy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const db = fakeDb({}, { hasTable: () => { throw new Error("boom"); } });
+    expect(await contextMapTopics({ db, context })).toEqual([]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

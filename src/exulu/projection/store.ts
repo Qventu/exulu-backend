@@ -79,8 +79,8 @@ export function readProjectionRow(row: any): ProjectionRowRead {
 }
 
 /**
- * Forgets a context's fitted projection: the stored row and this process's
- * cached copy of it.
+ * Forgets a context's fitted layout: the stored projection row, the named
+ * regions fitted alongside it, and this process's cached copy of the row.
  *
  * Called wherever a context's chunks are dropped or cleared. A re-embed through
  * a different model lands in a different space, and `chunkCoordinates` only
@@ -89,15 +89,27 @@ export function readProjectionRow(row: any): ProjectionRowRead {
  * `contextProjectionStatus` still reported a healthy fit. A refit is required
  * either way, including when the width itself changed.
  *
+ * The topic rows go with it, in the same guarded block, because the two describe
+ * one layout: a fit writes them under the same sanitised key (topics.ts) and
+ * nothing else ever deletes them, so leaving them behind means labels for
+ * vectors that no longer exist — drawn over whatever the next fit lays out, or
+ * over nothing at all on a base nobody refits.
+ *
  * Never throws: it runs mid-rebuild, and a context that was never fitted (or a
- * deployment whose core tables predate `context_projections`) must not fail an
- * embedder change.
+ * deployment whose core tables predate either table) must not fail an embedder
+ * change.
  */
 export async function dropProjection(db: any, contextId: string): Promise<void> {
   try {
-    await db("context_projections").where({ context: sanitizeName(contextId) }).delete();
+    const context = sanitizeName(contextId);
+    await db("context_projections").where({ context }).delete();
+    // Not filtered by version: every region this context has ever had describes
+    // a layout that is now gone, whichever build fitted it.
+    await db("context_map_topics").where({ context }).delete();
   } catch (e) {
-    console.error("[EXULU] could not delete the context projection", e instanceof Error ? e.message : String(e));
+    // One message for both deletes, because the block is one unit of meaning:
+    // whichever of the two failed, the context now has a layout it should not.
+    console.error("[EXULU] could not delete the context projection or its topic rows", e instanceof Error ? e.message : String(e));
   }
   // Outside the try: a delete that failed still has to leave this process
   // without a cached projection, because the chunks it described are gone.

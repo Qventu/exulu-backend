@@ -81,7 +81,7 @@ import { memoryBaseContributors } from "@SRC/graphql/resolvers/memory-base-contr
 import { listMemoryBases, countAgents } from "@SRC/graphql/resolvers/memory-bases";
 import { memoryBaseUnusedIds, memoryBaseUsage, memoryUsage, memoryUsageByIds } from "@SRC/graphql/resolvers/memory-usage";
 import { hydrateConflictRow, memoryConflictCounts, memoryConflicts, memoryConflictsForMemory } from "@SRC/graphql/resolvers/memory-conflicts";
-import { contextMapEdges, contextMapPoints, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
+import { contextMapEdges, contextMapPoints, contextMapTopics, contextProjectionStatus } from "@SRC/graphql/resolvers/context-map";
 import { EDGE_LIMIT_DEFAULT, POINTS_LIMIT_DEFAULT } from "@SRC/exulu/projection/constants";
 import { resolveConflict, suggestMerge } from "@SRC/exulu/memory/conflicts/resolve";
 import { runScan } from "@SRC/exulu/memory/conflicts/scan";
@@ -753,7 +753,8 @@ type PageInfo {
   // item-level access control, the same call <ctx>_itemsPagination makes.
   typeDefs += `
     contextMapPoints(contextId: ID!, mode: ContextMapMode = DOCUMENTS, groupField: String, search: String, limit: Int = ${POINTS_LIMIT_DEFAULT}): ContextMapPoints
-    contextMapEdges(contextId: ID!, nodeId: ID!, limit: Int = ${EDGE_LIMIT_DEFAULT}): [ContextMapEdge!]!
+    contextMapEdges(contextId: ID!, nodeId: ID!, mode: ContextMapMode = DOCUMENTS, limit: Int = ${EDGE_LIMIT_DEFAULT}): [ContextMapEdge!]!
+    contextMapTopics(contextId: ID!): [ContextMapTopic!]!
     contextProjectionStatus(contextId: ID!): ContextProjectionStatus
     `;
 
@@ -2760,7 +2761,17 @@ type EmbeddingModelOption {
   resolvers.Query["contextMapEdges"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
     if (!context.user || !target) return [];
-    return contextMapEdges({ db: context.db, context: target, user: context.user, nodeId: args.nodeId, limit: args.limit ?? EDGE_LIMIT_DEFAULT });
+    return contextMapEdges({
+      db: context.db, context: target, user: context.user, nodeId: args.nodeId,
+      mode: args.mode ?? "DOCUMENTS", limit: args.limit ?? EDGE_LIMIT_DEFAULT,
+    });
+  };
+  // Counts and labels for the base's regions. Unscoped on purpose - see the
+  // resolver's own doc comment; it returns nothing a reader could look up.
+  resolvers.Query["contextMapTopics"] = async (_, args, context) => {
+    const target = memoryContextOf(args.contextId);
+    if (!context.user || !target) return [];
+    return contextMapTopics({ db: context.db, context: target });
   };
   resolvers.Query["contextProjectionStatus"] = async (_, args, context) => {
     const target = memoryContextOf(args.contextId);
@@ -3179,6 +3190,14 @@ type ContextMapPoint {
 }
 type ContextMapPoints { points: [ContextMapPoint!]!  total: Int!  sampled: Boolean! }
 type ContextMapEdge { source: ID!  target: ID!  score: Float! }
+type ContextMapTopic {
+    id: ID!
+    label: String!
+    count: Int!
+    x: Float!
+    y: Float!
+    z: Float!
+}
 type ContextProjectionStatus {
     fitted: Boolean!
     method: String

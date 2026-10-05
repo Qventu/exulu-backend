@@ -206,11 +206,24 @@ describe("dropProjection", () => {
     const db = fakeWriteDb(projection);
     expect((await loadProjection(db, "My Docs", 1000))?.dims).toBe(2);
     await dropProjection(db, "My Docs");
-    expect(db.__deletes).toEqual([{ table: "context_projections", criteria: { context: "my_docs" } }]);
+    expect(db.__deletes).toContainEqual({ table: "context_projections", criteria: { context: "my_docs" } });
     // The next read has to go back to the database, or this replica keeps
     // placing chunks with the projection that was just deleted.
     await loadProjection(db, "My Docs", 1000);
     expect(db.__reads).toHaveLength(2);
+  });
+
+  // A fit writes the base's named regions under the same sanitised key
+  // (topics.ts), and nothing else ever deletes them. Without this an embedder
+  // swap left labels describing vectors that no longer exist on any base that
+  // is never refitted - drawn over whatever the next fit lays out.
+  it("deletes the context's topic rows along with the row that positioned them", async () => {
+    const db = fakeWriteDb(projection);
+    await dropProjection(db, "My Docs");
+    expect(db.__deletes).toEqual([
+      { table: "context_projections", criteria: { context: "my_docs" } },
+      { table: "context_map_topics", criteria: { context: "my_docs" } },
+    ]);
   });
 
   // It runs mid-rebuild, next to dropChunksTable: a context that was never
