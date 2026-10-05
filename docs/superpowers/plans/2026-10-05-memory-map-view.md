@@ -1151,6 +1151,10 @@ export interface MapCanvasProps {
   highlightTopic: string | null;
   ringedIds: Set<string>;
   paused: boolean;
+  /** Faint nearest-neighbour lines for every passage, not only the selected one. */
+  allLinks: boolean;
+  /** A neighbour hovered in the panel; its line is drawn at full strength. */
+  hoverNeighbourId: string | null;
   onSelect: (id: string | null) => void;
   onUnsupported: () => void;
 }
@@ -1183,7 +1187,8 @@ const POINT_FRAGMENT = `
 type Hover = { label: string; x: number; y: number } | null;
 
 export function MapCanvas({
-  points, topics, groups, edges, selectedId, highlightTopic, ringedIds, paused, onSelect, onUnsupported,
+  points, topics, groups, edges, selectedId, highlightTopic, ringedIds, paused, allLinks,
+  hoverNeighbourId, onSelect, onUnsupported,
 }: MapCanvasProps) {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const cloudRef = React.useRef<THREE.Points | null>(null);
@@ -1393,7 +1398,7 @@ export function MapCanvas({
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(vertices), 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(colors), 3));
     lines.geometry = geometry;
-  }, [edges, selectedId, points]);
+  }, [edges, selectedId, points, allLinks, hoverNeighbourId]);
 
   // Idle rotation. OrbitControls owns it; pausing is one flag.
   React.useEffect(() => {
@@ -1743,6 +1748,8 @@ export function ContextMapCard({ contextId, groups, groupField, ringedIds, itemH
               highlightTopic={highlightTopic}
               ringedIds={ringedIds ?? new Set()}
               paused={paused}
+              allLinks={allLinks}
+              hoverNeighbourId={hoverNeighbour}
               onSelect={(id) => setParam("selected", id)}
               onUnsupported={() => setUnsupported(true)}
             />
@@ -1800,7 +1807,7 @@ export function ContextMapCard({ contextId, groups, groupField, ringedIds, itemH
 }
 ```
 
-`hoverNeighbour` and `allLinks` are passed into the canvas by the implementer as two more props on `MapCanvasProps` once the canvas lands; the shape above is the contract the tests assert against.
+The line effect in Task 6 reads `allLinks` and `hoverNeighbourId`: with `allLinks` on it also emits one faint segment per passage to its nearest drawn neighbour, and a hovered neighbour's segment is drawn at full strength. Both are already on `MapCanvasProps`.
 
 - [ ] **Step 5: Add the messages**
 
