@@ -43,8 +43,10 @@ export function kmeans(
     centroids.push([finite(pickedPoint[0]), finite(pickedPoint[1]), finite(pickedPoint[2])]);
   }
 
-  const assignments = new Array<number>(n).fill(0);
-  for (let it = 0; it < iterations; it += 1) {
+  // Writes each point's nearest centre into `assignments`, and says whether
+  // anything changed. A tie goes to the earlier centre, which is the rule the
+  // client's membership function follows too.
+  const assignAll = (assignments: number[]): boolean => {
     let moved = false;
     for (let i = 0; i < n; i += 1) {
       let best = 0;
@@ -55,6 +57,12 @@ export function kmeans(
       }
       if (assignments[i] !== best) { assignments[i] = best; moved = true; }
     }
+    return moved;
+  };
+
+  const assignments = new Array<number>(n).fill(0);
+  for (let it = 0; it < iterations; it += 1) {
+    const moved = assignAll(assignments);
     const sums = centroids.map(() => [0, 0, 0]);
     const counts = centroids.map(() => 0);
     for (let i = 0; i < n; i += 1) {
@@ -69,6 +77,16 @@ export function kmeans(
     }
     if (!moved) break;
   }
+  // One final pass against the centres actually being returned. The loop
+  // assigns against the previous iteration's centres and then moves them — on
+  // the `!moved` break as well as on the cap — so without this the returned
+  // assignments describe a partition one step behind the returned centroids.
+  // computeTopics counts those assignments into each region's stored `count`
+  // while the client recomputes "nearest centre" from the stored centroids, so
+  // the two have to describe the same partition or they disagree on exactly the
+  // boundary points. A centre left with no points by this pass is simply not a
+  // region: computeTopics drops it along with the empty clusters.
+  assignAll(assignments);
   return { assignments, centroids };
 }
 

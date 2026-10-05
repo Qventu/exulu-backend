@@ -42,6 +42,30 @@ describe("kmeans", () => {
     expect(sizes.get(clusterKey)).toBe(10); // All points in that cluster
   });
 
+  // The loop assigns against the previous iteration's centres and then moves
+  // them, so whatever it returns describes a partition one step behind the
+  // centres it returns with it. computeTopics counts those assignments and the
+  // client recomputes "nearest centre" from the stored centroids, so on the
+  // iteration cap the chip's count and the dimmed dots disagreed on exactly the
+  // boundary points. At cap 1 this fixture had six of them.
+  it("returns assignments that agree with the centroids it returns, even at the iteration cap", () => {
+    const points = [...blob(0, 0, 0, 30, 0.5), ...blob(4, 4, 4, 30, 0.5)];
+    const { assignments, centroids } = kmeans(points, 2, 27, 1);
+    expect(assignments).toHaveLength(60);
+    expect(centroids).toHaveLength(2);
+    const nearest = (p: number[]) => {
+      let best = 0;
+      let bestD = Infinity;
+      for (let c = 0; c < centroids.length; c += 1) {
+        const d = (centroids[c]![0]! - p[0]!) ** 2
+          + (centroids[c]![1]! - p[1]!) ** 2 + (centroids[c]![2]! - p[2]!) ** 2;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      return best;
+    };
+    expect(assignments).toEqual(points.map(nearest));
+  });
+
   it("coerces non-finite coordinates to finite centres", () => {
     const points = [[1, 1, 1], [2, 2, 2], [NaN, 5, 5]];
     const { centroids } = kmeans(points, 2, 7);
