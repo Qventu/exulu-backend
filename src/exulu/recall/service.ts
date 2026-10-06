@@ -335,6 +335,7 @@ export const recallService = {
       .whereNotIn("status", [
         "transcribing",
         "awaiting_review",
+        "reviewed",
         "saved",
         "failed",
         "cancelled",
@@ -371,9 +372,16 @@ export const recallService = {
     if (!dbRow) return;
     const job = this._row(dbRow);
 
-    // Idempotent: a transcript already downloaded means this event was handled.
+    // Idempotent: a transcript already downloaded means this event was
+    // handled. `reviewed` belongs here too — it is signed off (and `saved`
+    // can follow it directly without going back through `awaiting_review`) —
+    // otherwise a re-delivered transcript.done overwrites raw_segments and
+    // resets a reviewed job back to awaiting_review, silently reverting the
+    // human's sign-off (final fix wave, Finding 2).
     if (
-      (job.status === "awaiting_review" || job.status === "saved") &&
+      (job.status === "awaiting_review" ||
+        job.status === "reviewed" ||
+        job.status === "saved") &&
       job.raw_segments &&
       job.raw_segments.length > 0
     ) {

@@ -345,7 +345,7 @@ describe("exportableJob — export-route lookup for a reviewed-but-unpublished j
     // ownership lookup, then exportableJob's full-row read.
     firstResults[JOBS] = [row, row];
 
-    const result = await transcriptionService.exportableJob("job-1", 7);
+    const result = await transcriptionService.exportableJob("job-1", { id: 7 });
 
     expect(result).toMatchObject({
       name: "Standup",
@@ -358,14 +358,14 @@ describe("exportableJob — export-route lookup for a reviewed-but-unpublished j
   it("returns undefined for a job owned by someone else", async () => {
     firstResults[JOBS] = [jobRow({ created_by: 7 })];
 
-    const result = await transcriptionService.exportableJob("job-1", 999);
+    const result = await transcriptionService.exportableJob("job-1", { id: 999 });
 
     expect(result).toBeUndefined();
   });
 
   it("returns undefined for a job that does not exist", async () => {
     // firstResults[JOBS] stays unset; the db-fake's .first() resolves undefined.
-    const result = await transcriptionService.exportableJob("missing-job", 7);
+    const result = await transcriptionService.exportableJob("missing-job", { id: 7 });
 
     expect(result).toBeUndefined();
   });
@@ -386,11 +386,37 @@ describe("exportableJob — export-route lookup for a reviewed-but-unpublished j
     });
 
     try {
-      await expect(transcriptionService.exportableJob("job-1", 7)).rejects.toThrow(
-        "connection reset",
-      );
+      await expect(
+        transcriptionService.exportableJob("job-1", { id: 7 }),
+      ).rejects.toThrow("connection reset");
     } finally {
       db.from = originalFrom;
     }
+  });
+
+  // Final fix wave, Finding 3: a super_admin who marked someone else's
+  // transcript reviewed must also be able to export it — the routes.ts
+  // caller now forwards the whole user (super_admin included), not just an
+  // id, so assertOwnsTranscriptionJob's super_admin bypass actually fires.
+  it("returns the export shape for a super_admin who does not own the job", async () => {
+    const row = jobRow({
+      created_by: 7,
+      source: "recall",
+      reviewed_at: "2026-10-01T09:00:00.000Z",
+    });
+    // assertOwnsTranscriptionJob's super_admin branch returns before
+    // touching the db, so only exportableJob's own full-row read happens.
+    firstResults[JOBS] = [row];
+
+    const result = await transcriptionService.exportableJob("job-1", {
+      id: 999,
+      super_admin: true,
+    });
+
+    expect(result).toMatchObject({
+      name: "Standup",
+      recording_source: "recall",
+      reviewed_at: "2026-10-01T09:00:00.000Z",
+    });
   });
 });

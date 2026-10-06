@@ -30,7 +30,11 @@ import {
 } from "./client";
 import { effectiveSegments, renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
 import { buildTranscriptItemInput } from "./build-transcript-item";
-import { assertOwnsTranscriptionJob, TranscriptionJobAccessError } from "./authorize";
+import {
+  assertOwnsTranscriptionJob,
+  TranscriptionJobAccessError,
+  type TranscriptionJobUser,
+} from "./authorize";
 import type { TranscriptExportItem } from "./transcript-export";
 
 const TABLE = "transcription_jobs";
@@ -584,17 +588,22 @@ export const transcriptionService = {
    * yours" so the caller can answer the same 404 either way: a 403 would
    * confirm to a stranger that the transcript exists.
    *
+   * Takes the full caller (not just an id), same as the GraphQL mutations
+   * pass `context.user` to this helper — a super_admin who reviewed someone
+   * else's transcript needs that flag to export it too (final fix wave,
+   * Finding 3). A `{ id }`-only caller still works (super_admin optional).
+   *
    * Goes through _rowFromDb so raw_segments / corrected_segments / speakers
    * / post_processing_outputs come back parsed exactly like every other
    * caller of this row.
    */
   async exportableJob(
     jobId: string,
-    userId: number | string,
+    user: TranscriptionJobUser,
   ): Promise<(TranscriptExportItem & { reviewed_at?: string | Date | null }) | undefined> {
     const { db } = await postgresClient();
     try {
-      await assertOwnsTranscriptionJob(db, { id: userId }, jobId);
+      await assertOwnsTranscriptionJob(db, user, jobId);
     } catch (err) {
       // Only a permission/not-found failure becomes "undefined" (→ the
       // route's 404). Anything else — a connection drop, a timeout, a

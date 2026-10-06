@@ -1382,8 +1382,11 @@ export const createExpressRoutes = async (
     },
     // A job that has been reviewed but not published has no item to read
     // through getItems; the lookup applies the job's own ownership check
-    // instead (transcriptionService.exportableJob).
-    getJob: (jobId, user) => transcriptionService.exportableJob(jobId, user.id),
+    // instead (transcriptionService.exportableJob). Pass the whole user,
+    // not just its id — same as the GraphQL mutations do — so a
+    // super_admin who reviewed someone else's transcript can also export it
+    // (final fix wave, Finding 3).
+    getJob: (jobId, user) => transcriptionService.exportableJob(jobId, user),
     convert: (markdown, format) => exportMarkdown(markdown, format),
   });
 
