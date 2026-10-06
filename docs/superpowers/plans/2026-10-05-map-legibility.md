@@ -394,3 +394,170 @@ Report the gate output verbatim, both correlation figures, and this list for Dan
 4. Select a passage: the panel opens, the links control appears, closing it clears the selection.
 5. Confirm the labels read over the dots at the default camera distance.
 6. Open a memory base and confirm it still reads well with `type` in the panel rather than in colour.
+
+---
+
+### Task 6: Rotate the layout onto its own axes
+
+Added 2026-10-06, after Task 5's measurement refuted the plan's central premise.
+
+**Why this exists.** Task 1 stored the true layout instead of its linear approximation, and the refit moved the correlation between two stored axes from −0.795 to −0.779 — nothing. The diagnosis was wrong: the residual of 0.144 had been telling us all along that the linear map already approximated the layout closely, which only happens when the layout is itself nearly linear. Working the covariance by hand, the cloud spreads 0.40 along one horizontal diagonal, 0.18 along the other and 0.25 in depth — an elongated ellipsoid of roughly two to one, not the near-degenerate streak the spec claimed.
+
+So the streak on screen is largely the camera. The long axis lies diagonally across two axes while the camera sits fixed on the third, so a flattened ellipsoid is seen nearly edge-on. Aligning the layout with its own principal axes is a **rigid rotation** — every distance and every neighbour relationship is preserved — and it puts the widest spread across the screen rather than into the depth.
+
+**Files:**
+- Modify: `src/exulu/projection/math.ts`, `src/exulu/projection/math.test.ts`
+- Modify: `src/exulu/projection/fit.ts` (around line 139, between the layout and its normalisation)
+
+**Interfaces:**
+- Produces: `principalRotation(points: number[][], seed: number): number[][]` — three orthonormal rows, ordered by descending spread of the data along them, signs fixed deterministically.
+- Produces: `rotateLayout(points: number[][], rotation: number[][]): number[][]`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+describe("principalRotation", () => {
+  // A cloud stretched along the x=-y diagonal: exactly the shape measured on the
+  // real base (corr_xy = -0.78), and the one the camera sees edge-on.
+  const diagonal = Array.from({ length: 200 }, (_, i) => {
+    const t = (i / 199) * 2 - 1;
+    return [t, -t, (i % 7) / 70];
+  });
+
+  it("decorrelates the axes of a diagonal cloud", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    expect(Math.abs(correlation(rotated, 0, 1))).toBeLessThan(0.05);
+  });
+
+  it("puts the widest spread on the first axis", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    expect(spread(rotated, 0)).toBeGreaterThan(spread(rotated, 1));
+    expect(spread(rotated, 1)).toBeGreaterThanOrEqual(spread(rotated, 2));
+  });
+
+  it("preserves every pairwise distance, because it is a rotation", () => {
+    const rotated = rotateLayout(diagonal, principalRotation(diagonal, 7));
+    for (const [i, j] of [[0, 1], [0, 150], [37, 180]] as const) {
+      expect(distance(rotated[i]!, rotated[j]!)).toBeCloseTo(distance(diagonal[i]!, diagonal[j]!), 6);
+    }
+  });
+
+  it("is deterministic for one seed", () => {
+    expect(principalRotation(diagonal, 7)).toEqual(principalRotation(diagonal, 7));
+  });
+
+  it("returns an identity-like rotation for a cloud with no dominant direction", () => {
+    const ball = Array.from({ length: 60 }, (_, i) => [Math.sin(i), Math.cos(i), Math.sin(i * 2)]);
+    const rotated = rotateLayout(ball, principalRotation(ball, 3));
+    expect(rotated).toHaveLength(60);
+    expect(rotated.every((p) => p.every(Number.isFinite))).toBe(true);
+  });
+});
+```
+
+Add the three small helpers (`correlation`, `spread`, `distance`) locally in the test file.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx jest src/exulu/projection/math --maxWorkers=2`
+Expected: FAIL — neither function exists.
+
+- [ ] **Step 3: Implement**
+
+Reuse the existing subspace-iteration routine rather than adding a second eigensolver, and add the determinism the rotation needs on top of it:
+
+```ts
+/**
+ * Three orthonormal axes ordered by how far the cloud spreads along them.
+ *
+ * Reuses randomizedPCA rather than adding a second eigensolver, with two things
+ * it does not guarantee layered on top: the axes are SORTED by the data's spread
+ * along them, and each one's sign is pinned so a refit cannot mirror the cloud.
+ * Without the sort the "principal" axis is whichever the iteration happened to
+ * settle on; without the sign fix an eigenvector's negation is equally valid and
+ * the map would flip between fits of identical data.
+ */
+export function principalRotation(points: number[][], seed: number): number[][] {
+  const centre = [0, 1, 2].map((j) => points.reduce((s, p) => s + finite(p[j]), 0) / (points.length || 1));
+  const centred = points.map((p) => Float32Array.from([0, 1, 2].map((j) => finite(p[j]) - (centre[j] ?? 0))));
+  const basis = randomizedPCA(centred, 3, 3, seed, POWER_ITERATIONS).map((b) => Array.from(b));
+  // A degenerate cloud can yield fewer than three usable axes; fall through to
+  // the identity rather than rotating by something half-defined.
+  if (basis.length < 3) return [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+
+  const variance = basis.map((axis) =>
+    centred.reduce((s, p) => {
+      const d = axis.reduce((acc, a, j) => acc + a * (p[j] ?? 0), 0);
+      return s + d * d;
+    }, 0) / Math.max(1, centred.length));
+
+  return basis
+    .map((axis, i) => ({ axis, variance: variance[i] ?? 0 }))
+    .sort((a, b) => b.variance - a.variance)
+    // Sign convention: the largest-magnitude component is positive. Any axis and
+    // its negation describe the same rotation, so without this a refit of
+    // unchanged data can mirror the cloud and every stored coordinate changes.
+    .map(({ axis }) => {
+      let lead = 0;
+      for (const [j, v] of axis.entries()) if (Math.abs(v) > Math.abs(axis[lead] ?? 0)) lead = j;
+      return (axis[lead] ?? 0) < 0 ? axis.map((v) => -v) : axis;
+    });
+}
+
+/** Applies a rotation to every point. Rigid: distances and neighbours survive. */
+export function rotateLayout(points: number[][], rotation: number[][]): number[][] {
+  return points.map((p) => rotation.map((axis) => axis.reduce((s, a, j) => s + a * finite(p[j]), 0)));
+}
+```
+
+- [ ] **Step 4: Rotate before normalising**
+
+In `src/exulu/projection/fit.ts`, between the layout and its normalisation (line 139-140):
+
+```ts
+  const raw = umap.fit(reduced.map((z) => Array.from(z)));
+  // The layout's long axis can lie anywhere; the camera does not move. Rotating
+  // onto the cloud's own axes is rigid — every distance survives — and puts the
+  // widest spread across the screen instead of into the depth. Measured on a
+  // real base, the layout was an ellipsoid of roughly 2:1 lying diagonally, seen
+  // nearly edge-on.
+  const oriented = rotateLayout(raw, principalRotation(raw, seed));
+  const { points: layout, scale } = normalizeLayout(oriented);
+```
+
+Everything downstream — the linear map, the residual, the clustering, the stored coordinates — is fitted on `layout`, so all of it follows the rotation with no further change.
+
+- [ ] **Step 5: Run the tests and the typecheck**
+
+Run: `npx jest src/exulu/projection --maxWorkers=2 && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -c "error TS"`
+Expected: PASS; count 8.
+
+- [ ] **Step 6: Refit and measure**
+
+```bash
+POSTGRES_DB_HOST=127.0.0.1 POSTGRES_DB_PORT=5432 POSTGRES_DB_USER=postgres \
+POSTGRES_DB_PASSWORD=localdev POSTGRES_DB_NAME=algi POSTGRES_DB_SSL=false \
+npx tsx scripts/fit-context-projection.ts --context hydraulik_steuerbloecke
+```
+
+**Run this from the backend worktree, not the primary checkout** — the primary checkout is on another branch and does not carry these changes. Task 5's measurement was taken against the old code for exactly that reason.
+
+Then:
+
+```bash
+docker exec algi-local psql -U postgres -d algi -c \
+  "select round(corr(px,py)::numeric,3) corr_xy, round(corr(px,pz)::numeric,3) corr_xz,
+          round(corr(py,pz)::numeric,3) corr_yz, round(stddev(px)::numeric,3) sd_x,
+          round(stddev(py)::numeric,3) sd_y, round(stddev(pz)::numeric,3) sd_z
+     from hydraulik_steuerbloecke_chunks where px is not null;"
+```
+
+Expected: all three correlations near zero, and the spreads ordered descending. Before: −0.779 / −0.217 / −0.163 with 0.381 / 0.220 / 0.245. **Report both rows side by side. If the correlations are not near zero, say so plainly and stop** — a rotation that does not decorrelate has not been applied.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git branch --show-current   # feat/map-legibility
+git add src/exulu/projection/math.ts src/exulu/projection/math.test.ts src/exulu/projection/fit.ts
+git commit -m "fix(map): rotate the layout onto its own axes so the camera sees its width"
+```
