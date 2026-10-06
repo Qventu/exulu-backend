@@ -48,7 +48,7 @@ Three changes in the fit, all in `src/exulu/projection/`. The third was added on
 
 The layout's long axis can lie anywhere and the camera does not move, so an elongated cloud is seen edge-on as often as not. Aligning the layout with its own principal axes before anything else consumes it is a **proper rotation** — every distance and every neighbour survives — and it puts the widest spread across the screen instead of into the depth.
 
-Measured on `hydraulik_steuerbloecke`: the three axis correlations went from −0.779, −0.217 and −0.163 to 0.001, 0.000 and −0.001, with spreads moving from 0.381 / 0.220 / 0.245 to 0.449 / 0.276 / 0.137. The cloud is a sheet of roughly three to one with its widest face now at the camera.
+Measured on `hydraulik_steuerbloecke`: the three axis correlations went from −0.779, −0.217 and −0.163 to 0.001, 0.000 and 0.001, with spreads moving from 0.381 / 0.220 / 0.245 to 0.449 / 0.276 / 0.137. The cloud is a sheet of roughly three to one with its widest face now at the camera.
 
 The axes are ordered by the spread of the data along them and their signs are pinned, because an axis and its negation describe the same orientation and without a convention a refit of unchanged data would mirror the cloud and rewrite every stored coordinate for nothing.
 
