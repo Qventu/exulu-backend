@@ -14,7 +14,13 @@ Three causes, two of them structural rather than cosmetic. All three trace to th
 
 Measured on the fitted base: `corr(px, py) = −0.80`. The points lie close to a line.
 
-The fit computes a genuine non-linear layout for the sampled passages, then **discards it** and stores the *linear approximation* for every chunk — including the 1,129 it had true positions for. A linear map cannot reproduce a non-linear embedding, so the structure collapses toward its dominant direction. The stored residual (0.144) reports the average error; the visible effect is the flattening.
+The fit computes a genuine non-linear layout for the sampled passages, then **discards it** and stores the *linear approximation* for every chunk — including the 1,129 it had true positions for.
+
+**Corrected on 2026-10-06, by this sub-project's own measurement.** This section originally concluded that the linear approximation *is what flattened the cloud*, and cited the −0.80 correlation as its evidence. That was wrong. Storing the true positions moved the correlation from −0.795 to −0.779 — nothing. The residual of 0.144 had been saying so all along: a linear map only approximates a layout that closely when the layout is already nearly linear.
+
+The real cause is the **camera**. The layout is an elongated ellipsoid whose long axis lies diagonally across two axes, while the camera sits fixed on the third — so a flattened cloud was being seen nearly edge-on. §4.1 is the fix that followed, and it is the one that worked.
+
+The change below is still worth making, on its own narrower grounds: the layout is known exactly for the sampled passages, so storing an approximation of something already known is wasteful and wrong. It is simply not the fix for what was on screen.
 
 ### 2.2 Every dot is the same colour
 
@@ -36,11 +42,25 @@ The side panel repeats the chip row verbatim. The counts appear twice and never 
 
 ## 4. Coordinates (backend)
 
-Two changes in the fit, both in `src/exulu/projection/`.
+Three changes in the fit, all in `src/exulu/projection/`. The third was added on 2026-10-06, after §2.1's diagnosis was refuted; it is the one that fixed what was on screen.
 
-**Cluster in layout space.** k-means currently runs over `applyMap(reduced)` — the linear approximation. It runs over the layout itself instead. The centroids then live in the same space as the stored coordinates, which is what the client's nearest-centre membership assumes.
+### 4.1 Rotate the layout onto its own axes
 
-**Store the layout for the sample.** `backfillCoordinates` writes `applyMap(...)` for every chunk. It takes the fit's sample as a map of chunk id to layout position and writes that instead wherever it has one, falling back to the linear map for the rest. On this base that is 1,129 of 1,134 rows; on a base larger than `FIT_SAMPLE` the sample is 20,000 and the remainder uses the map, which is exactly what the map was learned for.
+The layout's long axis can lie anywhere and the camera does not move, so an elongated cloud is seen edge-on as often as not. Aligning the layout with its own principal axes before anything else consumes it is a **proper rotation** — every distance and every neighbour survives — and it puts the widest spread across the screen instead of into the depth.
+
+Measured on `hydraulik_steuerbloecke`: the three axis correlations went from −0.779, −0.217 and −0.163 to 0.001, 0.000 and −0.001, with spreads moving from 0.381 / 0.220 / 0.245 to 0.449 / 0.276 / 0.137. The cloud is a sheet of roughly three to one with its widest face now at the camera.
+
+The axes are ordered by the spread of the data along them and their signs are pinned, because an axis and its negation describe the same orientation and without a convention a refit of unchanged data would mirror the cloud and rewrite every stored coordinate for nothing.
+
+This reuses the existing subspace iteration rather than adding a second eigensolver. Doing so surfaced a real defect in the shared orthonormalisation, which on a low-rank cloud could return a vector parallel to one it had already accepted; fixing it changes the basis handed to the layout for **every** base on its next refit, which is the one behavioural change here that a reader will not find in §4.2 or §4.3.
+
+### 4.2 Cluster in layout space
+
+k-means currently runs over `applyMap(reduced)` — the linear approximation. It runs over the layout itself instead. The centroids then live in the same space as the stored coordinates, which is what the client's nearest-centre membership assumes.
+
+### 4.3 Store the layout for the sample
+
+`backfillCoordinates` writes `applyMap(...)` for every chunk. It takes the fit's sample as a map of chunk id to layout position and writes that instead wherever it has one, falling back to the linear map for the rest. On this base that is 1,129 of 1,134 rows; on a base larger than `FIT_SAMPLE` the sample is 20,000 and the remainder uses the map, which is exactly what the map was learned for.
 
 The residual keeps its current meaning — how far a *new* passage lands from where the layout would have put it — and becomes more honest, because it now measures the only thing the linear map is still used for.
 
