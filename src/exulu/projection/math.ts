@@ -70,33 +70,43 @@ export function meanVector(rows: ArrayLike<number>[], dims: number): Float32Arra
  * direction already covered by the ones before it (so the result can be shorter
  * than the input - see randomizedPCA's contract).
  *
- * The candidate is scaled to unit length BEFORE anything is projected out of
- * it, and that is what keeps the output orthonormal. The reason is the 1e-8 bar
- * below, which decides "already covered" in ABSOLUTE terms while the quantity
- * it judges is relative. Accepted basis vectors are stored as float32, so a
- * residual that is orthogonal to them is still off the true directions by about
- * 6e-8 of the candidate's own length - the noise floor this bar has to stay
- * above. randomizedPCA passes its `next` accumulators, and on a low-rank base
- * their lengths span five orders of magnitude: measured on one at the real
- * base's shape (1129 rows, 1024 dimensions, rank 20, 50 components asked) they
- * ran from 6.2e+1 down to 1.1e-6, putting the noise floor of the longest at
- * 3.7e-6, far above the bar. Every residual in between is pure float32 noise
- * that clears the bar anyway, gets normalised back up to unit length, and comes
- * out pointing wherever the noise pointed - measured on that base, a 1.4e-1 dot
- * product between two of the basis's own vectors, and 8.5e-2 at the 1536-
- * dimension shape. Unit-length candidates put the floor at a fixed 6e-8 for
- * every one of them, and the same measurements give 2.5e-9 and 1.9e-9.
+ * TWO sweeps, and the second one is load-bearing. Do not remove it: it is the
+ * only reason the output of this function is a basis at all on a low-rank
+ * cloud. One sweep leaves the computed residual carrying an error the size of
+ * the cancellation it just performed, so an almost-dependent candidate comes
+ * out of it pointing wherever that error pointed, gets normalised up to unit
+ * length, and joins the basis as a direction that is not perpendicular to
+ * anything. Re-projecting the already-orthogonalised vector is the standard
+ * remedy, and it is complete rather than partial. Measured on low-rank clouds
+ * at three shapes, worst dot product between two of the returned vectors:
  *
- * This is reachable from the real fit: embeddings arrive here l2-normalised, so
- * row length is not what varies - the accumulators do, whenever a base has
- * fewer independent directions than the components asked for, which is what a
- * base of near-duplicate boilerplate chunks is. Nothing downstream breaks
- * loudly (the ridge absorbs near-collinear columns) but a basis that is not a
- * basis should not be stored.
+ *                        one sweep   two sweeps
+ *   600 x 1536, rank 12    8.5e-2       1.3e-9
+ *   1129 x 1024, rank 20   1.4e-1       2.4e-9
+ *   120 x 256, rank 8      1.1e-1       3.4e-9
  *
- * The second sweep is belt-and-braces, not the fix - re-projecting an
- * already-orthogonalised vector is the standard remedy for the same arithmetic,
- * and it costs `k · k · dims` against the data pass's `rows · dims · k`.
+ * The second sweep is also what restores the rank contract above: the same
+ * three clouds returned 23, 38 and 15 vectors with one sweep and exactly 12,
+ * 20 and 8 - their true ranks - with two. Those surplus directions were
+ * amplified rounding noise, and they do not stop at being useless, because
+ * fit.ts persists this length as the base's component count and counts it as
+ * fitted parameters.
+ *
+ * All of which is reachable from the real fit, not hypothetical: embeddings
+ * arrive here l2-normalised so row length does not vary, but a base with fewer
+ * independent directions than the components asked for is just a base of
+ * near-duplicate boilerplate chunks, and then the accumulators randomizedPCA
+ * passes in span orders of magnitude (6.2e+1 down to 1.1e-6, measured at the
+ * real base's shape) and the small ones are nothing but cancellation.
+ *
+ * Scaling the candidate to unit length first is NOT a fix for any of this and
+ * was tried: Gram-Schmidt is positively homogeneous, so a scale factor cannot
+ * change the direction of anything it accepts, only whether the 1e-8 bar below
+ * accepts it. Measured on the three clouds above it left the dot products at
+ * 7.2e-2, 1.4e-1 and 1.0e-1 - unchanged - while turning the bar into a
+ * relative one sitting under the float32 noise floor, so the dependent
+ * directions got accepted instead of dropped and the counts went to 20, 35 and
+ * 15 against true ranks of 12, 20 and 8.
  */
 function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Array[] {
   const out: Float32Array[] = [];
@@ -105,14 +115,6 @@ function orthonormalize(vectors: ArrayLike<number>[], dims: number): Float32Arra
     // a direction is accepted into the basis.
     const v = new Float64Array(dims);
     for (let d = 0; d < dims; d += 1) v[d] = candidate[d] ?? 0;
-    let scale = 0;
-    for (let d = 0; d < dims; d += 1) {
-      const vd = v[d] ?? 0;
-      scale += vd * vd;
-    }
-    scale = Math.sqrt(scale);
-    if (!Number.isFinite(scale) || scale === 0) continue;   // nothing to normalise
-    for (let d = 0; d < dims; d += 1) v[d] = (v[d] ?? 0) / scale;
     for (let sweep = 0; sweep < 2; sweep += 1) {
       for (const basis of out) {
         let dot = 0;
@@ -356,15 +358,24 @@ export function fitResidual(
  * The brief's answer was to fall back to the identity, which would have left
  * exactly the flat layouts this task exists to reorient unrotated.
  *
- * The other load-bearing detail is that the candidates arriving here are
- * already unit length (randomizedPCA normalises its output, and the canonical
- * axes are unit by construction). That is what makes a dependent candidate
- * recognisable: its residual lands near the float64 floor rather than near some
- * fraction of its own length, so it falls below the bar below and is dropped
- * instead of being normalised back up into noise. The second sweep and the
- * threshold's relative form are defensive against a future caller passing
- * something longer - neither is what makes this correct today, so do not read
- * them as the fix.
+ * The two sweeps are the other half, for the reason spelled out over
+ * orthonormalize: one sweep returns an almost-dependent candidate pointing
+ * wherever its own cancellation error pointed, and a triple like that is not a
+ * rotation, so it changes the distances this whole task promises to preserve.
+ *
+ * How much margin the drop decision has depends on where the candidate came
+ * from, and it is worth knowing it is not much. A canonical axis that lies in
+ * the accepted span cancels in exact arithmetic and leaves ~3.6e-17, nine
+ * orders under the bar. One from the iteration is float32, so a direction that
+ * is dependent is only dependent to float32 precision and its residual is
+ * bounded below by that rounding, ~6e-8 against a 1e-7 bar - a factor of 1.7 in
+ * the worst case, 3.7x to 20x measured. That thin margin is tolerable only
+ * because both outcomes here are harmless: a false accept still yields three
+ * perpendicular axes, and the surplus one carries no variance so the sort puts
+ * it last; a false drop is replaced by a canonical axis that carries no
+ * variance either. Nothing about the count is persisted. That is NOT true of
+ * orthonormalize, where the same decision sets the stored component count -
+ * which is why the bar there is left absolute.
  *
  * Deterministic: the candidates keep randomizedPCA's order and the canonical
  * axes are always tried in x, y, z order, so a refit of unchanged data rebuilds

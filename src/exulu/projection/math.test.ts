@@ -82,10 +82,13 @@ describe("randomizedPCA", () => {
   // and 4.9e-1 at shapes this size. Nothing downstream breaks loudly - the ridge
   // absorbs near-collinear columns - which is why it needs asserting here.
   //
-  // What it returns is its own business: fewer vectors than asked for is the
-  // documented answer to a short-rank cloud. That they are mutually orthogonal
-  // is not.
-  it("returns an orthonormal basis for a cloud with less rank than the components asked", () => {
+  // How many it returns is the other half: fewer than asked for is the
+  // documented answer to a short-rank cloud, and the right number is the rank
+  // itself. One sweep returned 23, 38 and 15 on clouds of true rank 12, 20 and
+  // 8 - the surplus being amplified rounding noise, which fit.ts then persists
+  // as the base's component count and counts as fitted parameters. So this
+  // asserts the exact count, not `at least the rank`, which anything passes.
+  it("returns an orthonormal basis of exactly the rank for a cloud with less rank than the components asked", () => {
     const dims = 120, rank = 6, k = 20;
     const r = rng(5);
     const planted = Array.from({ length: rank }, () => Float32Array.from({ length: dims }, () => r() - 0.5));
@@ -95,7 +98,7 @@ describe("randomizedPCA", () => {
         w.reduce((s, weight, c) => s + weight * (planted[c]?.[d] ?? 0), 0));
     });
     const basis = randomizedPCA(rows, dims, k, 7, 3);
-    expect(basis.length).toBeGreaterThanOrEqual(rank);
+    expect(basis).toHaveLength(rank);
     for (const b of basis) near(Math.hypot(...Array.from(b)), 1, 1e-5);
     for (let a = 0; a < basis.length; a += 1) {
       for (let c = a + 1; c < basis.length; c += 1) {

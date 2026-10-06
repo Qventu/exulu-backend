@@ -551,8 +551,16 @@ describe("fitContextProjection", () => {
     // is what lets the expectations above be derived with an arbitrary one. Only
     // the sign of a zero component varies between seeds - IEEE -0, which no
     // coordinate can tell from 0 - so this compares values, not bits.
-    for (const [i, row] of principalRotation(lobeLayout(PAIRED_SAMPLE), 12345).entries()) {
-      for (const [j, v] of row.entries()) expect(v).toBeCloseTo(lobeRotation[i]?.[j] ?? 0, 15);
+    const reseeded = principalRotation(lobeLayout(PAIRED_SAMPLE), 12345);
+    // Shape first, and no `?? 0` below: read with a fallback, a rotation that
+    // changed shape would silently be compared against zeros and pass.
+    expect(reseeded).toHaveLength(3);
+    expect(lobeRotation).toHaveLength(3);
+    for (const [i, row] of reseeded.entries()) {
+      const expected = lobeRotation[i];
+      expect(row).toHaveLength(3);
+      expect(expected).toHaveLength(3);
+      for (const [j, v] of row.entries()) expect(v).toBeCloseTo(expected![j]!, 15);
     }
   });
 
