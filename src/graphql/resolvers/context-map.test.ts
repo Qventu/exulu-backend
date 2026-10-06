@@ -885,6 +885,11 @@ describe("contextMapItem", () => {
     const selected = db.__log.filter((l: any[]) => l[0] === "raw").map((l: any[]) => String(l[1]));
     expect(selected).toContain('items."chunks_count" as "chunksCount"');
     expect(selected).toContain('items."textlength" as "textLength"');
+    // The identity predicate. fakeDb answers mem_items#first whatever the
+    // query says, so without this the resolver could drop the id filter
+    // entirely and still pass every assertion here - returning the context's
+    // first readable item for every selection.
+    expect(db.__log).toContainEqual(["mem_items", "where", "items.id", OWNER]);
   });
 
   it("returns null when the viewer may not read the item, or it does not exist", async () => {
@@ -918,9 +923,14 @@ describe("contextMapItem", () => {
     expect((await contextMapItem({ db, context, user, itemId: OWNER }))?.name).toBe("");
   });
 
+  // The exact clause, not a substring match on "archived": the harness cannot
+  // evaluate predicates, so `includes("archived")` would pass against
+  // `IS TRUE` - the inverse - and against `IS NOT FALSE`. IS NOT TRUE is also
+  // what the points query uses, which matters because `archived` is nullable
+  // on rows that predate the column.
   it("never returns an archived item", async () => {
     const db = fakeDb({ "mem_items#first": [row] });
     await contextMapItem({ db, context, user, itemId: OWNER });
-    expect(db.__log.some((l: any[]) => l[1] === "whereRaw" && String(l[2]).includes("archived"))).toBe(true);
+    expect(db.__log).toContainEqual(["mem_items", "whereRaw", "items.archived IS NOT TRUE"]);
   });
 });
