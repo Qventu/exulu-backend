@@ -333,3 +333,64 @@ describe("finalize from reviewed", () => {
     expect(row.status).toBe("cancelled");
   });
 });
+
+describe("exportableJob — export-route lookup for a reviewed-but-unpublished job", () => {
+  it("returns the export shape, including reviewed_at, for the owning caller", async () => {
+    const row = jobRow({
+      created_by: 7,
+      source: "recall",
+      reviewed_at: "2026-10-01T09:00:00.000Z",
+    });
+    // Two .first() calls on the same table: assertOwnsTranscriptionJob's own
+    // ownership lookup, then exportableJob's full-row read.
+    firstResults[JOBS] = [row, row];
+
+    const result = await transcriptionService.exportableJob("job-1", 7);
+
+    expect(result).toMatchObject({
+      name: "Standup",
+      recording_source: "recall",
+      raw_segments: row.raw_segments,
+      reviewed_at: "2026-10-01T09:00:00.000Z",
+    });
+  });
+
+  it("returns undefined for a job owned by someone else", async () => {
+    firstResults[JOBS] = [jobRow({ created_by: 7 })];
+
+    const result = await transcriptionService.exportableJob("job-1", 999);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for a job that does not exist", async () => {
+    // firstResults[JOBS] stays unset; the db-fake's .first() resolves undefined.
+    const result = await transcriptionService.exportableJob("missing-job", 7);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("propagates a non-access error from the ownership check instead of swallowing it", async () => {
+    // Simulates a connection drop / timeout / programming fault inside
+    // assertOwnsTranscriptionJob's own query — this must NOT be reported to
+    // the caller as a missing transcript (finding 1 of the task-4 review).
+    const originalFrom = db.from;
+    db.from = () => ({
+      select: () => ({
+        where: () => ({
+          first: async () => {
+            throw new Error("connection reset");
+          },
+        }),
+      }),
+    });
+
+    try {
+      await expect(transcriptionService.exportableJob("job-1", 7)).rejects.toThrow(
+        "connection reset",
+      );
+    } finally {
+      db.from = originalFrom;
+    }
+  });
+});

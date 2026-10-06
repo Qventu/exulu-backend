@@ -30,7 +30,7 @@ import {
 } from "./client";
 import { effectiveSegments, renderTranscript, type RawSegment, type SpeakerMap } from "./transcript-text";
 import { buildTranscriptItemInput } from "./build-transcript-item";
-import { assertOwnsTranscriptionJob } from "./authorize";
+import { assertOwnsTranscriptionJob, TranscriptionJobAccessError } from "./authorize";
 import type { TranscriptExportItem } from "./transcript-export";
 
 const TABLE = "transcription_jobs";
@@ -595,8 +595,13 @@ export const transcriptionService = {
     const { db } = await postgresClient();
     try {
       await assertOwnsTranscriptionJob(db, { id: userId }, jobId);
-    } catch {
-      return undefined;
+    } catch (err) {
+      // Only a permission/not-found failure becomes "undefined" (→ the
+      // route's 404). Anything else — a connection drop, a timeout, a
+      // programming fault inside the helper's own query — must not be
+      // reported to the caller as a missing transcript.
+      if (err instanceof TranscriptionJobAccessError) return undefined;
+      throw err;
     }
 
     const dbRow = await db(TABLE).where({ id: jobId }).first();
