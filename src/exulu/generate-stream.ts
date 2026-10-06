@@ -41,6 +41,7 @@ import type { ExuluStatisticParams } from "@EXULU_TYPES/statistics.ts";
 import { updateStatistic } from "./statistics.ts";
 import { STATISTICS_TYPE_ENUM, type STATISTICS_TYPE } from "@EXULU_TYPES/enums/statistics.ts";
 import { recallMemories } from "./memory/recall";
+import { isPublicSurface } from "./public-surface";
 import { previousUserTexts } from "./memory/recall-query";
 import { collectMemoryDecisions } from "./memory/decisions";
 import type { RecallCollector } from "./memory/recall-collector";
@@ -366,7 +367,12 @@ export const generateSync = async ({
     // turn, and without the placeholder it would drop the actual last prior
     // turn instead.
     const currentAsUiMessage = { id: "current", role: "user", parts: query ? [{ type: "text", text: query }] : [] } as UIMessage;
-    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb, previousUserTurns: previousUserTexts([...messages, currentAsUiMessage]) });
+    // A public link recalls PUBLIC memories only, whoever is signed in: the
+    // surface is a guest surface, and a guest's recall is public-only
+    // (recall-collector.ts). Without this a signed-in visitor's private
+    // memories fed answers on a link meant for guests.
+    const recallUser = isPublicSurface(req) ? undefined : user;
+    const memoryRecall = await recallMemories({ agent, contexts, query, user: recallUser, db: memoryDb, previousUserTurns: previousUserTexts([...messages, currentAsUiMessage]) });
     const memoryContext = memoryRecall.promptBlock;
     const memoryItems = memoryRecall.memoryItems;
 
@@ -796,7 +802,12 @@ export const generateStream = async ({
     // `messages` here already contains the history plus the current message
     // as its last element (validated a few lines above), so
     // previousUserTexts() correctly excludes only the current turn.
-    const memoryRecall = await recallMemories({ agent, contexts, query, user, db: memoryDb, previousUserTurns: previousUserTexts(messages) });
+    // A public link recalls PUBLIC memories only, whoever is signed in: the
+    // surface is a guest surface, and a guest's recall is public-only
+    // (recall-collector.ts). Without this a signed-in visitor's private
+    // memories fed answers on a link meant for guests.
+    const recallUser = isPublicSurface(req) ? undefined : user;
+    const memoryRecall = await recallMemories({ agent, contexts, query, user: recallUser, db: memoryDb, previousUserTurns: previousUserTexts(messages) });
     const memoryContext = memoryRecall.promptBlock;
     const memoryItems = memoryRecall.memoryItems;
 
