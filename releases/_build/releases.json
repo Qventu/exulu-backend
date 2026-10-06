@@ -1813,5 +1813,75 @@
     ],
     "copySource": "source-page",
     "videoCount": 3
+  },
+  {
+    "slug": "2026-10-06-agent-memory",
+    "date": "2026-10-06",
+    "title": "Agent memory — IMP release",
+    "pill": "6 October 2026",
+    "heroHtml": "Agent memory, end to end",
+    "heroText": "Agent memory, end to end",
+    "ledeHtml": "Memory stopped being a hidden system-prompt injection and became something you can\n        see, correct, measure and argue with. Five parts shipped together: the save card in chat, the\n        Memory area, usage tracking, conflict detection, and a map of the whole base.",
+    "releasedLabel": null,
+    "scopedCss": ".slice + .slice { margin-top: 56px; }\np code { font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }\n.feature .extras p { margin: 0 0 16px; font-size: 16px; }",
+    "sections": [
+      {
+        "id": null,
+        "heading": "Memory, in the open",
+        "oneLiner": "Your agent remembers — and you approve the words.",
+        "html": "<h2>Memory, in the open</h2>\n      <p class=\"one-liner\">Your agent remembers — and you approve the words.</p>\n      <div class=\"slice\">\n        <video src=\"./shorts/memory-in-chat.mp4\" autoplay=\"\" loop=\"\" muted=\"\" playsinline=\"\"></video>\n      <p>Memory already worked. It was just invisible: a question in chat, a generic approval, a system-prompt injection nobody saw.</p>\n      <p>Now the agent has three tools — remember, update and forget — and the consent step <em>is</em> the save card. You approve the exact sentence that gets stored, and you can edit it before you do. Nothing reaches the base that you did not see.</p>\n      </div>",
+        "videos": [
+          {
+            "src": "./shorts/memory-in-chat.mp4"
+          }
+        ]
+      },
+      {
+        "id": null,
+        "heading": "The Memory area",
+        "oneLiner": "One place that answers: what has this agent actually learned?",
+        "html": "<h2>The Memory area</h2>\n      <p class=\"one-liner\">One place that answers: what has this agent actually learned?</p>\n      <div class=\"slice\">\n        <video src=\"./shorts/memory-area.mp4\" autoplay=\"\" loop=\"\" muted=\"\" playsinline=\"\"></video>\n      <p>Under Build there is now a Memory area: every base, every agent, and one memory in full.</p>\n      <p>It is built over the knowledge workspace you already know, so filters, access control and the item dialogs behave exactly as they do everywhere else. A base page opens on a stats strip — how many memories, how many used this month, how many never used, how many in conflict.</p>\n      </div>",
+        "videos": [
+          {
+            "src": "./shorts/memory-area.mp4"
+          }
+        ]
+      },
+      {
+        "id": null,
+        "heading": "What the agent actually uses",
+        "oneLiner": "Half a base is never read. Now you can tell which half.",
+        "html": "<h2>What the agent actually uses</h2>\n      <p class=\"one-liner\">Half a base is never read. Now you can tell which half.</p>\n      <div class=\"slice\">\n        <video src=\"./shorts/usage.mp4\" autoplay=\"\" loop=\"\" muted=\"\" playsinline=\"\"></video>\n      <p>Every memory recalled into an answer is recorded — one record per recalled memory per answer, guest conversations included. Nothing about the content, only the fact of the use.</p>\n      <p>That gives a <strong>Last used</strong> column, a usage filter for never-used and stale memories, and a bulk <strong>Archive</strong> for the leftovers. Archived memories leave recall and the counts and can be restored from Knowledge — they are not deleted.</p>\n      </div>",
+        "videos": [
+          {
+            "src": "./shorts/usage.mp4"
+          }
+        ]
+      },
+      {
+        "id": null,
+        "heading": "Conflicts",
+        "oneLiner": "Two memories disagree. The agent believes both.",
+        "html": "<h2>Conflicts</h2>\n      <p class=\"one-liner\">Two memories disagree. The agent believes both.</p>\n      <div class=\"slice\">\n        <video src=\"./shorts/conflicts.mp4\" autoplay=\"\" loop=\"\" muted=\"\" playsinline=\"\"></video>\n      <p>A base accumulates near-duplicates and outright contradictions, and until now nothing surfaced them.</p>\n      <p>A scan per base finds both: duplicates by similarity, contradictions judged by a structured model call per candidate pair. Three resolutions — keep one, merge into a single memory, or dismiss as not a conflict — and the decision is stored. Only shared memories are scanned; private memories never enter detection.</p>\n      <div class=\"snippet-label\">Run a scan from the API</div>\n      <pre><code>mutation MemoryConflictsScan($contextId: ID!) {\n  memoryConflictsScan(contextId: $contextId) {\n    open\n    duplicateGroups\n    contradictionGroups\n    judged\n    scannedAt\n  }\n}</code></pre>\n      </div>",
+        "videos": [
+          {
+            "src": "./shorts/conflicts.mp4"
+          }
+        ]
+      },
+      {
+        "id": null,
+        "heading": "The map",
+        "oneLiner": "A list tells you what is in a base one row at a time. The map tells you what it is about.",
+        "html": "<h2>The map</h2>\n      <p class=\"one-liner\">A list tells you what is in a base one row at a time. The map tells you what it is about.</p>\n      <div class=\"slice\">\n        <video src=\"./shorts/memory-map.mp4\" autoplay=\"\" loop=\"\" muted=\"\" playsinline=\"\"></video>\n      <p>Every passage carries a position computed from its embedding, so a base draws as a cloud where near means similar — and it works on knowledge bases as well as memory.</p>\n      <p>Regions are clusters, named from the distinctive words in the text index that search already keeps. <strong>No model is asked</strong>, so a region's name is the base's own vocabulary. Select a dot and the map draws lines to the passages worded most like it and opens the item beside the cloud. On a memory base, a slider filters by when a memory was added, so you can watch the base fill in.</p>\n      <p>Only passages you may read are drawn, and the caption says how many of how many are on screen.</p>\n      <div class=\"snippet-label\">The map's read API</div>\n      <pre><code>query ContextMapPoints($contextId: ID!) {\n  contextMapPoints(contextId: $contextId, mode: PASSAGES, limit: 5000) {\n    points { id itemId x y z itemName group chunks createdAtMs }\n    total\n    sampled\n  }\n}</code></pre>\n      </div>",
+        "videos": [
+          {
+            "src": "./shorts/memory-map.mp4"
+          }
+        ]
+      }
+    ],
+    "copySource": "source-page",
+    "videoCount": 5
   }
 ]
